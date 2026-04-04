@@ -1,0 +1,28 @@
+# Replace mail.example.com with your actual domain
+mail.example.com {
+    # Proxy to the app container
+    reverse_proxy app:3000
+
+    # TLS is handled automatically by Caddy
+    tls {
+        protocols tls1.2 tls1.3
+    }
+
+    # Security headers
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy no-referrer
+    }
+
+    # Rate limit inbound endpoints
+    @inbound path /inbound/*
+    handle @inbound {
+        reverse_proxy app:3000
+    }
+
+    log {
+        output stdout
+        format json
+    }
+}
