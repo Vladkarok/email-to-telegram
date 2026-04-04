@@ -1,0 +1,49 @@
+import type { FastifyInstance } from "fastify";
+import { verifyWorkerRequest } from "../../utils/workerAuth.js";
+import { getDb } from "../../db/client.js";
+import { processInboundEmail } from "../../email/pipeline.js";
+import { getLogger } from "../../utils/logger.js";
+
+export function rawRoute(app: FastifyInstance): void {
+  app.post(
+    "/inbound/raw",
+    {
+      config: { rawBody: true },
+      bodyLimit: 26_214_400, // 25 MB
+    },
+    async (req, reply) => {
+      const sig = req.headers["x-worker-sig"] as string | undefined;
+      const ts = req.headers["x-worker-ts"] as string | undefined;
+      const localPart = req.headers["x-local-part"] as string | undefined;
+
+      if (!sig || !ts) {
+        await reply.status(401).send({ error: "missing signature" });
+        return;
+      }
+
+      // rawBody set by server hook; fall back to req.body for octet-stream in tests
+      const body = req.rawBody ?? (Buffer.isBuffer(req.body) ? req.body : null);
+      if (!body) {
+        await reply.status(400).send({ error: "empty body" });
+        return;
+      }
+
+      if (!verifyWorkerRequest(body, sig, ts)) {
+        await reply.status(401).send({ error: "invalid signature" });
+        return;
+      }
+
+      if (!localPart) {
+        await reply.status(400).send({ error: "missing x-local-part header" });
+        return;
+      }
+
+      // Acknowledge immediately, process async
+      await reply.status(202).send({ status: "accepted" });
+
+      processInboundEmail(getDb(), null, { rawEmail: body, localPart }).catch((err: unknown) => {
+        getLogger().error({ err, localPart }, "pipeline error");
+      });
+    },
+  );
+}
