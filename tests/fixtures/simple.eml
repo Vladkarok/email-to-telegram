@@ -1,0 +1,10 @@
+From: sender@example.com
+To: alerts-ab12cd@tgmail.example.com
+Subject: Server alert - CPU high
+Message-ID: <unique-id-001@example.com>
+Date: Sat, 04 Apr 2026 14:30:00 +0000
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+
+CPU usage has exceeded 90% on prod-web-01.
+Current: 94.2%

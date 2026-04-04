@@ -1,0 +1,8 @@
+From: old-system@example.com
+To: legacy-abc@tgmail.example.com
+Subject: Legacy alert
+Message-ID: <legacy-001@example.com>
+Date: Sat, 04 Apr 2026 08:00:00 +0000
+
+Plain text without MIME headers.
+This is valid RFC 822 email.

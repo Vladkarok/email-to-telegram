@@ -1,0 +1,11 @@
+From: sender@example.com
+To: alerts-abc@tgmail.example.com
+Subject: =?UTF-8?Q?Alert=3A_Сервер_недоступен?=
+Message-ID: <unicode-001@example.com>
+Date: Sat, 04 Apr 2026 12:00:00 +0000
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Сервер prod-01 недоступен с 12:00 UTC.
+Проверьте подключение.

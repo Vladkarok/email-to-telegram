@@ -1,0 +1,27 @@
+From: newsletter@example.com
+To: news-xyz123@tgmail.example.com
+Subject: Weekly Digest
+Message-ID: <html-001@example.com>
+Date: Sat, 04 Apr 2026 10:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="boundary123"
+
+--boundary123
+Content-Type: text/plain; charset=UTF-8
+
+This is the plain text version.
+
+Check out our latest features!
+
+--boundary123
+Content-Type: text/html; charset=UTF-8
+
+<html><body>
+<h1>Weekly Digest</h1>
+<p>This is the <b>HTML</b> version with <i>formatting</i>.</p>
+<p>Check out our <a href="https://example.com">latest features</a>!</p>
+<script>alert('xss')</script>
+<p style="color:red">Styled text</p>
+</body></html>
+
+--boundary123--

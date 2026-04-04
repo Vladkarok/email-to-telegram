@@ -1,0 +1,56 @@
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { generateDownloadToken, verifyDownloadToken } from "../../../src/utils/tokens.js";
+
+const SECRET = "test-secret-that-is-long-enough-abc";
+const ATTACHMENT_ID = "uuid-attach-1234";
+
+describe("download tokens", () => {
+  let savedSecret: string | undefined;
+
+  beforeEach(() => {
+    savedSecret = process.env["HMAC_SECRET"];
+    process.env["HMAC_SECRET"] = SECRET;
+  });
+
+  afterEach(() => {
+    process.env["HMAC_SECRET"] = savedSecret;
+  });
+
+  it("generates a token that verifies successfully", () => {
+    const { token, expiresAt } = generateDownloadToken(ATTACHMENT_ID);
+    const result = verifyDownloadToken(token, ATTACHMENT_ID, expiresAt);
+    expect(result).toBe(true);
+  });
+
+  it("rejects a tampered token", () => {
+    const { token, expiresAt } = generateDownloadToken(ATTACHMENT_ID);
+    const tampered = token.slice(0, -4) + "xxxx";
+    expect(verifyDownloadToken(tampered, ATTACHMENT_ID, expiresAt)).toBe(false);
+  });
+
+  it("rejects an expired token", () => {
+    const { token } = generateDownloadToken(ATTACHMENT_ID);
+    const expiredAt = new Date(Date.now() - 1000); // already expired
+    expect(verifyDownloadToken(token, ATTACHMENT_ID, expiredAt)).toBe(false);
+  });
+
+  it("rejects a token with wrong attachment ID", () => {
+    const { token, expiresAt } = generateDownloadToken(ATTACHMENT_ID);
+    expect(verifyDownloadToken(token, "different-uuid", expiresAt)).toBe(false);
+  });
+
+  it("generates unique tokens each time", () => {
+    const t1 = generateDownloadToken(ATTACHMENT_ID);
+    const t2 = generateDownloadToken(ATTACHMENT_ID);
+    expect(t1.token).not.toBe(t2.token);
+  });
+
+  it("expiry is approximately TTL_HOURS in the future", () => {
+    const before = Date.now();
+    const { expiresAt } = generateDownloadToken(ATTACHMENT_ID, 24);
+    const after = Date.now();
+    const expected = before + 24 * 60 * 60 * 1000;
+    expect(expiresAt.getTime()).toBeGreaterThanOrEqual(expected - 1000);
+    expect(expiresAt.getTime()).toBeLessThanOrEqual(after + 24 * 60 * 60 * 1000 + 1000);
+  });
+});
