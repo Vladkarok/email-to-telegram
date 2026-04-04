@@ -2,8 +2,8 @@ import type { ParsedEmail } from "./types.js";
 import { sanitizeTelegramHtml, stripHtml } from "../utils/telegramHtml.js";
 
 const MAX_LEN = 4096;
-const MAX_BODY_LEN = 3800;
 const TRUNCATION_NOTICE = "\n[... truncated]";
+const SEPARATOR = "\n\n";
 
 export interface AttachmentLink {
   filename: string;
@@ -23,40 +23,41 @@ export function renderEmail(
   const subject = email.subject ?? "(no subject)";
 
   const header = buildHeader(mode, from, aliasFullAddress, subject);
+
+  // Attachments section is always included in full — never truncated.
+  // Reserve its space before computing the body budget.
+  const attachmentsSection =
+    attachmentLinks.length > 0
+      ? "Attachments:\n" + attachmentLinks.map((a) => `${a.filename}: ${a.url}`).join("\n")
+      : "";
+
+  const fixedCost =
+    header.length +
+    SEPARATOR.length +
+    (attachmentsSection ? SEPARATOR.length + attachmentsSection.length : 0);
+
+  const bodyBudget = MAX_LEN - fixedCost;
+
   const rawBody = extractBody(email, mode);
-  const body = truncateBody(rawBody);
+  const body = truncateToBudget(rawBody, bodyBudget);
 
   const parts = [header, body];
+  if (attachmentsSection) parts.push(attachmentsSection);
 
-  if (attachmentLinks.length > 0) {
-    const links = attachmentLinks.map((a) => `${a.filename}: ${a.url}`).join("\n");
-    parts.push(`Attachments:\n${links}`);
-  }
-
-  const full = parts.filter(Boolean).join("\n\n");
-
-  if (full.length <= MAX_LEN) return full;
-
-  return full.slice(0, MAX_LEN - TRUNCATION_NOTICE.length) + TRUNCATION_NOTICE;
+  return parts.join(SEPARATOR);
 }
 
 function buildHeader(mode: RenderMode, from: string, to: string, subject: string): string {
   if (mode === "html") {
-    // Escape HTML metacharacters so From/Subject aren't parsed as tags.
-    // <user@example.com> would otherwise be treated as an unknown tag.
     const e = escapeHtml;
     return `From: ${e(from)}\nTo: ${e(to)}\nSubject: ${e(subject)}`;
   }
+  if (mode === "markdown") {
+    const e = escapeMarkdownV2;
+    return `From: ${e(from)}\nTo: ${e(to)}\nSubject: ${e(subject)}`;
+  }
+  // plaintext — no parse_mode, no escaping needed
   return `From: ${from}\nTo: ${to}\nSubject: ${subject}`;
-}
-
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function truncateBody(body: string): string {
-  if (body.length <= MAX_BODY_LEN) return body;
-  return body.slice(0, MAX_BODY_LEN - TRUNCATION_NOTICE.length) + TRUNCATION_NOTICE;
 }
 
 function extractBody(email: ParsedEmail, mode: RenderMode): string {
@@ -64,15 +65,37 @@ function extractBody(email: ParsedEmail, mode: RenderMode): string {
     if (email.htmlBody) {
       return sanitizeTelegramHtml(email.htmlBody);
     }
-    return email.textBody ?? "";
+    // Plain-text fallback must be HTML-escaped; raw text with < > & would be
+    // parsed as tags or entity refs by Telegram's HTML parser.
+    return escapeHtml(email.textBody ?? "");
   }
 
-  // plaintext and markdown: prefer text, fall back to stripped HTML
-  if (email.textBody) {
-    return email.textBody;
+  if (mode === "markdown") {
+    // All content must be MarkdownV2-escaped. Strip HTML if only htmlBody is present.
+    const raw = email.textBody ?? (email.htmlBody ? stripHtml(email.htmlBody) : "");
+    return escapeMarkdownV2(raw);
   }
-  if (email.htmlBody) {
-    return stripHtml(email.htmlBody);
-  }
+
+  // plaintext — sent with no parse_mode, no escaping required
+  if (email.textBody) return email.textBody;
+  if (email.htmlBody) return stripHtml(email.htmlBody);
   return "";
+}
+
+function truncateToBudget(text: string, budget: number): string {
+  if (budget <= 0) return TRUNCATION_NOTICE;
+  if (text.length <= budget) return text;
+  const cutLen = budget - TRUNCATION_NOTICE.length;
+  if (cutLen <= 0) return TRUNCATION_NOTICE;
+  return text.slice(0, cutLen) + TRUNCATION_NOTICE;
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// Telegram MarkdownV2 requires these characters to be escaped with a leading backslash.
+// See https://core.telegram.org/bots/api#markdownv2-style
+function escapeMarkdownV2(text: string): string {
+  return text.replace(/[_*[\]()~`<>#+=|{}.!\\-]/g, "\\$&");
 }
