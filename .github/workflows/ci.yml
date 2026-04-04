@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    name: Lint, typecheck, test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: emailbot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://app:test@localhost:5432/emailbot_test
+      TELEGRAM_BOT_TOKEN: 123456:test
+      MAIL_DOMAIN: tgmail.example.com
+      INGEST_MODE: cloudflare
+      HTTP_PORT: "3000"
+      HMAC_SECRET: test-hmac-secret-32-chars-minimum-x
+      WORKER_SECRET: test-worker-secret-32-chars-min-x
+      ATTACHMENT_DIR: /tmp/test-attachments
+      RAW_EMAIL_DIR: /tmp/test-rawemails
+      ATTACHMENT_TTL_HOURS: "336"
+      RAW_EMAIL_TTL_HOURS: "336"
+      MAX_SIZE_BYTES: "10485760"
+      LOG_LEVEL: silent
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Test
+        run: npm run test:coverage

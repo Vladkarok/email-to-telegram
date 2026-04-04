@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Drizzle generated migrations (keep drizzle/ dir but not meta)
+drizzle/meta/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test coverage
+coverage/
+
+# Docker volumes (local dev)
+pgdata/
+caddy_data/
+caddy_config/
+attachments/
+rawemails/
+backups/
