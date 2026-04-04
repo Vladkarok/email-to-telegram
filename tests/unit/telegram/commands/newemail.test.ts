@@ -1,0 +1,120 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createMockCtx } from "../../../helpers/mockContext.js";
+
+vi.mock("../../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
+
+const mockCreateAlias = vi.fn();
+const mockFindAliasByLocalPart = vi.fn();
+vi.mock("../../../../src/db/repos/aliases.js", () => ({
+  createAlias: (...args: unknown[]): unknown => mockCreateAlias(...args),
+  findAliasByLocalPart: (...args: unknown[]): unknown => mockFindAliasByLocalPart(...args),
+}));
+
+vi.mock("../../../../src/config.js", () => ({
+  loadConfig: () => ({ mailDomain: "tgmail.example.com" }),
+}));
+
+const { newemailHandler } = await import("../../../../src/telegram/commands/newemail.js");
+
+describe("/newemail command", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFindAliasByLocalPart.mockResolvedValue(null); // no collision by default
+    mockCreateAlias.mockResolvedValue({
+      localPart: "alerts-ab12cd",
+      fullAddress: "alerts-ab12cd@tgmail.example.com",
+    });
+  });
+
+  it("creates an alias with the given name and a random suffix", async () => {
+    const ctx = createMockCtx({ commandMatch: "alerts" });
+
+    await newemailHandler(ctx);
+
+    expect(mockCreateAlias).toHaveBeenCalledOnce();
+    const [, aliasData] = mockCreateAlias.mock.calls[0] as [unknown, { localPart: string }];
+    expect(aliasData.localPart).toMatch(/^alerts-[a-z0-9]{6}$/);
+    expect(ctx.reply).toHaveBeenCalledOnce();
+    expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain(
+      "tgmail.example.com",
+    );
+  });
+
+  it("generates a fully random alias when no name is provided", async () => {
+    const ctx = createMockCtx({ commandMatch: "" });
+
+    await newemailHandler(ctx);
+
+    expect(mockCreateAlias).toHaveBeenCalledOnce();
+    const [, aliasData] = mockCreateAlias.mock.calls[0] as [unknown, { localPart: string }];
+    // no custom prefix — just a random string
+    expect(aliasData.localPart).toMatch(/^[a-z0-9]{8,}$/);
+  });
+
+  it("rejects names with uppercase letters", async () => {
+    const ctx = createMockCtx({ commandMatch: "MyAlerts" });
+
+    await newemailHandler(ctx);
+
+    expect(mockCreateAlias).not.toHaveBeenCalled();
+    expect(ctx.reply).toHaveBeenCalledOnce();
+    expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
+      /invalid|only.*lowercase|allowed/i,
+    );
+  });
+
+  it("rejects names with special characters not in [a-z0-9._-]", async () => {
+    const ctx = createMockCtx({ commandMatch: "alerts@bad" });
+
+    await newemailHandler(ctx);
+
+    expect(mockCreateAlias).not.toHaveBeenCalled();
+    expect(ctx.reply).toHaveBeenCalledOnce();
+  });
+
+  it("rejects names longer than 32 characters", async () => {
+    const ctx = createMockCtx({ commandMatch: "a".repeat(33) });
+
+    await newemailHandler(ctx);
+
+    expect(mockCreateAlias).not.toHaveBeenCalled();
+    expect(ctx.reply).toHaveBeenCalledOnce();
+    expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/too long|max/i);
+  });
+
+  it("stores the chat_id from context", async () => {
+    const ctx = createMockCtx({ commandMatch: "alerts", chatId: -1009999999 });
+
+    await newemailHandler(ctx);
+
+    const [, aliasData] = mockCreateAlias.mock.calls[0] as [unknown, { chatId: bigint }];
+    expect(aliasData.chatId).toBe(-1009999999n);
+  });
+
+  it("stores message_thread_id when present (forum topic)", async () => {
+    const ctx = createMockCtx({
+      commandMatch: "alerts",
+      messageThreadId: 42,
+    });
+
+    await newemailHandler(ctx);
+
+    const [, aliasData] = mockCreateAlias.mock.calls[0] as [
+      unknown,
+      { messageThreadId: bigint | null },
+    ];
+    expect(aliasData.messageThreadId).toBe(42n);
+  });
+
+  it("stores null messageThreadId when not in a forum topic", async () => {
+    const ctx = createMockCtx({ commandMatch: "alerts", messageThreadId: null });
+
+    await newemailHandler(ctx);
+
+    const [, aliasData] = mockCreateAlias.mock.calls[0] as [
+      unknown,
+      { messageThreadId: bigint | null },
+    ];
+    expect(aliasData.messageThreadId).toBeNull();
+  });
+});
