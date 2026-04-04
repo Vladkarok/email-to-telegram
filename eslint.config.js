@@ -4,9 +4,9 @@ import prettierConfig from "eslint-config-prettier";
 
 export default tseslint.config(
   eslint.configs.recommended,
-  ...tseslint.configs.recommendedTypeChecked,
-  prettierConfig,
   {
+    files: ["src/**/*.ts", "tests/**/*.ts"],
+    extends: [...tseslint.configs.recommendedTypeChecked],
     languageOptions: {
       parserOptions: {
         project: "./tsconfig.eslint.json",
@@ -26,6 +26,18 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ["dist/**", "node_modules/**", "coverage/**", "drizzle/**"],
+    files: ["tests/**/*.ts"],
+    rules: {
+      "no-console": "off",
+    },
+  },
+  // Basic (non-type-checked) rules for JS config files
+  {
+    files: ["*.js"],
+    extends: [...tseslint.configs.recommended],
+  },
+  prettierConfig,
+  {
+    ignores: ["dist/**", "dist-eslint/**", "node_modules/**", "coverage/**", "drizzle/**"],
   },
 );

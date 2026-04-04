@@ -1,8 +1,15 @@
 {
-  "extends": "./tsconfig.json",
   "compilerOptions": {
-    "rootDir": ".",
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "lib": ["ES2022"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
     "noEmit": true
   },
-  "include": ["src/**/*", "tests/**/*", "*.ts", "*.config.ts"]
+  "include": ["src/**/*", "tests/**/*"]
 }
