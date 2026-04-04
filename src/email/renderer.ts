@@ -24,12 +24,9 @@ export function renderEmail(
 
   const header = buildHeader(mode, from, aliasFullAddress, subject);
 
-  // Attachments section is always included in full — never truncated.
-  // Reserve its space before computing the body budget.
-  const attachmentsSection =
-    attachmentLinks.length > 0
-      ? "Attachments:\n" + attachmentLinks.map((a) => `${a.filename}: ${a.url}`).join("\n")
-      : "";
+  // Attachments section is built with mode-appropriate escaping so filenames
+  // and URLs are safe in HTML / MarkdownV2 parse modes.
+  const attachmentsSection = buildAttachmentsSection(attachmentLinks, mode);
 
   const fixedCost =
     header.length +
@@ -44,7 +41,44 @@ export function renderEmail(
   const parts = [header, body];
   if (attachmentsSection) parts.push(attachmentsSection);
 
-  return parts.join(SEPARATOR);
+  // Safety clamp: if header + attachments alone exceed MAX_LEN (many attachments),
+  // drop trailing attachment entries until the message fits.
+  return clampToMaxLen(parts);
+}
+
+function buildAttachmentsSection(links: AttachmentLink[], mode: RenderMode): string {
+  if (links.length === 0) return "";
+  const items = links.map((a) => {
+    if (mode === "html") {
+      // Use anchor tags so filenames are HTML-safe and URLs are clickable.
+      return `<a href="${a.url}">${escapeHtml(a.filename)}</a>`;
+    }
+    if (mode === "markdown") {
+      // Inline link syntax: URL inside () only needs \ and ) escaped (tokens have neither).
+      return `[${escapeMarkdownV2(a.filename)}](${a.url})`;
+    }
+    return `${a.filename}: ${a.url}`;
+  });
+  return "Attachments:\n" + items.join("\n");
+}
+
+function clampToMaxLen(parts: string[]): string {
+  const joined = parts.join(SEPARATOR);
+  if (joined.length <= MAX_LEN) return joined;
+
+  // Drop trailing attachment entries one by one until the message fits.
+  // parts = [header, body, attachmentsSection?]
+  if (parts.length < 3) return joined.slice(0, MAX_LEN);
+
+  const attLines = parts[2].split("\n"); // "Attachments:\nline1\nline2..."
+  while (attLines.length > 1 && parts.join(SEPARATOR).length > MAX_LEN) {
+    attLines.pop();
+    parts[2] = attLines.join("\n");
+  }
+
+  const result = parts.join(SEPARATOR);
+  // Last resort: if even the label line alone overflows, hard-slice.
+  return result.length <= MAX_LEN ? result : result.slice(0, MAX_LEN);
 }
 
 function buildHeader(mode: RenderMode, from: string, to: string, subject: string): string {

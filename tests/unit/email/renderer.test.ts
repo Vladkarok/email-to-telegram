@@ -58,6 +58,57 @@ describe("renderEmail", () => {
     });
   });
 
+  describe("html mode attachments", () => {
+    it("renders attachment as <a> link with HTML-escaped filename", () => {
+      const attachmentLinks = [
+        {
+          filename: "report <Q&A>.pdf",
+          sizeBytes: 1000,
+          url: "https://example.com/dl/token1",
+        },
+      ];
+      const result = renderEmail(BASE, "html", "alerts@example.com", attachmentLinks);
+      expect(result).toContain('<a href="https://example.com/dl/token1">');
+      expect(result).toContain("report &lt;Q&amp;A&gt;.pdf");
+      expect(result).not.toContain("<Q&A>");
+    });
+
+    it("total length does not exceed 4096 even when many attachments are present", () => {
+      const manyLinks = Array.from({ length: 40 }, (_, i) => ({
+        filename: `attachment-with-long-name-${i}.pdf`,
+        sizeBytes: 100,
+        url: `https://example.com/dl/${"a".repeat(64)}${i}`,
+      }));
+      const result = renderEmail(BASE, "html", "alerts@example.com", manyLinks);
+      expect(result.length).toBeLessThanOrEqual(4096);
+    });
+  });
+
+  describe("markdown mode attachments", () => {
+    it("renders attachment as inline link with MarkdownV2-escaped filename", () => {
+      const attachmentLinks = [
+        {
+          filename: "report_final.pdf",
+          sizeBytes: 1000,
+          url: "https://example.com/dl/token1",
+        },
+      ];
+      const result = renderEmail(BASE, "markdown", "alerts@example.com", attachmentLinks);
+      // filename _ must be escaped, URL preserved inside ()
+      expect(result).toContain("[report\\_final\\.pdf](https://example.com/dl/token1)");
+    });
+
+    it("total length does not exceed 4096 even when many attachments are present", () => {
+      const manyLinks = Array.from({ length: 40 }, (_, i) => ({
+        filename: `attachment_long_name_${i}.pdf`,
+        sizeBytes: 100,
+        url: `https://example.com/dl/${"a".repeat(64)}${i}`,
+      }));
+      const result = renderEmail(BASE, "markdown", "alerts@example.com", manyLinks);
+      expect(result.length).toBeLessThanOrEqual(4096);
+    });
+  });
+
   describe("html mode", () => {
     it("preserves safe HTML tags", () => {
       const email = { ...BASE, htmlBody: "<p>Hello <b>world</b></p>", textBody: null };
