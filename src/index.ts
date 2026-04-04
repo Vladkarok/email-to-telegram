@@ -4,6 +4,7 @@ import { initDb, closeDb } from "./db/client.js";
 import { runMigrations } from "./db/migrate.js";
 import { createHttpServer, startHttpServer } from "./http/server.js";
 import { createBot } from "./telegram/bot.js";
+import { setApi } from "./telegram/api.js";
 
 async function main() {
   // 1. Load and validate config (fail fast)
@@ -20,6 +21,7 @@ async function main() {
 
   // 4. Start Telegram bot
   const bot = createBot(config.telegramBotToken);
+  setApi(bot.api);
   bot.start({ drop_pending_updates: true }).catch((err: unknown) => {
     logger.error({ err }, "Bot polling error");
   });

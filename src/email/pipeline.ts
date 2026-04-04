@@ -1,12 +1,19 @@
+import { randomUUID } from "crypto";
+import { join } from "path";
+import type { Api } from "grammy";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema.js";
 import { parseEmail } from "./parser.js";
 import { cleanEmailBody } from "./cleaner.js";
-import { renderEmail } from "./renderer.js";
+import { renderEmail, type AttachmentLink } from "./renderer.js";
 import { isDuplicate } from "./dedup.js";
 import { findAliasByLocalPart } from "../db/repos/aliases.js";
 import { checkAllowRule } from "../db/repos/allowRules.js";
 import { createDeliveryLog, updateDeliveryLogStatus } from "../db/repos/deliveryLogs.js";
+import { createAttachment } from "../db/repos/attachments.js";
+import { createAttachmentLink } from "../db/repos/attachmentLinks.js";
+import { writeAttachment } from "../storage/disk.js";
+import { generateDownloadToken } from "../utils/tokens.js";
 import { getLogger } from "../utils/logger.js";
 
 type Db = NodePgDatabase<typeof schema>;
@@ -14,6 +21,12 @@ type Db = NodePgDatabase<typeof schema>;
 export interface PipelineInput {
   rawEmail: Buffer;
   localPart: string;
+  /** Public base URL for building attachment download links, e.g. https://mail.example.com */
+  publicBaseUrl: string;
+  /** Directory where attachment files are stored */
+  attachmentDir: string;
+  /** Attachment download link TTL in hours */
+  attachmentTtlHours: number;
 }
 
 export interface PipelineResult {
@@ -23,11 +36,11 @@ export interface PipelineResult {
 
 export async function processInboundEmail(
   db: Db,
-  api: { sendMessage: (...args: unknown[]) => Promise<unknown> } | null,
+  api: Api | null,
   input: PipelineInput,
 ): Promise<PipelineResult> {
   const log = getLogger();
-  const { rawEmail, localPart } = input;
+  const { rawEmail, localPart, publicBaseUrl, attachmentDir, attachmentTtlHours } = input;
 
   // 1. Resolve alias
   const alias = await findAliasByLocalPart(db, localPart);
@@ -74,18 +87,51 @@ export async function processInboundEmail(
     parsed.textBody = cleanEmailBody(parsed.textBody);
   }
 
-  // 7. Render
-  const renderMode = (alias.renderMode ?? "plaintext") as "plaintext" | "html" | "markdown";
-  const text = renderEmail(parsed, renderMode, alias.fullAddress, []);
+  // 7. Save attachments and generate download links
+  const attachmentLinks: AttachmentLink[] = [];
+  for (const att of parsed.attachments) {
+    try {
+      const fileId = randomUUID();
+      const storagePath = join(attachmentDir, deliveryLog.id, `${fileId}.bin`);
+      await writeAttachment(storagePath, att.content);
 
-  // 8. Send
+      const dbAtt = await createAttachment(db, {
+        deliveryLogId: deliveryLog.id,
+        originalFilename: att.filename,
+        contentType: att.contentType,
+        sizeBytes: att.sizeBytes,
+        sha256: att.sha256,
+        storagePath,
+      });
+
+      const { token, expiresAt } = generateDownloadToken(dbAtt.id, attachmentTtlHours);
+      await createAttachmentLink(db, dbAtt.id, token, expiresAt);
+
+      attachmentLinks.push({
+        filename: att.filename,
+        sizeBytes: att.sizeBytes,
+        url: `${publicBaseUrl}/dl/${token}`,
+      });
+    } catch (err: unknown) {
+      log.error({ err, filename: att.filename }, "failed to store attachment");
+    }
+  }
+
+  // 8. Render
+  const renderMode = (alias.renderMode ?? "plaintext") as "plaintext" | "html" | "markdown";
+  const text = renderEmail(parsed, renderMode, alias.fullAddress, attachmentLinks);
+
+  // 9. Send — parse_mode depends on render mode; plaintext uses none (avoids HTML metachar issues)
   if (api) {
     const { sendTelegramMessage } = await import("../telegram/sender.js");
-    const result = await sendTelegramMessage(api as Parameters<typeof sendTelegramMessage>[0], {
+    const parseMode =
+      renderMode === "html" ? "HTML" : renderMode === "markdown" ? "MarkdownV2" : undefined;
+
+    const result = await sendTelegramMessage(api, {
       chatId: alias.chatId,
       threadId: alias.messageThreadId ?? null,
       text,
-      parseMode: renderMode === "html" ? "HTML" : renderMode === "markdown" ? "MarkdownV2" : "HTML",
+      parseMode,
     });
 
     const finalStatus = result.ok ? "delivered" : "failed";

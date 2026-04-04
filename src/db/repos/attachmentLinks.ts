@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { eq } from "drizzle-orm";
+import { eq, isNull, and } from "drizzle-orm";
 import { attachmentLinks, attachments } from "../schema.js";
 import type * as schema from "../schema.js";
 
@@ -56,11 +56,18 @@ export async function findAttachmentLinkByToken(
   };
 }
 
-export async function markLinkDownloaded(db: Db, linkId: string): Promise<void> {
-  await db
+/**
+ * Atomically marks the link as downloaded only if it hasn't been already.
+ * Returns true if this call claimed the download, false if already consumed
+ * (concurrent request beat us to it).
+ */
+export async function markLinkDownloaded(db: Db, linkId: string): Promise<boolean> {
+  const rows = await db
     .update(attachmentLinks)
     .set({ downloadedAt: new Date() })
-    .where(eq(attachmentLinks.id, linkId));
+    .where(and(eq(attachmentLinks.id, linkId), isNull(attachmentLinks.downloadedAt)))
+    .returning({ id: attachmentLinks.id });
+  return rows.length > 0;
 }
 
 export async function createAttachmentLink(

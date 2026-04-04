@@ -18,6 +18,7 @@ const envSchema = z.object({
   HTTP_PORT: portSchema,
   HMAC_SECRET: secretSchema,
   WORKER_SECRET: secretSchema,
+  PUBLIC_BASE_URL: z.string().url(),
   ATTACHMENT_DIR: z.string().min(1),
   RAW_EMAIL_DIR: z.string().min(1),
   SMTP_PORT: portSchema.optional(),
@@ -33,6 +34,7 @@ export interface AppConfig {
   databaseUrl: string;
   telegramBotToken: string;
   mailDomain: string;
+  publicBaseUrl: string;
   ingestMode: "cloudflare" | "smtp";
   httpPort: number;
   hmacSecret: string;
@@ -67,6 +69,7 @@ export function loadConfig(): AppConfig {
     databaseUrl: env.DATABASE_URL,
     telegramBotToken: env.TELEGRAM_BOT_TOKEN,
     mailDomain: env.MAIL_DOMAIN,
+    publicBaseUrl: env.PUBLIC_BASE_URL,
     ingestMode: env.INGEST_MODE,
     httpPort: env.HTTP_PORT,
     hmacSecret: env.HMAC_SECRET,

@@ -1,10 +1,15 @@
 import type { FastifyInstance } from "fastify";
 import { verifyWorkerRequest } from "../../utils/workerAuth.js";
 import { getDb } from "../../db/client.js";
+import { getApi } from "../../telegram/api.js";
 import { processInboundEmail } from "../../email/pipeline.js";
 import { getLogger } from "../../utils/logger.js";
+import type { AppConfig } from "../../config.js";
 
-export function rawRoute(app: FastifyInstance): void {
+export function rawRoute(
+  app: FastifyInstance,
+  config: Pick<AppConfig, "publicBaseUrl" | "attachmentDir" | "attachmentTtlHours">,
+): void {
   app.post(
     "/inbound/raw",
     {
@@ -21,7 +26,8 @@ export function rawRoute(app: FastifyInstance): void {
         return;
       }
 
-      // rawBody set by server hook; fall back to req.body for octet-stream in tests
+      // rawBody captured by the JSON/octet-stream parsers in createHttpServer;
+      // fall back to req.body directly for octet-stream in tests
       const body = req.rawBody ?? (Buffer.isBuffer(req.body) ? req.body : null);
       if (!body) {
         await reply.status(400).send({ error: "empty body" });
@@ -41,7 +47,13 @@ export function rawRoute(app: FastifyInstance): void {
       // Acknowledge immediately, process async
       await reply.status(202).send({ status: "accepted" });
 
-      processInboundEmail(getDb(), null, { rawEmail: body, localPart }).catch((err: unknown) => {
+      processInboundEmail(getDb(), getApi(), {
+        rawEmail: body,
+        localPart,
+        publicBaseUrl: config.publicBaseUrl,
+        attachmentDir: config.attachmentDir,
+        attachmentTtlHours: config.attachmentTtlHours,
+      }).catch((err: unknown) => {
         getLogger().error({ err, localPart }, "pipeline error");
       });
     },

@@ -21,8 +21,8 @@ export function renderEmail(
 ): string {
   const from = email.headerFrom ?? email.envelopeFrom ?? "unknown";
   const subject = email.subject ?? "(no subject)";
-  const header = `From: ${from}\nTo: ${aliasFullAddress}\nSubject: ${subject}`;
 
+  const header = buildHeader(mode, from, aliasFullAddress, subject);
   const rawBody = extractBody(email, mode);
   const body = truncateBody(rawBody);
 
@@ -38,6 +38,20 @@ export function renderEmail(
   if (full.length <= MAX_LEN) return full;
 
   return full.slice(0, MAX_LEN - TRUNCATION_NOTICE.length) + TRUNCATION_NOTICE;
+}
+
+function buildHeader(mode: RenderMode, from: string, to: string, subject: string): string {
+  if (mode === "html") {
+    // Escape HTML metacharacters so From/Subject aren't parsed as tags.
+    // <user@example.com> would otherwise be treated as an unknown tag.
+    const e = escapeHtml;
+    return `From: ${e(from)}\nTo: ${e(to)}\nSubject: ${e(subject)}`;
+  }
+  return `From: ${from}\nTo: ${to}\nSubject: ${subject}`;
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 function truncateBody(body: string): string {

@@ -15,6 +15,12 @@ vi.mock("../../../src/db/repos/aliases.js", () => ({
 
 const WORKER_SECRET = "test-worker-secret-32chars-abcde";
 
+const TEST_CONFIG = {
+  publicBaseUrl: "https://mail.example.com",
+  attachmentDir: "/tmp/attachments",
+  attachmentTtlHours: 24,
+};
+
 async function buildApp() {
   const app = Fastify({ logger: false });
   // Register octet-stream parser so raw route can receive binary bodies
@@ -25,7 +31,7 @@ async function buildApp() {
       done(null, body);
     },
   );
-  registerRoutes(app);
+  registerRoutes(app, TEST_CONFIG);
   return app;
 }
 

@@ -14,21 +14,26 @@ export function downloadRoute(app: FastifyInstance): void {
       return;
     }
 
-    // Check expiry and one-time use
+    // Check expiry and one-time use (fast path before hitting DB again)
     const now = new Date();
     if (link.expiresAt <= now || link.downloadedAt) {
       await reply.status(410).send({ error: "link expired or already used" });
       return;
     }
 
-    // Verify HMAC token against attachment ID + expiry
+    // Verify HMAC integrity
     if (!verifyDownloadToken(token, link.attachmentId, link.expiresAt)) {
       await reply.status(403).send({ error: "invalid token" });
       return;
     }
 
-    // Mark consumed before streaming
-    await markLinkDownloaded(getDb(), link.id);
+    // Atomically claim the link — guards against concurrent requests both passing
+    // the downloadedAt check above and both receiving the file
+    const claimed = await markLinkDownloaded(getDb(), link.id);
+    if (!claimed) {
+      await reply.status(410).send({ error: "link expired or already used" });
+      return;
+    }
 
     const file = await readAttachmentStream(link.attachment.storagePath);
     const filename = link.attachment.originalFilename ?? "attachment";

@@ -8,7 +8,7 @@ export interface SendOptions {
   chatId: bigint;
   threadId: bigint | null;
   text: string;
-  parseMode: ParseMode;
+  parseMode?: ParseMode;
 }
 
 export interface SendResult {
@@ -18,9 +18,10 @@ export interface SendResult {
 }
 
 export async function sendTelegramMessage(api: Api, opts: SendOptions): Promise<SendResult> {
-  const other: { parse_mode: ParseMode; message_thread_id?: number } = {
-    parse_mode: opts.parseMode,
-  };
+  const other: { parse_mode?: ParseMode; message_thread_id?: number } = {};
+  if (opts.parseMode) {
+    other.parse_mode = opts.parseMode;
+  }
   if (opts.threadId !== null) {
     other.message_thread_id = Number(opts.threadId);
   }

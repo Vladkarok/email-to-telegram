@@ -5,6 +5,7 @@ const REQUIRED_ENV: Record<string, string> = {
   DATABASE_URL: "postgres://app:pass@localhost:5432/db",
   TELEGRAM_BOT_TOKEN: "123456:ABC",
   MAIL_DOMAIN: "tgmail.example.com",
+  PUBLIC_BASE_URL: "https://tgmail.example.com",
   INGEST_MODE: "cloudflare",
   HTTP_PORT: "3000",
   HMAC_SECRET: "a".repeat(32),

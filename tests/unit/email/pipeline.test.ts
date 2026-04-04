@@ -30,9 +30,25 @@ vi.mock("../../../src/telegram/sender.js", () => ({
   sendTelegramMessage: (...args: unknown[]): unknown => mockSendTelegram(...args),
 }));
 
+vi.mock("../../../src/db/repos/attachments.js", () => ({
+  createAttachment: vi.fn(() => Promise.resolve({ id: "att-uuid-1" })),
+}));
+vi.mock("../../../src/db/repos/attachmentLinks.js", () => ({
+  createAttachmentLink: vi.fn(() => Promise.resolve()),
+}));
+vi.mock("../../../src/storage/disk.js", () => ({
+  writeAttachment: vi.fn(() => Promise.resolve()),
+}));
+
 function simpleEmail() {
   return readFileSync(join(import.meta.dirname, "../../fixtures/simple.eml"));
 }
+
+const PIPELINE_CONFIG = {
+  publicBaseUrl: "https://mail.example.com",
+  attachmentDir: "/tmp/att",
+  attachmentTtlHours: 24,
+};
 
 const activeAlias = {
   id: "alias-uuid-1",
@@ -57,6 +73,7 @@ describe("processInboundEmail", () => {
       {
         rawEmail: simpleEmail(),
         localPart: "unknown",
+        ...PIPELINE_CONFIG,
       },
     );
     expect(result).toEqual({ ok: false, reason: "alias_not_found" });
@@ -70,6 +87,7 @@ describe("processInboundEmail", () => {
       {
         rawEmail: simpleEmail(),
         localPart: "alerts",
+        ...PIPELINE_CONFIG,
       },
     );
     expect(result).toEqual({ ok: false, reason: "alias_not_found" });
@@ -85,6 +103,7 @@ describe("processInboundEmail", () => {
       {
         rawEmail: simpleEmail(),
         localPart: "alerts",
+        ...PIPELINE_CONFIG,
       },
     );
     expect(result).toEqual({ ok: false, reason: "duplicate" });
@@ -103,6 +122,7 @@ describe("processInboundEmail", () => {
       {
         rawEmail: simpleEmail(),
         localPart: "alerts",
+        ...PIPELINE_CONFIG,
       },
     );
     expect(result).toEqual({ ok: true });
@@ -123,6 +143,7 @@ describe("processInboundEmail", () => {
       {
         rawEmail: simpleEmail(),
         localPart: "alerts",
+        ...PIPELINE_CONFIG,
       },
     );
     expect(result).toEqual({ ok: true });
@@ -144,6 +165,7 @@ describe("processInboundEmail", () => {
       {
         rawEmail: simpleEmail(),
         localPart: "alerts",
+        ...PIPELINE_CONFIG,
       },
     );
     expect(result).toEqual({ ok: false, reason: "send_failed" });

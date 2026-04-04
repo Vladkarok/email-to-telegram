@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { registerRoutes } from "./routes/index.js";
 import { getLogger } from "../utils/logger.js";
 import type { AppConfig } from "../config.js";
@@ -12,29 +12,39 @@ declare module "fastify" {
   }
 }
 
+function setRawBody(req: FastifyRequest, body: Buffer): void {
+  req.rawBody = body;
+}
+
 export async function createHttpServer(_config: AppConfig): Promise<FastifyInstance> {
   const app = Fastify({
     logger: false,
     bodyLimit: 26_214_400, // 25 MB global limit
   });
 
-  // Raw body plugin — capture raw bytes for HMAC verification
+  // Capture raw bytes for both content types used by the Cloudflare Worker.
+  // Must be done in the parser (before the body is transformed) — a preValidation
+  // hook is too late because req.body is already a parsed object by then.
+
+  app.addContentTypeParser("application/json", { parseAs: "buffer" }, (req, body: Buffer, done) => {
+    try {
+      setRawBody(req, body);
+      done(null, JSON.parse(body.toString("utf-8")) as Record<string, unknown>);
+    } catch (err: unknown) {
+      done(err instanceof Error ? err : new Error(String(err)));
+    }
+  });
+
   app.addContentTypeParser(
     "application/octet-stream",
     { parseAs: "buffer" },
-    (_req, body, done) => {
+    (req, body: Buffer, done) => {
+      setRawBody(req, body);
       done(null, body);
     },
   );
 
-  app.addHook("preValidation", (req, _reply, done) => {
-    if (req.routeOptions.config?.rawBody) {
-      req.rawBody = req.body as Buffer;
-    }
-    done();
-  });
-
-  registerRoutes(app);
+  registerRoutes(app, _config);
 
   return app;
 }

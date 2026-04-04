@@ -109,7 +109,7 @@ describe("GET /dl/:token", () => {
         sizeBytes: fileContent.length,
       },
     });
-    mockMarkDownloaded.mockResolvedValue(undefined);
+    mockMarkDownloaded.mockResolvedValue(true); // atomic claim succeeded
     mockReadAttachment.mockResolvedValue(fileContent);
 
     const app = buildApp();
@@ -117,5 +117,29 @@ describe("GET /dl/:token", () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers["content-type"]).toContain("application/pdf");
     expect(mockMarkDownloaded).toHaveBeenCalledOnce();
+  });
+
+  it("returns 410 when a concurrent request already claimed the token", async () => {
+    const attachmentId = "attach-uuid-5";
+    const { token, expiresAt } = generateDownloadToken(attachmentId);
+
+    mockFindLink.mockResolvedValue({
+      id: "link-2",
+      token,
+      expiresAt,
+      downloadedAt: null,
+      attachmentId,
+      attachment: {
+        storagePath: "/data/attachments/doc.pdf",
+        originalFilename: "doc.pdf",
+        contentType: "application/pdf",
+        sizeBytes: 100,
+      },
+    });
+    mockMarkDownloaded.mockResolvedValue(false); // another request beat us
+
+    const app = buildApp();
+    const res = await app.inject({ method: "GET", url: `/dl/${token}` });
+    expect(res.statusCode).toBe(410);
   });
 });
