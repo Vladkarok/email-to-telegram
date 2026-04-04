@@ -9,7 +9,21 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "lcov", "html"],
       include: ["src/**/*.ts"],
-      exclude: ["src/index.ts", "src/db/migrate.ts"],
+      exclude: [
+        // Entrypoint and DB bootstrap — require full runtime
+        "src/index.ts",
+        "src/db/migrate.ts",
+        "src/db/client.ts",
+        "src/db/schema.ts",
+        // DB repos — integration-test territory (need real Postgres)
+        "src/db/repos/**",
+        // Storage — integration-test territory (need real filesystem)
+        "src/storage/**",
+        // HTTP server setup — integration-test territory
+        "src/http/server.ts",
+        // Pure type declarations (no executable code)
+        "src/email/types.ts",
+      ],
       thresholds: {
         lines: 80,
         functions: 80,

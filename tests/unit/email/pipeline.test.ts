@@ -1,0 +1,152 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { processInboundEmail } from "../../../src/email/pipeline.js";
+import { readFileSync } from "fs";
+import { join } from "path";
+
+vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
+
+const mockFindAlias = vi.fn();
+const mockCheckAllow = vi.fn();
+const mockIsDuplicate = vi.fn();
+const mockCreateLog = vi.fn();
+const mockUpdateLogStatus = vi.fn();
+
+vi.mock("../../../src/db/repos/aliases.js", () => ({
+  findAliasByLocalPart: (...args: unknown[]): unknown => mockFindAlias(...args),
+}));
+vi.mock("../../../src/db/repos/allowRules.js", () => ({
+  checkAllowRule: (...args: unknown[]): unknown => mockCheckAllow(...args),
+}));
+vi.mock("../../../src/email/dedup.js", () => ({
+  isDuplicate: (...args: unknown[]): unknown => mockIsDuplicate(...args),
+}));
+vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
+  createDeliveryLog: (...args: unknown[]): unknown => mockCreateLog(...args),
+  updateDeliveryLogStatus: (...args: unknown[]): unknown => mockUpdateLogStatus(...args),
+}));
+
+const mockSendTelegram = vi.fn();
+vi.mock("../../../src/telegram/sender.js", () => ({
+  sendTelegramMessage: (...args: unknown[]): unknown => mockSendTelegram(...args),
+}));
+
+function simpleEmail() {
+  return readFileSync(join(import.meta.dirname, "../../fixtures/simple.eml"));
+}
+
+const activeAlias = {
+  id: "alias-uuid-1",
+  localPart: "alerts",
+  fullAddress: "alerts@example.com",
+  chatId: 100n,
+  messageThreadId: null,
+  status: "active",
+  renderMode: "plaintext",
+};
+
+describe("processInboundEmail", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("returns alias_not_found when alias is missing", async () => {
+    mockFindAlias.mockResolvedValue(null);
+    const result = await processInboundEmail(
+      {} as Parameters<typeof processInboundEmail>[0],
+      null,
+      {
+        rawEmail: simpleEmail(),
+        localPart: "unknown",
+      },
+    );
+    expect(result).toEqual({ ok: false, reason: "alias_not_found" });
+  });
+
+  it("returns alias_not_found when alias is paused", async () => {
+    mockFindAlias.mockResolvedValue({ ...activeAlias, status: "paused" });
+    const result = await processInboundEmail(
+      {} as Parameters<typeof processInboundEmail>[0],
+      null,
+      {
+        rawEmail: simpleEmail(),
+        localPart: "alerts",
+      },
+    );
+    expect(result).toEqual({ ok: false, reason: "alias_not_found" });
+  });
+
+  it("returns duplicate when dedup check fails", async () => {
+    mockFindAlias.mockResolvedValue(activeAlias);
+    mockCheckAllow.mockResolvedValue(true);
+    mockIsDuplicate.mockResolvedValue(true);
+    const result = await processInboundEmail(
+      {} as Parameters<typeof processInboundEmail>[0],
+      null,
+      {
+        rawEmail: simpleEmail(),
+        localPart: "alerts",
+      },
+    );
+    expect(result).toEqual({ ok: false, reason: "duplicate" });
+  });
+
+  it("returns ok:true when api is null (no send)", async () => {
+    mockFindAlias.mockResolvedValue(activeAlias);
+    mockCheckAllow.mockResolvedValue(true);
+    mockIsDuplicate.mockResolvedValue(false);
+    mockCreateLog.mockResolvedValue({ id: "log-uuid-1" });
+    mockUpdateLogStatus.mockResolvedValue(undefined);
+
+    const result = await processInboundEmail(
+      {} as Parameters<typeof processInboundEmail>[0],
+      null,
+      {
+        rawEmail: simpleEmail(),
+        localPart: "alerts",
+      },
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it("delivers and returns ok:true on successful send", async () => {
+    mockFindAlias.mockResolvedValue(activeAlias);
+    mockCheckAllow.mockResolvedValue(true);
+    mockIsDuplicate.mockResolvedValue(false);
+    mockCreateLog.mockResolvedValue({ id: "log-uuid-2" });
+    mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 42 });
+
+    const fakeApi = {} as Parameters<typeof processInboundEmail>[1];
+    const result = await processInboundEmail(
+      {} as Parameters<typeof processInboundEmail>[0],
+      fakeApi,
+      {
+        rawEmail: simpleEmail(),
+        localPart: "alerts",
+      },
+    );
+    expect(result).toEqual({ ok: true });
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(expect.anything(), "log-uuid-2", "delivered");
+  });
+
+  it("returns send_failed when Telegram delivery fails", async () => {
+    mockFindAlias.mockResolvedValue(activeAlias);
+    mockCheckAllow.mockResolvedValue(true);
+    mockIsDuplicate.mockResolvedValue(false);
+    mockCreateLog.mockResolvedValue({ id: "log-uuid-3" });
+    mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockSendTelegram.mockResolvedValue({ ok: false, error: "flood wait" });
+
+    const fakeApi = {} as Parameters<typeof processInboundEmail>[1];
+    const result = await processInboundEmail(
+      {} as Parameters<typeof processInboundEmail>[0],
+      fakeApi,
+      {
+        rawEmail: simpleEmail(),
+        localPart: "alerts",
+      },
+    );
+    expect(result).toEqual({ ok: false, reason: "send_failed" });
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(expect.anything(), "log-uuid-3", "failed");
+  });
+});
