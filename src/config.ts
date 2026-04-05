@@ -32,6 +32,8 @@ const envSchema = z.object({
   HEALTHCHECKS_URL: z.string().url().optional(),
   /** Optional: Telegram chat ID to send critical alerts to */
   ALERT_CHAT_ID: z.coerce.bigint().optional(),
+  /** Directory to store nightly DB backups (optional — skips backup if unset) */
+  BACKUP_DIR: z.string().optional(),
 });
 
 export interface AppConfig {
@@ -54,6 +56,7 @@ export interface AppConfig {
   initialAllowedUsers: bigint[];
   healthchecksUrl: string | undefined;
   alertChatId: bigint | undefined;
+  backupDir: string | undefined;
 }
 
 export function loadConfig(): AppConfig {
@@ -91,5 +94,6 @@ export function loadConfig(): AppConfig {
     initialAllowedUsers,
     healthchecksUrl: env.HEALTHCHECKS_URL,
     alertChatId: env.ALERT_CHAT_ID,
+    backupDir: env.BACKUP_DIR,
   };
 }

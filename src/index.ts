@@ -1,3 +1,6 @@
+import { execFile } from "child_process";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 import { schedule } from "node-cron";
 import { loadConfig } from "./config.js";
 import { createLogger, setLogger } from "./utils/logger.js";
@@ -77,6 +80,21 @@ async function main() {
       logger.error({ err }, "uptime check error");
     });
   });
+
+  // Nightly DB backup at 02:00 UTC
+  if (config.backupDir) {
+    const scriptPath = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "backup.sh");
+    schedule("0 2 * * *", () => {
+      execFile(scriptPath, [config.backupDir!, config.databaseUrl], (err, stdout, stderr) => {
+        if (err) {
+          logger.error({ err, stderr }, "backup failed");
+        } else {
+          logger.info({ stdout: stdout.trim() }, "backup complete");
+        }
+      });
+    });
+    logger.info({ backupDir: config.backupDir }, "Nightly backup scheduled at 02:00 UTC");
+  }
 
   // 7. Graceful shutdown
   const shutdown = async (signal: string) => {

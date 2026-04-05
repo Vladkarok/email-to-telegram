@@ -9,6 +9,7 @@ services:
         condition: service_healthy
     volumes:
       - attachments:/data/attachments
+      - backups:/data/backups
     networks:
       - internal
       - proxy
@@ -62,6 +63,7 @@ services:
 volumes:
   pgdata:
   attachments:
+  backups:
 
 networks:
   internal:

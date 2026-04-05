@@ -1,0 +1,389 @@
+/**
+ * Integration test matrix for processInboundEmail.
+ *
+ * Tests the full pipeline logic end-to-end with real fixture .eml files
+ * and real parser/cleaner/renderer. DB and Telegram API are mocked at
+ * their boundary (repo functions + sendTelegramMessage), so no Postgres
+ * or network is required.
+ *
+ * Matrix:
+ *  ✓ plain text email — delivered, text forwarded
+ *  ✓ HTML-rich email — rendered as plaintext (default mode)
+ *  ✓ quoted-reply email — quoted block stripped by cleaner
+ *  ✓ signature email — signature stripped by cleaner
+ *  ✓ unicode subject/body — forwarded correctly
+ *  ✓ oversized email — accepted (size enforcement is at HTTP layer)
+ *  ✓ unknown alias — rejected alias_not_found
+ *  ✓ paused alias — rejected alias_not_found
+ *  ✓ blocked sender — rejected sender_not_allowed
+ *  ✓ duplicate Message-ID — rejected duplicate
+ *  ✓ duplicate body hash — rejected duplicate
+ *  ✓ forum topic delivery — messageThreadId set on send call
+ *  ✓ rawEmailPath stored in delivery log
+ *  ✓ delivery_attempt recorded on success
+ *  ✓ delivery_attempt recorded on failure
+ *  ✓ finalStatus = delivered on success
+ *  ✓ finalStatus = failed on send error
+ */
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "fs";
+import { join } from "path";
+import { processInboundEmail } from "../../../src/email/pipeline.js";
+
+// ── Mocks ────────────────────────────────────────────────────────────────────
+
+const mockFindAlias = vi.fn();
+const mockCheckAllow = vi.fn();
+const mockIsDuplicate = vi.fn();
+const mockCreateLog = vi.fn();
+const mockUpdateLogStatus = vi.fn();
+const mockInsertAttempt = vi.fn();
+const mockSendTelegram = vi.fn();
+
+vi.mock("../../../src/db/repos/aliases.js", () => ({
+  findAliasByLocalPart: (...a: unknown[]): unknown => mockFindAlias(...a),
+}));
+vi.mock("../../../src/db/repos/allowRules.js", () => ({
+  checkAllowRule: (...a: unknown[]): unknown => mockCheckAllow(...a),
+}));
+vi.mock("../../../src/email/dedup.js", () => ({
+  isDuplicate: (...a: unknown[]): unknown => mockIsDuplicate(...a),
+}));
+vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
+  createDeliveryLog: (...a: unknown[]): unknown => mockCreateLog(...a),
+  updateDeliveryLogStatus: (...a: unknown[]): unknown => mockUpdateLogStatus(...a),
+}));
+vi.mock("../../../src/db/repos/deliveryAttempts.js", () => ({
+  insertDeliveryAttempt: (...a: unknown[]): unknown => mockInsertAttempt(...a),
+}));
+vi.mock("../../../src/db/repos/attachments.js", () => ({
+  createAttachment: vi.fn().mockResolvedValue({ id: "att-1" }),
+}));
+vi.mock("../../../src/db/repos/attachmentLinks.js", () => ({
+  createAttachmentLink: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("../../../src/storage/disk.js", () => ({
+  writeAttachment: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("../../../src/telegram/sender.js", () => ({
+  sendTelegramMessage: (...a: unknown[]): unknown => mockSendTelegram(...a),
+  sendTelegramPhotos: vi.fn().mockResolvedValue(undefined),
+}));
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+const FIXTURES = join(import.meta.dirname, "../../fixtures");
+
+function fixture(name: string): Buffer {
+  return readFileSync(join(FIXTURES, name));
+}
+
+const PIPELINE_CONFIG = {
+  publicBaseUrl: "https://mail.example.com",
+  attachmentDir: "/tmp/att",
+  attachmentTtlHours: 24,
+};
+
+function makeAlias(overrides: Partial<typeof baseAlias> = {}) {
+  return { ...baseAlias, ...overrides };
+}
+
+const baseAlias = {
+  id: "alias-uuid",
+  localPart: "alerts",
+  fullAddress: "alerts@example.com",
+  chatId: -100n,
+  messageThreadId: null as bigint | null,
+  status: "active",
+  renderMode: "plaintext",
+};
+
+const fakeDb = {} as Parameters<typeof processInboundEmail>[0];
+const fakeApi = {} as NonNullable<Parameters<typeof processInboundEmail>[1]>;
+
+function setupHappyPath(logId = "log-1") {
+  mockFindAlias.mockResolvedValue(makeAlias());
+  mockCheckAllow.mockResolvedValue(true);
+  mockIsDuplicate.mockResolvedValue(false);
+  mockCreateLog.mockResolvedValue({ id: logId });
+  mockUpdateLogStatus.mockResolvedValue(undefined);
+  mockInsertAttempt.mockResolvedValue(undefined);
+  mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 99 });
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+describe("pipeline integration matrix", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  // ── Delivery scenarios ──────────────────────────────────────────────────
+
+  it("plain text: delivers and returns ok:true", async () => {
+    setupHappyPath();
+    const result = await processInboundEmail(fakeDb, fakeApi, {
+      rawEmail: fixture("simple.eml"),
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+      ...PIPELINE_CONFIG,
+    });
+    expect(result).toEqual({ ok: true });
+    expect(mockSendTelegram).toHaveBeenCalledOnce();
+    const [, opts] = mockSendTelegram.mock.calls[0] as [unknown, { text: string }];
+    expect(opts.text).toContain("CPU usage");
+  });
+
+  it("HTML-rich email: rendered as plaintext by default", async () => {
+    setupHappyPath();
+    await processInboundEmail(fakeDb, fakeApi, {
+      rawEmail: fixture("html-rich.eml"),
+      localPart: "alerts",
+      envelopeFrom: "newsletter@example.com",
+      ...PIPELINE_CONFIG,
+    });
+    const [, opts] = mockSendTelegram.mock.calls[0] as [
+      unknown,
+      { text: string; parse_mode?: string },
+    ];
+    expect(opts.parse_mode).toBeUndefined();
+    expect(typeof opts.text).toBe("string");
+    expect(opts.text.length).toBeGreaterThan(0);
+  });
+
+  it("quoted-reply: quoted block stripped from forwarded text", async () => {
+    setupHappyPath();
+    await processInboundEmail(fakeDb, fakeApi, {
+      rawEmail: fixture("quoted-reply.eml"),
+      localPart: "alerts",
+      envelopeFrom: "colleague@example.com",
+      ...PIPELINE_CONFIG,
+    });
+    const [, opts] = mockSendTelegram.mock.calls[0] as [unknown, { text: string }];
+    expect(opts.text).toContain("Sounds good");
+    expect(opts.text).not.toContain("Can everyone join");
+  });
+
+  it("signature email: signature stripped from forwarded text", async () => {
+    setupHappyPath();
+    await processInboundEmail(fakeDb, fakeApi, {
+      rawEmail: fixture("with-signature.eml"),
+      localPart: "alerts",
+      envelopeFrom: "support@example.com",
+      ...PIPELINE_CONFIG,
+    });
+    const [, opts] = mockSendTelegram.mock.calls[0] as [unknown, { text: string }];
+    expect(opts.text).toContain("Ticket #1234");
+    expect(opts.text).not.toContain("John Smith");
+  });
+
+  it("unicode subject and body: forwarded without corruption", async () => {
+    setupHappyPath();
+    await processInboundEmail(fakeDb, fakeApi, {
+      rawEmail: fixture("unicode.eml"),
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+      ...PIPELINE_CONFIG,
+    });
+    const [, opts] = mockSendTelegram.mock.calls[0] as [unknown, { text: string }];
+    expect(opts.text).toContain("Сервер");
+  });
+
+  it("oversized email body: still processed (size gate is at HTTP layer)", async () => {
+    setupHappyPath();
+    // Build a large email that exceeds MAX_SIZE_BYTES (10 MiB)
+    const bigBody = "X".repeat(11 * 1024 * 1024);
+    const oversized = Buffer.from(
+      `From: sender@example.com\r\nTo: alerts@example.com\r\nSubject: Big\r\nMessage-ID: <big@test>\r\n\r\n${bigBody}`,
+    );
+    const result = await processInboundEmail(fakeDb, fakeApi, {
+      rawEmail: oversized,
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+      ...PIPELINE_CONFIG,
+    });
+    // Pipeline itself does not enforce size; it processes whatever it receives
+    expect(result.ok).toBe(true);
+  });
+
+  it("forum topic: message_thread_id passed to Telegram send", async () => {
+    mockFindAlias.mockResolvedValue(makeAlias({ messageThreadId: 42n }));
+    mockCheckAllow.mockResolvedValue(true);
+    mockIsDuplicate.mockResolvedValue(false);
+    mockCreateLog.mockResolvedValue({ id: "log-topic" });
+    mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockInsertAttempt.mockResolvedValue(undefined);
+    mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 55 });
+
+    await processInboundEmail(fakeDb, fakeApi, {
+      rawEmail: fixture("simple.eml"),
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+      ...PIPELINE_CONFIG,
+    });
+
+    const [, opts] = mockSendTelegram.mock.calls[0] as [unknown, { threadId: bigint | null }];
+    expect(opts.threadId).toBe(42n);
+  });
+
+  // ── Rejection scenarios ─────────────────────────────────────────────────
+
+  it("unknown alias: returns alias_not_found", async () => {
+    mockFindAlias.mockResolvedValue(null);
+    const result = await processInboundEmail(fakeDb, fakeApi, {
+      rawEmail: fixture("simple.eml"),
+      localPart: "nonexistent",
+      ...PIPELINE_CONFIG,
+    });
+    expect(result).toEqual({ ok: false, reason: "alias_not_found" });
+    expect(mockSendTelegram).not.toHaveBeenCalled();
+  });
+
+  it("paused alias: returns alias_not_found", async () => {
+    mockFindAlias.mockResolvedValue(makeAlias({ status: "paused" }));
+    const result = await processInboundEmail(fakeDb, fakeApi, {
+      rawEmail: fixture("simple.eml"),
+      localPart: "alerts",
+      ...PIPELINE_CONFIG,
+    });
+    expect(result).toEqual({ ok: false, reason: "alias_not_found" });
+  });
+
+  it("blocked sender: returns sender_not_allowed", async () => {
+    mockFindAlias.mockResolvedValue(makeAlias());
+    mockCheckAllow.mockResolvedValue(false);
+    const result = await processInboundEmail(fakeDb, fakeApi, {
+      rawEmail: fixture("simple.eml"),
+      localPart: "alerts",
+      envelopeFrom: "spam@attacker.com",
+      ...PIPELINE_CONFIG,
+    });
+    expect(result).toEqual({ ok: false, reason: "sender_not_allowed" });
+    expect(mockSendTelegram).not.toHaveBeenCalled();
+  });
+
+  it("duplicate Message-ID: returns duplicate, no send", async () => {
+    mockFindAlias.mockResolvedValue(makeAlias());
+    mockCheckAllow.mockResolvedValue(true);
+    mockIsDuplicate.mockResolvedValue(true);
+    const result = await processInboundEmail(fakeDb, fakeApi, {
+      rawEmail: fixture("simple.eml"),
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+      ...PIPELINE_CONFIG,
+    });
+    expect(result).toEqual({ ok: false, reason: "duplicate" });
+    expect(mockCreateLog).not.toHaveBeenCalled();
+    expect(mockSendTelegram).not.toHaveBeenCalled();
+  });
+
+  it("duplicate body hash: returns duplicate (same dedup path)", async () => {
+    mockFindAlias.mockResolvedValue(makeAlias());
+    mockCheckAllow.mockResolvedValue(true);
+    mockIsDuplicate.mockResolvedValue(true);
+    const result = await processInboundEmail(fakeDb, fakeApi, {
+      rawEmail: fixture("unicode.eml"),
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+      ...PIPELINE_CONFIG,
+    });
+    expect(result).toEqual({ ok: false, reason: "duplicate" });
+  });
+
+  // ── DB recording ────────────────────────────────────────────────────────
+
+  it("rawEmailPath stored in delivery log when provided", async () => {
+    setupHappyPath();
+    await processInboundEmail(fakeDb, fakeApi, {
+      rawEmail: fixture("simple.eml"),
+      rawEmailPath: "/data/rawemails/2026-01-01/test.eml",
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+      ...PIPELINE_CONFIG,
+    });
+    expect(mockCreateLog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ rawEmailPath: "/data/rawemails/2026-01-01/test.eml" }),
+    );
+  });
+
+  it("delivery_attempt recorded with succeeded status on success", async () => {
+    setupHappyPath("log-attempt-ok");
+    await processInboundEmail(fakeDb, fakeApi, {
+      rawEmail: fixture("simple.eml"),
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+      ...PIPELINE_CONFIG,
+    });
+    expect(mockInsertAttempt).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        deliveryLogId: "log-attempt-ok",
+        attemptNo: 1,
+        status: "succeeded",
+        telegramMessageId: 99n,
+      }),
+    );
+  });
+
+  it("delivery_attempt recorded with failed status on send error", async () => {
+    mockFindAlias.mockResolvedValue(makeAlias());
+    mockCheckAllow.mockResolvedValue(true);
+    mockIsDuplicate.mockResolvedValue(false);
+    mockCreateLog.mockResolvedValue({ id: "log-attempt-fail" });
+    mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockInsertAttempt.mockResolvedValue(undefined);
+    mockSendTelegram.mockResolvedValue({ ok: false, error: "flood wait 30" });
+
+    await processInboundEmail(fakeDb, fakeApi, {
+      rawEmail: fixture("simple.eml"),
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+      ...PIPELINE_CONFIG,
+    });
+    expect(mockInsertAttempt).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ status: "failed", errorText: "flood wait 30" }),
+    );
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(
+      expect.anything(),
+      "log-attempt-fail",
+      "failed",
+    );
+  });
+
+  it("finalStatus = delivered on successful send", async () => {
+    setupHappyPath("log-status-ok");
+    await processInboundEmail(fakeDb, fakeApi, {
+      rawEmail: fixture("simple.eml"),
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+      ...PIPELINE_CONFIG,
+    });
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(
+      expect.anything(),
+      "log-status-ok",
+      "delivered",
+    );
+  });
+
+  it("finalStatus = failed on send error", async () => {
+    mockFindAlias.mockResolvedValue(makeAlias());
+    mockCheckAllow.mockResolvedValue(true);
+    mockIsDuplicate.mockResolvedValue(false);
+    mockCreateLog.mockResolvedValue({ id: "log-status-fail" });
+    mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockInsertAttempt.mockResolvedValue(undefined);
+    mockSendTelegram.mockResolvedValue({ ok: false, error: "chat not found" });
+
+    await processInboundEmail(fakeDb, fakeApi, {
+      rawEmail: fixture("simple.eml"),
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+      ...PIPELINE_CONFIG,
+    });
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(
+      expect.anything(),
+      "log-status-fail",
+      "failed",
+    );
+  });
+});
