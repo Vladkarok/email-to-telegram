@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { verifyWorkerRequest } from "../../utils/workerAuth.js";
 import { getDb } from "../../db/client.js";
 import { findAliasByLocalPart } from "../../db/repos/aliases.js";
+import { checkAllowRule } from "../../db/repos/allowRules.js";
 
 export function preflightRoute(app: FastifyInstance): void {
   app.post("/inbound/preflight", { config: { rawBody: true } }, async (req, reply) => {
@@ -20,15 +21,31 @@ export function preflightRoute(app: FastifyInstance): void {
       return;
     }
 
-    const { localPart } = req.body as { localPart: string };
+    const { localPart, envelopeFrom } = req.body as {
+      localPart: string;
+      envelopeFrom?: string;
+    };
     if (!localPart) {
       await reply.status(400).send({ error: "missing localPart" });
       return;
     }
 
     const alias = await findAliasByLocalPart(getDb(), localPart);
-    const accept = alias !== null && alias.status === "active";
+    if (!alias || alias.status !== "active") {
+      await reply.send({ accept: false });
+      return;
+    }
 
-    await reply.send({ accept });
+    // When the worker supplies the SMTP envelope sender, enforce the allow list at the edge
+    // so blocked senders are rejected before raw email bytes are streamed to the VPS.
+    if (envelopeFrom) {
+      const allowed = await checkAllowRule(getDb(), alias.id, envelopeFrom);
+      if (!allowed) {
+        await reply.send({ accept: false });
+        return;
+      }
+    }
+
+    await reply.send({ accept: true });
   });
 }

@@ -13,6 +13,11 @@ vi.mock("../../../src/db/repos/aliases.js", () => ({
   findAliasByLocalPart: (...args: unknown[]): unknown => mockFindAlias(...args),
 }));
 
+const mockCheckAllow = vi.fn();
+vi.mock("../../../src/db/repos/allowRules.js", () => ({
+  checkAllowRule: (...args: unknown[]): unknown => mockCheckAllow(...args),
+}));
+
 const WORKER_SECRET = "test-worker-secret-32chars-abcde";
 
 const TEST_CONFIG = {
@@ -63,6 +68,7 @@ describe("POST /inbound/preflight", () => {
     savedSecret = process.env["WORKER_SECRET"];
     process.env["WORKER_SECRET"] = WORKER_SECRET;
     mockFindAlias.mockReset();
+    mockCheckAllow.mockReset();
   });
 
   afterEach(() => {
@@ -120,6 +126,59 @@ describe("POST /inbound/preflight", () => {
       payload: JSON.stringify({ localPart: "alerts" }),
     });
     expect(res.statusCode).toBe(401);
+  });
+
+  it("returns accept:false when envelopeFrom is not in allow list", async () => {
+    mockFindAlias.mockResolvedValue({ id: "uuid-1", status: "active", localPart: "alerts" });
+    mockCheckAllow.mockResolvedValue(false);
+
+    const body = Buffer.from(
+      JSON.stringify({ localPart: "alerts", envelopeFrom: "blocked@attacker.com" }),
+    );
+    const { signature, timestamp } = signWorkerRequest(body);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/preflight",
+      headers: {
+        "content-type": "application/json",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+      },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ accept: false });
+    expect(mockCheckAllow).toHaveBeenCalledWith(
+      expect.anything(),
+      "uuid-1",
+      "blocked@attacker.com",
+    );
+  });
+
+  it("returns accept:true when envelopeFrom is in allow list", async () => {
+    mockFindAlias.mockResolvedValue({ id: "uuid-1", status: "active", localPart: "alerts" });
+    mockCheckAllow.mockResolvedValue(true);
+
+    const body = Buffer.from(
+      JSON.stringify({ localPart: "alerts", envelopeFrom: "allowed@example.com" }),
+    );
+    const { signature, timestamp } = signWorkerRequest(body);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/preflight",
+      headers: {
+        "content-type": "application/json",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+      },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ accept: true });
   });
 });
 

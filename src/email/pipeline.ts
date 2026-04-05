@@ -21,6 +21,12 @@ type Db = NodePgDatabase<typeof schema>;
 export interface PipelineInput {
   rawEmail: Buffer;
   localPart: string;
+  /**
+   * SMTP envelope sender (MAIL FROM) as received by the Cloudflare Worker via message.from.
+   * This is the authoritative value for allow-rule enforcement — it cannot be spoofed by
+   * the email body. When present it takes precedence over the From: header parsed from MIME.
+   */
+  envelopeFrom?: string;
   /** Public base URL for building attachment download links, e.g. https://mail.example.com */
   publicBaseUrl: string;
   /** Directory where attachment files are stored */
@@ -51,9 +57,12 @@ export async function processInboundEmail(
   // 2. Parse email
   const parsed = await parseEmail(rawEmail, rawEmail.length);
 
-  // 3. Allow-rule check
-  if (parsed.envelopeFrom) {
-    const allowed = await checkAllowRule(db, alias.id, parsed.envelopeFrom);
+  // 3. Allow-rule check — use the SMTP envelope sender from the HTTP header when available
+  // (it comes from Cloudflare's message.from and cannot be spoofed via email headers),
+  // falling back to the parsed From: address only when the worker doesn't supply it.
+  const envelopeFrom = input.envelopeFrom ?? parsed.envelopeFrom;
+  if (envelopeFrom) {
+    const allowed = await checkAllowRule(db, alias.id, envelopeFrom);
     if (!allowed) {
       return { ok: false, reason: "sender_not_allowed" };
     }

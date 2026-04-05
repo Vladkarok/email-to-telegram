@@ -65,6 +65,27 @@ describe("processInboundEmail", () => {
     vi.resetAllMocks();
   });
 
+  it("returns sender_not_allowed when envelopeFrom from PipelineInput is blocked", async () => {
+    mockFindAlias.mockResolvedValue(activeAlias);
+    mockCheckAllow.mockResolvedValue(false);
+    const result = await processInboundEmail(
+      {} as Parameters<typeof processInboundEmail>[0],
+      null,
+      {
+        rawEmail: simpleEmail(),
+        localPart: "alerts",
+        envelopeFrom: "blocked@attacker.com",
+        ...PIPELINE_CONFIG,
+      },
+    );
+    expect(result).toEqual({ ok: false, reason: "sender_not_allowed" });
+    expect(mockCheckAllow).toHaveBeenCalledWith(
+      expect.anything(),
+      activeAlias.id,
+      "blocked@attacker.com",
+    );
+  });
+
   it("returns alias_not_found when alias is missing", async () => {
     mockFindAlias.mockResolvedValue(null);
     const result = await processInboundEmail(

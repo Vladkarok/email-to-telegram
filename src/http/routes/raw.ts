@@ -20,6 +20,9 @@ export function rawRoute(
       const sig = req.headers["x-worker-sig"] as string | undefined;
       const ts = req.headers["x-worker-ts"] as string | undefined;
       const localPart = req.headers["x-local-part"] as string | undefined;
+      // SMTP envelope sender supplied by the Cloudflare Worker (message.from = MAIL FROM).
+      // Used as the authoritative sender for allow-rule enforcement.
+      const envelopeFrom = req.headers["x-envelope-from"] as string | undefined;
 
       if (!sig || !ts) {
         await reply.status(401).send({ error: "missing signature" });
@@ -50,6 +53,7 @@ export function rawRoute(
       processInboundEmail(getDb(), getApi(), {
         rawEmail: body,
         localPart,
+        envelopeFrom,
         publicBaseUrl: config.publicBaseUrl,
         attachmentDir: config.attachmentDir,
         attachmentTtlHours: config.attachmentTtlHours,
