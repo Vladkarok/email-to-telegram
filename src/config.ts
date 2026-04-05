@@ -28,6 +28,10 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "silent"]).default("info"),
   NODE_ENV: z.enum(["development", "production", "test"]).default("production"),
   INITIAL_ALLOWED_USERS: z.string().optional(),
+  /** Optional: URL to ping on each healthy cycle (e.g. https://hc-ping.com/<uuid>) */
+  HEALTHCHECKS_URL: z.string().url().optional(),
+  /** Optional: Telegram chat ID to send critical alerts to */
+  ALERT_CHAT_ID: z.coerce.bigint().optional(),
 });
 
 export interface AppConfig {
@@ -48,6 +52,8 @@ export interface AppConfig {
   logLevel: string;
   nodeEnv: string;
   initialAllowedUsers: bigint[];
+  healthchecksUrl: string | undefined;
+  alertChatId: bigint | undefined;
 }
 
 export function loadConfig(): AppConfig {
@@ -83,5 +89,7 @@ export function loadConfig(): AppConfig {
     logLevel: env.LOG_LEVEL,
     nodeEnv: env.NODE_ENV,
     initialAllowedUsers,
+    healthchecksUrl: env.HEALTHCHECKS_URL,
+    alertChatId: env.ALERT_CHAT_ID,
   };
 }

@@ -1,0 +1,153 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
+
+const mockFindFailedLogs = vi.fn();
+const mockUpdateLogStatus = vi.fn();
+const mockFindAliasById = vi.fn();
+const mockCountAttempts = vi.fn();
+const mockInsertAttempt = vi.fn();
+const mockReadRawEmail = vi.fn();
+const mockSendTelegramMessage = vi.fn();
+
+vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
+  findFailedLogs: (...args: unknown[]): unknown => mockFindFailedLogs(...args),
+  updateDeliveryLogStatus: (...args: unknown[]): unknown => mockUpdateLogStatus(...args),
+}));
+vi.mock("../../../src/db/repos/aliases.js", () => ({
+  findAliasById: (...args: unknown[]): unknown => mockFindAliasById(...args),
+}));
+vi.mock("../../../src/db/repos/deliveryAttempts.js", () => ({
+  countAttemptsByLog: (...args: unknown[]): unknown => mockCountAttempts(...args),
+  insertDeliveryAttempt: (...args: unknown[]): unknown => mockInsertAttempt(...args),
+}));
+vi.mock("../../../src/storage/disk.js", () => ({
+  readRawEmail: (...args: unknown[]): unknown => mockReadRawEmail(...args),
+}));
+vi.mock("../../../src/telegram/sender.js", () => ({
+  sendTelegramMessage: (...args: unknown[]): unknown => mockSendTelegramMessage(...args),
+}));
+vi.mock("../../../src/utils/logger.js", () => ({
+  getLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
+}));
+
+// Use real parser/cleaner/renderer (they don't need DB)
+const RAW_EMAIL = Buffer.from(
+  "From: sender@example.com\r\nTo: alias@example.com\r\nSubject: Test\r\n\r\nHello world",
+);
+
+const fakeAlias = {
+  id: "alias-uuid",
+  localPart: "alerts",
+  fullAddress: "alerts@example.com",
+  chatId: -100n,
+  messageThreadId: null,
+  status: "active",
+  renderMode: "plaintext",
+};
+
+const fakeLog = {
+  id: "log-uuid",
+  emailAddressId: "alias-uuid",
+  rawEmailPath: "/data/rawemails/2026-01-01/test.eml",
+};
+
+const { runRetryWorker } = await import("../../../src/email/retry.js");
+
+const fakeDb = {} as Parameters<typeof runRetryWorker>[0];
+const fakeApi = { sendMessage: vi.fn() } as unknown as Parameters<typeof runRetryWorker>[1];
+
+describe("runRetryWorker", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFindAliasById.mockResolvedValue(fakeAlias);
+    mockCountAttempts.mockResolvedValue(0);
+    mockInsertAttempt.mockResolvedValue(undefined);
+    mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockReadRawEmail.mockResolvedValue(RAW_EMAIL);
+    mockSendTelegramMessage.mockResolvedValue({ ok: true, telegramMessageId: 42 });
+  });
+
+  it("does nothing when there are no failed logs", async () => {
+    mockFindFailedLogs.mockResolvedValue([]);
+    await runRetryWorker(fakeDb, fakeApi);
+    expect(mockSendTelegramMessage).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when api is null", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    await runRetryWorker(fakeDb, null);
+    expect(mockSendTelegramMessage).not.toHaveBeenCalled();
+  });
+
+  it("successfully retries a failed log and marks it delivered", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    await runRetryWorker(fakeDb, fakeApi);
+
+    expect(mockReadRawEmail).toHaveBeenCalledWith(fakeLog.rawEmailPath);
+    expect(mockSendTelegramMessage).toHaveBeenCalledOnce();
+    expect(mockInsertAttempt).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({ status: "succeeded", attemptNo: 1 }),
+    );
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "delivered");
+  });
+
+  it("marks permanently_failed when max retries reached", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockCountAttempts.mockResolvedValue(3); // already at MAX_RETRIES
+    await runRetryWorker(fakeDb, fakeApi);
+
+    expect(mockSendTelegramMessage).not.toHaveBeenCalled();
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+  });
+
+  it("marks permanently_failed when alias is deleted", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockFindAliasById.mockResolvedValue({ ...fakeAlias, status: "deleted" });
+    await runRetryWorker(fakeDb, fakeApi);
+
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+    expect(mockSendTelegramMessage).not.toHaveBeenCalled();
+  });
+
+  it("marks permanently_failed when raw email file is missing", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockReadRawEmail.mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
+    await runRetryWorker(fakeDb, fakeApi);
+
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+  });
+
+  it("marks permanently_failed when rawEmailPath is null", async () => {
+    mockFindFailedLogs.mockResolvedValue([{ ...fakeLog, rawEmailPath: null }]);
+    await runRetryWorker(fakeDb, fakeApi);
+
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+    expect(mockSendTelegramMessage).not.toHaveBeenCalled();
+  });
+
+  it("records failed attempt and leaves status as failed when send fails but retries remain", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockCountAttempts.mockResolvedValue(0); // first attempt
+    mockSendTelegramMessage.mockResolvedValue({ ok: false, error: "Telegram error" });
+    await runRetryWorker(fakeDb, fakeApi);
+
+    expect(mockInsertAttempt).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({ status: "failed" }),
+    );
+    // Still retries left — should NOT mark permanently_failed or delivered
+    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(fakeDb, fakeLog.id, "delivered");
+  });
+
+  it("marks permanently_failed on last failed attempt", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockCountAttempts.mockResolvedValue(2); // attempt 3 of 3
+    mockSendTelegramMessage.mockResolvedValue({ ok: false, error: "Telegram error" });
+    await runRetryWorker(fakeDb, fakeApi);
+
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+  });
+});

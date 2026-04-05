@@ -8,7 +8,7 @@ import { downloadRoute } from "./download.js";
 
 export function registerRoutes(
   app: FastifyInstance,
-  config: Pick<AppConfig, "publicBaseUrl" | "attachmentDir" | "attachmentTtlHours">,
+  config: Pick<AppConfig, "publicBaseUrl" | "attachmentDir" | "attachmentTtlHours" | "rawEmailDir">,
 ): void {
   healthzRoute(app);
   readyzRoute(app);

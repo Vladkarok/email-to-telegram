@@ -24,6 +24,9 @@ vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
   createDeliveryLog: (...args: unknown[]): unknown => mockCreateLog(...args),
   updateDeliveryLogStatus: (...args: unknown[]): unknown => mockUpdateLogStatus(...args),
 }));
+vi.mock("../../../src/db/repos/deliveryAttempts.js", () => ({
+  insertDeliveryAttempt: vi.fn().mockResolvedValue(undefined),
+}));
 
 const mockSendTelegram = vi.fn();
 vi.mock("../../../src/telegram/sender.js", () => ({

@@ -1,11 +1,15 @@
+import { schedule } from "node-cron";
 import { loadConfig } from "./config.js";
 import { createLogger, setLogger } from "./utils/logger.js";
 import { initDb, closeDb, getDb } from "./db/client.js";
 import { runMigrations } from "./db/migrate.js";
 import { createHttpServer, startHttpServer } from "./http/server.js";
 import { createBot } from "./telegram/bot.js";
-import { setApi } from "./telegram/api.js";
+import { setApi, getApi } from "./telegram/api.js";
 import { upsertAllowedUser } from "./db/repos/users.js";
+import { runRetryWorker } from "./email/retry.js";
+import { runCleanup } from "./storage/cleanup.js";
+import { runUptimeCheck } from "./utils/uptime.js";
 
 async function main() {
   // 1. Load and validate config (fail fast)
@@ -42,7 +46,39 @@ async function main() {
   const app = await createHttpServer(config);
   await startHttpServer(app, config.httpPort);
 
-  // 6. Graceful shutdown
+  // 6. Background cron jobs
+  const cleanupConfig = {
+    attachmentDir: config.attachmentDir,
+    rawEmailDir: config.rawEmailDir,
+    attachmentTtlHours: config.attachmentTtlHours,
+    rawEmailTtlHours: config.rawEmailTtlHours,
+  };
+
+  // Retry failed deliveries every 5 minutes
+  schedule("*/5 * * * *", () => {
+    runRetryWorker(getDb(), getApi()).catch((err: unknown) => {
+      logger.error({ err }, "retry worker error");
+    });
+  });
+
+  // Clean up expired files and old DB rows every 15 minutes
+  schedule("*/15 * * * *", () => {
+    runCleanup(getDb(), cleanupConfig).catch((err: unknown) => {
+      logger.error({ err }, "cleanup worker error");
+    });
+  });
+
+  // Uptime check every 5 minutes
+  schedule("*/5 * * * *", () => {
+    runUptimeCheck(getDb(), getApi(), {
+      healthchecksUrl: config.healthchecksUrl,
+      alertChatId: config.alertChatId,
+    }).catch((err: unknown) => {
+      logger.error({ err }, "uptime check error");
+    });
+  });
+
+  // 7. Graceful shutdown
   const shutdown = async (signal: string) => {
     logger.info({ signal }, "Shutting down...");
     try {

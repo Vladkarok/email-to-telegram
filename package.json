@@ -24,11 +24,13 @@
   },
   "dependencies": {
     "@fastify/rate-limit": "^9.1.0",
+    "@types/node-cron": "^3.0.11",
     "drizzle-orm": "^0.38.3",
     "fastify": "^5.8.4",
     "grammy": "^1.31.0",
     "mailparser": "^3.7.1",
     "nanoid": "^5.0.9",
+    "node-cron": "^4.2.1",
     "pg": "^8.13.1",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",

@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNotNull } from "drizzle-orm";
 import { deliveryLogs, type DeliveryLog, type NewDeliveryLog } from "../schema.js";
 import type * as schema from "../schema.js";
 
@@ -46,4 +46,11 @@ export async function updateDeliveryLogStatus(
   finalStatus: string,
 ): Promise<void> {
   await db.update(deliveryLogs).set({ finalStatus }).where(eq(deliveryLogs.id, id));
+}
+
+export async function findFailedLogs(db: Db): Promise<DeliveryLog[]> {
+  return db
+    .select()
+    .from(deliveryLogs)
+    .where(and(eq(deliveryLogs.finalStatus, "failed"), isNotNull(deliveryLogs.rawEmailPath)));
 }

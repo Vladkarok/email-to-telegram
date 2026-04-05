@@ -12,6 +12,7 @@ import { isDuplicate } from "./dedup.js";
 import { findAliasByLocalPart } from "../db/repos/aliases.js";
 import { checkAllowRule } from "../db/repos/allowRules.js";
 import { createDeliveryLog, updateDeliveryLogStatus } from "../db/repos/deliveryLogs.js";
+import { insertDeliveryAttempt } from "../db/repos/deliveryAttempts.js";
 import { createAttachment } from "../db/repos/attachments.js";
 import { createAttachmentLink } from "../db/repos/attachmentLinks.js";
 import { writeAttachment } from "../storage/disk.js";
@@ -22,6 +23,8 @@ type Db = NodePgDatabase<typeof schema>;
 
 export interface PipelineInput {
   rawEmail: Buffer;
+  /** Path where the raw email was persisted on disk (for retry). */
+  rawEmailPath?: string;
   localPart: string;
   /**
    * SMTP envelope sender (MAIL FROM) as received by the Cloudflare Worker via message.from.
@@ -89,6 +92,7 @@ export async function processInboundEmail(
     headerFrom: parsed.headerFrom,
     subject: parsed.subject,
     rawSizeBytes: parsed.rawSizeBytes,
+    rawEmailPath: input.rawEmailPath ?? null,
     hasAttachments: parsed.attachments.length > 0,
     finalStatus: "received",
   });
@@ -148,6 +152,17 @@ export async function processInboundEmail(
       threadId: alias.messageThreadId ?? null,
       text,
       parseMode,
+    });
+
+    // Record attempt in DB
+    await insertDeliveryAttempt(db, {
+      deliveryLogId: deliveryLog.id,
+      attemptNo: 1,
+      targetChatId: alias.chatId,
+      targetThreadId: alias.messageThreadId ?? null,
+      telegramMessageId: result.telegramMessageId ? BigInt(result.telegramMessageId) : null,
+      status: result.ok ? "succeeded" : "failed",
+      errorText: result.error ?? null,
     });
 
     const finalStatus = result.ok ? "delivered" : "failed";

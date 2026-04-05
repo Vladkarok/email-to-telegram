@@ -1,14 +1,22 @@
+import { join } from "path";
+import { randomUUID } from "crypto";
 import type { FastifyInstance } from "fastify";
 import { verifyWorkerRequest } from "../../utils/workerAuth.js";
 import { getDb } from "../../db/client.js";
 import { getApi } from "../../telegram/api.js";
 import { processInboundEmail } from "../../email/pipeline.js";
+import { writeRawEmail } from "../../storage/disk.js";
 import { getLogger } from "../../utils/logger.js";
 import type { AppConfig } from "../../config.js";
 
+function rawEmailPath(rawEmailDir: string): string {
+  const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  return join(rawEmailDir, date, `${randomUUID()}.eml`);
+}
+
 export function rawRoute(
   app: FastifyInstance,
-  config: Pick<AppConfig, "publicBaseUrl" | "attachmentDir" | "attachmentTtlHours">,
+  config: Pick<AppConfig, "publicBaseUrl" | "attachmentDir" | "attachmentTtlHours" | "rawEmailDir">,
 ): void {
   app.post(
     "/inbound/raw",
@@ -50,8 +58,16 @@ export function rawRoute(
       // Acknowledge immediately, process async
       await reply.status(202).send({ status: "accepted" });
 
+      const storedPath = rawEmailPath(config.rawEmailDir);
+
+      // Save raw email to disk for potential retry
+      writeRawEmail(storedPath, body).catch((err: unknown) => {
+        getLogger().error({ err }, "failed to save raw email");
+      });
+
       processInboundEmail(getDb(), getApi(), {
         rawEmail: body,
+        rawEmailPath: storedPath,
         localPart,
         envelopeFrom,
         publicBaseUrl: config.publicBaseUrl,
