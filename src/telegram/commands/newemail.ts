@@ -26,7 +26,7 @@ export async function newemailHandler(ctx: CommandContext<Context>): Promise<voi
   let targetThreadId: bigint | null = null;
   let targetChatTitle: string | undefined;
 
-  if (pending) {
+  if (pending?.action === "newemail") {
     targetChatId = pending.chatId;
     targetChatTitle = pending.chatTitle;
     clearPending(ctx.from.id);
