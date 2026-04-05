@@ -21,6 +21,8 @@ export default defineConfig({
         "src/storage/**",
         // HTTP server setup — integration-test territory
         "src/http/server.ts",
+        // Bot wiring — registers handlers, logic tested in individual handler files
+        "src/telegram/bot.ts",
         // Pure type declarations (no executable code)
         "src/email/types.ts",
       ],
