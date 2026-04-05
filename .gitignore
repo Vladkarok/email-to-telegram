@@ -9,8 +9,7 @@ dist/
 .env.local
 .env.*.local
 
-# Drizzle generated migrations (keep drizzle/ dir but not meta)
-drizzle/meta/
+# Drizzle migrations — keep everything including meta/ (needed for runtime migrations)
 
 # Logs
 *.log
