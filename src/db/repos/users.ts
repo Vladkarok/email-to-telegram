@@ -26,3 +26,13 @@ export async function findUserById(db: Db, id: bigint): Promise<User | null> {
 export async function allowUser(db: Db, id: bigint): Promise<void> {
   await db.update(users).set({ isAllowed: true, updatedAt: new Date() }).where(eq(users.id, id));
 }
+
+export async function upsertAllowedUser(db: Db, id: bigint): Promise<void> {
+  await db
+    .insert(users)
+    .values({ id, username: null, isAllowed: true })
+    .onConflictDoUpdate({
+      target: users.id,
+      set: { isAllowed: true, updatedAt: new Date() },
+    });
+}

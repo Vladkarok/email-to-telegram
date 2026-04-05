@@ -1,10 +1,11 @@
 import { loadConfig } from "./config.js";
 import { createLogger, setLogger } from "./utils/logger.js";
-import { initDb, closeDb } from "./db/client.js";
+import { initDb, closeDb, getDb } from "./db/client.js";
 import { runMigrations } from "./db/migrate.js";
 import { createHttpServer, startHttpServer } from "./http/server.js";
 import { createBot } from "./telegram/bot.js";
 import { setApi } from "./telegram/api.js";
+import { upsertAllowedUser } from "./db/repos/users.js";
 
 async function main() {
   // 1. Load and validate config (fail fast)
@@ -18,6 +19,13 @@ async function main() {
   // 3. Connect to DB and run migrations
   initDb(config.databaseUrl);
   await runMigrations();
+
+  // 3a. Seed initial allowed users
+  if (config.initialAllowedUsers.length > 0) {
+    const db = getDb();
+    await Promise.all(config.initialAllowedUsers.map((id) => upsertAllowedUser(db, id)));
+    logger.info({ count: config.initialAllowedUsers.length }, "Seeded initial allowed users");
+  }
 
   // 4. Start Telegram bot
   const bot = createBot(config.telegramBotToken);
