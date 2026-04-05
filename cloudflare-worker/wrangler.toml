@@ -1,0 +1,12 @@
+name = "email-to-telegram"
+main = "src/worker.ts"
+compatibility_date = "2024-09-23"
+
+# Secrets — set with:
+#   wrangler secret put WORKER_SECRET
+#   wrangler secret put VPS_URL
+#
+# VPS_URL example: https://mail.example.com
+#
+# Email routing is configured in the Cloudflare dashboard:
+#   Email → Email Routing → Routing Rules → catch-all → Send to Worker → email-to-telegram
