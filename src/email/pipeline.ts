@@ -83,7 +83,7 @@ export async function processInboundEmail(
     emailAddressId: alias.id,
     messageIdHeader: parsed.messageId,
     bodySha256: parsed.bodySha256,
-    envelopeFrom: parsed.envelopeFrom,
+    envelopeFrom: envelopeFrom,
     headerFrom: parsed.headerFrom,
     subject: parsed.subject,
     rawSizeBytes: parsed.rawSizeBytes,

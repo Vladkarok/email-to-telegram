@@ -130,6 +130,26 @@ describe("processInboundEmail", () => {
     expect(result).toEqual({ ok: false, reason: "duplicate" });
   });
 
+  it("persists the authoritative envelopeFrom in the delivery log", async () => {
+    mockFindAlias.mockResolvedValue(activeAlias);
+    mockCheckAllow.mockResolvedValue(true);
+    mockIsDuplicate.mockResolvedValue(false);
+    mockCreateLog.mockResolvedValue({ id: "log-uuid-audit" });
+    mockUpdateLogStatus.mockResolvedValue(undefined);
+
+    await processInboundEmail({} as Parameters<typeof processInboundEmail>[0], null, {
+      rawEmail: simpleEmail(),
+      localPart: "alerts",
+      envelopeFrom: "real-sender@smtp.example.com",
+      ...PIPELINE_CONFIG,
+    });
+
+    expect(mockCreateLog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ envelopeFrom: "real-sender@smtp.example.com" }),
+    );
+  });
+
   it("returns ok:true when api is null (no send)", async () => {
     mockFindAlias.mockResolvedValue(activeAlias);
     mockCheckAllow.mockResolvedValue(true);
