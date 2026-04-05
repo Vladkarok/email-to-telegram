@@ -26,6 +26,9 @@ Thumbs.db
 *.swp
 *.swo
 
+# Claude Code
+.claude/
+
 # Test coverage
 coverage/
 
