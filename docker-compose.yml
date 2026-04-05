@@ -9,8 +9,9 @@ services:
         condition: service_healthy
     volumes:
       - attachments:/data/attachments
-    ports:
-      - "127.0.0.1:3000:3000"
+    networks:
+      - internal
+      - proxy
     mem_limit: 256m
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/healthz"]
@@ -28,6 +29,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    networks:
+      - internal
     mem_limit: 256m
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U emailtelegram"]
@@ -38,3 +41,9 @@ services:
 volumes:
   pgdata:
   attachments:
+
+networks:
+  internal:
+    driver: bridge
+  proxy:
+    external: true # shared with shiny-caddy-1
