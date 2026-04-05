@@ -5,6 +5,18 @@ import type * as schema from "../schema.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
+export async function findAliasById(db: Db, id: string): Promise<EmailAddress | null> {
+  const [alias] = await db.select().from(emailAddresses).where(eq(emailAddresses.id, id));
+  return alias ?? null;
+}
+
+export async function findAliasesByCreator(db: Db, createdBy: bigint): Promise<EmailAddress[]> {
+  return db
+    .select()
+    .from(emailAddresses)
+    .where(and(eq(emailAddresses.createdBy, createdBy), ne(emailAddresses.status, "deleted")));
+}
+
 export async function createAlias(
   db: Db,
   data: Pick<

@@ -159,6 +159,17 @@ export const attachmentLinks = pgTable(
   (t) => [uniqueIndex("idx_link_token").on(t.token), index("idx_link_expires").on(t.expiresAt)],
 );
 
+// ─── chats ───────────────────────────────────────────────────────────────────
+
+export const chats = pgTable("chats", {
+  id: bigint("id", { mode: "bigint" }).primaryKey(),
+  title: varchar("title", { length: 255 }).notNull(),
+  type: varchar("type", { length: 20 }).notNull(), // 'private' | 'group' | 'supergroup' | 'channel'
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // ─── Type exports ─────────────────────────────────────────────────────────────
 
 export type User = typeof users.$inferSelect;
@@ -175,3 +186,5 @@ export type Attachment = typeof attachments.$inferSelect;
 export type NewAttachment = typeof attachments.$inferInsert;
 export type AttachmentLink = typeof attachmentLinks.$inferSelect;
 export type NewAttachmentLink = typeof attachmentLinks.$inferInsert;
+export type Chat = typeof chats.$inferSelect;
+export type NewChat = typeof chats.$inferInsert;

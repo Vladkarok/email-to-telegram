@@ -4,10 +4,24 @@ import { createMockCtx } from "../../../helpers/mockContext.js";
 vi.mock("../../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
 const mockCreateAlias = vi.fn();
-const mockFindAliasByLocalPart = vi.fn();
 vi.mock("../../../../src/db/repos/aliases.js", () => ({
   createAlias: (...args: unknown[]): unknown => mockCreateAlias(...args),
-  findAliasByLocalPart: (...args: unknown[]): unknown => mockFindAliasByLocalPart(...args),
+  findAliasByLocalPart: vi.fn().mockResolvedValue(null),
+  findAliasById: vi.fn().mockResolvedValue(null),
+  findAliasesByCreator: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock("../../../../src/db/repos/chats.js", () => ({
+  findChatById: vi.fn().mockResolvedValue({ title: "Test Chat", type: "supergroup" }),
+  upsertChat: vi.fn().mockResolvedValue(undefined),
+  findActiveChats: vi.fn().mockResolvedValue([]),
+  deactivateChat: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("../../../../src/telegram/session.js", () => ({
+  getPending: vi.fn().mockReturnValue(undefined),
+  clearPending: vi.fn(),
+  setPending: vi.fn(),
 }));
 
 vi.mock("../../../../src/config.js", () => ({
@@ -19,7 +33,6 @@ const { newemailHandler } = await import("../../../../src/telegram/commands/newe
 describe("/newemail command", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFindAliasByLocalPart.mockResolvedValue(null); // no collision by default
     mockCreateAlias.mockResolvedValue({
       localPart: "alerts-ab12cd",
       fullAddress: "alerts-ab12cd@tgmail.example.com",
@@ -47,7 +60,6 @@ describe("/newemail command", () => {
 
     expect(mockCreateAlias).toHaveBeenCalledOnce();
     const [, aliasData] = mockCreateAlias.mock.calls[0] as [unknown, { localPart: string }];
-    // no custom prefix — just a random string
     expect(aliasData.localPart).toMatch(/^[a-z0-9]{8,}$/);
   });
 
@@ -92,10 +104,7 @@ describe("/newemail command", () => {
   });
 
   it("stores message_thread_id when present (forum topic)", async () => {
-    const ctx = createMockCtx({
-      commandMatch: "alerts",
-      messageThreadId: 42,
-    });
+    const ctx = createMockCtx({ commandMatch: "alerts", messageThreadId: 42 });
 
     await newemailHandler(ctx);
 
@@ -116,5 +125,17 @@ describe("/newemail command", () => {
       { messageThreadId: bigint | null },
     ];
     expect(aliasData.messageThreadId).toBeNull();
+  });
+
+  it("shows friendly error on duplicate alias name", async () => {
+    mockCreateAlias.mockRejectedValueOnce(
+      new Error("duplicate key value violates unique constraint idx_alias_local_part"),
+    );
+    const ctx = createMockCtx({ commandMatch: "alerts" });
+
+    await newemailHandler(ctx);
+
+    expect(ctx.reply).toHaveBeenCalledOnce();
+    expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/taken|duplicate/i);
   });
 });
