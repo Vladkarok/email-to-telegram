@@ -13,7 +13,6 @@ const { startHandler } = await import("../../../../src/telegram/commands/start.j
 describe("/start command", () => {
   it("in private chat: registers DM and shows chat selection", async () => {
     const ctx = createMockCtx({ chatType: "private" });
-    (ctx as unknown as Record<string, unknown>).me = { username: "testbot" };
     await startHandler(ctx);
     expect(ctx.reply).toHaveBeenCalled();
     const firstCall = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as unknown;
@@ -22,7 +21,6 @@ describe("/start command", () => {
 
   it("in group chat: redirects to DM with button", async () => {
     const ctx = createMockCtx({ chatType: "supergroup" });
-    (ctx as unknown as Record<string, unknown>).me = { username: "testbot" };
     await startHandler(ctx);
     expect(ctx.reply).toHaveBeenCalledWith(
       expect.stringContaining("private chat"),
@@ -32,12 +30,19 @@ describe("/start command", () => {
 });
 
 describe("/help command", () => {
-  it("replies with command list", async () => {
+  it("replies with /start as primary entry point", async () => {
     const ctx = createMockCtx();
     await helpHandler(ctx);
     expect(ctx.reply).toHaveBeenCalledWith(
-      expect.stringContaining("/newemail"),
+      expect.stringContaining("/start"),
       expect.objectContaining({ parse_mode: "HTML" }),
     );
+  });
+
+  it("mentions allow rules", async () => {
+    const ctx = createMockCtx();
+    await helpHandler(ctx);
+    const text = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as unknown;
+    expect(String(text)).toContain("/allow");
   });
 });

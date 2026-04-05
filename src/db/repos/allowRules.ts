@@ -28,6 +28,11 @@ export async function removeAllowRule(
     );
 }
 
+export async function findAllowRuleById(db: Db, id: string): Promise<AllowRule | null> {
+  const [rule] = await db.select().from(allowRules).where(eq(allowRules.id, id)).limit(1);
+  return rule ?? null;
+}
+
 export async function listAllowRules(db: Db, emailAddressId: string): Promise<AllowRule[]> {
   return db.select().from(allowRules).where(eq(allowRules.emailAddressId, emailAddressId));
 }

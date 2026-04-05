@@ -2,25 +2,29 @@ import type { Context } from "grammy";
 
 export async function helpHandler(ctx: Context): Promise<void> {
   await ctx.reply(
-    `<b>📖 Commands</b>
+    `<b>📖 Help</b>
 
-<b>Alias management</b>
-/newemail [name] — create a new email alias
-/listemail — list aliases for this chat
-/deleteemail &lt;name&gt; — delete an alias
-/pauseemail &lt;name&gt; — pause delivery
-/resumeemail &lt;name&gt; — resume delivery
-/settings &lt;name&gt; — change render mode
+Use /start to open the management menu where you can:
+• Browse chats where the bot is active
+• Create email aliases per chat
+• Manage allow rules (who can send mail)
+• Pause, resume, or delete aliases
+• Change render mode (plaintext / HTML / Markdown)
 
-<b>Allow rules</b>
+<b>Quick commands</b>
+/start — open management menu
+/listemail — list all your aliases
+
+<b>Allow rules (also manageable from the menu)</b>
 /allow add &lt;alias&gt; &lt;email_or_domain&gt;
 /allow remove &lt;alias&gt; &lt;email_or_domain&gt;
 /allow list &lt;alias&gt;
 
-<b>Info</b>
+<b>Admin</b>
+/allow &lt;telegram_id&gt; — authorize a user (owner only)
 /help — show this message
 
-Mail is only accepted from allowed senders. Add at least one allow rule after creating an alias.`,
+💡 After creating an alias, add at least one allow rule — otherwise all mail is rejected.`,
     { parse_mode: "HTML" },
   );
 }

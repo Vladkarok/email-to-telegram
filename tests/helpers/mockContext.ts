@@ -10,10 +10,14 @@ export interface MockCtxOptions {
   text?: string;
   /** Parsed command argument (everything after the command name) */
   commandMatch?: string;
+  botUsername?: string;
 }
 
 export type MockCtx = CommandContext<Context> & {
   reply: ReturnType<typeof vi.fn>;
+  editMessageText: ReturnType<typeof vi.fn>;
+  deleteMessage: ReturnType<typeof vi.fn>;
+  answerCallbackQuery: ReturnType<typeof vi.fn>;
 };
 
 export function createMockCtx(opts: MockCtxOptions = {}): MockCtx {
@@ -31,6 +35,12 @@ export function createMockCtx(opts: MockCtxOptions = {}): MockCtx {
       id: chatId,
       type: opts.chatType ?? "supergroup",
     },
+    me: {
+      id: 987654321,
+      username: opts.botUsername ?? "testbot",
+      is_bot: true,
+      first_name: "TestBot",
+    },
     message: {
       message_id: 1,
       message_thread_id: opts.messageThreadId ?? undefined,
@@ -42,6 +52,8 @@ export function createMockCtx(opts: MockCtxOptions = {}): MockCtx {
     match: opts.commandMatch ?? "",
     reply: vi.fn().mockResolvedValue({ message_id: 99 }),
     replyWithHTML: vi.fn().mockResolvedValue({ message_id: 99 }),
+    editMessageText: vi.fn().mockResolvedValue({}),
+    deleteMessage: vi.fn().mockResolvedValue(true),
     answerCallbackQuery: vi.fn().mockResolvedValue(true),
     api: {
       sendMessage: vi.fn().mockResolvedValue({ message_id: 99 }),

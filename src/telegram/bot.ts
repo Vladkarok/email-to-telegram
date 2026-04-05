@@ -13,8 +13,10 @@ import { helpHandler } from "./commands/help.js";
 import { chatMemberHandler } from "./handlers/chatMember.js";
 import { editChatSelectionMenu, editChatManagementMenu } from "./menu/chatMenu.js";
 import { editAliasListMenu, editAliasDetailMenu } from "./menu/aliasMenu.js";
+import { sendAllowRulesMenu, editAllowRulesMenu } from "./menu/allowRulesMenu.js";
 import { findAliasById, updateAliasStatus, updateAliasRenderMode } from "../db/repos/aliases.js";
 import { findChatById } from "../db/repos/chats.js";
+import { addAllowRule, findAllowRuleById, removeAllowRule } from "../db/repos/allowRules.js";
 import { getPending, clearPending, setPending } from "./session.js";
 import { getLogger } from "../utils/logger.js";
 import { InlineKeyboard } from "grammy";
@@ -54,6 +56,31 @@ export function createBot(token: string): Bot {
     if (pending.action === "newemail") {
       clearPending(ctx.from.id);
       await createEmailAlias(ctx, text.trim(), pending.chatId, null, pending.chatTitle);
+      return;
+    }
+
+    if (pending.action === "allowrule") {
+      clearPending(ctx.from.id);
+      const value = text.trim().toLowerCase();
+      if (!isValidAllowValue(value)) {
+        await ctx.reply(
+          "❌ Invalid format. Use a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).",
+          { parse_mode: "HTML" },
+        );
+        return;
+      }
+      const matchType = value.includes("@") ? "exact_email" : "domain";
+      await addAllowRule(getDb(), {
+        emailAddressId: pending.aliasId,
+        matchType,
+        matchValue: value,
+      });
+      const icon = matchType === "domain" ? "🌐" : "📧";
+      await ctx.reply(`✅ Added rule: ${icon} <code>${escapeHtml(value)}</code>`, {
+        parse_mode: "HTML",
+      });
+      await sendAllowRulesMenu(ctx, getDb(), pending.aliasId);
+      return;
     }
   });
 
@@ -185,7 +212,7 @@ export function createBot(token: string): Bot {
     );
   });
 
-  // set_mode:{aliasId}:{mode} — apply render mode (existing + from new menu)
+  // set_mode:{aliasId}:{mode} — apply render mode
   bot.callbackQuery(/^set_mode:(.+):(.+)$/, async (ctx) => {
     const [, aliasId, mode] = ctx.match;
     const validModes = ["plaintext", "html", "markdown"];
@@ -195,8 +222,53 @@ export function createBot(token: string): Bot {
     }
     await updateAliasRenderMode(getDb(), aliasId, mode as "plaintext" | "html" | "markdown");
     await ctx.answerCallbackQuery(`✅ Mode set to ${mode}`);
-    // Return to alias detail if coming from the new menu flow
     await editAliasDetailMenu(ctx, getDb(), aliasId);
+  });
+
+  // al:{aliasId} — allow rules menu
+  bot.callbackQuery(/^al:([0-9a-f-]{36})$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await editAllowRulesMenu(ctx, getDb(), ctx.match[1]);
+  });
+
+  // dr:{ruleId} — delete allow rule
+  bot.callbackQuery(/^dr:([0-9a-f-]{36})$/, async (ctx) => {
+    await ctx.answerCallbackQuery("Rule removed.");
+    const rule = await findAllowRuleById(getDb(), ctx.match[1]);
+    if (rule) {
+      await removeAllowRule(getDb(), {
+        emailAddressId: rule.emailAddressId,
+        matchValue: rule.matchValue,
+      });
+      await editAllowRulesMenu(ctx, getDb(), rule.emailAddressId);
+    }
+  });
+
+  // aa:{aliasId} — start add allow rule flow
+  bot.callbackQuery(/^aa:([0-9a-f-]{36})$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (!ctx.from) return;
+    const alias = await findAliasById(getDb(), ctx.match[1]);
+    if (!alias) return;
+
+    setPending(ctx.from.id, {
+      action: "allowrule",
+      aliasId: alias.id,
+      aliasLocalPart: alias.localPart,
+    });
+
+    const keyboard = new InlineKeyboard().text("✖ Cancel", `na:${alias.id}`);
+    await ctx.editMessageText(
+      `📋 Add allow rule for <code>${escapeHtml(alias.localPart)}</code>\n\nSend a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).`,
+      { parse_mode: "HTML", reply_markup: keyboard },
+    );
+  });
+
+  // na:{aliasId} — cancel add allow rule
+  bot.callbackQuery(/^na:([0-9a-f-]{36})$/, async (ctx) => {
+    await ctx.answerCallbackQuery("Cancelled.");
+    if (ctx.from) clearPending(ctx.from.id);
+    await editAllowRulesMenu(ctx, getDb(), ctx.match[1]);
   });
 
   return bot;
@@ -204,4 +276,11 @@ export function createBot(token: string): Bot {
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function isValidAllowValue(value: string): boolean {
+  if (value.includes("@")) {
+    return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value);
+  }
+  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(value);
 }
