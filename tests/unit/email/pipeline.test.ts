@@ -28,6 +28,7 @@ vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
 const mockSendTelegram = vi.fn();
 vi.mock("../../../src/telegram/sender.js", () => ({
   sendTelegramMessage: (...args: unknown[]): unknown => mockSendTelegram(...args),
+  sendTelegramPhotos: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../../src/db/repos/attachments.js", () => ({
