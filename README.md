@@ -57,18 +57,52 @@ docker compose up -d
 
 ### Environment variables
 
-See [`.env.example`](.env.example) for all required variables.
+<!-- AUTO-GENERATED: from .env.example -->
+
+| Variable                | Required | Description                                                          |
+| ----------------------- | -------- | -------------------------------------------------------------------- |
+| `POSTGRES_PASSWORD`     | Yes      | PostgreSQL password (must match `DATABASE_URL`)                      |
+| `DATABASE_URL`          | Yes      | PostgreSQL connection string                                         |
+| `TELEGRAM_BOT_TOKEN`    | Yes      | Bot token from @BotFather                                            |
+| `MAIL_DOMAIN`           | Yes      | Domain for email aliases (e.g. `example.com`)                        |
+| `PUBLIC_BASE_URL`       | Yes      | HTTPS URL of this server (for attachment links)                      |
+| `INGEST_MODE`           | Yes      | `cloudflare` or `smtp`                                               |
+| `SMTP_PORT`             | If smtp  | SMTP listen port inside container                                    |
+| `HTTP_PORT`             | Yes      | HTTP server port (default `3000`)                                    |
+| `HMAC_SECRET`           | Yes      | Secret for signing attachment tokens (min 16 chars)                  |
+| `WORKER_SECRET`         | Yes      | Shared secret with Cloudflare Worker (min 16 chars)                  |
+| `ATTACHMENT_DIR`        | Yes      | Path for storing attachments                                         |
+| `RAW_EMAIL_DIR`         | Yes      | Path for storing raw emails                                          |
+| `ATTACHMENT_TTL_HOURS`  | No       | Attachment retention in hours (default `336` = 14 days)              |
+| `RAW_EMAIL_TTL_HOURS`   | No       | Raw email retention in hours (default `336`)                         |
+| `MAX_SIZE_BYTES`        | No       | Max accepted message size in bytes (default `10485760` = 10 MiB)     |
+| `INITIAL_ALLOWED_USERS` | No       | Comma-separated Telegram user IDs to pre-authorize                   |
+| `LOG_LEVEL`             | No       | `trace`, `debug`, `info`, `warn`, `error`, `silent` (default `info`) |
+| `NODE_ENV`              | No       | `development`, `production`, `test` (default `production`)           |
+
+<!-- /AUTO-GENERATED -->
 
 ## Development
 
-```bash
-npm install
-npm run dev          # start with hot reload
-npm test             # run tests
-npm run test:watch   # watch mode
-npm run lint         # ESLint
-npm run typecheck    # TypeScript check
-```
+<!-- AUTO-GENERATED: scripts from package.json -->
+
+| Command                 | Description                            |
+| ----------------------- | -------------------------------------- |
+| `npm run dev`           | Start with hot reload (tsx watch)      |
+| `npm run build`         | Compile TypeScript to `dist/`          |
+| `npm start`             | Run compiled output                    |
+| `npm test`              | Run tests once                         |
+| `npm run test:watch`    | Run tests in watch mode                |
+| `npm run test:coverage` | Run tests with coverage report         |
+| `npm run lint`          | ESLint                                 |
+| `npm run lint:fix`      | ESLint with auto-fix                   |
+| `npm run format`        | Prettier write                         |
+| `npm run format:check`  | Prettier check (used in CI)            |
+| `npm run typecheck`     | TypeScript type check (no emit)        |
+| `npm run db:generate`   | Generate Drizzle migration from schema |
+| `npm run db:migrate`    | Apply migrations via drizzle-kit       |
+
+<!-- /AUTO-GENERATED -->
 
 ## Deployment
 
