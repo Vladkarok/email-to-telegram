@@ -30,9 +30,13 @@ async function main() {
   // 4. Start Telegram bot
   const bot = createBot(config.telegramBotToken);
   setApi(bot.api);
-  bot.start({ drop_pending_updates: true }).catch((err: unknown) => {
-    logger.error({ err }, "Bot polling error");
-  });
+  const startPolling = () => {
+    bot.start({ drop_pending_updates: true }).catch((err: unknown) => {
+      logger.error({ err }, "Bot polling error — restarting in 5s");
+      setTimeout(startPolling, 5000);
+    });
+  };
+  startPolling();
 
   // 5. Start HTTP server
   const app = await createHttpServer(config);
