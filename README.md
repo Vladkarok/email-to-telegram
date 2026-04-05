@@ -5,11 +5,13 @@ Self-hosted replacement for the defunct **etlgr.io** service. Create email alias
 ## How it works
 
 1. Add the bot to a Telegram group (or use it in DM)
-2. Run `/newemail [name]` — the bot creates an alias like `alerts-k3x9m2@tgmail.example.com`
+2. Run `/newemail [name]` — the bot creates an alias like `alerts-k3x9m2@example.com`
 3. Add allowed senders with `/allow add alerts-k3x9m2 github.com`
 4. Any email from an allowed sender to that alias appears in the chat
 
 Attachments are stored on the VPS and served as expiring download links (not uploaded to Telegram).
+
+> **Note:** `MAIL_DOMAIN` must be your zone-level domain (e.g. `example.com`), not a subdomain. Cloudflare Email Routing only supports catch-all rules at the zone root.
 
 ## Architecture
 
@@ -45,7 +47,7 @@ The Cloudflare Email Worker handles ingestion: it does a preflight check (is thi
 
 ## Setup
 
-See [email-to-telegram-plan.md](./email-to-telegram-plan.md) for the full architecture, database schema, and deployment guide.
+See [`.env.example`](.env.example) for a fully annotated configuration file.
 
 ### Quick start
 
@@ -57,52 +59,57 @@ docker compose up -d
 
 ### Environment variables
 
-<!-- AUTO-GENERATED: from .env.example -->
+<!-- AUTO-GENERATED from .env.example -->
 
-| Variable                | Required | Description                                                          |
-| ----------------------- | -------- | -------------------------------------------------------------------- |
-| `POSTGRES_PASSWORD`     | Yes      | PostgreSQL password (must match `DATABASE_URL`)                      |
-| `DATABASE_URL`          | Yes      | PostgreSQL connection string                                         |
-| `TELEGRAM_BOT_TOKEN`    | Yes      | Bot token from @BotFather                                            |
-| `MAIL_DOMAIN`           | Yes      | Domain for email aliases (e.g. `example.com`)                        |
-| `PUBLIC_BASE_URL`       | Yes      | HTTPS URL of this server (for attachment links)                      |
-| `INGEST_MODE`           | Yes      | `cloudflare` or `smtp`                                               |
-| `SMTP_PORT`             | If smtp  | SMTP listen port inside container                                    |
-| `HTTP_PORT`             | Yes      | HTTP server port (default `3000`)                                    |
-| `HMAC_SECRET`           | Yes      | Secret for signing attachment tokens (min 16 chars)                  |
-| `WORKER_SECRET`         | Yes      | Shared secret with Cloudflare Worker (min 16 chars)                  |
-| `ATTACHMENT_DIR`        | Yes      | Path for storing attachments                                         |
-| `RAW_EMAIL_DIR`         | Yes      | Path for storing raw emails                                          |
-| `ATTACHMENT_TTL_HOURS`  | No       | Attachment retention in hours (default `336` = 14 days)              |
-| `RAW_EMAIL_TTL_HOURS`   | No       | Raw email retention in hours (default `336`)                         |
-| `MAX_SIZE_BYTES`        | No       | Max accepted message size in bytes (default `10485760` = 10 MiB)     |
-| `INITIAL_ALLOWED_USERS` | No       | Comma-separated Telegram user IDs to pre-authorize                   |
-| `LOG_LEVEL`             | No       | `trace`, `debug`, `info`, `warn`, `error`, `silent` (default `info`) |
-| `NODE_ENV`              | No       | `development`, `production`, `test` (default `production`)           |
+| Variable                | Required | Description                                                               |
+| ----------------------- | -------- | ------------------------------------------------------------------------- |
+| `POSTGRES_PASSWORD`     | Yes      | PostgreSQL password (must match `DATABASE_URL`)                           |
+| `DATABASE_URL`          | Yes      | PostgreSQL connection string                                              |
+| `TELEGRAM_BOT_TOKEN`    | Yes      | Bot token from @BotFather                                                 |
+| `MAIL_DOMAIN`           | Yes      | Zone-level domain for email aliases (e.g. `example.com`)                  |
+| `PUBLIC_BASE_URL`       | Yes      | Public HTTPS URL of the VPS API (for attachment links)                    |
+| `INGEST_MODE`           | Yes      | `cloudflare` or `smtp`                                                    |
+| `HTTP_PORT`             | Yes      | HTTP listen port (default `3000`)                                         |
+| `HMAC_SECRET`           | Yes      | Secret for signing attachment tokens (`openssl rand -hex 32`)             |
+| `WORKER_SECRET`         | Yes      | Shared secret between Cloudflare Worker and VPS (`openssl rand -hex 32`)  |
+| `ATTACHMENT_DIR`        | Yes      | Path to attachment storage directory                                      |
+| `RAW_EMAIL_DIR`         | Yes      | Path to raw email storage directory                                       |
+| `SMTP_PORT`             | No       | SMTP listen port (smtp mode only, default `2525`)                         |
+| `ATTACHMENT_TTL_HOURS`  | No       | Attachment retention in hours (default `336` = 14 days)                   |
+| `RAW_EMAIL_TTL_HOURS`   | No       | Raw email retention in hours (default `336`)                              |
+| `MAX_SIZE_BYTES`        | No       | Max accepted message size in bytes (default `10485760` = 10 MiB)          |
+| `INITIAL_ALLOWED_USERS` | No       | Comma-separated Telegram user IDs to pre-authorize                        |
+| `LOG_LEVEL`             | No       | `trace` / `debug` / `info` / `warn` / `error` / `silent` (default `info`) |
+| `NODE_ENV`              | No       | `development` / `production` / `test` (default `production`)              |
 
-<!-- /AUTO-GENERATED -->
+<!-- END AUTO-GENERATED -->
 
 ## Development
 
-<!-- AUTO-GENERATED: scripts from package.json -->
+<!-- AUTO-GENERATED from package.json scripts -->
 
 | Command                 | Description                            |
 | ----------------------- | -------------------------------------- |
 | `npm run dev`           | Start with hot reload (tsx watch)      |
 | `npm run build`         | Compile TypeScript to `dist/`          |
 | `npm start`             | Run compiled output                    |
-| `npm test`              | Run tests once                         |
+| `npm test`              | Run test suite                         |
 | `npm run test:watch`    | Run tests in watch mode                |
 | `npm run test:coverage` | Run tests with coverage report         |
-| `npm run lint`          | ESLint                                 |
-| `npm run lint:fix`      | ESLint with auto-fix                   |
-| `npm run format`        | Prettier write                         |
-| `npm run format:check`  | Prettier check (used in CI)            |
+| `npm run lint`          | ESLint check                           |
+| `npm run lint:fix`      | ESLint auto-fix                        |
+| `npm run format`        | Prettier format all files              |
+| `npm run format:check`  | Prettier format check (CI)             |
 | `npm run typecheck`     | TypeScript type check (no emit)        |
 | `npm run db:generate`   | Generate Drizzle migration from schema |
-| `npm run db:migrate`    | Apply migrations via drizzle-kit       |
+| `npm run db:migrate`    | Apply pending migrations               |
 
-<!-- /AUTO-GENERATED -->
+<!-- END AUTO-GENERATED -->
+
+```bash
+npm install
+npm run dev
+```
 
 ## Deployment
 

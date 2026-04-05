@@ -6,6 +6,8 @@ import type * as schema from "../db/schema.js";
 import { parseEmail } from "./parser.js";
 import { cleanEmailBody } from "./cleaner.js";
 import { renderEmail, type AttachmentLink } from "./renderer.js";
+import { isImageContentType } from "./imageTypes.js";
+import type { PhotoItem } from "../telegram/sender.js";
 import { isDuplicate } from "./dedup.js";
 import { findAliasByLocalPart } from "../db/repos/aliases.js";
 import { checkAllowRule } from "../db/repos/allowRules.js";
@@ -96,8 +98,10 @@ export async function processInboundEmail(
     parsed.textBody = cleanEmailBody(parsed.textBody);
   }
 
-  // 7. Save attachments and generate download links
+  // 7. Save attachments — images go to Telegram directly, others become download links
   const attachmentLinks: AttachmentLink[] = [];
+  const imageAttachments: PhotoItem[] = [];
+
   for (const att of parsed.attachments) {
     try {
       const fileId = randomUUID();
@@ -113,14 +117,17 @@ export async function processInboundEmail(
         storagePath,
       });
 
-      const { token, expiresAt } = generateDownloadToken(dbAtt.id, attachmentTtlHours);
-      await createAttachmentLink(db, dbAtt.id, token, expiresAt);
-
-      attachmentLinks.push({
-        filename: att.filename,
-        sizeBytes: att.sizeBytes,
-        url: `${publicBaseUrl}/dl/${token}`,
-      });
+      if (isImageContentType(att.contentType)) {
+        imageAttachments.push({ storagePath, filename: att.filename });
+      } else {
+        const { token, expiresAt } = generateDownloadToken(dbAtt.id, attachmentTtlHours);
+        await createAttachmentLink(db, dbAtt.id, token, expiresAt);
+        attachmentLinks.push({
+          filename: att.filename,
+          sizeBytes: att.sizeBytes,
+          url: `${publicBaseUrl}/dl/${token}`,
+        });
+      }
     } catch (err: unknown) {
       log.error({ err, filename: att.filename }, "failed to store attachment");
     }
@@ -132,7 +139,7 @@ export async function processInboundEmail(
 
   // 9. Send — parse_mode depends on render mode; plaintext uses none (avoids HTML metachar issues)
   if (api) {
-    const { sendTelegramMessage } = await import("../telegram/sender.js");
+    const { sendTelegramMessage, sendTelegramPhotos } = await import("../telegram/sender.js");
     const parseMode =
       renderMode === "html" ? "HTML" : renderMode === "markdown" ? "MarkdownV2" : undefined;
 
@@ -149,6 +156,16 @@ export async function processInboundEmail(
     if (!result.ok) {
       log.error({ deliveryLogId: deliveryLog.id, error: result.error }, "delivery failed");
       return { ok: false, reason: "send_failed" };
+    }
+
+    // Send image attachments as Telegram photos (replied to the text message)
+    if (imageAttachments.length > 0) {
+      await sendTelegramPhotos(api, {
+        chatId: alias.chatId,
+        threadId: alias.messageThreadId ?? null,
+        replyToMessageId: result.telegramMessageId,
+        photos: imageAttachments,
+      });
     }
   }
 

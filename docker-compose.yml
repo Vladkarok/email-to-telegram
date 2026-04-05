@@ -13,6 +13,14 @@ services:
       - internal
       - proxy
     mem_limit: 256m
+    pids_limit: 200
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
       interval: 30s
@@ -32,6 +40,9 @@ services:
     networks:
       - internal
     mem_limit: 256m
+    pids_limit: 200
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U emailtelegram"]
       interval: 10s

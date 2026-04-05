@@ -36,12 +36,16 @@ export function downloadRoute(app: FastifyInstance): void {
     }
 
     const file = await readAttachmentStream(link.attachment.storagePath);
-    const filename = link.attachment.originalFilename ?? "attachment";
+    // Strip characters that would break the quoted-string in Content-Disposition (RFC 6266)
+    const safeFilename = (link.attachment.originalFilename ?? "attachment").replace(
+      /["\\\r\n]/g,
+      "_",
+    );
     const contentType = link.attachment.contentType ?? "application/octet-stream";
 
     await reply
       .header("Content-Type", contentType)
-      .header("Content-Disposition", `attachment; filename="${filename}"`)
+      .header("Content-Disposition", `attachment; filename="${safeFilename}"`)
       .header("Content-Length", file.length)
       .send(file);
   });
