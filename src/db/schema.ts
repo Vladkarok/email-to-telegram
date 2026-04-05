@@ -151,7 +151,7 @@ export const attachmentLinks = pgTable(
     attachmentId: uuid("attachment_id")
       .notNull()
       .references(() => attachments.id, { onDelete: "cascade" }),
-    token: varchar("token", { length: 64 }).notNull(),
+    token: varchar("token", { length: 96 }).notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     downloadedAt: timestamp("downloaded_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
