@@ -6,6 +6,7 @@ import { createAlias } from "../../db/repos/aliases.js";
 import { findChatById } from "../../db/repos/chats.js";
 import { loadConfig } from "../../config.js";
 import { getPending, clearPending } from "../session.js";
+import { canManageChat } from "../authorization.js";
 
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 const generateSuffix = customAlphabet(ALPHABET, 6);
@@ -36,6 +37,11 @@ export async function newemailHandler(ctx: CommandContext<Context>): Promise<voi
       ctx.message?.message_thread_id != null ? BigInt(ctx.message.message_thread_id) : null;
     const chat = await findChatById(db, targetChatId);
     targetChatTitle = chat?.title;
+  }
+
+  if (!(await canManageChat(ctx.api, ctx.from.id, targetChatId))) {
+    await ctx.reply("⛔ Access denied.");
+    return;
   }
 
   await createEmailAlias(ctx, rawName, targetChatId, targetThreadId, targetChatTitle);

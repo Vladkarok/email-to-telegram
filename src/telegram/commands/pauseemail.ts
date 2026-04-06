@@ -1,6 +1,7 @@
 import type { CommandContext, Context } from "grammy";
 import { getDb } from "../../db/client.js";
 import { findAliasByIdAndChat, updateAliasStatus } from "../../db/repos/aliases.js";
+import { canManageAlias } from "../authorization.js";
 
 export async function pauseemailHandler(ctx: CommandContext<Context>): Promise<void> {
   const localPart = ctx.match.trim();
@@ -17,6 +18,11 @@ export async function pauseemailHandler(ctx: CommandContext<Context>): Promise<v
     await ctx.reply(`❌ Alias <code>${localPart}</code> not found in this chat.`, {
       parse_mode: "HTML",
     });
+    return;
+  }
+
+  if (!ctx.from || !(await canManageAlias(getDb(), ctx.api, ctx.from.id, alias.id))) {
+    await ctx.reply("⛔ Access denied.");
     return;
   }
 

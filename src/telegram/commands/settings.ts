@@ -2,6 +2,7 @@ import type { CommandContext, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { getDb } from "../../db/client.js";
 import { findAliasByIdAndChat, updateAliasRenderMode } from "../../db/repos/aliases.js";
+import { canManageAlias } from "../authorization.js";
 
 const RENDER_MODES = ["plaintext", "html", "markdown"] as const;
 
@@ -21,6 +22,11 @@ export async function settingsHandler(ctx: CommandContext<Context>): Promise<voi
     await ctx.reply(`❌ Alias <code>${localPart}</code> not found in this chat.`, {
       parse_mode: "HTML",
     });
+    return;
+  }
+
+  if (!ctx.from || !(await canManageAlias(getDb(), ctx.api, ctx.from.id, alias.id))) {
+    await ctx.reply("⛔ Access denied.");
     return;
   }
 
