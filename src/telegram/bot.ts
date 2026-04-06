@@ -1,4 +1,4 @@
-import { Bot, type Context } from "grammy";
+import { Bot, type Context, type CallbackQueryContext } from "grammy";
 import { getDb } from "../db/client.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { startHandler } from "./commands/start.js";
@@ -24,7 +24,10 @@ import { InlineKeyboard } from "grammy";
 
 // ── Authorization helpers ────────────────────────────────────────────────────
 
-async function assertChatAccess(ctx: Context, chatId: bigint): Promise<boolean> {
+async function assertChatAccess(
+  ctx: CallbackQueryContext<Context>,
+  chatId: bigint,
+): Promise<boolean> {
   if (!ctx.from) {
     await ctx.answerCallbackQuery("⛔ Access denied");
     return false;
@@ -34,7 +37,10 @@ async function assertChatAccess(ctx: Context, chatId: bigint): Promise<boolean> 
   return allowed;
 }
 
-async function assertAliasAccess(ctx: Context, aliasId: string): Promise<boolean> {
+async function assertAliasAccess(
+  ctx: CallbackQueryContext<Context>,
+  aliasId: string,
+): Promise<boolean> {
   if (!ctx.from) {
     await ctx.answerCallbackQuery("⛔ Access denied");
     return false;
@@ -272,8 +278,9 @@ export function createBot(token: string): Bot {
       await ctx.answerCallbackQuery("Rule not found.");
       return;
     }
-    if (!(await assertAliasAccess(ctx, rule.emailAddressId))) return;
+    // Answer Telegram promptly before the async access check (Telegram requires ≤10s)
     await ctx.answerCallbackQuery("Rule removed.");
+    if (!(await assertAliasAccess(ctx, rule.emailAddressId))) return;
     await removeAllowRule(getDb(), {
       emailAddressId: rule.emailAddressId,
       matchValue: rule.matchValue,
@@ -303,8 +310,9 @@ export function createBot(token: string): Bot {
   });
 
   // na:{aliasId} — cancel add allow rule
+  // No auth check: cancel only clears the caller's own pending state and
+  // re-renders the allow-rules menu (read-only). No alias mutation occurs.
   bot.callbackQuery(/^na:([0-9a-f-]{36})$/, async (ctx) => {
-    if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
     await ctx.answerCallbackQuery("Cancelled.");
     if (ctx.from) clearPending(ctx.from.id);
     await editAllowRulesMenu(ctx, getDb(), ctx.match[1]);
