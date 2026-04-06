@@ -20,7 +20,7 @@ export function verifyWorkerRequest(body: Buffer, signature: string, timestamp: 
   if (!secret) return false;
 
   const ts = parseInt(timestamp, 10);
-  if (isNaN(ts) || Date.now() - ts > MAX_AGE_MS) return false;
+  if (isNaN(ts) || Math.abs(Date.now() - ts) > MAX_AGE_MS) return false;
 
   const expected = createHmac("sha256", secret)
     .update(timestamp + ".")
