@@ -19,6 +19,7 @@ const envSchema = z.object({
   HMAC_SECRET: secretSchema,
   WORKER_SECRET: secretSchema,
   PUBLIC_BASE_URL: z.string().url(),
+  // Validated separately against HTTPS requirement in loadConfig().
   ATTACHMENT_DIR: z.string().min(1),
   RAW_EMAIL_DIR: z.string().min(1),
   SMTP_PORT: portSchema.optional(),
@@ -27,7 +28,26 @@ const envSchema = z.object({
   MAX_SIZE_BYTES: z.coerce.number().int().positive().default(10485760),
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "silent"]).default("info"),
   NODE_ENV: z.enum(["development", "production", "test"]).default("production"),
-  INITIAL_ALLOWED_USERS: z.string().optional(),
+  // Comma-separated Telegram user IDs; validated as integers here so bad values
+  // produce a clear Zod error at startup rather than a BigInt() runtime throw.
+  INITIAL_ALLOWED_USERS: z
+    .string()
+    .optional()
+    .transform((val) => {
+      if (!val) return [];
+      return val
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    })
+    .pipe(
+      z.array(
+        z
+          .string()
+          .regex(/^-?\d+$/, { message: "each entry must be an integer Telegram user ID" })
+          .transform((s) => BigInt(s)),
+      ),
+    ),
   /** Optional: URL to ping on each healthy cycle (e.g. https://hc-ping.com/<uuid>) */
   HEALTHCHECKS_URL: z.string().url().optional(),
   /** Optional: Telegram chat ID to send critical alerts to */
@@ -68,11 +88,12 @@ export function loadConfig(): AppConfig {
 
   const env = result.data;
 
-  const initialAllowedUsers =
-    env.INITIAL_ALLOWED_USERS?.split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .map((s) => BigInt(s)) ?? [];
+  // Require HTTPS for PUBLIC_BASE_URL in production to prevent download tokens
+  // being transmitted over an unencrypted connection.  URL schemes are
+  // case-insensitive, so compare the parsed protocol rather than the raw string.
+  if (env.NODE_ENV === "production" && new URL(env.PUBLIC_BASE_URL).protocol !== "https:") {
+    throw new Error("Invalid configuration:\n  PUBLIC_BASE_URL must use HTTPS in production");
+  }
 
   return {
     databaseUrl: env.DATABASE_URL,
@@ -91,7 +112,7 @@ export function loadConfig(): AppConfig {
     maxSizeBytes: env.MAX_SIZE_BYTES,
     logLevel: env.LOG_LEVEL,
     nodeEnv: env.NODE_ENV,
-    initialAllowedUsers,
+    initialAllowedUsers: env.INITIAL_ALLOWED_USERS,
     healthchecksUrl: env.HEALTHCHECKS_URL,
     alertChatId: env.ALERT_CHAT_ID,
     backupDir: env.BACKUP_DIR,

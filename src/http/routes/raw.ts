@@ -7,6 +7,7 @@ import { getApi } from "../../telegram/api.js";
 import { processInboundEmail } from "../../email/pipeline.js";
 import { writeRawEmail } from "../../storage/disk.js";
 import { getLogger } from "../../utils/logger.js";
+import { pipelineTracker } from "../../utils/inFlight.js";
 import type { AppConfig } from "../../config.js";
 
 function rawEmailPath(rawEmailDir: string): string {
@@ -16,13 +17,17 @@ function rawEmailPath(rawEmailDir: string): string {
 
 export function rawRoute(
   app: FastifyInstance,
-  config: Pick<AppConfig, "publicBaseUrl" | "attachmentDir" | "attachmentTtlHours" | "rawEmailDir">,
+  config: Pick<
+    AppConfig,
+    "publicBaseUrl" | "attachmentDir" | "attachmentTtlHours" | "rawEmailDir" | "maxSizeBytes"
+  >,
 ): void {
   app.post(
     "/inbound/raw",
     {
-      config: { rawBody: true },
-      bodyLimit: 26_214_400, // 25 MB
+      config: { rawBody: true, rateLimit: { max: 60, timeWindow: "1 minute" } },
+      // Per-route limit overrides the global bodyLimit set in createHttpServer()
+      bodyLimit: config.maxSizeBytes,
     },
     async (req, reply) => {
       const sig = req.headers["x-worker-sig"] as string | undefined;
@@ -65,17 +70,22 @@ export function rawRoute(
         getLogger().error({ err }, "failed to save raw email");
       });
 
-      processInboundEmail(getDb(), getApi(), {
-        rawEmail: body,
-        rawEmailPath: storedPath,
-        localPart,
-        envelopeFrom,
-        publicBaseUrl: config.publicBaseUrl,
-        attachmentDir: config.attachmentDir,
-        attachmentTtlHours: config.attachmentTtlHours,
-      }).catch((err: unknown) => {
-        getLogger().error({ err, localPart }, "pipeline error");
-      });
+      pipelineTracker
+        .run(() =>
+          processInboundEmail(getDb(), getApi(), {
+            rawEmail: body,
+            rawEmailPath: storedPath,
+            localPart,
+            envelopeFrom,
+            correlationId: req.id,
+            publicBaseUrl: config.publicBaseUrl,
+            attachmentDir: config.attachmentDir,
+            attachmentTtlHours: config.attachmentTtlHours,
+          }),
+        )
+        .catch((err: unknown) => {
+          getLogger().error({ err, localPart }, "pipeline error");
+        });
     },
   );
 }

@@ -13,7 +13,22 @@ export function getDb() {
 }
 
 export function initDb(databaseUrl: string) {
-  _pool = new pg.Pool({ connectionString: databaseUrl });
+  _pool = new pg.Pool({
+    connectionString: databaseUrl,
+    max: 20,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000,
+  });
+
+  // Surface pool errors so they appear in logs rather than crashing the process
+  // with an unhandled 'error' event on the EventEmitter.
+  _pool.on("error", (err) => {
+    // Imported lazily to avoid a circular dep at module load time
+    void import("../utils/logger.js").then(({ getLogger }) => {
+      getLogger().error({ err }, "pg pool error");
+    });
+  });
+
   _db = drizzle(_pool, { schema });
   return _db;
 }

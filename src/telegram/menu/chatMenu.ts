@@ -2,7 +2,7 @@ import { InlineKeyboard } from "grammy";
 import type { Context } from "grammy";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../../db/schema.js";
-import { findActiveChats } from "../../db/repos/chats.js";
+import { getAccessibleChats } from "../authorization.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -10,12 +10,18 @@ function chatIcon(type: string): string {
   return type === "private" ? "🏠" : "👥";
 }
 
-export async function sendChatSelectionMenu(ctx: Context, db: Db): Promise<void> {
-  const chats = await findActiveChats(db);
+export async function sendChatSelectionMenu(
+  ctx: Context,
+  db: Db,
+  { welcome = false }: { welcome?: boolean } = {},
+): Promise<void> {
+  if (!ctx.from) return;
+  const chats = await getAccessibleChats(db, ctx.api, ctx.from.id);
+  const prefix = welcome ? "👋 Welcome! All email aliases are managed here.\n\n" : "";
 
   if (chats.length === 0) {
     await ctx.reply(
-      "No chats registered yet.\n\nAdd me to a group to manage email aliases for it, or use me here in DM.",
+      `${prefix}No chats registered yet.\n\nAdd me to a group to manage email aliases for it, or use me here in DM.`,
     );
     return;
   }
@@ -25,11 +31,12 @@ export async function sendChatSelectionMenu(ctx: Context, db: Db): Promise<void>
     keyboard.text(`${chatIcon(chat.type)} ${chat.title}`, `cm:${chat.id}`).row();
   }
 
-  await ctx.reply("Select a chat to manage:", { reply_markup: keyboard });
+  await ctx.reply(`${prefix}Select a chat to manage:`, { reply_markup: keyboard });
 }
 
 export async function editChatSelectionMenu(ctx: Context, db: Db): Promise<void> {
-  const chats = await findActiveChats(db);
+  if (!ctx.from) return;
+  const chats = await getAccessibleChats(db, ctx.api, ctx.from.id);
 
   if (chats.length === 0) {
     await ctx.editMessageText(

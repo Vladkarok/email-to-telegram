@@ -1,8 +1,19 @@
+import { createReadStream } from "fs";
 import { readFile, writeFile, mkdir, unlink, rm, stat } from "fs/promises";
 import { dirname } from "path";
+import type { Readable } from "stream";
 
-export async function readAttachmentStream(storagePath: string): Promise<Buffer> {
-  return readFile(storagePath);
+/**
+ * Open a storage file for streaming download.
+ * Returns the size (for Content-Length) and a read stream.
+ * Streaming avoids buffering the entire attachment into memory.
+ */
+export async function openAttachmentStream(
+  storagePath: string,
+): Promise<{ stream: Readable; size: number }> {
+  const { size } = await stat(storagePath);
+  const stream = createReadStream(storagePath);
+  return { stream, size };
 }
 
 export async function writeAttachment(storagePath: string, data: Buffer): Promise<void> {

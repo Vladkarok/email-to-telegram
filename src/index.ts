@@ -1,4 +1,5 @@
 import { execFile } from "child_process";
+import { access, mkdir, constants } from "fs/promises";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { schedule } from "node-cron";
@@ -13,6 +14,8 @@ import { upsertAllowedUser } from "./db/repos/users.js";
 import { runRetryWorker } from "./email/retry.js";
 import { runCleanup } from "./storage/cleanup.js";
 import { runUptimeCheck } from "./utils/uptime.js";
+import { pipelineTracker } from "./utils/inFlight.js";
+import { startSessionSweep, destroySessionStore } from "./telegram/session.js";
 
 async function main() {
   // 1. Load and validate config (fail fast)
@@ -22,6 +25,20 @@ async function main() {
   const logger = createLogger(config.logLevel);
   setLogger(logger);
   logger.info({ ingestMode: config.ingestMode }, "Starting email-to-telegram");
+
+  // 2a. Ensure required directories exist and are writable (fail fast)
+  const requiredDirs = [config.attachmentDir, config.rawEmailDir];
+  if (config.backupDir) requiredDirs.push(config.backupDir);
+  await Promise.all(
+    requiredDirs.map(async (dir) => {
+      await mkdir(dir, { recursive: true });
+      // W_OK alone passes on mode-0200 dirs that lack the execute bit
+      // (required to create entries).  W_OK | X_OK catches both cases.
+      await access(dir, constants.W_OK | constants.X_OK).catch(() => {
+        throw new Error(`Directory is not writable or not traversable: ${dir}`);
+      });
+    }),
+  );
 
   // 3. Connect to DB and run migrations
   initDb(config.databaseUrl);
@@ -35,12 +52,17 @@ async function main() {
   }
 
   // 4. Start Telegram bot
+  startSessionSweep();
   const bot = createBot(config.telegramBotToken);
   setApi(bot.api);
+  let shuttingDown = false;
+  let pollingRestartTimer: ReturnType<typeof setTimeout> | null = null;
   const startPolling = () => {
+    if (shuttingDown) return; // guard against already-queued setTimeout callbacks
     bot.start({ drop_pending_updates: true }).catch((err: unknown) => {
+      if (shuttingDown) return;
       logger.error({ err }, "Bot polling error — restarting in 5s");
-      setTimeout(startPolling, 5000);
+      pollingRestartTimer = setTimeout(startPolling, 5000);
     });
   };
   startPolling();
@@ -49,7 +71,7 @@ async function main() {
   const app = await createHttpServer(config);
   await startHttpServer(app, config.httpPort);
 
-  // 6. Background cron jobs
+  // 6. Background cron jobs — keep references so shutdown can stop them
   const cleanupConfig = {
     attachmentDir: config.attachmentDir,
     rawEmailDir: config.rawEmailDir,
@@ -57,51 +79,80 @@ async function main() {
     rawEmailTtlHours: config.rawEmailTtlHours,
   };
 
-  // Retry failed deliveries every 5 minutes
-  schedule("*/5 * * * *", () => {
-    runRetryWorker(getDb(), getApi()).catch((err: unknown) => {
-      logger.error({ err }, "retry worker error");
-    });
-  });
+  const cronTasks = [
+    // Retry failed deliveries every 5 minutes
+    schedule("*/5 * * * *", () => {
+      runRetryWorker(getDb(), getApi()).catch((err: unknown) => {
+        logger.error({ err }, "retry worker error");
+      });
+    }),
 
-  // Clean up expired files and old DB rows every 15 minutes
-  schedule("*/15 * * * *", () => {
-    runCleanup(getDb(), cleanupConfig).catch((err: unknown) => {
-      logger.error({ err }, "cleanup worker error");
-    });
-  });
+    // Clean up expired files and old DB rows every 15 minutes
+    schedule("*/15 * * * *", () => {
+      runCleanup(getDb(), cleanupConfig).catch((err: unknown) => {
+        logger.error({ err }, "cleanup worker error");
+      });
+    }),
 
-  // Uptime check every 5 minutes
-  schedule("*/5 * * * *", () => {
-    runUptimeCheck(getDb(), getApi(), {
-      healthchecksUrl: config.healthchecksUrl,
-      alertChatId: config.alertChatId,
-    }).catch((err: unknown) => {
-      logger.error({ err }, "uptime check error");
-    });
-  });
+    // Uptime check every 5 minutes
+    schedule("*/5 * * * *", () => {
+      runUptimeCheck(getDb(), getApi(), {
+        healthchecksUrl: config.healthchecksUrl,
+        alertChatId: config.alertChatId,
+        probeDirs: [config.attachmentDir, config.rawEmailDir],
+      }).catch((err: unknown) => {
+        logger.error({ err }, "uptime check error");
+      });
+    }),
+  ];
 
   // Nightly DB backup at 02:00 UTC
   if (config.backupDir) {
     const scriptPath = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "backup.sh");
-    schedule("0 2 * * *", () => {
-      execFile(scriptPath, [config.backupDir!, config.databaseUrl], (err, stdout, stderr) => {
-        if (err) {
-          logger.error({ err, stderr }, "backup failed");
-        } else {
-          logger.info({ stdout: stdout.trim() }, "backup complete");
-        }
-      });
-    });
+    cronTasks.push(
+      schedule("0 2 * * *", () => {
+        execFile(
+          scriptPath,
+          [config.backupDir!],
+          { env: { ...process.env, DATABASE_URL: config.databaseUrl } },
+          (err, stdout, stderr) => {
+            if (err) {
+              logger.error({ err, stderr }, "backup failed");
+            } else {
+              logger.info({ stdout: stdout.trim() }, "backup complete");
+            }
+          },
+        );
+      }),
+    );
     logger.info({ backupDir: config.backupDir }, "Nightly backup scheduled at 02:00 UTC");
   }
 
   // 7. Graceful shutdown
   const shutdown = async (signal: string) => {
     logger.info({ signal }, "Shutting down...");
+    shuttingDown = true;
+    if (pollingRestartTimer) {
+      clearTimeout(pollingRestartTimer);
+      pollingRestartTimer = null;
+    }
     try {
-      await bot.stop();
-      await app.close();
+      // 7a. Stop cron schedulers so no new background work starts.
+      for (const task of cronTasks) void task.stop();
+
+      // 7b. Close HTTP and stop bot in parallel — both stop accepting new work.
+      // HTTP is closed first priority so that /inbound/raw stops triggering
+      // new pipelines immediately; bot.stop() runs concurrently.
+      await Promise.all([app.close(), bot.stop()]);
+
+      // 7d. Wait for any in-flight email pipelines to finish before closing the DB.
+      if (pipelineTracker.inFlight > 0) {
+        logger.info({ inFlight: pipelineTracker.inFlight }, "Draining in-flight pipelines...");
+        await pipelineTracker.drain(15_000).catch((err: unknown) => {
+          logger.warn({ err }, "Pipeline drain timed out; proceeding with shutdown");
+        });
+      }
+      destroySessionStore();
       await closeDb();
       logger.info("Shutdown complete.");
       process.exit(0);

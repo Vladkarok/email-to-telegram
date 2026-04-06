@@ -3,9 +3,11 @@ import type { CommandContext, Context } from "grammy";
 import { customAlphabet } from "nanoid";
 import { getDb } from "../../db/client.js";
 import { createAlias } from "../../db/repos/aliases.js";
+import type { EmailAddress } from "../../db/schema.js";
 import { findChatById } from "../../db/repos/chats.js";
 import { loadConfig } from "../../config.js";
 import { getPending, clearPending } from "../session.js";
+import { canManageChat } from "../authorization.js";
 
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 const generateSuffix = customAlphabet(ALPHABET, 6);
@@ -29,7 +31,6 @@ export async function newemailHandler(ctx: CommandContext<Context>): Promise<voi
   if (pending?.action === "newemail") {
     targetChatId = pending.chatId;
     targetChatTitle = pending.chatTitle;
-    clearPending(ctx.from.id);
   } else {
     targetChatId = BigInt(ctx.chat.id);
     targetThreadId =
@@ -37,6 +38,14 @@ export async function newemailHandler(ctx: CommandContext<Context>): Promise<voi
     const chat = await findChatById(db, targetChatId);
     targetChatTitle = chat?.title;
   }
+
+  if (!(await canManageChat(ctx.api, ctx.from.id, targetChatId, { fresh: true }))) {
+    clearPending(ctx.from.id);
+    await ctx.reply("⛔ Access denied.");
+    return;
+  }
+
+  clearPending(ctx.from.id);
 
   await createEmailAlias(ctx, rawName, targetChatId, targetThreadId, targetChatTitle);
 }
@@ -72,8 +81,9 @@ export async function createEmailAlias(
   const localPart = rawName.length > 0 ? `${prefix}-${generateSuffix()}` : prefix;
   const fullAddress = `${localPart}@${config.mailDomain}`;
 
+  let alias: EmailAddress;
   try {
-    await createAlias(getDb(), {
+    alias = await createAlias(getDb(), {
       localPart,
       fullAddress,
       chatId,
@@ -97,10 +107,8 @@ export async function createEmailAlias(
 
   const chatNote = chatTitle ? `\nDelivering to: <b>${escapeHtml(chatTitle)}</b>` : "";
 
-  const keyboard = new InlineKeyboard().text(
-    "🔐 Add Allow Rule",
-    `am:${localPart}`, // will be resolved via alias lookup — placeholder, handled in bot.ts
-  );
+  // Use alias.id (UUID) — the am: callback regex expects a UUID, not a localPart string
+  const keyboard = new InlineKeyboard().text("🔐 Add Allow Rule", `am:${alias.id}`);
 
   await ctx.reply(
     `✅ Email alias created!\n\n📧 <code>${fullAddress}</code>${chatNote}\n\n⚠️ Add at least one allow rule — until then all mail is rejected.\n\n<code>/allow add ${localPart} domain.com</code>`,

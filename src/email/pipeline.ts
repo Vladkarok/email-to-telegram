@@ -26,6 +26,8 @@ export interface PipelineInput {
   /** Path where the raw email was persisted on disk (for retry). */
   rawEmailPath?: string;
   localPart: string;
+  /** HTTP request ID for correlating pipeline log entries to an inbound request. */
+  correlationId?: string;
   /**
    * SMTP envelope sender (MAIL FROM) as received by the Cloudflare Worker via message.from.
    * This is the authoritative value for allow-rule enforcement — it cannot be spoofed by
@@ -50,7 +52,9 @@ export async function processInboundEmail(
   api: Api | null,
   input: PipelineInput,
 ): Promise<PipelineResult> {
-  const log = getLogger();
+  const log = input.correlationId
+    ? getLogger().child({ correlationId: input.correlationId })
+    : getLogger();
   const { rawEmail, localPart, publicBaseUrl, attachmentDir, attachmentTtlHours } = input;
 
   // 1. Resolve alias
@@ -83,7 +87,7 @@ export async function processInboundEmail(
     return { ok: false, reason: "duplicate" };
   }
 
-  // 5. Create delivery log
+  // 5. Create delivery log — null means a concurrent pipeline beat us (race dedup)
   const deliveryLog = await createDeliveryLog(db, {
     emailAddressId: alias.id,
     messageIdHeader: parsed.messageId,
@@ -96,6 +100,9 @@ export async function processInboundEmail(
     hasAttachments: parsed.attachments.length > 0,
     finalStatus: "received",
   });
+  if (!deliveryLog) {
+    return { ok: false, reason: "duplicate" };
+  }
 
   // 6. Clean body
   if (parsed.textBody) {

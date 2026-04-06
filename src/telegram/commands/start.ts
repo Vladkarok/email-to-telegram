@@ -21,6 +21,5 @@ export async function startHandler(ctx: Context): Promise<void> {
   const name = [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(" ");
   await upsertChat(getDb(), { id: BigInt(ctx.chat.id), title: `🏠 ${name} (DM)`, type: "private" });
 
-  await ctx.reply(`👋 Welcome! All email aliases are managed here.\n\nSelect a chat to manage:`);
-  await sendChatSelectionMenu(ctx, getDb());
+  await sendChatSelectionMenu(ctx, getDb(), { welcome: true });
 }

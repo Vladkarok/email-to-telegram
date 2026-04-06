@@ -1,3 +1,4 @@
+import { Readable } from "stream";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Fastify from "fastify";
 import { registerRoutes } from "../../../src/http/routes/index.js";
@@ -18,16 +19,22 @@ vi.mock("../../../src/db/repos/attachmentLinks.js", () => ({
   markLinkDownloaded: (...args: unknown[]): unknown => mockMarkDownloaded(...args),
 }));
 
-const mockReadAttachment = vi.fn();
+const mockOpenAttachment = vi.fn();
 vi.mock("../../../src/storage/disk.js", () => ({
-  readAttachmentStream: (...args: unknown[]): unknown => mockReadAttachment(...args),
+  openAttachmentStream: (...args: unknown[]): unknown => mockOpenAttachment(...args),
 }));
 
 const HMAC_SECRET = "test-secret-that-is-long-enough-abc";
 
 function buildApp() {
   const app = Fastify({ logger: false });
-  registerRoutes(app);
+  registerRoutes(app, {
+    publicBaseUrl: "https://example.com",
+    attachmentDir: "/tmp/attachments",
+    attachmentTtlHours: 336,
+    rawEmailDir: "/tmp/raw",
+    maxSizeBytes: 10_485_760,
+  });
   return app;
 }
 
@@ -39,7 +46,7 @@ describe("GET /dl/:token", () => {
     process.env["HMAC_SECRET"] = HMAC_SECRET;
     mockFindLink.mockReset();
     mockMarkDownloaded.mockReset();
-    mockReadAttachment.mockReset();
+    mockOpenAttachment.mockReset();
   });
 
   afterEach(() => {
@@ -110,7 +117,10 @@ describe("GET /dl/:token", () => {
       },
     });
     mockMarkDownloaded.mockResolvedValue(true); // atomic claim succeeded
-    mockReadAttachment.mockResolvedValue(fileContent);
+    mockOpenAttachment.mockResolvedValue({
+      stream: Readable.from(fileContent),
+      size: fileContent.length,
+    });
 
     const app = buildApp();
     const res = await app.inject({ method: "GET", url: `/dl/${token}` });

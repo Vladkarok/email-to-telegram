@@ -2,6 +2,7 @@ import type { CommandContext, Context } from "grammy";
 import { getDb } from "../../db/client.js";
 import { findAliasByLocalPart } from "../../db/repos/aliases.js";
 import { addAllowRule, removeAllowRule, listAllowRules } from "../../db/repos/allowRules.js";
+import { canManageAlias } from "../authorization.js";
 
 const USAGE = `Usage:
   /allow add <alias> <email_or_domain>
@@ -37,6 +38,11 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
 
   if (!alias) {
     await ctx.reply(`❌ Alias <code>${aliasName}</code> not found.`, { parse_mode: "HTML" });
+    return;
+  }
+
+  if (!ctx.from || !(await canManageAlias(db, ctx.api, ctx.from.id, alias.id, { fresh: true }))) {
+    await ctx.reply("⛔ Access denied.");
     return;
   }
 

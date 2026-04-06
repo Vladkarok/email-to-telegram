@@ -1,9 +1,19 @@
 import type { Context, NextFunction } from "grammy";
 import { getDb } from "../../db/client.js";
 import { upsertUser } from "../../db/repos/users.js";
+import { RateLimiter } from "../../utils/rateLimit.js";
+
+// 30 commands per minute per user; sweep idle keys every 60 s to prevent memory growth
+const limiter = new RateLimiter(30, 60_000);
+limiter.startSweep();
 
 export async function authMiddleware(ctx: Context, next: NextFunction): Promise<void> {
   if (!ctx.from) return;
+
+  if (!limiter.check(String(ctx.from.id))) {
+    await ctx.reply("⚠️ Too many requests. Please slow down.");
+    return;
+  }
 
   const db = getDb();
   const user = await upsertUser(db, {

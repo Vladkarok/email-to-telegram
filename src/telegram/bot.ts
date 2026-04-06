@@ -1,4 +1,4 @@
-import { Bot } from "grammy";
+import { Bot, type Context, type CallbackQueryContext } from "grammy";
 import { getDb } from "../db/client.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { startHandler } from "./commands/start.js";
@@ -18,8 +18,37 @@ import { findAliasById, updateAliasStatus, updateAliasRenderMode } from "../db/r
 import { findChatById } from "../db/repos/chats.js";
 import { addAllowRule, findAllowRuleById, removeAllowRule } from "../db/repos/allowRules.js";
 import { getPending, clearPending, setPending } from "./session.js";
+import { canManageChat, canManageAlias } from "./authorization.js";
 import { getLogger } from "../utils/logger.js";
 import { InlineKeyboard } from "grammy";
+
+// ── Authorization helpers ────────────────────────────────────────────────────
+
+async function assertChatAccess(
+  ctx: CallbackQueryContext<Context>,
+  chatId: bigint,
+): Promise<boolean> {
+  if (!ctx.from) {
+    await ctx.answerCallbackQuery("⛔ Access denied");
+    return false;
+  }
+  const allowed = await canManageChat(ctx.api, ctx.from.id, chatId);
+  if (!allowed) await ctx.answerCallbackQuery("⛔ Access denied");
+  return allowed;
+}
+
+async function assertAliasAccess(
+  ctx: CallbackQueryContext<Context>,
+  aliasId: string,
+): Promise<boolean> {
+  if (!ctx.from) {
+    await ctx.answerCallbackQuery("⛔ Access denied");
+    return false;
+  }
+  const allowed = await canManageAlias(getDb(), ctx.api, ctx.from.id, aliasId);
+  if (!allowed) await ctx.answerCallbackQuery("⛔ Access denied");
+  return allowed;
+}
 
 export function createBot(token: string): Bot {
   const bot = new Bot(token);
@@ -54,12 +83,28 @@ export function createBot(token: string): Bot {
     if (!pending) return next();
 
     if (pending.action === "newemail") {
+      // Re-verify chat access at write time with a live check — this is a
+      // text message handler, not a callback query, so no 10s deadline applies.
+      if (!(await canManageChat(ctx.api, ctx.from.id, pending.chatId, { fresh: true }))) {
+        clearPending(ctx.from.id);
+        await ctx.reply("⛔ Access denied.");
+        return;
+      }
       clearPending(ctx.from.id);
       await createEmailAlias(ctx, text.trim(), pending.chatId, null, pending.chatTitle);
       return;
     }
 
     if (pending.action === "allowrule") {
+      // Re-verify alias access at write time with a live check — text message
+      // handler, not a callback query, so no 10s deadline applies.
+      if (
+        !(await canManageAlias(getDb(), ctx.api, ctx.from.id, pending.aliasId, { fresh: true }))
+      ) {
+        clearPending(ctx.from.id);
+        await ctx.reply("⛔ Access denied.");
+        return;
+      }
       clearPending(ctx.from.id);
       const value = text.trim().toLowerCase();
       if (!isValidAllowValue(value)) {
@@ -104,8 +149,9 @@ export function createBot(token: string): Bot {
 
   // cm:{chatId} — chat management menu
   bot.callbackQuery(/^cm:(-?\d+)$/, async (ctx) => {
-    await ctx.answerCallbackQuery();
     const chatId = BigInt(ctx.match[1]);
+    if (!(await assertChatAccess(ctx, chatId))) return;
+    await ctx.answerCallbackQuery();
     const chat = await findChatById(getDb(), chatId);
     if (!chat) {
       await ctx.answerCallbackQuery("Chat not found.");
@@ -116,8 +162,9 @@ export function createBot(token: string): Bot {
 
   // cl:{chatId} — alias list for a chat
   bot.callbackQuery(/^cl:(-?\d+)$/, async (ctx) => {
-    await ctx.answerCallbackQuery();
     const chatId = BigInt(ctx.match[1]);
+    if (!(await assertChatAccess(ctx, chatId))) return;
+    await ctx.answerCallbackQuery();
     const chat = await findChatById(getDb(), chatId);
     const title = chat?.title ?? `Chat ${ctx.match[1]}`;
     await editAliasListMenu(ctx, getDb(), chatId, title);
@@ -125,9 +172,10 @@ export function createBot(token: string): Bot {
 
   // cn:{chatId} — start new email flow
   bot.callbackQuery(/^cn:(-?\d+)$/, async (ctx) => {
+    const chatId = BigInt(ctx.match[1]);
+    if (!(await assertChatAccess(ctx, chatId))) return;
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;
-    const chatId = BigInt(ctx.match[1]);
     const chat = await findChatById(getDb(), chatId);
     const chatTitle = chat?.title ?? `Chat ${ctx.match[1]}`;
 
@@ -146,10 +194,11 @@ export function createBot(token: string): Bot {
 
   // ns:{chatId} — skip (random alias)
   bot.callbackQuery(/^ns:(-?\d+)$/, async (ctx) => {
+    const chatId = BigInt(ctx.match[1]);
+    if (!(await assertChatAccess(ctx, chatId))) return;
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;
     clearPending(ctx.from.id);
-    const chatId = BigInt(ctx.match[1]);
     const chat = await findChatById(getDb(), chatId);
     const chatTitle = chat?.title;
     await ctx.deleteMessage().catch(() => {});
@@ -165,12 +214,14 @@ export function createBot(token: string): Bot {
 
   // am:{aliasId} — alias detail menu
   bot.callbackQuery(/^am:([0-9a-f-]{36})$/, async (ctx) => {
+    if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
     await ctx.answerCallbackQuery();
     await editAliasDetailMenu(ctx, getDb(), ctx.match[1]);
   });
 
   // ap:{aliasId} — pause alias
   bot.callbackQuery(/^ap:([0-9a-f-]{36})$/, async (ctx) => {
+    if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
     await ctx.answerCallbackQuery("Paused.");
     await updateAliasStatus(getDb(), ctx.match[1], "paused");
     await editAliasDetailMenu(ctx, getDb(), ctx.match[1]);
@@ -178,6 +229,7 @@ export function createBot(token: string): Bot {
 
   // ar:{aliasId} — resume alias
   bot.callbackQuery(/^ar:([0-9a-f-]{36})$/, async (ctx) => {
+    if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
     await ctx.answerCallbackQuery("Resumed.");
     await updateAliasStatus(getDb(), ctx.match[1], "active");
     await editAliasDetailMenu(ctx, getDb(), ctx.match[1]);
@@ -185,6 +237,7 @@ export function createBot(token: string): Bot {
 
   // ad:{aliasId} — delete alias
   bot.callbackQuery(/^ad:([0-9a-f-]{36})$/, async (ctx) => {
+    if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
     await ctx.answerCallbackQuery("Deleted.");
     const alias = await findAliasById(getDb(), ctx.match[1]);
     if (alias) {
@@ -197,6 +250,7 @@ export function createBot(token: string): Bot {
 
   // ac:{aliasId} — render mode settings
   bot.callbackQuery(/^ac:([0-9a-f-]{36})$/, async (ctx) => {
+    if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
     await ctx.answerCallbackQuery();
     const alias = await findAliasById(getDb(), ctx.match[1]);
     if (!alias) return;
@@ -215,6 +269,7 @@ export function createBot(token: string): Bot {
   // set_mode:{aliasId}:{mode} — apply render mode
   bot.callbackQuery(/^set_mode:(.+):(.+)$/, async (ctx) => {
     const [, aliasId, mode] = ctx.match;
+    if (!(await assertAliasAccess(ctx, aliasId))) return;
     const validModes = ["plaintext", "html", "markdown"];
     if (!validModes.includes(mode)) {
       await ctx.answerCallbackQuery("Invalid mode");
@@ -227,25 +282,31 @@ export function createBot(token: string): Bot {
 
   // al:{aliasId} — allow rules menu
   bot.callbackQuery(/^al:([0-9a-f-]{36})$/, async (ctx) => {
+    if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
     await ctx.answerCallbackQuery();
     await editAllowRulesMenu(ctx, getDb(), ctx.match[1]);
   });
 
   // dr:{ruleId} — delete allow rule
   bot.callbackQuery(/^dr:([0-9a-f-]{36})$/, async (ctx) => {
-    await ctx.answerCallbackQuery("Rule removed.");
     const rule = await findAllowRuleById(getDb(), ctx.match[1]);
-    if (rule) {
-      await removeAllowRule(getDb(), {
-        emailAddressId: rule.emailAddressId,
-        matchValue: rule.matchValue,
-      });
-      await editAllowRulesMenu(ctx, getDb(), rule.emailAddressId);
+    if (!rule) {
+      await ctx.answerCallbackQuery("Rule not found.");
+      return;
     }
+    // Answer Telegram promptly before the async access check (Telegram requires ≤10s)
+    await ctx.answerCallbackQuery("Rule removed.");
+    if (!(await assertAliasAccess(ctx, rule.emailAddressId))) return;
+    await removeAllowRule(getDb(), {
+      emailAddressId: rule.emailAddressId,
+      matchValue: rule.matchValue,
+    });
+    await editAllowRulesMenu(ctx, getDb(), rule.emailAddressId);
   });
 
   // aa:{aliasId} — start add allow rule flow
   bot.callbackQuery(/^aa:([0-9a-f-]{36})$/, async (ctx) => {
+    if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;
     const alias = await findAliasById(getDb(), ctx.match[1]);
@@ -265,6 +326,8 @@ export function createBot(token: string): Bot {
   });
 
   // na:{aliasId} — cancel add allow rule
+  // No auth check: cancel only clears the caller's own pending state and
+  // re-renders the allow-rules menu (read-only). No alias mutation occurs.
   bot.callbackQuery(/^na:([0-9a-f-]{36})$/, async (ctx) => {
     await ctx.answerCallbackQuery("Cancelled.");
     if (ctx.from) clearPending(ctx.from.id);

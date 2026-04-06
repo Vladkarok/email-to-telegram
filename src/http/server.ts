@@ -1,4 +1,7 @@
+import { randomUUID } from "crypto";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
+import helmet from "@fastify/helmet";
+import rateLimit from "@fastify/rate-limit";
 import { registerRoutes } from "./routes/index.js";
 import { getLogger } from "../utils/logger.js";
 import type { AppConfig } from "../config.js";
@@ -16,10 +19,21 @@ function setRawBody(req: FastifyRequest, body: Buffer): void {
   req.rawBody = body;
 }
 
-export async function createHttpServer(_config: AppConfig): Promise<FastifyInstance> {
+export async function createHttpServer(config: AppConfig): Promise<FastifyInstance> {
   const app = Fastify({
     logger: false,
-    bodyLimit: 26_214_400, // 25 MB global limit
+    bodyLimit: config.maxSizeBytes,
+    // Assign each request a UUID so it can be threaded through async pipeline logs.
+    genReqId: () => randomUUID(),
+    // The service runs behind a Caddy reverse proxy. Without trustProxy, @fastify/rate-limit
+    // keys all requests on Caddy's internal bridge IP instead of the real client address,
+    // which causes everyone to share the same rate-limit bucket.
+    trustProxy: true,
+  });
+
+  await app.register(helmet);
+  await app.register(rateLimit, {
+    global: false, // per-route limits only; apply explicitly on each route
   });
 
   // Capture raw bytes for both content types used by the Cloudflare Worker.
@@ -44,7 +58,7 @@ export async function createHttpServer(_config: AppConfig): Promise<FastifyInsta
     },
   );
 
-  registerRoutes(app, _config);
+  registerRoutes(app, config);
 
   return app;
 }

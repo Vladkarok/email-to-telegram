@@ -98,6 +98,14 @@ export const deliveryLogs = pgTable(
     index("idx_log_alias_time").on(t.emailAddressId, t.receivedAt),
     index("idx_log_message_id").on(t.messageIdHeader),
     index("idx_log_body_hash").on(t.bodySha256),
+    // Unique partial indexes enforce dedup at the DB level, closing the
+    // SELECT-then-INSERT race when two requests arrive simultaneously.
+    uniqueIndex("idx_log_dedup_msgid")
+      .on(t.emailAddressId, t.messageIdHeader)
+      .where(sql`message_id_header IS NOT NULL`),
+    uniqueIndex("idx_log_dedup_bodyhash")
+      .on(t.emailAddressId, t.bodySha256)
+      .where(sql`body_sha256 IS NOT NULL`),
   ],
 );
 

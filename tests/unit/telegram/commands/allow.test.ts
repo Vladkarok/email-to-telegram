@@ -18,6 +18,11 @@ vi.mock("../../../../src/db/repos/allowRules.js", () => ({
   listAllowRules: (...args: unknown[]): unknown => mockListAllowRules(...args),
 }));
 
+vi.mock("../../../../src/telegram/authorization.js", () => ({
+  canManageAlias: vi.fn().mockResolvedValue(true),
+  canManageChat: vi.fn().mockResolvedValue(true),
+}));
+
 const { allowHandler } = await import("../../../../src/telegram/commands/allow.js");
 
 const ALIAS = {
