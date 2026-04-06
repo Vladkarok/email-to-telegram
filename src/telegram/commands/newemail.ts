@@ -39,7 +39,7 @@ export async function newemailHandler(ctx: CommandContext<Context>): Promise<voi
     targetChatTitle = chat?.title;
   }
 
-  if (!(await canManageChat(ctx.api, ctx.from.id, targetChatId))) {
+  if (!(await canManageChat(ctx.api, ctx.from.id, targetChatId, { fresh: true }))) {
     clearPending(ctx.from.id);
     await ctx.reply("⛔ Access denied.");
     return;

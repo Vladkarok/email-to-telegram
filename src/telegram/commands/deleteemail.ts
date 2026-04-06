@@ -21,7 +21,10 @@ export async function deleteemailHandler(ctx: CommandContext<Context>): Promise<
     return;
   }
 
-  if (!ctx.from || !(await canManageAlias(getDb(), ctx.api, ctx.from.id, alias.id))) {
+  if (
+    !ctx.from ||
+    !(await canManageAlias(getDb(), ctx.api, ctx.from.id, alias.id, { fresh: true }))
+  ) {
     await ctx.reply("⛔ Access denied.");
     return;
   }

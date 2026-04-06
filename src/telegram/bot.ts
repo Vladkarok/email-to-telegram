@@ -83,9 +83,9 @@ export function createBot(token: string): Bot {
     if (!pending) return next();
 
     if (pending.action === "newemail") {
-      // Re-verify chat access at write time — membership may have changed
-      // since the cn: callback that initiated this flow.
-      if (!(await canManageChat(ctx.api, ctx.from.id, pending.chatId))) {
+      // Re-verify chat access at write time with a live check — this is a
+      // text message handler, not a callback query, so no 10s deadline applies.
+      if (!(await canManageChat(ctx.api, ctx.from.id, pending.chatId, { fresh: true }))) {
         clearPending(ctx.from.id);
         await ctx.reply("⛔ Access denied.");
         return;
@@ -96,9 +96,11 @@ export function createBot(token: string): Bot {
     }
 
     if (pending.action === "allowrule") {
-      // Re-verify alias access at write time — access may have changed
-      // since the aa: callback that initiated this flow.
-      if (!(await canManageAlias(getDb(), ctx.api, ctx.from.id, pending.aliasId))) {
+      // Re-verify alias access at write time with a live check — text message
+      // handler, not a callback query, so no 10s deadline applies.
+      if (
+        !(await canManageAlias(getDb(), ctx.api, ctx.from.id, pending.aliasId, { fresh: true }))
+      ) {
         clearPending(ctx.from.id);
         await ctx.reply("⛔ Access denied.");
         return;

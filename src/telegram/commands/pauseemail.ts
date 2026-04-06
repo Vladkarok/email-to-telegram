@@ -21,7 +21,10 @@ export async function pauseemailHandler(ctx: CommandContext<Context>): Promise<v
     return;
   }
 
-  if (!ctx.from || !(await canManageAlias(getDb(), ctx.api, ctx.from.id, alias.id))) {
+  if (
+    !ctx.from ||
+    !(await canManageAlias(getDb(), ctx.api, ctx.from.id, alias.id, { fresh: true }))
+  ) {
     await ctx.reply("⛔ Access denied.");
     return;
   }

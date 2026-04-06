@@ -41,7 +41,7 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
     return;
   }
 
-  if (!ctx.from || !(await canManageAlias(db, ctx.api, ctx.from.id, alias.id))) {
+  if (!ctx.from || !(await canManageAlias(db, ctx.api, ctx.from.id, alias.id, { fresh: true }))) {
     await ctx.reply("⛔ Access denied.");
     return;
   }

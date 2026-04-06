@@ -86,19 +86,22 @@ export async function getAccessibleChats(db: Db, api: Api, userId: number): Prom
  * Rules (OR logic):
  * 1. The user created the alias (`alias.createdBy === BigInt(userId)`).
  * 2. The user can manage the alias's target chat (`canManageChat()`).
+ *
+ * Pass `fresh: true` on mutation paths (text commands, message handlers) to
+ * bypass the 5-min cache and get a live membership check. Callback query
+ * handlers must NOT use `fresh: true` because the live getChatMember() call
+ * may exceed Telegram's 10s callback-answer deadline.
  */
 export async function canManageAlias(
   db: Db,
   api: Api,
   userId: number,
   aliasId: string,
+  { fresh = false }: { fresh?: boolean } = {},
 ): Promise<boolean> {
   const alias = await findAliasById(db, aliasId);
   // Reject missing or soft-deleted aliases
   if (!alias || alias.status === "deleted") return false;
   if (alias.createdBy === BigInt(userId)) return true;
-  // NOTE: uses the 5-min cache. Prompt revocation on group-membership changes
-  // requires restructuring callback handlers to answer before the live check —
-  // see devdocs/encryption-todo.md for the future work item.
-  return canManageChat(api, userId, alias.chatId);
+  return canManageChat(api, userId, alias.chatId, { fresh });
 }
