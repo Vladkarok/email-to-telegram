@@ -4,6 +4,19 @@ import { findAttachmentLinkByToken, markLinkDownloaded } from "../../db/repos/at
 import { readAttachmentStream } from "../../storage/disk.js";
 import { verifyDownloadToken } from "../../utils/tokens.js";
 
+// SVG excluded: can execute JS when opened directly as a document despite attachment disposition.
+const SAFE_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "image/bmp",
+  "image/tiff",
+  "application/pdf",
+  "text/plain; charset=utf-8",
+  "text/csv; charset=utf-8",
+]);
+
 export function downloadRoute(app: FastifyInstance): void {
   app.get(
     "/dl/:token",
@@ -45,20 +58,12 @@ export function downloadRoute(app: FastifyInstance): void {
         "_",
       );
 
-      // Allow only safe, non-executable MIME types. Everything else is served as
-      // application/octet-stream to prevent browsers from executing content inline.
-      const SAFE_MIME_TYPES = new Set([
-        "image/jpeg",
-        "image/png",
-        "image/gif",
-        "image/webp",
-        "image/svg+xml",
-        "application/pdf",
-        "text/plain",
-        "text/csv",
-      ]);
-      const rawMime = link.attachment.contentType ?? "";
-      const contentType = SAFE_MIME_TYPES.has(rawMime) ? rawMime : "application/octet-stream";
+      // Map plain text/* types to their charset-qualified equivalents before lookup.
+      // Everything not in SAFE_MIME_TYPES is served as application/octet-stream.
+      const rawMime = (link.attachment.contentType ?? "").toLowerCase().trim();
+      const normalised =
+        rawMime === "text/plain" || rawMime === "text/csv" ? `${rawMime}; charset=utf-8` : rawMime;
+      const contentType = SAFE_MIME_TYPES.has(normalised) ? normalised : "application/octet-stream";
 
       await reply
         .header("Content-Type", contentType)

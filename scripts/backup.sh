@@ -15,28 +15,16 @@ BACKUP_DIR="${1:?backup_dir required}"
 DATABASE_URL="${DATABASE_URL:?DATABASE_URL env var required}"
 KEEP_DAYS="${2:-7}"
 
-# Parse host/port/user/dbname from DATABASE_URL
-# Format: postgres://user:pass@host:port/dbname
-PGUSER=$(echo "$DATABASE_URL" | sed -E 's|postgres://([^:]+):.*|\1|')
-PGPASSWORD=$(echo "$DATABASE_URL" | sed -E 's|postgres://[^:]+:([^@]+)@.*|\1|')
-PGHOST=$(echo "$DATABASE_URL" | sed -E 's|.*@([^:/]+).*|\1|')
-PGPORT=$(echo "$DATABASE_URL" | sed -E 's|.*:([0-9]+)/.*|\1|')
-PGDATABASE=$(echo "$DATABASE_URL" | sed -E 's|.*/([^?]+).*|\1|')
-
-export PGPASSWORD
-
 DATE=$(date -u +%Y-%m-%d)
 BACKUP_FILE="${BACKUP_DIR}/backup-${DATE}.sql.gz"
 
 mkdir -p "$BACKUP_DIR"
 
+# Pass the full connection string via --dbname to avoid fragile sed URL parsing
+# and to correctly handle special characters in passwords.
 pg_dump \
-  --host="$PGHOST" \
-  --port="$PGPORT" \
-  --username="$PGUSER" \
-  --no-password \
+  --dbname="$DATABASE_URL" \
   --format=plain \
-  "$PGDATABASE" \
   | gzip -9 > "$BACKUP_FILE"
 
 echo "Backup written: $BACKUP_FILE ($(du -sh "$BACKUP_FILE" | cut -f1))"

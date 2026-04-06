@@ -19,7 +19,9 @@ export function verifyWorkerRequest(body: Buffer, signature: string, timestamp: 
   const secret = process.env["WORKER_SECRET"];
   if (!secret) return false;
 
-  const ts = parseInt(timestamp, 10);
+  // Number() rejects strings with non-numeric chars (e.g. "1234abc" → NaN)
+  // whereas parseInt would silently accept them.
+  const ts = Number(timestamp);
   if (isNaN(ts) || Math.abs(Date.now() - ts) > MAX_AGE_MS) return false;
 
   const expected = createHmac("sha256", secret)
