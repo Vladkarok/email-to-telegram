@@ -2,7 +2,7 @@ import { InlineKeyboard } from "grammy";
 import type { Context } from "grammy";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../../db/schema.js";
-import { findActiveChats } from "../../db/repos/chats.js";
+import { getAccessibleChats } from "../authorization.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -11,7 +11,8 @@ function chatIcon(type: string): string {
 }
 
 export async function sendChatSelectionMenu(ctx: Context, db: Db): Promise<void> {
-  const chats = await findActiveChats(db);
+  if (!ctx.from) return;
+  const chats = await getAccessibleChats(db, ctx.api, ctx.from.id);
 
   if (chats.length === 0) {
     await ctx.reply(
@@ -29,7 +30,8 @@ export async function sendChatSelectionMenu(ctx: Context, db: Db): Promise<void>
 }
 
 export async function editChatSelectionMenu(ctx: Context, db: Db): Promise<void> {
-  const chats = await findActiveChats(db);
+  if (!ctx.from) return;
+  const chats = await getAccessibleChats(db, ctx.api, ctx.from.id);
 
   if (chats.length === 0) {
     await ctx.editMessageText(
