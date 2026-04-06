@@ -8,6 +8,7 @@ import type { Chat } from "../db/schema.js";
 type Db = NodePgDatabase<typeof schema>;
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const CACHE_MAX_SIZE = 10_000; // cap to prevent unbounded growth
 
 interface CacheEntry {
   result: boolean;
@@ -36,13 +37,21 @@ export async function canManageChat(api: Api, userId: number, chatId: bigint): P
 
   let result: boolean;
   try {
-    const member = await api.getChatMember(Number(chatId), userId);
+    // Use string form to avoid Number() truncation for large Telegram IDs
+    const member = await api.getChatMember(chatId.toString(), userId);
     result = ["creator", "administrator", "member"].includes(member.status);
   } catch {
     // Cannot verify membership (bot not in chat, chat not found, etc.) — deny
     result = false;
   }
 
+  // Evict stale entry and enforce max size before inserting
+  chatMemberCache.delete(cacheKey);
+  if (chatMemberCache.size >= CACHE_MAX_SIZE) {
+    // Evict the oldest (first inserted) entry
+    const firstKey = chatMemberCache.keys().next().value;
+    if (firstKey !== undefined) chatMemberCache.delete(firstKey);
+  }
   chatMemberCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
   return result;
 }
@@ -76,7 +85,8 @@ export async function canManageAlias(
   aliasId: string,
 ): Promise<boolean> {
   const alias = await findAliasById(db, aliasId);
-  if (!alias) return false;
+  // Reject missing or soft-deleted aliases
+  if (!alias || alias.status === "deleted") return false;
   if (alias.createdBy === BigInt(userId)) return true;
   return canManageChat(api, userId, alias.chatId);
 }
