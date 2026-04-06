@@ -13,6 +13,7 @@ import { upsertAllowedUser } from "./db/repos/users.js";
 import { runRetryWorker } from "./email/retry.js";
 import { runCleanup } from "./storage/cleanup.js";
 import { runUptimeCheck } from "./utils/uptime.js";
+import { pipelineTracker } from "./utils/inFlight.js";
 
 async function main() {
   // 1. Load and validate config (fail fast)
@@ -105,8 +106,16 @@ async function main() {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, "Shutting down...");
     try {
-      await bot.stop();
+      // Stop accepting new requests before draining so no new pipelines start.
       await app.close();
+      await bot.stop();
+      // Wait for any in-flight email pipelines to finish before closing the DB.
+      if (pipelineTracker.inFlight > 0) {
+        logger.info({ inFlight: pipelineTracker.inFlight }, "Draining in-flight pipelines...");
+        await pipelineTracker.drain(15_000).catch((err: unknown) => {
+          logger.warn({ err }, "Pipeline drain timed out; proceeding with shutdown");
+        });
+      }
       await closeDb();
       logger.info("Shutdown complete.");
       process.exit(0);
