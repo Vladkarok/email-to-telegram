@@ -48,7 +48,14 @@ export function destroySessionStore(): void {
 }
 
 function get(userId: number): UserSession {
-  return sessions.get(userId) ?? { lastTouched: Date.now() };
+  const session = sessions.get(userId);
+  if (!session) return { lastTouched: Date.now() };
+  // Evict eagerly on read so TTL is enforced immediately, not just on sweep.
+  if (Date.now() - session.lastTouched > SESSION_TTL_MS) {
+    sessions.delete(userId);
+    return { lastTouched: Date.now() };
+  }
+  return session;
 }
 
 function touch(userId: number, session: UserSession): UserSession {

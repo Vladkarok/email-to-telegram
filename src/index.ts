@@ -41,11 +41,13 @@ async function main() {
   const bot = createBot(config.telegramBotToken);
   setApi(bot.api);
   let shuttingDown = false;
+  let pollingRestartTimer: ReturnType<typeof setTimeout> | null = null;
   const startPolling = () => {
+    if (shuttingDown) return; // guard against already-queued setTimeout callbacks
     bot.start({ drop_pending_updates: true }).catch((err: unknown) => {
-      if (shuttingDown) return; // don't restart during shutdown
+      if (shuttingDown) return;
       logger.error({ err }, "Bot polling error — restarting in 5s");
-      setTimeout(startPolling, 5000);
+      pollingRestartTimer = setTimeout(startPolling, 5000);
     });
   };
   startPolling();
@@ -114,15 +116,18 @@ async function main() {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, "Shutting down...");
     shuttingDown = true;
+    if (pollingRestartTimer) {
+      clearTimeout(pollingRestartTimer);
+      pollingRestartTimer = null;
+    }
     try {
       // 7a. Stop cron schedulers so no new background work starts.
       for (const task of cronTasks) void task.stop();
 
-      // 7b. Stop bot polling so no new Telegram handlers start.
-      await bot.stop();
-
-      // 7c. Stop accepting new HTTP requests.
-      await app.close();
+      // 7b. Close HTTP and stop bot in parallel — both stop accepting new work.
+      // HTTP is closed first priority so that /inbound/raw stops triggering
+      // new pipelines immediately; bot.stop() runs concurrently.
+      await Promise.all([app.close(), bot.stop()]);
 
       // 7d. Wait for any in-flight email pipelines to finish before closing the DB.
       if (pipelineTracker.inFlight > 0) {
