@@ -28,6 +28,11 @@ vi.mock("../../../../src/config.js", () => ({
   loadConfig: () => ({ mailDomain: "tgmail.example.com" }),
 }));
 
+vi.mock("../../../../src/telegram/authorization.js", () => ({
+  canManageAlias: vi.fn().mockResolvedValue(true),
+  canManageChat: vi.fn().mockResolvedValue(true),
+}));
+
 const { newemailHandler } = await import("../../../../src/telegram/commands/newemail.js");
 
 describe("/newemail command", () => {

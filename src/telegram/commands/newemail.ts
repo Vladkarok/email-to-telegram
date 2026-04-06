@@ -30,7 +30,6 @@ export async function newemailHandler(ctx: CommandContext<Context>): Promise<voi
   if (pending?.action === "newemail") {
     targetChatId = pending.chatId;
     targetChatTitle = pending.chatTitle;
-    clearPending(ctx.from.id);
   } else {
     targetChatId = BigInt(ctx.chat.id);
     targetThreadId =
@@ -40,9 +39,12 @@ export async function newemailHandler(ctx: CommandContext<Context>): Promise<voi
   }
 
   if (!(await canManageChat(ctx.api, ctx.from.id, targetChatId))) {
+    clearPending(ctx.from.id);
     await ctx.reply("⛔ Access denied.");
     return;
   }
+
+  clearPending(ctx.from.id);
 
   await createEmailAlias(ctx, rawName, targetChatId, targetThreadId, targetChatTitle);
 }

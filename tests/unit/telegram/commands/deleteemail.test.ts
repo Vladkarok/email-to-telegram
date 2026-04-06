@@ -11,6 +11,11 @@ vi.mock("../../../../src/db/repos/aliases.js", () => ({
   updateAliasStatus: (...args: unknown[]): unknown => mockUpdateStatus(...args),
 }));
 
+vi.mock("../../../../src/telegram/authorization.js", () => ({
+  canManageAlias: vi.fn().mockResolvedValue(true),
+  canManageChat: vi.fn().mockResolvedValue(true),
+}));
+
 describe("/deleteemail command", () => {
   it("shows usage when no argument given", async () => {
     const ctx = createMockCtx({ commandMatch: "" });

@@ -83,12 +83,26 @@ export function createBot(token: string): Bot {
     if (!pending) return next();
 
     if (pending.action === "newemail") {
+      // Re-verify chat access at write time — membership may have changed
+      // since the cn: callback that initiated this flow.
+      if (!(await canManageChat(ctx.api, ctx.from.id, pending.chatId))) {
+        clearPending(ctx.from.id);
+        await ctx.reply("⛔ Access denied.");
+        return;
+      }
       clearPending(ctx.from.id);
       await createEmailAlias(ctx, text.trim(), pending.chatId, null, pending.chatTitle);
       return;
     }
 
     if (pending.action === "allowrule") {
+      // Re-verify alias access at write time — access may have changed
+      // since the aa: callback that initiated this flow.
+      if (!(await canManageAlias(getDb(), ctx.api, ctx.from.id, pending.aliasId))) {
+        clearPending(ctx.from.id);
+        await ctx.reply("⛔ Access denied.");
+        return;
+      }
       clearPending(ctx.from.id);
       const value = text.trim().toLowerCase();
       if (!isValidAllowValue(value)) {

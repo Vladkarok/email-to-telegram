@@ -57,6 +57,7 @@ export function createMockCtx(opts: MockCtxOptions = {}): MockCtx {
     answerCallbackQuery: vi.fn().mockResolvedValue(true),
     api: {
       sendMessage: vi.fn().mockResolvedValue({ message_id: 99 }),
+      getChatMember: vi.fn().mockResolvedValue({ status: "member" }),
     },
   } as unknown as MockCtx;
 
