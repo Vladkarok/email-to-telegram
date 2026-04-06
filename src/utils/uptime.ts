@@ -1,4 +1,5 @@
-import { access, constants } from "fs/promises";
+import { writeFile, unlink } from "fs/promises";
+import { join } from "path";
 import type { Api } from "grammy";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { sql } from "drizzle-orm";
@@ -31,13 +32,19 @@ async function probeDb(db: Db): Promise<boolean> {
 }
 
 async function probeDisk(dirs: string[]): Promise<boolean> {
+  // A real write+delete probe detects full disks and out-of-inodes failures
+  // that fs.access(W_OK) would miss (permissions look fine but writes fail).
   const results = await Promise.all(
     dirs.map(async (dir) => {
+      const probeFile = join(dir, `.uptime-probe-${process.pid}`);
       try {
-        await access(dir, constants.W_OK);
+        await writeFile(probeFile, "");
+        await unlink(probeFile);
         return true;
       } catch (err: unknown) {
         getLogger().error({ err, dir }, "uptime check: disk write probe failed");
+        // Best-effort cleanup if write succeeded but unlink failed
+        await unlink(probeFile).catch(() => undefined);
         return false;
       }
     }),
