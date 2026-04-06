@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { writeFile, unlink } from "fs/promises";
 import { join } from "path";
 import type { Api } from "grammy";
@@ -36,7 +37,10 @@ async function probeDisk(dirs: string[]): Promise<boolean> {
   // that fs.access(W_OK) would miss (permissions look fine but writes fail).
   const results = await Promise.all(
     dirs.map(async (dir) => {
-      const probeFile = join(dir, `.uptime-probe-${process.pid}`);
+      // UUID makes the filename unique per invocation so overlapping uptime checks
+      // (5-min cron firing while a previous check is still running) don't race on
+      // the same path and produce false ENOENT errors.
+      const probeFile = join(dir, `.uptime-probe-${process.pid}-${randomUUID()}`);
       try {
         await writeFile(probeFile, "");
         await unlink(probeFile);
