@@ -14,6 +14,7 @@ import { runRetryWorker } from "./email/retry.js";
 import { runCleanup } from "./storage/cleanup.js";
 import { runUptimeCheck } from "./utils/uptime.js";
 import { pipelineTracker } from "./utils/inFlight.js";
+import { startSessionSweep, destroySessionStore } from "./telegram/session.js";
 
 async function main() {
   // 1. Load and validate config (fail fast)
@@ -36,6 +37,7 @@ async function main() {
   }
 
   // 4. Start Telegram bot
+  startSessionSweep();
   const bot = createBot(config.telegramBotToken);
   setApi(bot.api);
   let shuttingDown = false;
@@ -129,6 +131,7 @@ async function main() {
           logger.warn({ err }, "Pipeline drain timed out; proceeding with shutdown");
         });
       }
+      destroySessionStore();
       await closeDb();
       logger.info("Shutdown complete.");
       process.exit(0);
