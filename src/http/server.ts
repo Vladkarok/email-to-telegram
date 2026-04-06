@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
+import helmet from "@fastify/helmet";
 import { registerRoutes } from "./routes/index.js";
 import { getLogger } from "../utils/logger.js";
 import type { AppConfig } from "../config.js";
@@ -21,6 +22,8 @@ export async function createHttpServer(_config: AppConfig): Promise<FastifyInsta
     logger: false,
     bodyLimit: 26_214_400, // 25 MB global limit
   });
+
+  await app.register(helmet);
 
   // Capture raw bytes for both content types used by the Cloudflare Worker.
   // Must be done in the parser (before the body is transformed) — a preValidation

@@ -41,12 +41,27 @@ export function downloadRoute(app: FastifyInstance): void {
       /["\\\r\n]/g,
       "_",
     );
-    const contentType = link.attachment.contentType ?? "application/octet-stream";
+
+    // Allow only safe, non-executable MIME types. Everything else is served as
+    // application/octet-stream to prevent browsers from executing content inline.
+    const SAFE_MIME_TYPES = new Set([
+      "image/jpeg",
+      "image/png",
+      "image/gif",
+      "image/webp",
+      "image/svg+xml",
+      "application/pdf",
+      "text/plain",
+      "text/csv",
+    ]);
+    const rawMime = link.attachment.contentType ?? "";
+    const contentType = SAFE_MIME_TYPES.has(rawMime) ? rawMime : "application/octet-stream";
 
     await reply
       .header("Content-Type", contentType)
       .header("Content-Disposition", `attachment; filename="${safeFilename}"`)
       .header("Content-Length", file.length)
+      .header("Cache-Control", "no-store")
       .send(file);
   });
 }
