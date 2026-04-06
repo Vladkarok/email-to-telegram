@@ -89,8 +89,9 @@ export function loadConfig(): AppConfig {
   const env = result.data;
 
   // Require HTTPS for PUBLIC_BASE_URL in production to prevent download tokens
-  // being transmitted over an unencrypted connection.
-  if (env.NODE_ENV === "production" && !env.PUBLIC_BASE_URL.startsWith("https://")) {
+  // being transmitted over an unencrypted connection.  URL schemes are
+  // case-insensitive, so compare the parsed protocol rather than the raw string.
+  if (env.NODE_ENV === "production" && new URL(env.PUBLIC_BASE_URL).protocol !== "https:") {
     throw new Error("Invalid configuration:\n  PUBLIC_BASE_URL must use HTTPS in production");
   }
 

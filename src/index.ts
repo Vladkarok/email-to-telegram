@@ -32,8 +32,10 @@ async function main() {
   await Promise.all(
     requiredDirs.map(async (dir) => {
       await mkdir(dir, { recursive: true });
-      await access(dir, constants.W_OK).catch(() => {
-        throw new Error(`Directory is not writable: ${dir}`);
+      // W_OK alone passes on mode-0200 dirs that lack the execute bit
+      // (required to create entries).  W_OK | X_OK catches both cases.
+      await access(dir, constants.W_OK | constants.X_OK).catch(() => {
+        throw new Error(`Directory is not writable or not traversable: ${dir}`);
       });
     }),
   );
