@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import helmet from "@fastify/helmet";
+import rateLimit from "@fastify/rate-limit";
 import { registerRoutes } from "./routes/index.js";
 import { getLogger } from "../utils/logger.js";
 import type { AppConfig } from "../config.js";
@@ -24,6 +25,9 @@ export async function createHttpServer(_config: AppConfig): Promise<FastifyInsta
   });
 
   await app.register(helmet);
+  await app.register(rateLimit, {
+    global: false, // per-route limits only; apply explicitly on each route
+  });
 
   // Capture raw bytes for both content types used by the Cloudflare Worker.
   // Must be done in the parser (before the body is transformed) — a preValidation

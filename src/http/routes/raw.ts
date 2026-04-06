@@ -21,7 +21,7 @@ export function rawRoute(
   app.post(
     "/inbound/raw",
     {
-      config: { rawBody: true },
+      config: { rawBody: true, rateLimit: { max: 60, timeWindow: "1 minute" } },
       bodyLimit: 26_214_400, // 25 MB
     },
     async (req, reply) => {
