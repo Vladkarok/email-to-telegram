@@ -25,15 +25,24 @@ const chatMemberCache = new Map<string, CacheEntry>();
  * - For groups/supergroups: checks Telegram membership via getChatMember.
  *   Allowed statuses: creator, administrator, member.
  * - Results are cached for 5 minutes to reduce Telegram API calls.
+ * - Pass `fresh: true` for mutation paths to bypass the cache and get a live
+ *   membership check, preventing a kicked user from acting during the TTL window.
  * - On any error (bot kicked, chat not found, etc.) access is denied.
  */
-export async function canManageChat(api: Api, userId: number, chatId: bigint): Promise<boolean> {
+export async function canManageChat(
+  api: Api,
+  userId: number,
+  chatId: bigint,
+  { fresh = false }: { fresh?: boolean } = {},
+): Promise<boolean> {
   // A user always owns their own private DM with the bot
   if (chatId === BigInt(userId)) return true;
 
   const cacheKey = `${chatId}:${userId}`;
-  const cached = chatMemberCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.result;
+  if (!fresh) {
+    const cached = chatMemberCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.result;
+  }
 
   let result: boolean;
   try {
@@ -88,5 +97,7 @@ export async function canManageAlias(
   // Reject missing or soft-deleted aliases
   if (!alias || alias.status === "deleted") return false;
   if (alias.createdBy === BigInt(userId)) return true;
-  return canManageChat(api, userId, alias.chatId);
+  // Always do a live check for mutations — a cached allow would let a
+  // recently-removed group member still modify aliases for 5 minutes.
+  return canManageChat(api, userId, alias.chatId, { fresh: true });
 }

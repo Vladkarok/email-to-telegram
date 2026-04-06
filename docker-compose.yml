@@ -9,6 +9,7 @@ services:
         condition: service_healthy
     volumes:
       - attachments:/data/attachments
+      - rawemails:/data/rawemails
       - backups:/data/backups
     networks:
       - internal
@@ -63,6 +64,7 @@ services:
 volumes:
   pgdata:
   attachments:
+  rawemails:
   backups:
 
 networks:
