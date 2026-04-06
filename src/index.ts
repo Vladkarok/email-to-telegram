@@ -85,13 +85,18 @@ async function main() {
   if (config.backupDir) {
     const scriptPath = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "backup.sh");
     schedule("0 2 * * *", () => {
-      execFile(scriptPath, [config.backupDir!, config.databaseUrl], (err, stdout, stderr) => {
-        if (err) {
-          logger.error({ err, stderr }, "backup failed");
-        } else {
-          logger.info({ stdout: stdout.trim() }, "backup complete");
-        }
-      });
+      execFile(
+        scriptPath,
+        [config.backupDir!],
+        { env: { ...process.env, DATABASE_URL: config.databaseUrl } },
+        (err, stdout, stderr) => {
+          if (err) {
+            logger.error({ err, stderr }, "backup failed");
+          } else {
+            logger.info({ stdout: stdout.trim() }, "backup complete");
+          }
+        },
+      );
     });
     logger.info({ backupDir: config.backupDir }, "Nightly backup scheduled at 02:00 UTC");
   }

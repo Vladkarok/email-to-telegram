@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Nightly PostgreSQL backup
-# Usage: backup.sh <backup_dir> <database_url> [keep_days]
+# Usage: backup.sh <backup_dir> [keep_days]
 #
-# Called from the app container via node-cron; DATABASE_URL is read from the
-# environment so the password never appears in process listings.
+# Called from the app container via node-cron. DATABASE_URL is passed via the
+# environment (not as a CLI argument) so the password never appears in process
+# listings or shell history.
 #
 # Backup files: <backup_dir>/backup-YYYY-MM-DD.sql.gz
 # Retention:    keep_days (default 7) — older files are deleted
@@ -11,8 +12,8 @@
 set -euo pipefail
 
 BACKUP_DIR="${1:?backup_dir required}"
-DATABASE_URL="${2:?database_url required}"
-KEEP_DAYS="${3:-7}"
+DATABASE_URL="${DATABASE_URL:?DATABASE_URL env var required}"
+KEEP_DAYS="${2:-7}"
 
 # Parse host/port/user/dbname from DATABASE_URL
 # Format: postgres://user:pass@host:port/dbname
