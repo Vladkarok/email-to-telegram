@@ -5,6 +5,7 @@ import { readAttachmentStream } from "../../storage/disk.js";
 import { verifyDownloadToken } from "../../utils/tokens.js";
 
 // SVG excluded: can execute JS when opened directly as a document despite attachment disposition.
+// Text types use prefix matching (isSafeMime) to allow any stored charset variant.
 const SAFE_MIME_TYPES = new Set([
   "image/jpeg",
   "image/png",
@@ -13,9 +14,17 @@ const SAFE_MIME_TYPES = new Set([
   "image/bmp",
   "image/tiff",
   "application/pdf",
-  "text/plain; charset=utf-8",
-  "text/csv; charset=utf-8",
 ]);
+
+/** Return true for any MIME type safe to serve with its original charset. */
+function isSafeMime(mime: string): boolean {
+  if (SAFE_MIME_TYPES.has(mime)) return true;
+  // Allow text/plain and text/csv with any (or no) charset parameter.
+  // Do NOT rewrite the stored charset — the raw bytes may not be UTF-8.
+  if (mime === "text/plain" || mime.startsWith("text/plain;")) return true;
+  if (mime === "text/csv" || mime.startsWith("text/csv;")) return true;
+  return false;
+}
 
 export function downloadRoute(app: FastifyInstance): void {
   app.get(
@@ -58,12 +67,11 @@ export function downloadRoute(app: FastifyInstance): void {
         "_",
       );
 
-      // Map plain text/* types to their charset-qualified equivalents before lookup.
-      // Everything not in SAFE_MIME_TYPES is served as application/octet-stream.
+      // Serve the stored MIME type if it is in the allowlist; fall back to
+      // application/octet-stream for anything else.  Do not override the stored
+      // charset — the raw bytes may not be UTF-8.
       const rawMime = (link.attachment.contentType ?? "").toLowerCase().trim();
-      const normalised =
-        rawMime === "text/plain" || rawMime === "text/csv" ? `${rawMime}; charset=utf-8` : rawMime;
-      const contentType = SAFE_MIME_TYPES.has(normalised) ? normalised : "application/octet-stream";
+      const contentType = isSafeMime(rawMime) ? rawMime : "application/octet-stream";
 
       await reply
         .header("Content-Type", contentType)

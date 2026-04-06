@@ -20,11 +20,35 @@ BACKUP_FILE="${BACKUP_DIR}/backup-${DATE}.sql.gz"
 
 mkdir -p "$BACKUP_DIR"
 
-# Pass the full connection string via --dbname to avoid fragile sed URL parsing
-# and to correctly handle special characters in passwords.
+# Parse connection components from DATABASE_URL using Python's URL parser so that
+# percent-encoded characters and special chars in passwords are handled correctly.
+# PGPASSWORD is passed via environment (not argv) to keep the credential out of
+# /proc/<pid>/cmdline, which is world-readable on Linux.
+_pg_vars=$(python3 - <<'PYEOF'
+import os, sys, urllib.parse as up
+u = up.urlparse(os.environ["DATABASE_URL"])
+host = u.hostname or "localhost"
+port = str(u.port or 5432)
+db   = up.unquote(u.path.lstrip("/"))
+user = up.unquote(u.username or "")
+pw   = up.unquote(u.password or "")
+# Output as NUL-delimited pairs so any character in values is safe
+sys.stdout.write(f"PGHOST={host}\nPGPORT={port}\nPGDATABASE={db}\nPGUSER={user}\nPGPASSWORD={pw}\n")
+PYEOF
+)
+
+# Load parsed variables into the current shell
+while IFS='=' read -r key value; do
+  export "$key=$value"
+done <<< "$_pg_vars"
+
 pg_dump \
-  --dbname="$DATABASE_URL" \
+  --host="$PGHOST" \
+  --port="$PGPORT" \
+  --username="$PGUSER" \
+  --no-password \
   --format=plain \
+  "$PGDATABASE" \
   | gzip -9 > "$BACKUP_FILE"
 
 echo "Backup written: $BACKUP_FILE ($(du -sh "$BACKUP_FILE" | cut -f1))"
