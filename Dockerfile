@@ -25,9 +25,11 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=builder /app/dist ./dist
 COPY drizzle/ ./drizzle/
 
-# Attachment storage volume
-RUN mkdir -p /data/attachments && chown appuser:appgroup /data/attachments
-VOLUME ["/data/attachments"]
+# Persistent storage volumes — all directories must be pre-created and chowned
+# before Docker mounts the named volumes over them (volumes are mounted as root).
+RUN mkdir -p /data/attachments /data/rawemails /data/backups \
+ && chown -R appuser:appgroup /data
+VOLUME ["/data/attachments", "/data/rawemails", "/data/backups"]
 
 USER appuser
 

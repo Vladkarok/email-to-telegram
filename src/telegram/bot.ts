@@ -32,8 +32,7 @@ async function assertChatAccess(
     await ctx.answerCallbackQuery("⛔ Access denied");
     return false;
   }
-  // fresh: true — bypass cache so a recently-kicked user can't still mutate
-  const allowed = await canManageChat(ctx.api, ctx.from.id, chatId, { fresh: true });
+  const allowed = await canManageChat(ctx.api, ctx.from.id, chatId);
   if (!allowed) await ctx.answerCallbackQuery("⛔ Access denied");
   return allowed;
 }
@@ -86,7 +85,7 @@ export function createBot(token: string): Bot {
     if (pending.action === "newemail") {
       // Re-verify chat access at write time — membership may have changed
       // since the cn: callback that initiated this flow.
-      if (!(await canManageChat(ctx.api, ctx.from.id, pending.chatId, { fresh: true }))) {
+      if (!(await canManageChat(ctx.api, ctx.from.id, pending.chatId))) {
         clearPending(ctx.from.id);
         await ctx.reply("⛔ Access denied.");
         return;

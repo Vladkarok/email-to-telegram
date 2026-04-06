@@ -97,7 +97,8 @@ export async function canManageAlias(
   // Reject missing or soft-deleted aliases
   if (!alias || alias.status === "deleted") return false;
   if (alias.createdBy === BigInt(userId)) return true;
-  // Always do a live check for mutations — a cached allow would let a
-  // recently-removed group member still modify aliases for 5 minutes.
-  return canManageChat(api, userId, alias.chatId, { fresh: true });
+  // NOTE: uses the 5-min cache. Prompt revocation on group-membership changes
+  // requires restructuring callback handlers to answer before the live check —
+  // see devdocs/encryption-todo.md for the future work item.
+  return canManageChat(api, userId, alias.chatId);
 }
