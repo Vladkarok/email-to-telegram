@@ -3,6 +3,7 @@ import type { CommandContext, Context } from "grammy";
 import { customAlphabet } from "nanoid";
 import { getDb } from "../../db/client.js";
 import { createAlias } from "../../db/repos/aliases.js";
+import type { EmailAddress } from "../../db/schema.js";
 import { findChatById } from "../../db/repos/chats.js";
 import { loadConfig } from "../../config.js";
 import { getPending, clearPending } from "../session.js";
@@ -80,7 +81,7 @@ export async function createEmailAlias(
   const localPart = rawName.length > 0 ? `${prefix}-${generateSuffix()}` : prefix;
   const fullAddress = `${localPart}@${config.mailDomain}`;
 
-  let alias: Awaited<ReturnType<typeof createAlias>>;
+  let alias: EmailAddress;
   try {
     alias = await createAlias(getDb(), {
       localPart,

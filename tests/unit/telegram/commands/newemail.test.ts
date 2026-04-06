@@ -36,9 +36,12 @@ vi.mock("../../../../src/telegram/authorization.js", () => ({
 const { newemailHandler } = await import("../../../../src/telegram/commands/newemail.js");
 
 describe("/newemail command", () => {
+  const MOCK_ALIAS_ID = "550e8400-e29b-41d4-a716-446655440000";
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockCreateAlias.mockResolvedValue({
+      id: MOCK_ALIAS_ID,
       localPart: "alerts-ab12cd",
       fullAddress: "alerts-ab12cd@tgmail.example.com",
     });
@@ -56,6 +59,22 @@ describe("/newemail command", () => {
     expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain(
       "tgmail.example.com",
     );
+  });
+
+  it("'Add Allow Rule' button uses alias UUID not localPart", async () => {
+    const ctx = createMockCtx({ commandMatch: "alerts" });
+
+    await newemailHandler(ctx);
+
+    const replyArgs = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      { reply_markup?: { inline_keyboard?: unknown[][] } },
+    ];
+    const keyboard = replyArgs[1]?.reply_markup;
+    // Button callback_data must be 'am:<UUID>' — not 'am:<localPart>'
+    const buttonData = JSON.stringify(keyboard);
+    expect(buttonData).toContain(`am:${MOCK_ALIAS_ID}`);
+    expect(buttonData).not.toContain("am:alerts");
   });
 
   it("generates a fully random alias when no name is provided", async () => {
