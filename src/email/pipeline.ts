@@ -87,7 +87,7 @@ export async function processInboundEmail(
     return { ok: false, reason: "duplicate" };
   }
 
-  // 5. Create delivery log
+  // 5. Create delivery log — null means a concurrent pipeline beat us (race dedup)
   const deliveryLog = await createDeliveryLog(db, {
     emailAddressId: alias.id,
     messageIdHeader: parsed.messageId,
@@ -100,6 +100,9 @@ export async function processInboundEmail(
     hasAttachments: parsed.attachments.length > 0,
     finalStatus: "received",
   });
+  if (!deliveryLog) {
+    return { ok: false, reason: "duplicate" };
+  }
 
   // 6. Clean body
   if (parsed.textBody) {

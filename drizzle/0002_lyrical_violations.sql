@@ -1,0 +1,2 @@
+CREATE UNIQUE INDEX "idx_log_dedup_msgid" ON "delivery_logs" USING btree ("email_address_id","message_id_header") WHERE message_id_header IS NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "idx_log_dedup_bodyhash" ON "delivery_logs" USING btree ("email_address_id","body_sha256") WHERE body_sha256 IS NOT NULL;
