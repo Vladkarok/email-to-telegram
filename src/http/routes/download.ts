@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { getDb } from "../../db/client.js";
 import { findAttachmentLinkByToken, markLinkDownloaded } from "../../db/repos/attachmentLinks.js";
-import { readAttachmentStream } from "../../storage/disk.js";
+import { openAttachmentStream } from "../../storage/disk.js";
 import { verifyDownloadToken } from "../../utils/tokens.js";
 
 // SVG excluded: can execute JS when opened directly as a document despite attachment disposition.
@@ -60,7 +60,9 @@ export function downloadRoute(app: FastifyInstance): void {
         return;
       }
 
-      const file = await readAttachmentStream(link.attachment.storagePath);
+      // Stream the file to avoid buffering large attachments in memory.
+      const { stream, size } = await openAttachmentStream(link.attachment.storagePath);
+
       // Strip characters that would break the quoted-string in Content-Disposition (RFC 6266)
       const safeFilename = (link.attachment.originalFilename ?? "attachment").replace(
         /["\\\r\n]/g,
@@ -76,9 +78,9 @@ export function downloadRoute(app: FastifyInstance): void {
       await reply
         .header("Content-Type", contentType)
         .header("Content-Disposition", `attachment; filename="${safeFilename}"`)
-        .header("Content-Length", file.length)
+        .header("Content-Length", size)
         .header("Cache-Control", "no-store")
-        .send(file);
+        .send(stream);
     },
   );
 }
