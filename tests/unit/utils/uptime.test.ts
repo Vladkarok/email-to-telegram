@@ -17,7 +17,8 @@ function makeDb(healthy: boolean) {
 
 function makeApi(): { api: Api; sendMessage: ReturnType<typeof vi.fn> } {
   const sendMessage = vi.fn().mockResolvedValue({});
-  return { api: { sendMessage } as unknown as Api, sendMessage };
+  const getMe = vi.fn().mockResolvedValue({ id: 1, is_bot: true, first_name: "Bot" });
+  return { api: { sendMessage, getMe } as unknown as Api, sendMessage };
 }
 
 describe("runUptimeCheck", () => {
@@ -36,7 +37,7 @@ describe("runUptimeCheck", () => {
     await runUptimeCheck(db, api, { healthchecksUrl: undefined, alertChatId: 999n });
     expect(sendMessage).toHaveBeenCalledWith(
       999,
-      expect.stringContaining("database connectivity"),
+      expect.stringContaining("db"),
       expect.objectContaining({ parse_mode: "HTML" }),
     );
   });

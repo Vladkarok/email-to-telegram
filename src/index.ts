@@ -84,6 +84,7 @@ async function main() {
       runUptimeCheck(getDb(), getApi(), {
         healthchecksUrl: config.healthchecksUrl,
         alertChatId: config.alertChatId,
+        probeDirs: [config.attachmentDir, config.rawEmailDir],
       }).catch((err: unknown) => {
         logger.error({ err }, "uptime check error");
       });
