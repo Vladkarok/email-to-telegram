@@ -74,6 +74,7 @@ export function rawRoute(
         rawEmailPath: storedPath,
         localPart,
         envelopeFrom,
+        correlationId: req.id,
         publicBaseUrl: config.publicBaseUrl,
         attachmentDir: config.attachmentDir,
         attachmentTtlHours: config.attachmentTtlHours,

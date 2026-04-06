@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
@@ -22,6 +23,8 @@ export async function createHttpServer(config: AppConfig): Promise<FastifyInstan
   const app = Fastify({
     logger: false,
     bodyLimit: config.maxSizeBytes,
+    // Assign each request a UUID so it can be threaded through async pipeline logs.
+    genReqId: () => randomUUID(),
   });
 
   await app.register(helmet);
