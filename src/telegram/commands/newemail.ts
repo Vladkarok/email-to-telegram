@@ -80,8 +80,9 @@ export async function createEmailAlias(
   const localPart = rawName.length > 0 ? `${prefix}-${generateSuffix()}` : prefix;
   const fullAddress = `${localPart}@${config.mailDomain}`;
 
+  let alias: Awaited<ReturnType<typeof createAlias>>;
   try {
-    await createAlias(getDb(), {
+    alias = await createAlias(getDb(), {
       localPart,
       fullAddress,
       chatId,
@@ -105,10 +106,8 @@ export async function createEmailAlias(
 
   const chatNote = chatTitle ? `\nDelivering to: <b>${escapeHtml(chatTitle)}</b>` : "";
 
-  const keyboard = new InlineKeyboard().text(
-    "🔐 Add Allow Rule",
-    `am:${localPart}`, // will be resolved via alias lookup — placeholder, handled in bot.ts
-  );
+  // Use alias.id (UUID) — the am: callback regex expects a UUID, not a localPart string
+  const keyboard = new InlineKeyboard().text("🔐 Add Allow Rule", `am:${alias.id}`);
 
   await ctx.reply(
     `✅ Email alias created!\n\n📧 <code>${fullAddress}</code>${chatNote}\n\n⚠️ Add at least one allow rule — until then all mail is rejected.\n\n<code>/allow add ${localPart} domain.com</code>`,
