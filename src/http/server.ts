@@ -18,10 +18,10 @@ function setRawBody(req: FastifyRequest, body: Buffer): void {
   req.rawBody = body;
 }
 
-export async function createHttpServer(_config: AppConfig): Promise<FastifyInstance> {
+export async function createHttpServer(config: AppConfig): Promise<FastifyInstance> {
   const app = Fastify({
     logger: false,
-    bodyLimit: 26_214_400, // 25 MB global limit
+    bodyLimit: config.maxSizeBytes,
   });
 
   await app.register(helmet);
@@ -51,7 +51,7 @@ export async function createHttpServer(_config: AppConfig): Promise<FastifyInsta
     },
   );
 
-  registerRoutes(app, _config);
+  registerRoutes(app, config);
 
   return app;
 }

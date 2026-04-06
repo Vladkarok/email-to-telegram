@@ -27,7 +27,13 @@ const HMAC_SECRET = "test-secret-that-is-long-enough-abc";
 
 function buildApp() {
   const app = Fastify({ logger: false });
-  registerRoutes(app);
+  registerRoutes(app, {
+    publicBaseUrl: "https://example.com",
+    attachmentDir: "/tmp/attachments",
+    attachmentTtlHours: 336,
+    rawEmailDir: "/tmp/raw",
+    maxSizeBytes: 10_485_760,
+  });
   return app;
 }
 

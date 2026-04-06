@@ -16,13 +16,17 @@ function rawEmailPath(rawEmailDir: string): string {
 
 export function rawRoute(
   app: FastifyInstance,
-  config: Pick<AppConfig, "publicBaseUrl" | "attachmentDir" | "attachmentTtlHours" | "rawEmailDir">,
+  config: Pick<
+    AppConfig,
+    "publicBaseUrl" | "attachmentDir" | "attachmentTtlHours" | "rawEmailDir" | "maxSizeBytes"
+  >,
 ): void {
   app.post(
     "/inbound/raw",
     {
       config: { rawBody: true, rateLimit: { max: 60, timeWindow: "1 minute" } },
-      bodyLimit: 26_214_400, // 25 MB
+      // Per-route limit overrides the global bodyLimit set in createHttpServer()
+      bodyLimit: config.maxSizeBytes,
     },
     async (req, reply) => {
       const sig = req.headers["x-worker-sig"] as string | undefined;
