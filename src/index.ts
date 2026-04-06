@@ -1,4 +1,5 @@
 import { execFile } from "child_process";
+import { access, mkdir, constants } from "fs/promises";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { schedule } from "node-cron";
@@ -24,6 +25,18 @@ async function main() {
   const logger = createLogger(config.logLevel);
   setLogger(logger);
   logger.info({ ingestMode: config.ingestMode }, "Starting email-to-telegram");
+
+  // 2a. Ensure required directories exist and are writable (fail fast)
+  const requiredDirs = [config.attachmentDir, config.rawEmailDir];
+  if (config.backupDir) requiredDirs.push(config.backupDir);
+  await Promise.all(
+    requiredDirs.map(async (dir) => {
+      await mkdir(dir, { recursive: true });
+      await access(dir, constants.W_OK).catch(() => {
+        throw new Error(`Directory is not writable: ${dir}`);
+      });
+    }),
+  );
 
   // 3. Connect to DB and run migrations
   initDb(config.databaseUrl);
