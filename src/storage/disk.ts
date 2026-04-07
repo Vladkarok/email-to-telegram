@@ -24,6 +24,13 @@ function pendingRawEmailMetaPath(rawEmailPath: string): string {
   return `${rawEmailPath}.pending.json`;
 }
 
+async function replaceFileAtomically(filePath: string, contents: Buffer | string): Promise<void> {
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await mkdir(dirname(filePath), { recursive: true });
+  await writeFile(tempPath, contents);
+  await rename(tempPath, filePath);
+}
+
 /**
  * Open a storage file for streaming download.
  * Returns the size (for Content-Length) and a read stream.
@@ -90,6 +97,16 @@ export async function writeAttachment(
   return metadata;
 }
 
+export async function backfillAttachmentFile(
+  storagePath: string,
+  attachmentId: string,
+): Promise<StorageEncryptionMetadata> {
+  const plaintext = await readFile(storagePath);
+  const { blob, metadata } = await encryptBufferForStorage(plaintext, `attachment:${attachmentId}`);
+  await replaceFileAtomically(storagePath, blob);
+  return metadata;
+}
+
 export async function writeRawEmail(
   storagePath: string,
   data: Buffer,
@@ -100,27 +117,46 @@ export async function writeRawEmail(
   return metadata;
 }
 
+export async function backfillRawEmailFile(
+  storagePath: string,
+): Promise<StorageEncryptionMetadata> {
+  const plaintext = await readFile(storagePath);
+  const { blob, metadata } = await encryptBufferForStorage(plaintext, rawEmailAads(storagePath)[0]);
+  await replaceFileAtomically(storagePath, blob);
+  return metadata;
+}
+
 export async function writePendingRawEmailMeta(
   rawEmailPath: string,
   data: Omit<PendingRawEmailMeta, "rawEmailPath" | "createdAt">,
 ): Promise<void> {
-  const metaPath = pendingRawEmailMetaPath(rawEmailPath);
-  const tempPath = `${metaPath}.${process.pid}.${Date.now()}.tmp`;
-  await mkdir(dirname(metaPath), { recursive: true });
-  await writeFile(
-    tempPath,
+  await overwritePendingRawEmailMeta({
+    rawEmailPath,
+    localPart: data.localPart,
+    envelopeFrom: data.envelopeFrom,
+    rawEmailEncryptionMode: data.rawEmailEncryptionMode,
+    rawEmailWrappedDek: data.rawEmailWrappedDek,
+    rawEmailKekKeyId: data.rawEmailKekKeyId,
+    correlationId: data.correlationId,
+    createdAt: new Date().toISOString(),
+  });
+}
+
+export async function overwritePendingRawEmailMeta(data: PendingRawEmailMeta): Promise<void> {
+  const metaPath = pendingRawEmailMetaPath(data.rawEmailPath);
+  await replaceFileAtomically(
+    metaPath,
     JSON.stringify({
-      rawEmailPath,
+      rawEmailPath: data.rawEmailPath,
       localPart: data.localPart,
       envelopeFrom: data.envelopeFrom,
       rawEmailEncryptionMode: data.rawEmailEncryptionMode,
       rawEmailWrappedDek: data.rawEmailWrappedDek,
       rawEmailKekKeyId: data.rawEmailKekKeyId,
       correlationId: data.correlationId,
-      createdAt: new Date().toISOString(),
+      createdAt: data.createdAt,
     }),
   );
-  await rename(tempPath, metaPath);
 }
 
 export async function deletePendingRawEmailMeta(rawEmailPath: string): Promise<void> {

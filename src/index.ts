@@ -21,6 +21,10 @@ import { pipelineTracker } from "./utils/inFlight.js";
 import { startSessionSweep, destroySessionStore } from "./telegram/session.js";
 import { configureStorageEncryption } from "./security/encryption.js";
 import { assertStorageEncryptionReadiness } from "./startup/storageReadiness.js";
+import {
+  backfillStoredEncryption,
+  rewrapStoredEncryptionKeys,
+} from "./security/storageMaintenance.js";
 
 async function main() {
   const startup = parseStartupOptions(process.argv.slice(2));
@@ -45,6 +49,20 @@ async function main() {
 
   if (startup.migrateOnly) {
     logger.info("Migrations complete.");
+    await closeDb();
+    return;
+  }
+
+  if (startup.rewrapStorageKeys) {
+    const summary = await rewrapStoredEncryptionKeys(getDb(), config.rawEmailDir);
+    logger.info({ summary }, "Storage key rewrap complete.");
+    await closeDb();
+    return;
+  }
+
+  if (startup.backfillStorageEncryption) {
+    const summary = await backfillStoredEncryption(getDb(), config.rawEmailDir);
+    logger.info({ summary }, "Storage encryption backfill complete.");
     await closeDb();
     return;
   }
