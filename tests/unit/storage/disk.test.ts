@@ -146,6 +146,34 @@ describe("pending raw email metadata", () => {
     ).resolves.toEqual(plaintext);
   });
 
+  it("rejects corrupted encrypted attachment files before exposing a download stream", async () => {
+    const root = await mkdtemp(join(tmpdir(), "email-to-telegram-disk-"));
+    tempDirs.push(root);
+    configureStorageEncryption({
+      mode: "local-v1",
+      masterKey: Buffer.alloc(32, 12).toString("base64"),
+      masterKeyId: "corrupt-att-key",
+    });
+
+    const storagePath = join(root, "corrupt-attachment.bin");
+    const plaintext = Buffer.from("corrupt me");
+    const metadata = await writeAttachment(storagePath, "att-corrupt", plaintext);
+    const blob = await readFile(storagePath);
+    blob[blob.length - 1] ^= 0xff;
+    await writeFile(storagePath, blob);
+
+    await expect(
+      openAttachmentStream({
+        id: "att-corrupt",
+        storagePath,
+        sizeBytes: plaintext.length,
+        encryptionMode: metadata.encryptionMode,
+        wrappedDek: metadata.wrappedDek,
+        kekKeyId: metadata.kekKeyId,
+      }),
+    ).rejects.toThrow();
+  });
+
   it("keeps newly encrypted raw emails readable after moving them to a new storage root", async () => {
     const root = await mkdtemp(join(tmpdir(), "email-to-telegram-disk-"));
     const restoredRoot = await mkdtemp(join(tmpdir(), "email-to-telegram-disk-restored-"));

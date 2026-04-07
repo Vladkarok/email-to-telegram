@@ -1,7 +1,19 @@
-import { createReadStream } from "fs";
-import { readFile, writeFile, mkdir, unlink, rm, stat, readdir, rename } from "fs/promises";
+import { createReadStream, createWriteStream } from "fs";
+import {
+  mkdtemp,
+  readFile,
+  writeFile,
+  mkdir,
+  unlink,
+  rm,
+  stat,
+  readdir,
+  rename,
+} from "fs/promises";
+import { tmpdir } from "os";
 import { basename, dirname, join } from "path";
 import { Readable } from "stream";
+import { pipeline } from "stream/promises";
 import { getLogger } from "../utils/logger.js";
 import {
   decryptStreamFromStorage,
@@ -35,8 +47,9 @@ async function replaceFileAtomically(filePath: string, contents: Buffer | string
 /**
  * Open a storage file for streaming download.
  * Returns the size (for Content-Length) and a read stream.
- * Plaintext files stream directly; encrypted files are decrypted on the fly
- * while still authenticating the whole blob before the stream finishes.
+ * Plaintext files stream directly; encrypted files are first decrypted into a
+ * temporary plaintext file so the AES-GCM tag is verified before any bytes are
+ * exposed to the caller.
  */
 export async function openAttachmentStream(attachment: {
   id: string;
@@ -52,18 +65,9 @@ export async function openAttachmentStream(attachment: {
     return { stream, size };
   }
 
-  const size =
-    attachment.sizeBytes ??
-    (
-      await readAttachmentBytes({
-        id: attachment.id,
-        storagePath: attachment.storagePath,
-        encryptionMode: attachment.encryptionMode,
-        wrappedDek: attachment.wrappedDek,
-        kekKeyId: attachment.kekKeyId,
-      })
-    ).length;
-  const stream = await decryptStreamFromStorage(
+  const tempDir = await mkdtemp(join(tmpdir(), "email-to-telegram-attachment-"));
+  const tempPath = join(tempDir, "download.bin");
+  const decryptedStream = await decryptStreamFromStorage(
     createReadStream(attachment.storagePath),
     {
       encryptionMode: attachment.encryptionMode === "local-v1" ? "local-v1" : "none",
@@ -72,6 +76,15 @@ export async function openAttachmentStream(attachment: {
     },
     `attachment:${attachment.id}`,
   );
+  await pipeline(decryptedStream, createWriteStream(tempPath, { mode: 0o600 }));
+  const size = attachment.sizeBytes ?? (await stat(tempPath)).size;
+  const stream = createReadStream(tempPath);
+  const cleanupTemp = () => {
+    void deleteFile(tempPath);
+    void deleteDir(tempDir);
+  };
+  stream.once("close", cleanupTemp);
+  stream.once("error", cleanupTemp);
   return {
     stream,
     size,
