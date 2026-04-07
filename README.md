@@ -380,8 +380,8 @@ If you use the included GitHub Actions workflows:
 2. After a successful `CI` run for a push to `dev`, GitHub Actions publishes
    `ghcr.io/vladkarok/email-to-telegram:dev` and a matching
    `ghcr.io/vladkarok/email-to-telegram:sha-<commit>` image
-3. The manual `Deploy Dev` workflow updates the VPS repo to `origin/dev`,
-   pulls the `:dev` image, and recreates the app container
+3. The production VPS can stay release-only; there is no built-in workflow that
+   deploys `dev` automatically to `oracle-shiny`
 4. Pushing a release tag like `v1.2.3` builds `:latest` plus `:v1.2.3`
 5. The release deploy job checks out the exact tagged commit on the VPS,
    pulls the matching image tag, and restarts the stack
