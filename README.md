@@ -307,7 +307,7 @@ See [`.env.example`](./.env.example) for the authoritative template.
 | `MAX_SIZE_BYTES`              | No       | Max accepted inbound body size                             |
 | `INITIAL_ALLOWED_USERS`       | No       | Initial Telegram operators; recommended on first deploy    |
 | `BACKUP_DIR`                  | No       | Nightly backup directory                                   |
-| `BACKUP_ARCHIVE_ENCRYPTION`   | No       | `off` or `storage-key` to encrypt backup dump archives     |
+| `BACKUP_ARCHIVE_ENCRYPTION`   | No       | `off` or `storage-key`; `yes` is invalid                   |
 | `HEALTHCHECKS_URL`            | No       | External heartbeat URL                                     |
 | `ALERT_CHAT_ID`               | No       | Telegram chat for critical alerts                          |
 | `LOG_LEVEL`                   | No       | Log verbosity                                              |
@@ -328,7 +328,11 @@ and list older read-only keys in `MASTER_ENCRYPTION_KEYRING` as
 Nightly backups created via `BACKUP_DIR` contain only the PostgreSQL dump. Keep
 the attachment/raw-mail directories alongside those backups, and if encryption
 is enabled, keep the matching `MASTER_ENCRYPTION_KEY` available for restore.
-If `BACKUP_ARCHIVE_ENCRYPTION=storage-key`, the dump itself is stored as
+`BACKUP_ARCHIVE_ENCRYPTION` is an enum, not a boolean: use `off` or
+`storage-key`. If `BACKUP_ARCHIVE_ENCRYPTION=storage-key`, the dump itself is
+encrypted with the same storage-key family configured by
+`MASTER_ENCRYPTION_KEY`, `MASTER_ENCRYPTION_KEY_ID`, and
+`MASTER_ENCRYPTION_KEYRING`, and stored as
 `backup-YYYY-MM-DD.sql.gz.etg` and the sidecar `.meta` file records the wrapped
 DEK and AAD needed for decryption. Restore those archives with:
 
