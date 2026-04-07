@@ -85,17 +85,18 @@ describe("renderEmail", () => {
   });
 
   describe("markdown mode attachments", () => {
-    it("renders attachment as inline link with MarkdownV2-escaped filename", () => {
+    it("renders attachment as HTML link with an escaped filename", () => {
       const attachmentLinks = [
         {
-          filename: "report_final.pdf",
+          filename: "report <final>.pdf",
           sizeBytes: 1000,
           url: "https://example.com/dl/token1",
         },
       ];
       const result = renderEmail(BASE, "markdown", "alerts@example.com", attachmentLinks);
-      // filename _ must be escaped, URL preserved inside ()
-      expect(result).toContain("[report\\_final\\.pdf](https://example.com/dl/token1)");
+      expect(result).toContain('<a href="https://example.com/dl/token1">');
+      expect(result).toContain("report &lt;final&gt;.pdf");
+      expect(result).not.toContain("report <final>.pdf");
     });
 
     it("total length does not exceed 4096 even when many attachments are present", () => {
@@ -114,6 +115,18 @@ describe("renderEmail", () => {
       const email = { ...BASE, htmlBody: "<p>Hello <b>world</b></p>", textBody: null };
       const result = renderEmail(email, "html", "alerts@example.com", []);
       expect(result).toContain("<b>world</b>");
+    });
+
+    it("keeps readable line breaks for block HTML elements", () => {
+      const email = {
+        ...BASE,
+        htmlBody: "<p>Hello</p><p>World</p><ul><li>First</li><li>Second</li></ul>",
+        textBody: null,
+      };
+      const result = renderEmail(email, "html", "alerts@example.com", []);
+      expect(result).toContain("Hello\n\nWorld");
+      expect(result).toContain("• First");
+      expect(result).toContain("• Second");
     });
 
     it("strips dangerous tags (script)", () => {
@@ -155,28 +168,66 @@ describe("renderEmail", () => {
   });
 
   describe("markdown mode", () => {
-    it("escapes MarkdownV2 special characters in body", () => {
+    it("renders common markdown syntax as Telegram-safe HTML", () => {
       const email = {
         ...BASE,
-        textBody: "Build [123] failed. See foo_bar and baz.qux!",
+        textBody: [
+          "# Release Notes",
+          "",
+          "Use **bold**, _italic_, and ~~strike~~.",
+          "",
+          "- first item",
+          "2. second item",
+          "> quoted line",
+          "",
+          "Open [docs](https://example.com/docs) and run `npm test`.",
+          "",
+          "```",
+          "const ok = true;",
+          "```",
+        ].join("\n"),
       };
       const result = renderEmail(email, "markdown", "alerts@example.com", []);
-      // [ ] . _ ! must all be escaped
-      expect(result).toContain("\\[123\\]");
-      expect(result).toContain("foo\\_bar");
-      expect(result).toContain("baz\\.qux\\!");
+      expect(result).toContain("<b>Release Notes</b>");
+      expect(result).toContain("<b>bold</b>");
+      expect(result).toContain("<i>italic</i>");
+      expect(result).toContain("<s>strike</s>");
+      expect(result).toContain("• first item");
+      expect(result).toContain("2. second item");
+      expect(result).toContain("&gt; quoted line");
+      expect(result).toContain('<a href="https://example.com/docs">docs</a>');
+      expect(result).toContain("<code>npm test</code>");
+      expect(result).toContain("<pre>const ok = true;</pre>");
     });
 
-    it("escapes angle brackets in header From field", () => {
+    it("prefers the HTML body when the plain-text body is not markdown-authored", () => {
+      const email = {
+        ...BASE,
+        textBody: "Hello team\n\nThis came from a rich-text composer.",
+        htmlBody: "<p>Hello <b>team</b></p><blockquote>Quoted</blockquote><ul><li>First</li></ul>",
+      };
+      const result = renderEmail(email, "markdown", "alerts@example.com", []);
+      expect(result).toContain("<b>team</b>");
+      expect(result).toContain("Quoted");
+      expect(result).toContain("• First");
+    });
+
+    it("prefers markdown-authored plain text over an HTML wrapper copy", () => {
+      const email = {
+        ...BASE,
+        textBody: "# Heading\n\n**Bold** and `code`",
+        htmlBody: "<div># Heading</div><div>**Bold** and `code`</div>",
+      };
+      const result = renderEmail(email, "markdown", "alerts@example.com", []);
+      expect(result).toContain("<b>Heading</b>");
+      expect(result).toContain("<b>Bold</b>");
+      expect(result).toContain("<code>code</code>");
+    });
+
+    it("HTML-escapes angle brackets in the header", () => {
       const email = { ...BASE, headerFrom: "Alice <alice@example.com>" };
       const result = renderEmail(email, "markdown", "alerts@example.com", []);
-      expect(result).toContain("Alice \\<alice@example\\.com\\>");
-    });
-
-    it("renders plain-text body content (with escaping)", () => {
-      const result = renderEmail(BASE, "markdown", "alerts@example.com", []);
-      // "Hello, this is the email body." has a trailing . which is escaped
-      expect(result).toContain("Hello, this is the email body\\.");
+      expect(result).toContain("Alice &lt;alice@example.com&gt;");
     });
   });
 });

@@ -13,6 +13,8 @@ export interface AttachmentLink {
 
 export type RenderMode = "plaintext" | "html" | "markdown";
 
+type HtmlParseMode = "HTML";
+
 export function renderEmail(
   email: ParsedEmail,
   mode: RenderMode,
@@ -36,7 +38,7 @@ export function renderEmail(
   const bodyBudget = MAX_LEN - fixedCost;
 
   const rawBody = extractBody(email, mode);
-  const body = truncateToBudget(rawBody, bodyBudget);
+  const body = truncateToBudget(rawBody, bodyBudget, mode);
 
   const parts = [header, body];
   if (attachmentsSection) parts.push(attachmentsSection);
@@ -44,6 +46,10 @@ export function renderEmail(
   // Safety clamp: if header + attachments alone exceed MAX_LEN (many attachments),
   // drop trailing attachment entries until the message fits.
   return clampToMaxLen(parts);
+}
+
+export function parseModeForRenderMode(mode: RenderMode): HtmlParseMode | undefined {
+  return mode === "plaintext" ? undefined : "HTML";
 }
 
 export function renderAttachmentFallback(
@@ -57,13 +63,9 @@ export function renderAttachmentFallback(
 function buildAttachmentsSection(links: AttachmentLink[], mode: RenderMode): string {
   if (links.length === 0) return "";
   const items = links.map((a) => {
-    if (mode === "html") {
+    if (mode === "html" || mode === "markdown") {
       // Use anchor tags so filenames are HTML-safe and URLs are clickable.
       return `<a href="${a.url}">${escapeHtml(a.filename)}</a>`;
-    }
-    if (mode === "markdown") {
-      // Inline link syntax: URL inside () only needs \ and ) escaped (tokens have neither).
-      return `[${escapeMarkdownV2(a.filename)}](${a.url})`;
     }
     return `${a.filename}: ${a.url}`;
   });
@@ -90,12 +92,8 @@ function clampToMaxLen(parts: string[]): string {
 }
 
 function buildHeader(mode: RenderMode, from: string, to: string, subject: string): string {
-  if (mode === "html") {
+  if (mode === "html" || mode === "markdown") {
     const e = escapeHtml;
-    return `From: ${e(from)}\nTo: ${e(to)}\nSubject: ${e(subject)}`;
-  }
-  if (mode === "markdown") {
-    const e = escapeMarkdownV2;
     return `From: ${e(from)}\nTo: ${e(to)}\nSubject: ${e(subject)}`;
   }
   // plaintext — no parse_mode, no escaping needed
@@ -113,9 +111,7 @@ function extractBody(email: ParsedEmail, mode: RenderMode): string {
   }
 
   if (mode === "markdown") {
-    // All content must be MarkdownV2-escaped. Strip HTML if only htmlBody is present.
-    const raw = email.textBody ?? (email.htmlBody ? stripHtml(email.htmlBody) : "");
-    return escapeMarkdownV2(raw);
+    return extractMarkdownBody(email);
   }
 
   // plaintext — sent with no parse_mode, no escaping required
@@ -124,20 +120,200 @@ function extractBody(email: ParsedEmail, mode: RenderMode): string {
   return "";
 }
 
-function truncateToBudget(text: string, budget: number): string {
+function extractMarkdownBody(email: ParsedEmail): string {
+  const textBody = normalizeLineEndings(email.textBody ?? "");
+
+  if (email.htmlBody && !looksLikeMarkdown(textBody)) {
+    const renderedHtml = sanitizeTelegramHtml(email.htmlBody);
+    if (renderedHtml || !textBody) {
+      return renderedHtml;
+    }
+  }
+
+  if (textBody) {
+    return renderMarkdownToTelegramHtml(textBody);
+  }
+
+  if (email.htmlBody) {
+    return sanitizeTelegramHtml(email.htmlBody);
+  }
+
+  return "";
+}
+
+function truncateToBudget(text: string, budget: number, mode: RenderMode): string {
   if (budget <= 0) return TRUNCATION_NOTICE;
   if (text.length <= budget) return text;
   const cutLen = budget - TRUNCATION_NOTICE.length;
   if (cutLen <= 0) return TRUNCATION_NOTICE;
-  return text.slice(0, cutLen) + TRUNCATION_NOTICE;
+  const truncated = text.slice(0, cutLen) + TRUNCATION_NOTICE;
+  if (mode === "plaintext") return truncated;
+  return sanitizeTelegramHtml(truncated);
 }
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-// Telegram MarkdownV2 requires these characters to be escaped with a leading backslash.
-// See https://core.telegram.org/bots/api#markdownv2-style
-function escapeMarkdownV2(text: string): string {
-  return text.replace(/[_*[\]()~`<>#+=|{}.!\\-]/g, "\\$&");
+function normalizeLineEndings(text: string): string {
+  return text.replace(/\r\n/g, "\n");
+}
+
+function looksLikeMarkdown(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+
+  return [
+    /^\s{0,3}#{1,6}\s+\S/m,
+    /^\s*>+\s*\S/m,
+    /^\s*[-*+]\s+\S/m,
+    /^\s*\d+[.)]\s+\S/m,
+    /```[\s\S]+```/,
+    /`[^`\n]+`/,
+    /\[[^\]\n]+\]\((?:https?:\/\/|mailto:)[^)]+\)/,
+    /(^|[^\w])(?:\*\*|__)(?=\S).+?\S(?:\*\*|__)(?!\w)/,
+    /(^|[^\w])(?:\*|_)(?=\S).+?\S(?:\*|_)(?!\w)/,
+    /~~(?=\S).+?\S~~/,
+  ].some((pattern) => pattern.test(trimmed));
+}
+
+function renderMarkdownToTelegramHtml(text: string): string {
+  const normalized = normalizeLineEndings(text).trimEnd();
+  if (!normalized) return "";
+
+  const lines = normalized.split("\n");
+  const rendered: string[] = [];
+  let codeFence: string[] | null = null;
+
+  for (const line of lines) {
+    if (/^\s*```/.test(line)) {
+      if (codeFence) {
+        rendered.push(`<pre>${escapeHtml(codeFence.join("\n"))}</pre>`);
+        codeFence = null;
+      } else {
+        codeFence = [];
+      }
+      continue;
+    }
+
+    if (codeFence) {
+      codeFence.push(line);
+      continue;
+    }
+
+    rendered.push(renderMarkdownLine(line));
+  }
+
+  if (codeFence) {
+    rendered.push(`<pre>${escapeHtml(codeFence.join("\n"))}</pre>`);
+  }
+
+  return sanitizeTelegramHtml(
+    rendered
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim(),
+  );
+}
+
+function renderMarkdownLine(line: string): string {
+  if (!line.trim()) return "";
+
+  const heading = line.match(/^\s{0,3}#{1,6}\s+(.*)$/);
+  if (heading) {
+    return `<b>${renderMarkdownInline(heading[1]?.trim() ?? "")}</b>`;
+  }
+
+  const quote = line.match(/^\s{0,3}>\s?(.*)$/);
+  if (quote) {
+    return `&gt; ${renderMarkdownInline(quote[1] ?? "")}`;
+  }
+
+  const ordered = line.match(/^\s*(\d+)[.)]\s+(.*)$/);
+  if (ordered) {
+    return `${ordered[1]}. ${renderMarkdownInline(ordered[2] ?? "")}`;
+  }
+
+  const unordered = line.match(/^\s*[-*+]\s+(.*)$/);
+  if (unordered) {
+    return `• ${renderMarkdownInline(unordered[1] ?? "")}`;
+  }
+
+  if (/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
+    return "────────";
+  }
+
+  return renderMarkdownInline(line);
+}
+
+function renderMarkdownInline(text: string): string {
+  const stash: string[] = [];
+  const stashHtml = (html: string): string => {
+    const token = `@@MDTOKEN_${stash.length}@@`;
+    stash.push(html);
+    return token;
+  };
+
+  let rendered = text.replace(/\\([\\`*_#[\]()~>+\-=|{}.!])/g, (_match, char: string) =>
+    stashHtml(escapeHtml(char)),
+  );
+
+  rendered = rendered.replace(/`([^`\n]+)`/g, (_match, code: string) =>
+    stashHtml(`<code>${escapeHtml(code)}</code>`),
+  );
+
+  rendered = rendered.replace(
+    /\[([^\]\n]+)\]\(((?:https?:\/\/|mailto:)[^)]+)\)/g,
+    (_match, label: string, url: string) =>
+      stashHtml(`<a href="${escapeHtmlAttribute(url)}">${escapeHtml(label)}</a>`),
+  );
+
+  rendered = escapeHtml(rendered);
+
+  rendered = replaceDelimited(rendered, /(\*\*\*|___)(?=\S)(.+?\S)\1/g, (content) => {
+    return `<b><i>${content}</i></b>`;
+  });
+  rendered = replaceDelimited(rendered, /(\*\*|__)(?=\S)(.+?\S)\1/g, (content) => {
+    return `<b>${content}</b>`;
+  });
+  rendered = replaceDelimited(rendered, /(~~)(?=\S)(.+?\S)\1/g, (content) => {
+    return `<s>${content}</s>`;
+  });
+  rendered = replaceDelimited(
+    rendered,
+    /(^|[^\w>])(\*|_)(?=\S)(.+?\S)\2(?!\w)/g,
+    (content, prefix) => {
+      return `${prefix}<i>${content}</i>`;
+    },
+  );
+
+  return rendered.replace(
+    /@@MDTOKEN_(\d+)@@/g,
+    (_match, index: string) => stash[Number(index)] ?? "",
+  );
+}
+
+function replaceDelimited(
+  text: string,
+  pattern: RegExp,
+  formatter: (content: string, prefix: string) => string,
+): string {
+  return text.replace(pattern, (match: string, ...captures: unknown[]) => {
+    const groups = captures.slice(0, -2) as string[];
+    if (groups.length === 2) {
+      const [delimiter, content] = groups;
+      void delimiter;
+      return formatter(content ?? "", "");
+    }
+    if (groups.length === 3) {
+      const [prefix, delimiter, content] = groups;
+      void delimiter;
+      return formatter(content ?? "", prefix ?? "");
+    }
+    return match;
+  });
+}
+
+function escapeHtmlAttribute(text: string): string {
+  return escapeHtml(text).replace(/"/g, "&quot;");
 }

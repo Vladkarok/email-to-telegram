@@ -7,7 +7,12 @@ import type * as schema from "../db/schema.js";
 import type { EmailAddress, DeliveryLog } from "../db/schema.js";
 import { parseEmail } from "./parser.js";
 import { cleanEmailBody } from "./cleaner.js";
-import { renderEmail, renderAttachmentFallback, type AttachmentLink } from "./renderer.js";
+import {
+  renderEmail,
+  renderAttachmentFallback,
+  parseModeForRenderMode,
+  type AttachmentLink,
+} from "./renderer.js";
 import { isImageContentType } from "./imageTypes.js";
 import type { PhotoItem } from "../telegram/sender.js";
 import { isDuplicate } from "./dedup.js";
@@ -230,8 +235,7 @@ export async function deliverQueuedEmail(
     // 9. Send — parse_mode depends on render mode; plaintext uses none (avoids HTML metachar issues)
     if (api) {
       const { sendTelegramMessage, sendTelegramPhotos } = await import("../telegram/sender.js");
-      const parseMode =
-        renderMode === "html" ? "HTML" : renderMode === "markdown" ? "MarkdownV2" : undefined;
+      const parseMode = parseModeForRenderMode(renderMode);
 
       const result = await sendTelegramMessage(api, {
         chatId: alias.chatId,

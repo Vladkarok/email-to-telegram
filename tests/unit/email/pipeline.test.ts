@@ -364,6 +364,40 @@ describe("deliverQueuedEmail", () => {
     expect(mockUpdateLogStatus).toHaveBeenCalledWith(expect.anything(), "log-failed", "failed");
   });
 
+  it("uses HTML parse mode for markdown-rendered deliveries", async () => {
+    mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 77 });
+
+    await deliverQueuedEmail(
+      {} as Parameters<typeof processInboundEmail>[0],
+      {} as Parameters<typeof processInboundEmail>[1],
+      {
+        alias: { ...activeAlias, renderMode: "markdown" },
+        parsed: {
+          messageId: "<id@test>",
+          subject: "Markdown",
+          envelopeFrom: "sender@example.com",
+          headerFrom: "Sender <sender@example.com>",
+          textBody: "# Heading\n\n**Bold**",
+          htmlBody: "<div># Heading</div><div>**Bold**</div>",
+          bodySha256: "hash",
+          attachments: [],
+          rawSizeBytes: 5,
+        },
+        deliveryLog: { id: "log-markdown" } as never,
+        envelopeFrom: "sender@example.com",
+        ...PIPELINE_CONFIG,
+      },
+    );
+
+    const [, opts] = mockSendTelegram.mock.calls[0] as [
+      unknown,
+      { parseMode?: string; text: string },
+    ];
+    expect(opts.parseMode).toBe("HTML");
+    expect(opts.text).toContain("<b>Heading</b>");
+    expect(opts.text).toContain("<b>Bold</b>");
+  });
+
   it("omits image download links when the image is sent as a Telegram photo", async () => {
     mockCreateAttachment
       .mockResolvedValueOnce({ id: "att-image" })

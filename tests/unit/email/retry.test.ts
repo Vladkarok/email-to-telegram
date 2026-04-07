@@ -259,6 +259,26 @@ describe("runRetryWorker", () => {
     expect(opts.text).toContain("/dl/");
   });
 
+  it("uses HTML parse mode for markdown-rendered retries", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockFindAliasById.mockResolvedValue({ ...fakeAlias, renderMode: "markdown" });
+    mockReadRawEmail.mockResolvedValue(
+      Buffer.from(
+        "From: sender@example.com\r\nTo: alias@example.com\r\nSubject: Markdown\r\n\r\n# Heading\r\n\r\n**Bold**",
+      ),
+    );
+
+    await runRetryWorker(fakeDb, fakeApi);
+
+    const [, opts] = mockSendTelegramMessage.mock.calls[0] as [
+      unknown,
+      { parseMode?: string; text: string },
+    ];
+    expect(opts.parseMode).toBe("HTML");
+    expect(opts.text).toContain("<b>Heading</b>");
+    expect(opts.text).toContain("<b>Bold</b>");
+  });
+
   it("does not rebuild download links for image attachments that are resent as photos", async () => {
     mockFindFailedLogs.mockResolvedValue([fakeLog]);
     mockListAttachments.mockResolvedValue([

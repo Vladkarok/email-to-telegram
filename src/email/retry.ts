@@ -4,7 +4,7 @@ import type * as schema from "../db/schema.js";
 import { queueInboundEmail, deliverQueuedEmail } from "./pipeline.js";
 import { parseEmail } from "./parser.js";
 import { cleanEmailBody } from "./cleaner.js";
-import { renderEmail, renderAttachmentFallback } from "./renderer.js";
+import { renderEmail, renderAttachmentFallback, parseModeForRenderMode } from "./renderer.js";
 import { isImageContentType } from "./imageTypes.js";
 import { sendTelegramMessage, sendTelegramPhotos } from "../telegram/sender.js";
 import {
@@ -227,8 +227,7 @@ async function retryDelivery(
 
   const renderMode = (alias.renderMode ?? "plaintext") as "plaintext" | "html" | "markdown";
   const text = renderEmail(parsed, renderMode, alias.fullAddress, attachmentLinks);
-  const parseMode =
-    renderMode === "html" ? "HTML" : renderMode === "markdown" ? "MarkdownV2" : undefined;
+  const parseMode = parseModeForRenderMode(renderMode);
 
   const result = await sendTelegramMessage(api, {
     chatId: alias.chatId,

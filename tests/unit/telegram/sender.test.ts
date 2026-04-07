@@ -71,7 +71,7 @@ describe("sendTelegramMessage", () => {
       chatId: 200n,
       threadId: null,
       text: "Retry me",
-      parseMode: "MarkdownV2",
+      parseMode: "HTML",
     });
     // Advance past the first retry delay (1 second)
     await vi.runAllTimersAsync();
