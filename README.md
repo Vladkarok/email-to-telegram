@@ -251,7 +251,7 @@ Each alias currently has two delivery-format settings:
 - Render mode: `plaintext`, `html`, or `markdown`
 - Body dedup: `on` or `off`
 
-Message-ID replay protection is always on.
+Message-ID duplicates are still blocked when that header is present.
 
 Body dedup is off by default for new aliases because alerting systems often send
 repeated messages with the same body, and hiding those by default is riskier than

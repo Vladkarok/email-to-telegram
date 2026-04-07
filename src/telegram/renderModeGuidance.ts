@@ -25,16 +25,16 @@ export function renderModeHelpText(): string {
 
 export function bodyDedupGuidance(enabled: boolean): string {
   if (enabled) {
-    return "Body dedup: on. Future emails with the same body may be suppressed for this alias. Message-ID replay protection stays on.";
+    return "Body dedup: on. Future emails with the same body may be suppressed for this alias. Message-ID duplicates are still blocked when that header is present.";
   }
 
-  return "Body dedup: off. Repeated alerts with the same body still deliver. Recommended for alarm aliases. Message-ID replay protection stays on.";
+  return "Body dedup: off. Repeated alerts with the same body still deliver. Recommended for alarm aliases. Message-ID duplicates are still blocked when that header is present.";
 }
 
 export function bodyDedupHelpText(): string {
   return [
     "<b>Body Dedup</b>",
-    "Message-ID replay protection is always on",
+    "Message-ID duplicates are still blocked when that header is present",
     "new aliases default to body dedup off",
     "body dedup off — repeated alerts with the same body still deliver (recommended for alarm aliases)",
     "body dedup on — future emails with the same body may be suppressed for that alias",

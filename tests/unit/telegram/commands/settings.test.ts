@@ -64,7 +64,7 @@ describe("/settings command", () => {
     await settingsHandler(ctx);
     expect(mockUpdateBodyDedup).toHaveBeenCalledWith(expect.anything(), "uuid-1", true);
     expect(ctx.reply).toHaveBeenCalledWith(
-      expect.stringContaining("Message-ID replay protection stays on"),
+      expect.stringContaining("Message-ID duplicates are still blocked"),
       expect.anything(),
     );
   });
