@@ -9,14 +9,12 @@ import { getLogger } from "../utils/logger.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
-/** Retention for delivery_logs / delivery_attempts rows (90 days). */
-const LOG_RETENTION_DAYS = 90;
-
 export interface CleanupConfig {
   attachmentDir: string;
   rawEmailDir: string;
   attachmentTtlHours: number;
   rawEmailTtlHours: number;
+  deliveryLogRetentionDays: number;
 }
 
 export async function runCleanup(db: Db, config: CleanupConfig): Promise<void> {
@@ -30,7 +28,7 @@ export async function runCleanup(db: Db, config: CleanupConfig): Promise<void> {
   await cleanRawEmails(config.rawEmailDir, config.rawEmailTtlHours, now, log);
 
   // 3. Delete old delivery_log rows (cascades to delivery_attempts)
-  await cleanDeliveryLogs(db, now, log);
+  await cleanDeliveryLogs(db, config.deliveryLogRetentionDays, now, log);
 }
 
 async function cleanAttachments(
@@ -127,15 +125,16 @@ async function cleanRawEmails(
 
 async function cleanDeliveryLogs(
   db: Db,
+  retentionDays: number,
   now: number,
   log: ReturnType<typeof getLogger>,
 ): Promise<void> {
-  const cutoff = new Date(now - LOG_RETENTION_DAYS * 24 * 3600 * 1000);
+  const cutoff = new Date(now - retentionDays * 24 * 3600 * 1000);
   try {
     const result = await db.delete(deliveryLogs).where(lt(deliveryLogs.createdAt, cutoff));
     const rows = (result as unknown as { rowCount?: number }).rowCount ?? 0;
     if (rows > 0) {
-      log.info({ rows, retentionDays: LOG_RETENTION_DAYS }, "cleanup: purged old delivery logs");
+      log.info({ rows, retentionDays }, "cleanup: purged old delivery logs");
     }
   } catch (err: unknown) {
     log.error({ err }, "cleanup: delivery log purge failed");

@@ -44,6 +44,7 @@ const config = {
   rawEmailDir: "/data/rawemails",
   attachmentTtlHours: 336,
   rawEmailTtlHours: 336,
+  deliveryLogRetentionDays: 30,
 };
 
 describe("runCleanup", () => {

@@ -16,6 +16,7 @@ const REQUIRED_ENV: Record<string, string> = {
 const OPTIONAL_ENV = [
   "ATTACHMENT_TTL_HOURS",
   "RAW_EMAIL_TTL_HOURS",
+  "DELIVERY_LOG_RETENTION_DAYS",
   "STORAGE_ENCRYPTION_MODE",
   "MASTER_ENCRYPTION_KEY",
   "MASTER_ENCRYPTION_KEY_ID",
@@ -59,6 +60,7 @@ describe("loadConfig", () => {
     const config = loadConfig();
     expect(config.attachmentTtlHours).toBe(336);
     expect(config.rawEmailTtlHours).toBe(336);
+    expect(config.deliveryLogRetentionDays).toBe(30);
     expect(config.storageEncryptionMode).toBe("none");
     expect(config.maxSizeBytes).toBe(10485760);
     expect(config.logLevel).toBe("info");

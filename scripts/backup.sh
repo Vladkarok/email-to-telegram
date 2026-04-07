@@ -7,6 +7,7 @@
 # listings or shell history.
 #
 # Backup files: <backup_dir>/backup-YYYY-MM-DD.sql.gz
+# Metadata:      <backup_dir>/backup-YYYY-MM-DD.meta
 # Retention:    keep_days (default 7) — older files are deleted
 
 set -eu
@@ -15,9 +16,13 @@ umask 077
 BACKUP_DIR="${1:?backup_dir required}"
 DATABASE_URL="${DATABASE_URL:?DATABASE_URL env var required}"
 KEEP_DAYS="${2:-7}"
+STORAGE_ENCRYPTION_MODE="${STORAGE_ENCRYPTION_MODE:-none}"
+MASTER_ENCRYPTION_KEY="${MASTER_ENCRYPTION_KEY:-}"
+MASTER_ENCRYPTION_KEY_ID="${MASTER_ENCRYPTION_KEY_ID:-local-env-v1}"
 
 DATE=$(date -u +%Y-%m-%d)
 BACKUP_FILE="${BACKUP_DIR}/backup-${DATE}.sql.gz"
+META_FILE="${BACKUP_DIR}/backup-${DATE}.meta"
 
 mkdir -p "$BACKUP_DIR"
 
@@ -31,10 +36,16 @@ IFS='
 TMP_CONN="${BACKUP_DIR}/.backup-conn-${DATE}-$$.txt"
 TMP_SQL="${BACKUP_DIR}/.backup-${DATE}-$$.sql"
 TMP_GZ="${BACKUP_FILE}.tmp"
+TMP_META="${META_FILE}.tmp"
 cleanup_tmp() {
-  rm -f "$TMP_SQL" "$TMP_GZ" "$TMP_CONN"
+  rm -f "$TMP_SQL" "$TMP_GZ" "$TMP_CONN" "$TMP_META"
 }
 trap cleanup_tmp EXIT INT TERM
+
+if [ "$STORAGE_ENCRYPTION_MODE" = "local-v1" ] && [ -z "$MASTER_ENCRYPTION_KEY" ]; then
+  echo "backup.sh: MASTER_ENCRYPTION_KEY is required when STORAGE_ENCRYPTION_MODE=local-v1" >&2
+  exit 1
+fi
 
 node --input-type=module -e '
   const url = new URL(process.env.DATABASE_URL);
@@ -68,11 +79,26 @@ pg_dump \
 
 gzip -9 < "$TMP_SQL" > "$TMP_GZ"
 mv "$TMP_GZ" "$BACKUP_FILE"
+
+{
+  echo "created_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "backup_file=$(basename "$BACKUP_FILE")"
+  echo "backup_scope=database_only"
+  echo "storage_encryption_mode=$STORAGE_ENCRYPTION_MODE"
+  echo "master_encryption_key_id=$MASTER_ENCRYPTION_KEY_ID"
+  echo "requires_matching_master_key=$([ "$STORAGE_ENCRYPTION_MODE" = "local-v1" ] && echo yes || echo no)"
+  echo "note=This backup contains only the PostgreSQL dump. Attachment/raw mail files are stored separately."
+  echo "restore_warning=If storage encryption is enabled, keep the matching MASTER_ENCRYPTION_KEY and the attachment/raw mail directories needed by those rows."
+} > "$TMP_META"
+mv "$TMP_META" "$META_FILE"
+
 rm -f "$TMP_SQL" "$TMP_CONN"
 trap - EXIT INT TERM
 
 echo "Backup written: $BACKUP_FILE ($(du -sh "$BACKUP_FILE" | cut -f1))"
+echo "Backup metadata: $META_FILE"
 
 # Rotate: delete backups older than KEEP_DAYS
 find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.sql.gz' -mtime "+${KEEP_DAYS}" -delete
+find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.meta' -mtime "+${KEEP_DAYS}" -delete
 echo "Retention: kept last ${KEEP_DAYS} days of backups"

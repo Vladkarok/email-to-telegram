@@ -20,6 +20,7 @@ import { runUptimeCheck } from "./utils/uptime.js";
 import { pipelineTracker } from "./utils/inFlight.js";
 import { startSessionSweep, destroySessionStore } from "./telegram/session.js";
 import { configureStorageEncryption } from "./security/encryption.js";
+import { assertStorageEncryptionReadiness } from "./startup/storageReadiness.js";
 
 async function main() {
   const startup = parseStartupOptions(process.argv.slice(2));
@@ -60,6 +61,7 @@ async function main() {
       });
     }),
   );
+  await assertStorageEncryptionReadiness(getDb(), config);
 
   // 3b. Seed initial allowed users
   if (config.initialAllowedUsers.length > 0) {
@@ -106,6 +108,7 @@ async function main() {
     rawEmailDir: config.rawEmailDir,
     attachmentTtlHours: config.attachmentTtlHours,
     rawEmailTtlHours: config.rawEmailTtlHours,
+    deliveryLogRetentionDays: config.deliveryLogRetentionDays,
   };
 
   const cronTasks = [

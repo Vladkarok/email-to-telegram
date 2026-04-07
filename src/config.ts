@@ -24,6 +24,7 @@ const envSchema = z.object({
   RAW_EMAIL_DIR: z.string().min(1),
   ATTACHMENT_TTL_HOURS: z.coerce.number().int().positive().default(336),
   RAW_EMAIL_TTL_HOURS: z.coerce.number().int().positive().default(336),
+  DELIVERY_LOG_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
   STORAGE_ENCRYPTION_MODE: z.enum(["none", "local-v1"]).default("none"),
   MASTER_ENCRYPTION_KEY: z.string().optional(),
   MASTER_ENCRYPTION_KEY_ID: z.string().default("local-env-v1"),
@@ -70,6 +71,7 @@ export interface AppConfig {
   rawEmailDir: string;
   attachmentTtlHours: number;
   rawEmailTtlHours: number;
+  deliveryLogRetentionDays: number;
   storageEncryptionMode: StorageEncryptionMode;
   masterEncryptionKey: string | undefined;
   masterEncryptionKeyId: string;
@@ -127,6 +129,7 @@ export function loadConfig(): AppConfig {
     rawEmailDir: env.RAW_EMAIL_DIR,
     attachmentTtlHours: env.ATTACHMENT_TTL_HOURS,
     rawEmailTtlHours: env.RAW_EMAIL_TTL_HOURS,
+    deliveryLogRetentionDays: env.DELIVERY_LOG_RETENTION_DAYS,
     storageEncryptionMode: env.STORAGE_ENCRYPTION_MODE,
     masterEncryptionKey: env.MASTER_ENCRYPTION_KEY,
     masterEncryptionKeyId: env.MASTER_ENCRYPTION_KEY_ID,
