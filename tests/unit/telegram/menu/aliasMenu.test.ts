@@ -26,6 +26,7 @@ const fakeAlias = {
   chatId: -100n,
   status: "active",
   renderMode: "plaintext",
+  bodyDedupEnabled: false,
 };
 
 describe("editAliasListMenu", () => {
@@ -64,6 +65,7 @@ describe("editAliasDetailMenu", () => {
     const [text] = (ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
     expect(text).toContain(fakeAlias.fullAddress);
     expect(text).toContain("github.com");
+    expect(text).toContain("Body dedup: <code>off</code>");
   });
 
   it("shows warning when no allow rules", async () => {
@@ -102,7 +104,7 @@ describe("editAliasDetailMenu", () => {
     expect(buttons.some((t) => t.includes("Resume"))).toBe(true);
   });
 
-  it("shows Allow Rules button", async () => {
+  it("shows Allow Rules and Settings buttons", async () => {
     mockFindAliasById.mockResolvedValue(fakeAlias);
     mockListAllowRules.mockResolvedValue([]);
     const ctx = createMockCtx({ chatType: "private" });
@@ -113,6 +115,7 @@ describe("editAliasDetailMenu", () => {
     ];
     const buttons = opts.reply_markup.inline_keyboard.flat().map((b) => b.text);
     expect(buttons.some((t) => t.includes("Allow Rules"))).toBe(true);
+    expect(buttons.some((t) => t.includes("Settings"))).toBe(true);
   });
 
   it("calls answerCallbackQuery when alias is not found", async () => {

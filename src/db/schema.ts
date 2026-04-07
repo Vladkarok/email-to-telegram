@@ -39,6 +39,7 @@ export const emailAddresses = pgTable(
       .notNull()
       .references(() => users.id),
     renderMode: varchar("render_mode", { length: 20 }).notNull().default("plaintext"),
+    bodyDedupEnabled: boolean("body_dedup_enabled").notNull().default(false),
     status: varchar("status", { length: 20 }).notNull().default("active"),
     maxEmailsHour: integer("max_emails_hour").notNull().default(60),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -84,6 +85,7 @@ export const deliveryLogs = pgTable(
       .references(() => emailAddresses.id, { onDelete: "cascade" }),
     messageIdHeader: varchar("message_id_header", { length: 998 }),
     bodySha256: varchar("body_sha256", { length: 64 }),
+    bodyDedupApplied: boolean("body_dedup_applied").notNull().default(false),
     envelopeFrom: varchar("envelope_from", { length: 320 }),
     headerFrom: varchar("header_from", { length: 320 }),
     subject: text("subject"),
@@ -105,7 +107,7 @@ export const deliveryLogs = pgTable(
       .where(sql`message_id_header IS NOT NULL`),
     uniqueIndex("idx_log_dedup_bodyhash")
       .on(t.emailAddressId, t.bodySha256)
-      .where(sql`body_sha256 IS NOT NULL`),
+      .where(sql`body_sha256 IS NOT NULL AND body_dedup_applied = true`),
   ],
 );
 

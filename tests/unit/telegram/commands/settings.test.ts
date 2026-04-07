@@ -6,9 +6,11 @@ vi.mock("../../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
 const mockFindAlias = vi.fn();
 const mockUpdateMode = vi.fn();
+const mockUpdateBodyDedup = vi.fn();
 vi.mock("../../../../src/db/repos/aliases.js", () => ({
   findAliasByIdAndChat: (...args: unknown[]): unknown => mockFindAlias(...args),
   updateAliasRenderMode: (...args: unknown[]): unknown => mockUpdateMode(...args),
+  updateAliasBodyDedup: (...args: unknown[]): unknown => mockUpdateBodyDedup(...args),
 }));
 
 vi.mock("../../../../src/telegram/authorization.js", () => ({
@@ -21,7 +23,7 @@ describe("/settings command", () => {
     const ctx = createMockCtx({ commandMatch: "" });
     await settingsHandler(ctx);
     expect(ctx.reply).toHaveBeenCalledWith(
-      expect.stringContaining("type markdown syntax literally"),
+      expect.stringContaining("body dedup on"),
       expect.objectContaining({ parse_mode: "HTML" }),
     );
   });
@@ -38,6 +40,7 @@ describe("/settings command", () => {
       id: "uuid-1",
       fullAddress: "alerts@example.com",
       renderMode: "plaintext",
+      bodyDedupEnabled: false,
     });
     mockUpdateMode.mockResolvedValue(undefined);
     const ctx = createMockCtx({ commandMatch: "alerts html" });
@@ -49,16 +52,35 @@ describe("/settings command", () => {
     );
   });
 
+  it("applies body dedup directly when given as argument", async () => {
+    mockFindAlias.mockResolvedValue({
+      id: "uuid-1",
+      fullAddress: "alerts@example.com",
+      renderMode: "plaintext",
+      bodyDedupEnabled: false,
+    });
+    mockUpdateBodyDedup.mockResolvedValue(undefined);
+    const ctx = createMockCtx({ commandMatch: "alerts dedup on" });
+    await settingsHandler(ctx);
+    expect(mockUpdateBodyDedup).toHaveBeenCalledWith(expect.anything(), "uuid-1", true);
+    expect(ctx.reply).toHaveBeenCalledWith(
+      expect.stringContaining("Message-ID replay protection stays on"),
+      expect.anything(),
+    );
+  });
+
   it("shows inline keyboard when no mode argument", async () => {
     mockFindAlias.mockResolvedValue({
       id: "uuid-2",
       fullAddress: "news@example.com",
       renderMode: "plaintext",
+      bodyDedupEnabled: false,
     });
     const ctx = createMockCtx({ commandMatch: "news" });
     await settingsHandler(ctx);
     const call = ctx.reply.mock.calls[0] as [string, { reply_markup: unknown }];
     expect(call[0]).toContain("send literal text exactly as typed");
+    expect(call[0]).toContain("Body dedup: <b>off</b>");
     expect(call[1]).toHaveProperty("reply_markup");
   });
 });

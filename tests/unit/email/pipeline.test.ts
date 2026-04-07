@@ -71,6 +71,7 @@ const activeAlias = {
   messageThreadId: null,
   status: "active",
   renderMode: "plaintext",
+  bodyDedupEnabled: false,
   maxEmailsHour: 60,
 };
 
@@ -204,7 +205,34 @@ describe("processInboundEmail", () => {
 
     expect(mockCreateLog).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ envelopeFrom: "real-sender@sender.example.com" }),
+      expect.objectContaining({
+        envelopeFrom: "real-sender@sender.example.com",
+        bodyDedupApplied: false,
+      }),
+    );
+  });
+
+  it("passes the alias body dedup setting into the duplicate check and delivery log", async () => {
+    mockFindAlias.mockResolvedValue({ ...activeAlias, bodyDedupEnabled: true });
+    mockCheckAllow.mockResolvedValue(true);
+    mockIsDuplicate.mockResolvedValue(false);
+    mockCreateLog.mockResolvedValue({ id: "log-dedup-enabled" });
+    mockUpdateLogStatus.mockResolvedValue(undefined);
+
+    await processInboundEmail(fakeDb() as Parameters<typeof processInboundEmail>[0], null, {
+      rawEmail: simpleEmail(),
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+      ...PIPELINE_CONFIG,
+    });
+
+    expect(mockIsDuplicate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ bodyDedupEnabled: true }),
+    );
+    expect(mockCreateLog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ bodyDedupApplied: true }),
     );
   });
 

@@ -24,6 +24,7 @@ describe("isDuplicate", () => {
       messageId: "<new@example.com>",
       bodySha256: "abc123",
       aliasId: "uuid-1",
+      bodyDedupEnabled: false,
     });
     expect(result).toBe(false);
   });
@@ -34,17 +35,19 @@ describe("isDuplicate", () => {
       messageId: "<duplicate@example.com>",
       bodySha256: "xyz",
       aliasId: "uuid-1",
+      bodyDedupEnabled: false,
     });
     expect(result).toBe(true);
   });
 
-  it("returns true when body hash matches a prior delivery for the same alias", async () => {
+  it("returns true when body hash matches a prior delivery and body dedup is enabled", async () => {
     mockFindByMessageId.mockResolvedValue(null);
     mockFindByBodyHash.mockResolvedValue({ id: "existing-log" });
     const result = await isDuplicate({} as Parameters<typeof isDuplicate>[0], {
       messageId: null,
       bodySha256: "hashofbody",
       aliasId: "uuid-1",
+      bodyDedupEnabled: true,
     });
     expect(result).toBe(true);
   });
@@ -56,7 +59,21 @@ describe("isDuplicate", () => {
       messageId: null,
       bodySha256: "abc",
       aliasId: "uuid-1",
+      bodyDedupEnabled: false,
     });
     expect(mockFindByMessageId).not.toHaveBeenCalled();
+  });
+
+  it("skips body-hash dedup when body dedup is disabled", async () => {
+    mockFindByMessageId.mockResolvedValue(null);
+    mockFindByBodyHash.mockResolvedValue({ id: "existing-log" });
+    const result = await isDuplicate({} as Parameters<typeof isDuplicate>[0], {
+      messageId: null,
+      bodySha256: "hashofbody",
+      aliasId: "uuid-1",
+      bodyDedupEnabled: false,
+    });
+    expect(result).toBe(false);
+    expect(mockFindByBodyHash).not.toHaveBeenCalled();
   });
 });

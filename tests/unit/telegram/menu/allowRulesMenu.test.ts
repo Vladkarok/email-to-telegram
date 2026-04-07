@@ -24,6 +24,7 @@ const fakeAlias = {
   chatId: -100n,
   status: "active",
   renderMode: "plaintext",
+  bodyDedupEnabled: false,
 };
 
 describe("sendAllowRulesMenu", () => {

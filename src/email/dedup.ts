@@ -8,6 +8,7 @@ interface DedupInput {
   messageId: string | null;
   bodySha256: string;
   aliasId: string;
+  bodyDedupEnabled: boolean;
 }
 
 export async function isDuplicate(db: Db, input: DedupInput): Promise<boolean> {
@@ -15,6 +16,8 @@ export async function isDuplicate(db: Db, input: DedupInput): Promise<boolean> {
     const existing = await findDeliveryLogByMessageId(db, input.messageId, input.aliasId);
     if (existing) return true;
   }
+
+  if (!input.bodyDedupEnabled) return false;
 
   const existing = await findDeliveryLogByBodyHash(db, input.bodySha256, input.aliasId);
   return existing !== null;

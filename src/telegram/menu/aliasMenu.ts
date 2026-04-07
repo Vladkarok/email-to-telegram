@@ -62,7 +62,8 @@ export async function editAliasDetailMenu(ctx: Context, db: Db, aliasId: string)
   const text =
     `📧 <code>${escapeHtml(alias.fullAddress)}</code>\n` +
     `Status: ${statusIcon(alias.status)} ${alias.status}\n` +
-    `Render: <code>${alias.renderMode}</code>\n\n` +
+    `Render: <code>${alias.renderMode}</code>\n` +
+    `Body dedup: <code>${alias.bodyDedupEnabled ? "on" : "off"}</code>\n\n` +
     `<b>Allow rules:</b>\n${rulesText}`;
 
   const keyboard = new InlineKeyboard();
@@ -73,7 +74,7 @@ export async function editAliasDetailMenu(ctx: Context, db: Db, aliasId: string)
     keyboard.text("▶️ Resume", `ar:${alias.id}`);
   }
   keyboard.text("🗑 Delete", `ad:${alias.id}`).row();
-  keyboard.text("📋 Allow Rules", `al:${alias.id}`).text("⚙️ Render Mode", `ac:${alias.id}`).row();
+  keyboard.text("📋 Allow Rules", `al:${alias.id}`).text("⚙️ Settings", `ac:${alias.id}`).row();
   keyboard.text("⬅️ Back", `cl:${alias.chatId}`);
 
   await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: keyboard });

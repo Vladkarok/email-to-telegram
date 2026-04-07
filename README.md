@@ -7,6 +7,22 @@ send to each alias, and forward accepted mail into a Telegram DM, group, or foru
 topic. Attachments are stored on disk and exposed through expiring download links;
 image attachments are also sent to Telegram directly when possible.
 
+## Intended Use And Trust Model
+
+This project is intended for operational alerts, monitoring mail, and convenience
+forwarding where seeing the message in Telegram is faster than watching a busy inbox.
+
+Do not use this project as a secure vault or a safe channel for secrets, recovery
+codes, credentials, medical/legal/financial records, or other regulated or highly
+confidential content.
+
+Current trust model:
+
+- The VPS operator and anyone with access to its backups may be able to access stored mail content
+- Anyone with access to the destination Telegram chat can read forwarded messages
+- Anyone with access to the bot token has meaningful visibility into bot-delivered content
+- Telegram forwarding is a convenience channel, not a life-safety or sole paging system
+
 ## Current Scope
 
 Implemented today:
@@ -54,7 +70,7 @@ can be served from `https://mail.example.com`.
 | `/deleteemail <name>`                    | Delete an alias                                     |
 | `/pauseemail <name>`                     | Pause an alias                                      |
 | `/resumeemail <name>`                    | Resume an alias                                     |
-| `/settings <name>`                       | Change render mode                                  |
+| `/settings <name>`                       | Change render mode and body dedup                   |
 | `/allow add <name> <email_or_domain>`    | Add an allow rule                                   |
 | `/allow remove <name> <email_or_domain>` | Remove an allow rule                                |
 | `/allow list <name>`                     | List allow rules                                    |
@@ -227,6 +243,22 @@ then be forwarded to the VPS over HTTPS.
 ```
 
 Without an allow rule, all mail to that alias is rejected.
+
+### Alias settings
+
+Each alias currently has two delivery-format settings:
+
+- Render mode: `plaintext`, `html`, or `markdown`
+- Body dedup: `on` or `off`
+
+Message-ID replay protection is always on.
+
+Body dedup is off by default for new aliases because alerting systems often send
+repeated messages with the same body, and hiding those by default is riskier than
+letting a duplicate through.
+
+Upgraded installations keep body dedup enabled on existing aliases so behavior does
+not change unexpectedly until you choose to change that setting.
 
 ### 12. Send a real test message
 

@@ -53,4 +53,12 @@ describe("/help command", () => {
     expect(String(text)).toContain("use Gmail or mail-client formatting buttons");
     expect(String(text)).toContain("type markdown syntax literally");
   });
+
+  it("includes the operational-use disclaimer", async () => {
+    const ctx = createMockCtx();
+    await helpHandler(ctx);
+    const text = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as unknown;
+    expect(String(text)).toContain("not for secrets or regulated/confidential data");
+    expect(String(text)).toContain("Do not rely on Telegram forwarding as your only life-safety");
+  });
 });

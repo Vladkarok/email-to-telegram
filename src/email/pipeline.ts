@@ -115,6 +115,7 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
       messageId: parsed.messageId,
       bodySha256: parsed.bodySha256,
       aliasId: alias.id,
+      bodyDedupEnabled: alias.bodyDedupEnabled ?? false,
     });
     if (dup) {
       return { kind: "duplicate" as const };
@@ -130,6 +131,7 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
       emailAddressId: alias.id,
       messageIdHeader: parsed.messageId,
       bodySha256: parsed.bodySha256,
+      bodyDedupApplied: alias.bodyDedupEnabled ?? false,
       envelopeFrom: envelopeFrom,
       headerFrom: parsed.headerFrom,
       subject: parsed.subject,

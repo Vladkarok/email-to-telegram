@@ -54,7 +54,13 @@ export async function findDeliveryLogByBodyHash(
   const [log] = await db
     .select()
     .from(deliveryLogs)
-    .where(and(eq(deliveryLogs.bodySha256, bodySha256), eq(deliveryLogs.emailAddressId, aliasId)));
+    .where(
+      and(
+        eq(deliveryLogs.bodySha256, bodySha256),
+        eq(deliveryLogs.emailAddressId, aliasId),
+        eq(deliveryLogs.bodyDedupApplied, true),
+      ),
+    );
   return log ?? null;
 }
 

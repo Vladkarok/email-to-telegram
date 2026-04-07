@@ -17,7 +17,7 @@
  *  ✓ paused alias — rejected alias_not_found
  *  ✓ blocked sender — rejected sender_not_allowed
  *  ✓ duplicate Message-ID — rejected duplicate
- *  ✓ duplicate body hash — rejected duplicate
+ *  ✓ duplicate body hash when body dedup is enabled — rejected duplicate
  *  ✓ forum topic delivery — messageThreadId set on send call
  *  ✓ rawEmailPath stored in delivery log
  *  ✓ delivery_attempt recorded on success
@@ -98,6 +98,7 @@ const baseAlias = {
   messageThreadId: null as bigint | null,
   status: "active",
   renderMode: "plaintext",
+  bodyDedupEnabled: false,
   maxEmailsHour: 60,
 };
 
@@ -284,8 +285,8 @@ describe("pipeline integration matrix", () => {
     expect(mockSendTelegram).not.toHaveBeenCalled();
   });
 
-  it("duplicate body hash: returns duplicate (same dedup path)", async () => {
-    mockFindAlias.mockResolvedValue(makeAlias());
+  it("duplicate body hash with body dedup enabled: returns duplicate", async () => {
+    mockFindAlias.mockResolvedValue(makeAlias({ bodyDedupEnabled: true }));
     mockCheckAllow.mockResolvedValue(true);
     mockIsDuplicate.mockResolvedValue(true);
     const result = await processInboundEmail(fakeDb, fakeApi, {

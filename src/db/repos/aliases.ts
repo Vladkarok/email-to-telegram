@@ -27,6 +27,7 @@ export async function createAlias(
     | "messageThreadId"
     | "createdBy"
     | "renderMode"
+    | "bodyDedupEnabled"
     | "status"
   >,
 ): Promise<EmailAddress> {
@@ -84,5 +85,16 @@ export async function updateAliasRenderMode(
   await db
     .update(emailAddresses)
     .set({ renderMode, updatedAt: new Date() })
+    .where(eq(emailAddresses.id, id));
+}
+
+export async function updateAliasBodyDedup(
+  db: Db,
+  id: string,
+  bodyDedupEnabled: boolean,
+): Promise<void> {
+  await db
+    .update(emailAddresses)
+    .set({ bodyDedupEnabled, updatedAt: new Date() })
     .where(eq(emailAddresses.id, id));
 }

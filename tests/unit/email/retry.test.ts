@@ -78,6 +78,7 @@ const fakeAlias = {
   messageThreadId: null,
   status: "active",
   renderMode: "plaintext",
+  bodyDedupEnabled: false,
 };
 
 const fakeLog = {

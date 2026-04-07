@@ -1,5 +1,5 @@
 import type { Context } from "grammy";
-import { renderModeHelpText } from "../renderModeGuidance.js";
+import { settingsHelpText, safetyDisclaimerText } from "../renderModeGuidance.js";
 
 export async function helpHandler(ctx: Context): Promise<void> {
   await ctx.reply(
@@ -14,9 +14,9 @@ export async function helpHandler(ctx: Context): Promise<void> {
 /pauseemail &lt;alias&gt; — pause an alias
 /resumeemail &lt;alias&gt; — resume a paused alias
 /deleteemail &lt;alias&gt; — delete an alias
-/settings &lt;alias&gt; — change render mode (plaintext / HTML / Markdown)
+/settings &lt;alias&gt; — change render mode or body dedup
 
-${renderModeHelpText()}
+${settingsHelpText()}
 
 <b>Allow rules</b>
 Only senders matching an allow rule can deliver mail to an alias.
@@ -24,6 +24,8 @@ Only senders matching an allow rule can deliver mail to an alias.
 /allow add &lt;alias&gt; &lt;email_or_domain&gt;
 /allow remove &lt;alias&gt; &lt;email_or_domain&gt;
 /help — show this message
+
+${safetyDisclaimerText()}
 
 💡 After creating an alias, add at least one allow rule — otherwise all mail is rejected.`,
     { parse_mode: "HTML" },

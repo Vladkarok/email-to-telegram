@@ -22,3 +22,34 @@ export function renderModeHelpText(): string {
     "markdown — type markdown syntax literally, not the rich-text toolbar",
   ].join("\n");
 }
+
+export function bodyDedupGuidance(enabled: boolean): string {
+  if (enabled) {
+    return "Body dedup: on. Future emails with the same body may be suppressed for this alias. Message-ID replay protection stays on.";
+  }
+
+  return "Body dedup: off. Repeated alerts with the same body still deliver. Recommended for alarm aliases. Message-ID replay protection stays on.";
+}
+
+export function bodyDedupHelpText(): string {
+  return [
+    "<b>Body Dedup</b>",
+    "Message-ID replay protection is always on",
+    "new aliases default to body dedup off",
+    "body dedup off — repeated alerts with the same body still deliver (recommended for alarm aliases)",
+    "body dedup on — future emails with the same body may be suppressed for that alias",
+  ].join("\n");
+}
+
+export function safetyDisclaimerText(): string {
+  return [
+    "<b>Safety Notes</b>",
+    "Use this for operational alerts and convenience forwarding, not for secrets or regulated/confidential data.",
+    "Mail content may be visible to the VPS operator, backups, Telegram chat members, and anyone with access to the bot or destination chat.",
+    "Do not rely on Telegram forwarding as your only life-safety or paging channel.",
+  ].join("\n");
+}
+
+export function settingsHelpText(): string {
+  return [renderModeHelpText(), "", bodyDedupHelpText()].join("\n");
+}

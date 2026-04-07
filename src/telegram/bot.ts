@@ -7,14 +7,23 @@ import { listemailHandler } from "./commands/listemail.js";
 import { deleteemailHandler } from "./commands/deleteemail.js";
 import { pauseemailHandler } from "./commands/pauseemail.js";
 import { resumeemailHandler } from "./commands/resumeemail.js";
-import { settingsHandler } from "./commands/settings.js";
+import {
+  settingsHandler,
+  buildAliasSettingsKeyboard,
+  buildAliasSettingsText,
+} from "./commands/settings.js";
 import { allowHandler } from "./commands/allow.js";
 import { helpHandler } from "./commands/help.js";
 import { chatMemberHandler } from "./handlers/chatMember.js";
 import { editChatSelectionMenu, editChatManagementMenu } from "./menu/chatMenu.js";
 import { editAliasListMenu, editAliasDetailMenu } from "./menu/aliasMenu.js";
 import { sendAllowRulesMenu, editAllowRulesMenu } from "./menu/allowRulesMenu.js";
-import { findAliasById, updateAliasStatus, updateAliasRenderMode } from "../db/repos/aliases.js";
+import {
+  findAliasById,
+  updateAliasBodyDedup,
+  updateAliasStatus,
+  updateAliasRenderMode,
+} from "../db/repos/aliases.js";
 import { findChatById } from "../db/repos/chats.js";
 import { addAllowRule, findAllowRuleById, removeAllowRule } from "../db/repos/allowRules.js";
 import { getPending, clearPending, setPending } from "./session.js";
@@ -248,22 +257,16 @@ export function createBot(token: string): Bot {
     }
   });
 
-  // ac:{aliasId} — render mode settings
+  // ac:{aliasId} — alias settings
   bot.callbackQuery(/^ac:([0-9a-f-]{36})$/, async (ctx) => {
     if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
     await ctx.answerCallbackQuery();
     const alias = await findAliasById(getDb(), ctx.match[1]);
     if (!alias) return;
-    const keyboard = new InlineKeyboard();
-    for (const mode of ["plaintext", "html", "markdown"] as const) {
-      const tick = mode === alias.renderMode ? "✓ " : "";
-      keyboard.text(`${tick}${mode}`, `set_mode:${alias.id}:${mode}`);
-    }
-    keyboard.row().text("⬅️ Back", `am:${alias.id}`);
-    await ctx.editMessageText(
-      `⚙️ Render mode for <code>${escapeHtml(alias.fullAddress)}</code>\nCurrent: <b>${alias.renderMode}</b>`,
-      { parse_mode: "HTML", reply_markup: keyboard },
-    );
+    await ctx.editMessageText(buildAliasSettingsText(alias), {
+      parse_mode: "HTML",
+      reply_markup: buildAliasSettingsKeyboard(alias, true),
+    });
   });
 
   // set_mode:{aliasId}:{mode} — apply render mode
@@ -277,7 +280,34 @@ export function createBot(token: string): Bot {
     }
     await updateAliasRenderMode(getDb(), aliasId, mode as "plaintext" | "html" | "markdown");
     await ctx.answerCallbackQuery(`✅ Mode set to ${mode}`);
-    await editAliasDetailMenu(ctx, getDb(), aliasId);
+    const alias = await findAliasById(getDb(), aliasId);
+    if (!alias) return;
+    await ctx.editMessageText(buildAliasSettingsText(alias), {
+      parse_mode: "HTML",
+      reply_markup: buildAliasSettingsKeyboard(alias, true),
+    });
+  });
+
+  // toggle_body_dedup:{aliasId} — toggle body-hash dedup for an alias
+  bot.callbackQuery(/^toggle_body_dedup:([0-9a-f-]{36})$/, async (ctx) => {
+    const aliasId = ctx.match[1];
+    if (!(await assertAliasAccess(ctx, aliasId))) return;
+    const alias = await findAliasById(getDb(), aliasId);
+    if (!alias) {
+      await ctx.answerCallbackQuery("Alias not found");
+      return;
+    }
+
+    const nextValue = !alias.bodyDedupEnabled;
+    await updateAliasBodyDedup(getDb(), aliasId, nextValue);
+    await ctx.answerCallbackQuery(`Body dedup ${nextValue ? "enabled" : "disabled"}`);
+
+    const updatedAlias = await findAliasById(getDb(), aliasId);
+    if (!updatedAlias) return;
+    await ctx.editMessageText(buildAliasSettingsText(updatedAlias), {
+      parse_mode: "HTML",
+      reply_markup: buildAliasSettingsKeyboard(updatedAlias, true),
+    });
   });
 
   // al:{aliasId} — allow rules menu
