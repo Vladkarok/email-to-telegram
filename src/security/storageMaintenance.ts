@@ -5,6 +5,7 @@ import { attachments, deliveryLogs } from "../db/schema.js";
 import {
   backfillAttachmentFile,
   backfillRawEmailFile,
+  clearStorageBackfillMeta,
   listPendingRawEmails,
   overwritePendingRawEmailMeta,
   type PendingRawEmailMeta,
@@ -205,6 +206,7 @@ export async function backfillStoredEncryption(
           encryptedAt: metadata.encryptedAt,
         })
         .where(eq(attachments.id, attachment.id));
+      await clearStorageBackfillMeta(attachment.storagePath);
       summary.attachments++;
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
@@ -239,6 +241,7 @@ export async function backfillStoredEncryption(
           rawEmailEncryptedAt: metadata.encryptedAt,
         })
         .where(eq(deliveryLogs.id, rawEmail.id));
+      await clearStorageBackfillMeta(rawEmailPath);
       summary.rawEmails++;
       rewrittenRawPaths.set(rawEmailPath, metadata);
     } catch (err: unknown) {
@@ -316,6 +319,7 @@ export async function backfillStoredEncryption(
         rewrittenRawPaths.get(pendingRawEmail.rawEmailPath) ??
         (await backfillRawEmailFile(pendingRawEmail.rawEmailPath));
       await overwritePendingRawEmailMeta(updatePendingEncryption(pendingRawEmail, metadata));
+      await clearStorageBackfillMeta(pendingRawEmail.rawEmailPath);
       summary.pendingRawEmails++;
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
+import { mkdtemp, mkdir, rm, stat, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import {
@@ -13,6 +13,8 @@ import {
 } from "../../../src/security/encryption.js";
 import { readDeliveryLogMetadata } from "../../../src/security/deliveryLogMetadata.js";
 import {
+  backfillAttachmentFile,
+  backfillRawEmailFile,
   listPendingRawEmails,
   openAttachmentStream,
   readRawEmail,
@@ -317,5 +319,57 @@ describe("storage maintenance", () => {
     expect(db._updates.deliveryLogs[1]?.values).toMatchObject({ metadataKekKeyId: "current-v2" });
     const pending = await listPendingRawEmails(root);
     expect(pending[0]?.rawEmailKekKeyId).toBe("current-v2");
+  });
+
+  it("resumes interrupted backfills from persisted metadata without re-encrypting the files again", async () => {
+    const root = await mkdtemp(join(tmpdir(), "email-to-telegram-maint-"));
+    tempDirs.push(root);
+    configureStorageEncryption({
+      mode: "local-v1",
+      masterKey: Buffer.alloc(32, 11).toString("base64"),
+      masterKeyId: "current-v2",
+    });
+
+    const attachmentPath = join(root, "attachments", "a2.bin");
+    const rawEmailPath = join(root, "raw", "2026-04-07", "m2.eml");
+    await mkdir(dirname(attachmentPath), { recursive: true });
+    await mkdir(dirname(rawEmailPath), { recursive: true });
+    await writeFile(attachmentPath, Buffer.from("resume attachment"));
+    await writeFile(rawEmailPath, Buffer.from("From: sender@example.com\r\n\r\nresume raw"));
+    await writePendingRawEmailMeta(rawEmailPath, {
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+      rawEmailEncryptionMode: "none",
+      rawEmailWrappedDek: null,
+      rawEmailKekKeyId: null,
+    });
+
+    await backfillAttachmentFile(attachmentPath, "att-2");
+    await backfillRawEmailFile(rawEmailPath);
+
+    const db = makeDb({
+      plaintextAttachments: [{ id: "att-2", storagePath: attachmentPath }],
+      plaintextRawEmails: [{ id: "log-2", rawEmailPath }],
+      plaintextMetadataLogs: [],
+    });
+
+    const summary = await backfillStoredEncryption(db as never, join(root, "raw"));
+
+    expect(summary).toMatchObject({
+      attachments: 1,
+      rawEmails: 1,
+      pendingRawEmails: 1,
+      skippedMissingFiles: 0,
+    });
+    await expect(stat(`${attachmentPath}.backfill.json`)).rejects.toThrow();
+    await expect(stat(`${rawEmailPath}.backfill.json`)).rejects.toThrow();
+    const rawUpdate = db._updates.deliveryLogs[0];
+    await expect(
+      readRawEmail(rawEmailPath, {
+        rawEmailEncryptionMode: String(rawUpdate?.values.rawEmailEncryptionMode),
+        rawEmailWrappedDek: String(rawUpdate?.values.rawEmailWrappedDek),
+        rawEmailKekKeyId: String(rawUpdate?.values.rawEmailKekKeyId),
+      }),
+    ).resolves.toEqual(Buffer.from("From: sender@example.com\r\n\r\nresume raw"));
   });
 });

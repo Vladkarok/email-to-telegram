@@ -282,4 +282,33 @@ describe("assertStorageEncryptionReadiness", () => {
       /Failed to decrypt a pending raw email/i,
     );
   });
+
+  it("ignores missing encrypted raw-email files that cleanup/recovery can self-heal", async () => {
+    mockReadRawEmail.mockRejectedValue(Object.assign(new Error("missing"), { code: "ENOENT" }));
+    mockListPendingRawEmails.mockResolvedValue([
+      {
+        rawEmailPath: "/data/rawemails/pending.eml",
+        rawEmailEncryptionMode: "local-v1",
+        rawEmailWrappedDek: "wrapped-pending",
+        rawEmailKekKeyId: "local-env-v1",
+      },
+    ]);
+    const db = fakeDbWithRows([
+      [],
+      [],
+      [],
+      [],
+      [
+        {
+          raw_email_path: "/data/rawemails/d1.eml",
+          raw_email_encryption_mode: "local-v1",
+          raw_email_wrapped_dek: "wrapped-raw",
+          raw_email_kek_key_id: "local-env-v1",
+        },
+      ],
+      [],
+    ]);
+
+    await expect(assertStorageEncryptionReadiness(db, baseConfig)).resolves.toBeUndefined();
+  });
 });

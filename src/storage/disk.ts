@@ -22,6 +22,8 @@ import {
   type StorageEncryptionMetadata,
 } from "../security/encryption.js";
 
+const STORAGE_FILE_MAGIC = Buffer.from("ETG1", "ascii");
+
 export interface PendingRawEmailMeta {
   rawEmailPath: string;
   localPart: string;
@@ -35,6 +37,10 @@ export interface PendingRawEmailMeta {
 
 function pendingRawEmailMetaPath(rawEmailPath: string): string {
   return `${rawEmailPath}.pending.json`;
+}
+
+function storageBackfillMetaPath(filePath: string): string {
+  return `${filePath}.backfill.json`;
 }
 
 async function replaceFileAtomically(filePath: string, contents: Buffer | string): Promise<void> {
@@ -145,8 +151,18 @@ export async function backfillAttachmentFile(
   storagePath: string,
   attachmentId: string,
 ): Promise<StorageEncryptionMetadata> {
+  const resumedMetadata = await readStorageBackfillMeta(storagePath);
+  if (resumedMetadata) {
+    const raw = await readFile(storagePath);
+    if (isEncryptedStorageBlob(raw)) {
+      return resumedMetadata;
+    }
+    await clearStorageBackfillMeta(storagePath);
+  }
+
   const plaintext = await readFile(storagePath);
   const { blob, metadata } = await encryptBufferForStorage(plaintext, `attachment:${attachmentId}`);
+  await writeStorageBackfillMeta(storagePath, metadata);
   await replaceFileAtomically(storagePath, blob);
   return metadata;
 }
@@ -164,8 +180,18 @@ export async function writeRawEmail(
 export async function backfillRawEmailFile(
   storagePath: string,
 ): Promise<StorageEncryptionMetadata> {
+  const resumedMetadata = await readStorageBackfillMeta(storagePath);
+  if (resumedMetadata) {
+    const raw = await readFile(storagePath);
+    if (isEncryptedStorageBlob(raw)) {
+      return resumedMetadata;
+    }
+    await clearStorageBackfillMeta(storagePath);
+  }
+
   const plaintext = await readFile(storagePath);
   const { blob, metadata } = await encryptBufferForStorage(plaintext, rawEmailAads(storagePath)[0]);
+  await writeStorageBackfillMeta(storagePath, metadata);
   await replaceFileAtomically(storagePath, blob);
   return metadata;
 }
@@ -304,6 +330,10 @@ export async function deleteDir(dirPath: string): Promise<void> {
   await rm(dirPath, { recursive: true, force: true });
 }
 
+export async function clearStorageBackfillMeta(filePath: string): Promise<void> {
+  await deleteFile(storageBackfillMetaPath(filePath));
+}
+
 /** Return mtime of a file, or null if it doesn't exist. */
 export async function fileMtime(filePath: string): Promise<Date | null> {
   try {
@@ -312,4 +342,45 @@ export async function fileMtime(filePath: string): Promise<Date | null> {
   } catch {
     return null;
   }
+}
+
+async function writeStorageBackfillMeta(
+  filePath: string,
+  metadata: StorageEncryptionMetadata,
+): Promise<void> {
+  await replaceFileAtomically(storageBackfillMetaPath(filePath), JSON.stringify(metadata));
+}
+
+async function readStorageBackfillMeta(
+  filePath: string,
+): Promise<StorageEncryptionMetadata | null> {
+  try {
+    const raw = await readFile(storageBackfillMetaPath(filePath), "utf-8");
+    const parsed = JSON.parse(raw) as Partial<StorageEncryptionMetadata>;
+    if (
+      parsed.encryptionMode === "local-v1" &&
+      typeof parsed.wrappedDek === "string" &&
+      typeof parsed.kekKeyId === "string"
+    ) {
+      return {
+        encryptionMode: parsed.encryptionMode,
+        wrappedDek: parsed.wrappedDek,
+        kekKeyId: parsed.kekKeyId,
+        encryptedAt: parsed.encryptedAt ? new Date(parsed.encryptedAt) : null,
+      };
+    }
+    return null;
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw err;
+  }
+}
+
+function isEncryptedStorageBlob(raw: Buffer): boolean {
+  return (
+    raw.length >= STORAGE_FILE_MAGIC.length &&
+    raw.subarray(0, STORAGE_FILE_MAGIC.length).equals(STORAGE_FILE_MAGIC)
+  );
 }

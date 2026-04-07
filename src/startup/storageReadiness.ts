@@ -59,9 +59,9 @@ export async function assertStorageEncryptionReadiness(
     return;
   }
 
-  const unexpectedAttachmentKey = rowsFromResult<{ id: string; kek_key_id: string | null }>(
+  const unexpectedAttachmentKey = rowsFromResult<{ kek_key_id: string | null }>(
     await db.execute(
-      sql`select id, kek_key_id from attachments where encryption_mode = 'local-v1' limit 100`,
+      sql`select distinct kek_key_id from attachments where encryption_mode = 'local-v1'`,
     ),
   ).find((row) => !acceptsKeyId(row.kek_key_id));
   if (unexpectedAttachmentKey) {
@@ -70,9 +70,9 @@ export async function assertStorageEncryptionReadiness(
     );
   }
 
-  const unexpectedRawKey = rowsFromResult<{ id: string; raw_email_kek_key_id: string | null }>(
+  const unexpectedRawKey = rowsFromResult<{ raw_email_kek_key_id: string | null }>(
     await db.execute(
-      sql`select id, raw_email_kek_key_id from delivery_logs where raw_email_encryption_mode = 'local-v1' and raw_email_path is not null limit 100`,
+      sql`select distinct raw_email_kek_key_id from delivery_logs where raw_email_encryption_mode = 'local-v1' and raw_email_path is not null`,
     ),
   ).find((row) => !acceptsKeyId(row.raw_email_kek_key_id));
   if (unexpectedRawKey) {
@@ -81,9 +81,9 @@ export async function assertStorageEncryptionReadiness(
     );
   }
 
-  const unexpectedMetadataKey = rowsFromResult<{ id: string; metadata_kek_key_id: string | null }>(
+  const unexpectedMetadataKey = rowsFromResult<{ metadata_kek_key_id: string | null }>(
     await db.execute(
-      sql`select id, metadata_kek_key_id from delivery_logs where metadata_encryption_mode = 'local-v1' limit 100`,
+      sql`select distinct metadata_kek_key_id from delivery_logs where metadata_encryption_mode = 'local-v1'`,
     ),
   ).find((row) => !acceptsKeyId(row.metadata_kek_key_id));
   if (unexpectedMetadataKey) {
@@ -149,9 +149,11 @@ export async function assertStorageEncryptionReadiness(
         rawEmailKekKeyId: sampleRawEmail.raw_email_kek_key_id,
       });
     } catch (err: unknown) {
-      throw new Error("Failed to decrypt a stored raw email with the configured key", {
-        cause: err,
-      });
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw new Error("Failed to decrypt a stored raw email with the configured key", {
+          cause: err,
+        });
+      }
     }
   }
 
@@ -201,6 +203,9 @@ export async function assertStorageEncryptionReadiness(
         rawEmailKekKeyId: pendingRawEmail.rawEmailKekKeyId ?? null,
       });
     } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        continue;
+      }
       throw new Error("Failed to decrypt a pending raw email with the configured key", {
         cause: err,
       });
