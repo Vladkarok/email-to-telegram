@@ -5,7 +5,12 @@ import { verifyWorkerRequest } from "../../utils/workerAuth.js";
 import { getDb } from "../../db/client.js";
 import { getApi } from "../../telegram/api.js";
 import { queueInboundEmail, deliverQueuedEmail } from "../../email/pipeline.js";
-import { writeRawEmail } from "../../storage/disk.js";
+import {
+  writeRawEmail,
+  writePendingRawEmailMeta,
+  deletePendingRawEmailMeta,
+  deleteFile,
+} from "../../storage/disk.js";
 import { getLogger } from "../../utils/logger.js";
 import { pipelineTracker } from "../../utils/inFlight.js";
 import type { AppConfig } from "../../config.js";
@@ -13,6 +18,10 @@ import type { AppConfig } from "../../config.js";
 function rawEmailPath(rawEmailDir: string): string {
   const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
   return join(rawEmailDir, date, `${randomUUID()}.eml`);
+}
+
+function shouldDeletePendingMeta(reason: string | undefined): boolean {
+  return reason === "duplicate" || reason === "alias_not_found" || reason === "sender_not_allowed";
 }
 
 export function rawRoute(
@@ -65,6 +74,16 @@ export function rawRoute(
       // Persist the raw email and create its delivery log before acknowledging.
       // After 202, the VPS must already have a durable record for retry/recovery.
       await writeRawEmail(storedPath, body);
+      try {
+        await writePendingRawEmailMeta(storedPath, {
+          localPart,
+          envelopeFrom: envelopeFrom ?? null,
+          correlationId: req.id,
+        });
+      } catch (err: unknown) {
+        await deleteFile(storedPath).catch(() => {});
+        throw err;
+      }
 
       const queued = await queueInboundEmail(getDb(), {
         rawEmail: body,
@@ -77,6 +96,12 @@ export function rawRoute(
         attachmentTtlHours: config.attachmentTtlHours,
       });
 
+      if (queued.queued || shouldDeletePendingMeta(queued.result.reason)) {
+        await deletePendingRawEmailMeta(storedPath).catch((err: unknown) => {
+          getLogger().warn({ err, storedPath }, "failed to delete pending raw email metadata");
+        });
+      }
+
       await reply.status(202).send({ status: "accepted" });
 
       if (!queued.queued) {
@@ -84,7 +109,7 @@ export function rawRoute(
       }
 
       pipelineTracker
-        .run(() => deliverQueuedEmail(getDb(), getApi(), queued.job))
+        .runFor(queued.job.deliveryLog.id, () => deliverQueuedEmail(getDb(), getApi(), queued.job))
         .catch((err: unknown) => {
           getLogger().error({ err, localPart }, "pipeline error");
         });

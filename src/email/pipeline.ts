@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { join } from "path";
 import type { Api } from "grammy";
+import { sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema.js";
 import type { EmailAddress, DeliveryLog } from "../db/schema.js";
@@ -94,40 +95,52 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
     }
   }
 
-  // 4. Dedup
-  const dup = await isDuplicate(db, {
-    messageId: parsed.messageId,
-    bodySha256: parsed.bodySha256,
-    aliasId: alias.id,
+  const receivedSince = new Date(Date.now() - 60 * 60 * 1000);
+  const queueResult = await db.transaction(async (tx) => {
+    // Serialize per-alias queue decisions so the hourly cap cannot be exceeded
+    // by concurrent requests racing between COUNT(*) and INSERT.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${alias.id}))`);
+
+    const dup = await isDuplicate(tx as Db, {
+      messageId: parsed.messageId,
+      bodySha256: parsed.bodySha256,
+      aliasId: alias.id,
+    });
+    if (dup) {
+      return { kind: "duplicate" as const };
+    }
+
+    const recentDeliveries = await countRecentDeliveriesByAlias(tx as Db, alias.id, receivedSince);
+    if (recentDeliveries >= alias.maxEmailsHour) {
+      return { kind: "rate_limited" as const };
+    }
+
+    // 5. Create delivery log — null means a concurrent pipeline beat us (race dedup)
+    const deliveryLog = await createDeliveryLog(tx as Db, {
+      emailAddressId: alias.id,
+      messageIdHeader: parsed.messageId,
+      bodySha256: parsed.bodySha256,
+      envelopeFrom: envelopeFrom,
+      headerFrom: parsed.headerFrom,
+      subject: parsed.subject,
+      rawSizeBytes: parsed.rawSizeBytes,
+      rawEmailPath: input.rawEmailPath ?? null,
+      hasAttachments: parsed.attachments.length > 0,
+      finalStatus: "received",
+    });
+    if (!deliveryLog) {
+      return { kind: "duplicate" as const };
+    }
+
+    return { kind: "queued" as const, deliveryLog };
   });
-  if (dup) {
+
+  if (queueResult.kind === "duplicate") {
     return { queued: false, result: { ok: false, reason: "duplicate" } };
   }
 
-  const recentDeliveries = await countRecentDeliveriesByAlias(
-    db,
-    alias.id,
-    new Date(Date.now() - 60 * 60 * 1000),
-  );
-  if (recentDeliveries >= alias.maxEmailsHour) {
+  if (queueResult.kind === "rate_limited") {
     return { queued: false, result: { ok: false, reason: "rate_limited" } };
-  }
-
-  // 5. Create delivery log — null means a concurrent pipeline beat us (race dedup)
-  const deliveryLog = await createDeliveryLog(db, {
-    emailAddressId: alias.id,
-    messageIdHeader: parsed.messageId,
-    bodySha256: parsed.bodySha256,
-    envelopeFrom: envelopeFrom,
-    headerFrom: parsed.headerFrom,
-    subject: parsed.subject,
-    rawSizeBytes: parsed.rawSizeBytes,
-    rawEmailPath: input.rawEmailPath ?? null,
-    hasAttachments: parsed.attachments.length > 0,
-    finalStatus: "received",
-  });
-  if (!deliveryLog) {
-    return { queued: false, result: { ok: false, reason: "duplicate" } };
   }
 
   return {
@@ -135,7 +148,7 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
     job: {
       alias,
       parsed,
-      deliveryLog,
+      deliveryLog: queueResult.deliveryLog,
       envelopeFrom,
       publicBaseUrl,
       attachmentDir,

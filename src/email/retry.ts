@@ -1,6 +1,7 @@
 import type { Api } from "grammy";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema.js";
+import { queueInboundEmail, deliverQueuedEmail } from "./pipeline.js";
 import { parseEmail } from "./parser.js";
 import { cleanEmailBody } from "./cleaner.js";
 import { renderEmail } from "./renderer.js";
@@ -9,20 +10,26 @@ import { sendTelegramMessage, sendTelegramPhotos } from "../telegram/sender.js";
 import {
   findLogsNeedingRetry,
   claimDeliveryLogForRetry,
+  findDeliveryLogByRawEmailPath,
   updateDeliveryLogStatus,
 } from "../db/repos/deliveryLogs.js";
 import { insertDeliveryAttempt, countAttemptsByLog } from "../db/repos/deliveryAttempts.js";
 import { findAliasById } from "../db/repos/aliases.js";
 import { listAttachmentsByDeliveryLogId } from "../db/repos/attachments.js";
 import { createAttachmentLink } from "../db/repos/attachmentLinks.js";
-import { readRawEmail } from "../storage/disk.js";
+import { readRawEmail, listPendingRawEmails, deletePendingRawEmailMeta } from "../storage/disk.js";
 import { generateDownloadToken } from "../utils/tokens.js";
 import { getLogger } from "../utils/logger.js";
+import { pipelineTracker } from "../utils/inFlight.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
 const MAX_RETRIES = 3;
 const STALE_DELIVERY_MS = 2 * 60 * 1000;
+
+function shouldDeletePendingRawEmail(reason: string | undefined): boolean {
+  return reason === "duplicate" || reason === "alias_not_found" || reason === "sender_not_allowed";
+}
 
 export async function runRetryWorker(
   db: Db,
@@ -30,11 +37,28 @@ export async function runRetryWorker(
   {
     attachmentTtlHours = 24,
     publicBaseUrl = "",
-  }: { attachmentTtlHours?: number; publicBaseUrl?: string } = {},
+    attachmentDir = "",
+    rawEmailDir,
+  }: {
+    attachmentTtlHours?: number;
+    publicBaseUrl?: string;
+    attachmentDir?: string;
+    rawEmailDir?: string;
+  } = {},
 ): Promise<void> {
   if (!api) return;
 
   const log = getLogger();
+
+  if (rawEmailDir) {
+    await recoverPendingRawEmails(db, api, {
+      attachmentDir,
+      attachmentTtlHours,
+      publicBaseUrl,
+      rawEmailDir,
+    });
+  }
+
   const retryableLogs = await findLogsNeedingRetry(db, new Date(Date.now() - STALE_DELIVERY_MS));
 
   if (retryableLogs.length === 0) return;
@@ -42,14 +66,18 @@ export async function runRetryWorker(
   log.info({ count: retryableLogs.length }, "retry worker: processing retryable deliveries");
 
   for (const deliveryLog of retryableLogs) {
+    if (pipelineTracker.isActive(deliveryLog.id)) continue;
+
     const claimed = await claimDeliveryLogForRetry(db, deliveryLog.id);
     if (!claimed) continue;
 
     try {
-      await retryDelivery(db, api, deliveryLog, {
-        attachmentTtlHours,
-        publicBaseUrl,
-      });
+      await pipelineTracker.runFor(deliveryLog.id, () =>
+        retryDelivery(db, api, deliveryLog, {
+          attachmentTtlHours,
+          publicBaseUrl,
+        }),
+      );
     } catch (err: unknown) {
       log.error({ err, deliveryLogId: deliveryLog.id }, "retry worker: unexpected error");
       await updateDeliveryLogStatus(db, deliveryLog.id, "failed").catch((statusErr: unknown) => {
@@ -58,6 +86,74 @@ export async function runRetryWorker(
           "retry worker: failed to reset delivery status after error",
         );
       });
+    }
+  }
+}
+
+async function recoverPendingRawEmails(
+  db: Db,
+  api: Api,
+  opts: {
+    attachmentTtlHours: number;
+    publicBaseUrl: string;
+    attachmentDir: string;
+    rawEmailDir: string;
+  },
+): Promise<void> {
+  const log = getLogger();
+  const pendingRawEmails = await listPendingRawEmails(opts.rawEmailDir);
+
+  for (const pendingEmail of pendingRawEmails) {
+    try {
+      const existingLog = await findDeliveryLogByRawEmailPath(db, pendingEmail.rawEmailPath);
+      if (existingLog) {
+        await deletePendingRawEmailMeta(pendingEmail.rawEmailPath);
+        continue;
+      }
+
+      let rawEmail: Buffer;
+      try {
+        rawEmail = await readRawEmail(pendingEmail.rawEmailPath);
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+          await deletePendingRawEmailMeta(pendingEmail.rawEmailPath);
+          continue;
+        }
+        throw err;
+      }
+
+      const queued = await queueInboundEmail(db, {
+        rawEmail,
+        rawEmailPath: pendingEmail.rawEmailPath,
+        localPart: pendingEmail.localPart,
+        envelopeFrom: pendingEmail.envelopeFrom ?? undefined,
+        correlationId: pendingEmail.correlationId,
+        publicBaseUrl: opts.publicBaseUrl,
+        attachmentDir: opts.attachmentDir,
+        attachmentTtlHours: opts.attachmentTtlHours,
+      });
+
+      if (!queued.queued) {
+        if (shouldDeletePendingRawEmail(queued.result.reason)) {
+          await deletePendingRawEmailMeta(pendingEmail.rawEmailPath);
+        } else {
+          log.warn(
+            { rawEmailPath: pendingEmail.rawEmailPath, reason: queued.result.reason },
+            "retry worker: keeping pending raw email for a later retry",
+          );
+        }
+        continue;
+      }
+
+      await deletePendingRawEmailMeta(pendingEmail.rawEmailPath);
+      await pipelineTracker.runFor(queued.job.deliveryLog.id, () =>
+        deliverQueuedEmail(db, api, queued.job),
+      );
+    } catch (err: unknown) {
+      log.error(
+        { err, rawEmailPath: pendingEmail.rawEmailPath },
+        "retry worker: failed to recover pending raw email",
+      );
     }
   }
 }
@@ -174,5 +270,6 @@ async function retryDelivery(
       { deliveryLogId: deliveryLog.id, attemptNo: newAttemptNo, error: result.error },
       "retry worker: will retry again",
     );
+    await updateDeliveryLogStatus(db, deliveryLog.id, "failed");
   }
 }

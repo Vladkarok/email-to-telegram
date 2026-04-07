@@ -58,6 +58,17 @@ export async function findDeliveryLogByBodyHash(
   return log ?? null;
 }
 
+export async function findDeliveryLogByRawEmailPath(
+  db: Db,
+  rawEmailPath: string,
+): Promise<DeliveryLog | null> {
+  const [log] = await db
+    .select()
+    .from(deliveryLogs)
+    .where(eq(deliveryLogs.rawEmailPath, rawEmailPath));
+  return log ?? null;
+}
+
 export async function updateDeliveryLogStatus(
   db: Db,
   id: string,
@@ -74,7 +85,7 @@ export async function findLogsNeedingRetry(db: Db, receivedBefore: Date): Promis
       and(
         isNotNull(deliveryLogs.rawEmailPath),
         lt(deliveryLogs.receivedAt, receivedBefore),
-        inArray(deliveryLogs.finalStatus, ["failed", "received", "processing"]),
+        inArray(deliveryLogs.finalStatus, ["failed", "received", "processing", "retrying"]),
       ),
     );
 }
@@ -82,7 +93,7 @@ export async function findLogsNeedingRetry(db: Db, receivedBefore: Date): Promis
 export async function claimDeliveryLogForRetry(
   db: Db,
   id: string,
-  expectedStatuses: readonly string[] = ["failed", "received", "processing"],
+  expectedStatuses: readonly string[] = ["failed", "received", "processing", "retrying"],
 ): Promise<boolean> {
   const rows = await db
     .update(deliveryLogs)

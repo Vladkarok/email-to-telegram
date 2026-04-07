@@ -13,10 +13,19 @@ const mockSendTelegramMessage = vi.fn();
 const mockSendTelegramPhotos = vi.fn();
 const mockListAttachments = vi.fn();
 const mockCreateAttachmentLink = vi.fn();
+const mockFindDeliveryLogByRawEmailPath = vi.fn();
+const mockListPendingRawEmails = vi.fn();
+const mockDeletePendingRawEmailMeta = vi.fn();
+const mockQueueInboundEmail = vi.fn();
+const mockDeliverQueuedEmail = vi.fn();
+const mockPipelineTrackerIsActive = vi.fn();
+const mockPipelineTrackerRunFor = vi.fn();
 
 vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
   findLogsNeedingRetry: (...args: unknown[]): unknown => mockFindFailedLogs(...args),
   claimDeliveryLogForRetry: (...args: unknown[]): unknown => mockClaimLog(...args),
+  findDeliveryLogByRawEmailPath: (...args: unknown[]): unknown =>
+    mockFindDeliveryLogByRawEmailPath(...args),
   updateDeliveryLogStatus: (...args: unknown[]): unknown => mockUpdateLogStatus(...args),
 }));
 vi.mock("../../../src/db/repos/aliases.js", () => ({
@@ -34,13 +43,26 @@ vi.mock("../../../src/db/repos/deliveryAttempts.js", () => ({
 }));
 vi.mock("../../../src/storage/disk.js", () => ({
   readRawEmail: (...args: unknown[]): unknown => mockReadRawEmail(...args),
+  listPendingRawEmails: (...args: unknown[]): unknown => mockListPendingRawEmails(...args),
+  deletePendingRawEmailMeta: (...args: unknown[]): unknown =>
+    mockDeletePendingRawEmailMeta(...args),
 }));
 vi.mock("../../../src/telegram/sender.js", () => ({
   sendTelegramMessage: (...args: unknown[]): unknown => mockSendTelegramMessage(...args),
   sendTelegramPhotos: (...args: unknown[]): unknown => mockSendTelegramPhotos(...args),
 }));
+vi.mock("../../../src/email/pipeline.js", () => ({
+  queueInboundEmail: (...args: unknown[]): unknown => mockQueueInboundEmail(...args),
+  deliverQueuedEmail: (...args: unknown[]): unknown => mockDeliverQueuedEmail(...args),
+}));
 vi.mock("../../../src/utils/logger.js", () => ({
   getLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
+}));
+vi.mock("../../../src/utils/inFlight.js", () => ({
+  pipelineTracker: {
+    isActive: (...args: unknown[]): unknown => mockPipelineTrackerIsActive(...args),
+    runFor: (...args: unknown[]): unknown => mockPipelineTrackerRunFor(...args),
+  },
 }));
 
 // Use real parser/cleaner/renderer (they don't need DB)
@@ -82,6 +104,18 @@ describe("runRetryWorker", () => {
     mockSendTelegramPhotos.mockResolvedValue(undefined);
     mockListAttachments.mockResolvedValue([]);
     mockCreateAttachmentLink.mockResolvedValue(undefined);
+    mockFindDeliveryLogByRawEmailPath.mockResolvedValue(null);
+    mockListPendingRawEmails.mockResolvedValue([]);
+    mockDeletePendingRawEmailMeta.mockResolvedValue(undefined);
+    mockQueueInboundEmail.mockResolvedValue({
+      queued: true,
+      job: { deliveryLog: { id: "recovered-log" } },
+    });
+    mockDeliverQueuedEmail.mockResolvedValue({ ok: true });
+    mockPipelineTrackerIsActive.mockReturnValue(false);
+    mockPipelineTrackerRunFor.mockImplementation(async (_key: string, fn: () => Promise<unknown>) =>
+      fn(),
+    );
     process.env["HMAC_SECRET"] = "hmac-secret-test-32chars-abcdef";
   });
 
@@ -145,7 +179,7 @@ describe("runRetryWorker", () => {
     expect(mockSendTelegramMessage).not.toHaveBeenCalled();
   });
 
-  it("records failed attempt and leaves status as failed when send fails but retries remain", async () => {
+  it("records failed attempt and resets status to failed when send fails but retries remain", async () => {
     mockFindFailedLogs.mockResolvedValue([fakeLog]);
     mockCountAttempts.mockResolvedValue(0); // first attempt
     mockSendTelegramMessage.mockResolvedValue({ ok: false, error: "Telegram error" });
@@ -155,7 +189,7 @@ describe("runRetryWorker", () => {
       fakeDb,
       expect.objectContaining({ status: "failed" }),
     );
-    // Still retries left — should NOT mark permanently_failed or delivered
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
     expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
     expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(fakeDb, fakeLog.id, "delivered");
   });
@@ -177,6 +211,16 @@ describe("runRetryWorker", () => {
 
     expect(mockSendTelegramMessage).not.toHaveBeenCalled();
     expect(mockReadRawEmail).not.toHaveBeenCalled();
+  });
+
+  it("skips logs that are already active in the local pipeline tracker", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockPipelineTrackerIsActive.mockReturnValue(true);
+
+    await runRetryWorker(fakeDb, fakeApi);
+
+    expect(mockClaimLog).not.toHaveBeenCalled();
+    expect(mockSendTelegramMessage).not.toHaveBeenCalled();
   });
 
   it("resets the status to failed when retry crashes unexpectedly", async () => {
@@ -213,5 +257,106 @@ describe("runRetryWorker", () => {
     );
     const [, opts] = mockSendTelegramMessage.mock.calls[0] as [unknown, { text: string }];
     expect(opts.text).toContain("/dl/");
+  });
+
+  it("recovers pending raw emails by queueing and delivering them", async () => {
+    mockFindFailedLogs.mockResolvedValue([]);
+    mockListPendingRawEmails.mockResolvedValue([
+      {
+        rawEmailPath: fakeLog.rawEmailPath,
+        localPart: "alerts",
+        envelopeFrom: "sender@example.com",
+        correlationId: "req-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    await runRetryWorker(fakeDb, fakeApi, {
+      attachmentDir: "/data/attachments",
+      attachmentTtlHours: 24,
+      publicBaseUrl: "https://mail.example.com",
+      rawEmailDir: "/data/rawemails",
+    });
+
+    expect(mockQueueInboundEmail).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({
+        rawEmail: RAW_EMAIL,
+        rawEmailPath: fakeLog.rawEmailPath,
+        localPart: "alerts",
+        envelopeFrom: "sender@example.com",
+      }),
+    );
+    expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledWith(fakeLog.rawEmailPath);
+    expect(mockDeliverQueuedEmail).toHaveBeenCalledOnce();
+  });
+
+  it("drops pending raw metadata once the raw email already has a delivery log", async () => {
+    mockFindFailedLogs.mockResolvedValue([]);
+    mockListPendingRawEmails.mockResolvedValue([
+      {
+        rawEmailPath: fakeLog.rawEmailPath,
+        localPart: "alerts",
+        envelopeFrom: "sender@example.com",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+    mockFindDeliveryLogByRawEmailPath.mockResolvedValue({ id: "existing-log" });
+
+    await runRetryWorker(fakeDb, fakeApi, {
+      attachmentDir: "/data/attachments",
+      rawEmailDir: "/data/rawemails",
+    });
+
+    expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledWith(fakeLog.rawEmailPath);
+    expect(mockQueueInboundEmail).not.toHaveBeenCalled();
+  });
+
+  it("drops pending raw metadata for terminal recovery rejections", async () => {
+    mockFindFailedLogs.mockResolvedValue([]);
+    mockListPendingRawEmails.mockResolvedValue([
+      {
+        rawEmailPath: fakeLog.rawEmailPath,
+        localPart: "alerts",
+        envelopeFrom: "blocked@example.com",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+    mockQueueInboundEmail.mockResolvedValue({
+      queued: false,
+      result: { ok: false, reason: "sender_not_allowed" },
+    });
+
+    await runRetryWorker(fakeDb, fakeApi, {
+      attachmentDir: "/data/attachments",
+      rawEmailDir: "/data/rawemails",
+    });
+
+    expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledWith(fakeLog.rawEmailPath);
+    expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
+  });
+
+  it("keeps deferred pending raw emails for a later recovery attempt", async () => {
+    mockFindFailedLogs.mockResolvedValue([]);
+    mockListPendingRawEmails.mockResolvedValue([
+      {
+        rawEmailPath: fakeLog.rawEmailPath,
+        localPart: "alerts",
+        envelopeFrom: "sender@example.com",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+    mockQueueInboundEmail.mockResolvedValue({
+      queued: false,
+      result: { ok: false, reason: "rate_limited" },
+    });
+
+    await runRetryWorker(fakeDb, fakeApi, {
+      attachmentDir: "/data/attachments",
+      rawEmailDir: "/data/rawemails",
+    });
+
+    expect(mockDeletePendingRawEmailMeta).not.toHaveBeenCalled();
+    expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
   });
 });

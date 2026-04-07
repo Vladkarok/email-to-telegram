@@ -8,6 +8,9 @@ vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 const mockQueueInboundEmail = vi.fn();
 const mockDeliverQueuedEmail = vi.fn();
 const mockWriteRawEmail = vi.fn();
+const mockWritePendingRawEmailMeta = vi.fn();
+const mockDeletePendingRawEmailMeta = vi.fn();
+const mockDeleteFile = vi.fn();
 
 vi.mock("../../../src/email/pipeline.js", () => ({
   queueInboundEmail: (...args: unknown[]): unknown => mockQueueInboundEmail(...args),
@@ -15,6 +18,10 @@ vi.mock("../../../src/email/pipeline.js", () => ({
 }));
 vi.mock("../../../src/storage/disk.js", () => ({
   writeRawEmail: (...args: unknown[]): unknown => mockWriteRawEmail(...args),
+  writePendingRawEmailMeta: (...args: unknown[]): unknown => mockWritePendingRawEmailMeta(...args),
+  deletePendingRawEmailMeta: (...args: unknown[]): unknown =>
+    mockDeletePendingRawEmailMeta(...args),
+  deleteFile: (...args: unknown[]): unknown => mockDeleteFile(...args),
 }));
 
 const mockFindAlias = vi.fn();
@@ -238,6 +245,12 @@ describe("POST /inbound/raw", () => {
     process.env["WORKER_SECRET"] = WORKER_SECRET;
     mockWriteRawEmail.mockReset();
     mockWriteRawEmail.mockResolvedValue(undefined);
+    mockWritePendingRawEmailMeta.mockReset();
+    mockWritePendingRawEmailMeta.mockResolvedValue(undefined);
+    mockDeletePendingRawEmailMeta.mockReset();
+    mockDeletePendingRawEmailMeta.mockResolvedValue(undefined);
+    mockDeleteFile.mockReset();
+    mockDeleteFile.mockResolvedValue(undefined);
     mockQueueInboundEmail.mockReset();
     mockQueueInboundEmail.mockResolvedValue({
       queued: true,
@@ -263,11 +276,22 @@ describe("POST /inbound/raw", () => {
         "content-type": "application/octet-stream",
         "x-worker-sig": signature,
         "x-worker-ts": timestamp,
+        "x-envelope-from": "sender@example.com",
         "x-local-part": "alerts",
       },
       payload: rawEmail,
     });
     expect(res.statusCode).toBe(202);
+    expect(mockQueueInboundEmail).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        rawEmail,
+        localPart: "alerts",
+        envelopeFrom: "sender@example.com",
+      }),
+    );
+    expect(mockWritePendingRawEmailMeta).toHaveBeenCalledOnce();
+    expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledOnce();
   });
 
   it("does not acknowledge raw mail before durable persistence succeeds", async () => {
@@ -291,6 +315,84 @@ describe("POST /inbound/raw", () => {
 
     expect(res.statusCode).toBe(500);
     expect(mockQueueInboundEmail).not.toHaveBeenCalled();
+  });
+
+  it("cleans up the raw email when pending metadata persistence fails", async () => {
+    mockWritePendingRawEmailMeta.mockRejectedValueOnce(new Error("fs exploded"));
+
+    const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
+    const { signature, timestamp } = signWorkerRequest(rawEmail);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/raw",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+        "x-local-part": "alerts",
+      },
+      payload: rawEmail,
+    });
+
+    expect(res.statusCode).toBe(500);
+    expect(mockDeleteFile).toHaveBeenCalledOnce();
+    expect(mockQueueInboundEmail).not.toHaveBeenCalled();
+  });
+
+  it("keeps pending recovery metadata when queueing is deferred", async () => {
+    mockQueueInboundEmail.mockResolvedValueOnce({
+      queued: false,
+      result: { ok: false, reason: "rate_limited" },
+    });
+
+    const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
+    const { signature, timestamp } = signWorkerRequest(rawEmail);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/raw",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+        "x-local-part": "alerts",
+      },
+      payload: rawEmail,
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(mockDeletePendingRawEmailMeta).not.toHaveBeenCalled();
+    expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
+  });
+
+  it("drops pending recovery metadata for terminal queue rejections", async () => {
+    mockQueueInboundEmail.mockResolvedValueOnce({
+      queued: false,
+      result: { ok: false, reason: "sender_not_allowed" },
+    });
+
+    const rawEmail = Buffer.from("From: blocked@example.com\r\nSubject: Hi\r\n\r\nBody");
+    const { signature, timestamp } = signWorkerRequest(rawEmail);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/raw",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+        "x-local-part": "alerts",
+      },
+      payload: rawEmail,
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledOnce();
+    expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
   });
 
   it("returns 401 for unsigned request", async () => {

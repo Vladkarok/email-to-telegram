@@ -71,6 +71,13 @@ const activeAlias = {
   maxEmailsHour: 60,
 };
 
+function fakeDb() {
+  return {
+    transaction: async <T>(fn: (tx: { execute: ReturnType<typeof vi.fn> }) => Promise<T>) =>
+      fn({ execute: vi.fn().mockResolvedValue(undefined) }),
+  };
+}
+
 describe("processInboundEmail", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -81,7 +88,7 @@ describe("processInboundEmail", () => {
     mockFindAlias.mockResolvedValue(activeAlias);
     mockCheckAllow.mockResolvedValue(false);
     const result = await processInboundEmail(
-      {} as Parameters<typeof processInboundEmail>[0],
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
       null,
       {
         rawEmail: simpleEmail(),
@@ -101,7 +108,7 @@ describe("processInboundEmail", () => {
   it("returns alias_not_found when alias is missing", async () => {
     mockFindAlias.mockResolvedValue(null);
     const result = await processInboundEmail(
-      {} as Parameters<typeof processInboundEmail>[0],
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
       null,
       {
         rawEmail: simpleEmail(),
@@ -115,7 +122,7 @@ describe("processInboundEmail", () => {
   it("returns alias_not_found when alias is paused", async () => {
     mockFindAlias.mockResolvedValue({ ...activeAlias, status: "paused" });
     const result = await processInboundEmail(
-      {} as Parameters<typeof processInboundEmail>[0],
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
       null,
       {
         rawEmail: simpleEmail(),
@@ -131,7 +138,7 @@ describe("processInboundEmail", () => {
     mockCheckAllow.mockResolvedValue(true);
     mockIsDuplicate.mockResolvedValue(true);
     const result = await processInboundEmail(
-      {} as Parameters<typeof processInboundEmail>[0],
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
       null,
       {
         rawEmail: simpleEmail(),
@@ -149,7 +156,7 @@ describe("processInboundEmail", () => {
     mockCountRecentDeliveries.mockResolvedValue(60);
 
     const result = await processInboundEmail(
-      {} as Parameters<typeof processInboundEmail>[0],
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
       null,
       {
         rawEmail: simpleEmail(),
@@ -170,7 +177,7 @@ describe("processInboundEmail", () => {
     mockCreateLog.mockResolvedValue({ id: "log-uuid-audit" });
     mockUpdateLogStatus.mockResolvedValue(undefined);
 
-    await processInboundEmail({} as Parameters<typeof processInboundEmail>[0], null, {
+    await processInboundEmail(fakeDb() as Parameters<typeof processInboundEmail>[0], null, {
       rawEmail: simpleEmail(),
       localPart: "alerts",
       envelopeFrom: "real-sender@sender.example.com",
@@ -191,7 +198,7 @@ describe("processInboundEmail", () => {
     mockUpdateLogStatus.mockResolvedValue(undefined);
 
     const result = await processInboundEmail(
-      {} as Parameters<typeof processInboundEmail>[0],
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
       null,
       {
         rawEmail: simpleEmail(),
@@ -212,7 +219,7 @@ describe("processInboundEmail", () => {
 
     const fakeApi = {} as Parameters<typeof processInboundEmail>[1];
     const result = await processInboundEmail(
-      {} as Parameters<typeof processInboundEmail>[0],
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
       fakeApi,
       {
         rawEmail: simpleEmail(),
@@ -234,7 +241,7 @@ describe("processInboundEmail", () => {
 
     const fakeApi = {} as Parameters<typeof processInboundEmail>[1];
     const result = await processInboundEmail(
-      {} as Parameters<typeof processInboundEmail>[0],
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
       fakeApi,
       {
         rawEmail: simpleEmail(),
@@ -258,7 +265,7 @@ describe("queueInboundEmail", () => {
     mockIsDuplicate.mockResolvedValue(false);
     mockCreateLog.mockResolvedValue({ id: "log-queued" });
 
-    const result = await queueInboundEmail({} as Parameters<typeof processInboundEmail>[0], {
+    const result = await queueInboundEmail(fakeDb() as Parameters<typeof processInboundEmail>[0], {
       rawEmail: simpleEmail(),
       rawEmailPath: "/data/rawemails/test.eml",
       localPart: "alerts",
@@ -274,6 +281,24 @@ describe("queueInboundEmail", () => {
         finalStatus: "received",
       }),
     );
+  });
+
+  it("returns duplicate when the delivery-log insert loses a DB race", async () => {
+    mockFindAlias.mockResolvedValue(activeAlias);
+    mockCheckAllow.mockResolvedValue(true);
+    mockIsDuplicate.mockResolvedValue(false);
+    mockCountRecentDeliveries.mockResolvedValue(0);
+    mockCreateLog.mockResolvedValue(null);
+
+    const result = await queueInboundEmail(fakeDb() as Parameters<typeof processInboundEmail>[0], {
+      rawEmail: simpleEmail(),
+      rawEmailPath: "/data/rawemails/test.eml",
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+      ...PIPELINE_CONFIG,
+    });
+
+    expect(result).toEqual({ queued: false, result: { ok: false, reason: "duplicate" } });
   });
 });
 

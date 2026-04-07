@@ -5,21 +5,17 @@
  */
 export class InFlightTracker {
   private count = 0;
+  private readonly activeKeys = new Map<string, number>();
   private readonly waiters: Array<() => void> = [];
 
   /** Increment the counter, run fn, decrement, then notify any drain waiters. */
   async run<T>(fn: () => Promise<T>): Promise<T> {
-    this.count++;
-    try {
-      return await fn();
-    } finally {
-      this.count--;
-      if (this.count === 0) {
-        for (const resolve of this.waiters.splice(0)) {
-          resolve();
-        }
-      }
-    }
+    return this.runInternal(undefined, fn);
+  }
+
+  /** Track a specific logical unit of work, e.g. a delivery-log id. */
+  async runFor<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    return this.runInternal(key, fn);
   }
 
   /**
@@ -50,6 +46,36 @@ export class InFlightTracker {
 
   get inFlight(): number {
     return this.count;
+  }
+
+  isActive(key: string): boolean {
+    return (this.activeKeys.get(key) ?? 0) > 0;
+  }
+
+  private async runInternal<T>(key: string | undefined, fn: () => Promise<T>): Promise<T> {
+    this.count++;
+    if (key) {
+      this.activeKeys.set(key, (this.activeKeys.get(key) ?? 0) + 1);
+    }
+
+    try {
+      return await fn();
+    } finally {
+      this.count--;
+      if (key) {
+        const remaining = (this.activeKeys.get(key) ?? 1) - 1;
+        if (remaining > 0) {
+          this.activeKeys.set(key, remaining);
+        } else {
+          this.activeKeys.delete(key);
+        }
+      }
+      if (this.count === 0) {
+        for (const resolve of this.waiters.splice(0)) {
+          resolve();
+        }
+      }
+    }
   }
 }
 

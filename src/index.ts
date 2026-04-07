@@ -66,9 +66,13 @@ async function main() {
   setApi(bot.api);
   let shuttingDown = false;
   let pollingRestartTimer: ReturnType<typeof setTimeout> | null = null;
+  let isInitialPollingStart = true;
   const startPolling = () => {
     if (shuttingDown) return; // guard against already-queued setTimeout callbacks
-    bot.start({ drop_pending_updates: true }).catch((err: unknown) => {
+    const dropPendingUpdates = isInitialPollingStart;
+    isInitialPollingStart = false;
+
+    bot.start({ drop_pending_updates: dropPendingUpdates }).catch((err: unknown) => {
       if (shuttingDown) return;
       logger.error({ err }, "Bot polling error — restarting in 5s");
       pollingRestartTimer = setTimeout(startPolling, 5000);
@@ -92,8 +96,10 @@ async function main() {
     // Retry failed deliveries every 5 minutes
     schedule("*/5 * * * *", () => {
       runRetryWorker(getDb(), getApi(), {
+        attachmentDir: config.attachmentDir,
         attachmentTtlHours: config.attachmentTtlHours,
         publicBaseUrl: config.publicBaseUrl,
+        rawEmailDir: config.rawEmailDir,
       }).catch((err: unknown) => {
         logger.error({ err }, "retry worker error");
       });
@@ -122,20 +128,24 @@ async function main() {
   if (config.backupDir) {
     const scriptPath = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "backup.sh");
     cronTasks.push(
-      schedule("0 2 * * *", () => {
-        execFile(
-          scriptPath,
-          [config.backupDir!],
-          { env: { ...process.env, DATABASE_URL: config.databaseUrl } },
-          (err, stdout, stderr) => {
-            if (err) {
-              logger.error({ err, stderr }, "backup failed");
-            } else {
-              logger.info({ stdout: stdout.trim() }, "backup complete");
-            }
-          },
-        );
-      }),
+      schedule(
+        "0 2 * * *",
+        () => {
+          execFile(
+            scriptPath,
+            [config.backupDir!],
+            { env: { ...process.env, DATABASE_URL: config.databaseUrl } },
+            (err, stdout, stderr) => {
+              if (err) {
+                logger.error({ err, stderr }, "backup failed");
+              } else {
+                logger.info({ stdout: stdout.trim() }, "backup complete");
+              }
+            },
+          );
+        },
+        { timezone: "UTC" },
+      ),
     );
     logger.info({ backupDir: config.backupDir }, "Nightly backup scheduled at 02:00 UTC");
   }
