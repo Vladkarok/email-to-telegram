@@ -40,6 +40,7 @@ const mockUpdateLogStatus = vi.fn();
 const mockCountRecentDeliveries = vi.fn();
 const mockInsertAttempt = vi.fn();
 const mockSendTelegram = vi.fn();
+const mockCreateDeliveryViewLink = vi.fn();
 
 vi.mock("../../../src/db/repos/aliases.js", () => ({
   findAliasByLocalPart: (...a: unknown[]): unknown => mockFindAlias(...a),
@@ -64,6 +65,9 @@ vi.mock("../../../src/db/repos/attachments.js", () => ({
 vi.mock("../../../src/db/repos/attachmentLinks.js", () => ({
   createAttachmentLink: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock("../../../src/db/repos/deliveryViewLinks.js", () => ({
+  createDeliveryViewLink: (...a: unknown[]): unknown => mockCreateDeliveryViewLink(...a),
+}));
 vi.mock("../../../src/storage/disk.js", () => ({
   writeAttachment: vi.fn().mockResolvedValue(undefined),
 }));
@@ -84,6 +88,7 @@ const PIPELINE_CONFIG = {
   publicBaseUrl: "https://mail.example.com",
   attachmentDir: "/tmp/att",
   attachmentTtlHours: 24,
+  rawEmailTtlHours: 24,
 };
 
 function makeAlias(overrides: Partial<typeof baseAlias> = {}) {
@@ -98,6 +103,7 @@ const baseAlias = {
   messageThreadId: null as bigint | null,
   status: "active",
   renderMode: "plaintext",
+  privacyModeEnabled: false,
   bodyDedupEnabled: false,
   maxEmailsHour: 60,
 };
@@ -116,6 +122,7 @@ function setupHappyPath(logId = "log-1") {
   mockUpdateLogStatus.mockResolvedValue(undefined);
   mockInsertAttempt.mockResolvedValue(undefined);
   mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 99 });
+  mockCreateDeliveryViewLink.mockResolvedValue(undefined);
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -124,6 +131,7 @@ describe("pipeline integration matrix", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCountRecentDeliveries.mockResolvedValue(0);
+    process.env["HMAC_SECRET"] = "hmac-secret-test-32chars-abcdef";
   });
 
   // ── Delivery scenarios ──────────────────────────────────────────────────
@@ -232,6 +240,34 @@ describe("pipeline integration matrix", () => {
 
     const [, opts] = mockSendTelegram.mock.calls[0] as [unknown, { threadId: bigint | null }];
     expect(opts.threadId).toBe(42n);
+  });
+
+  it("privacy mode: sends a one-time web view link instead of message content", async () => {
+    mockFindAlias.mockResolvedValue(makeAlias({ privacyModeEnabled: true }));
+    mockCheckAllow.mockResolvedValue(true);
+    mockIsDuplicate.mockResolvedValue(false);
+    mockCreateLog.mockResolvedValue({ id: "log-privacy", rawEmailPath: "/tmp/raw/privacy.eml" });
+    mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockInsertAttempt.mockResolvedValue(undefined);
+    mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 55 });
+
+    await processInboundEmail(fakeDb, fakeApi, {
+      rawEmail: fixture("simple.eml"),
+      rawEmailPath: "/tmp/raw/privacy.eml",
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+      ...PIPELINE_CONFIG,
+    });
+
+    const [, opts] = mockSendTelegram.mock.calls[0] as [unknown, { text: string }];
+    expect(opts.text).toContain("/view/");
+    expect(opts.text).not.toContain("CPU usage");
+    expect(mockCreateDeliveryViewLink).toHaveBeenCalledWith(
+      expect.anything(),
+      "log-privacy",
+      expect.any(String),
+      expect.any(Date),
+    );
   });
 
   // ── Rejection scenarios ─────────────────────────────────────────────────

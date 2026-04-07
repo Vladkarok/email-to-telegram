@@ -46,6 +46,7 @@ const TEST_CONFIG = {
   attachmentDir: "/tmp/attachments",
   attachmentTtlHours: 24,
   rawEmailDir: "/tmp/rawemails",
+  rawEmailTtlHours: 24,
   maxSizeBytes: 1024 * 1024,
 };
 

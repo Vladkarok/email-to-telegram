@@ -11,17 +11,22 @@ export function nextPollingStartOptions(isInitialPollingStart: boolean): {
 }
 
 export function buildRetryWorkerOptions(
-  config: Pick<AppConfig, "attachmentDir" | "attachmentTtlHours" | "publicBaseUrl" | "rawEmailDir">,
+  config: Pick<
+    AppConfig,
+    "attachmentDir" | "attachmentTtlHours" | "publicBaseUrl" | "rawEmailDir" | "rawEmailTtlHours"
+  >,
 ): {
   attachmentDir: string;
   attachmentTtlHours: number;
   publicBaseUrl: string;
   rawEmailDir: string;
+  rawEmailTtlHours: number;
 } {
   return {
     attachmentDir: config.attachmentDir,
     attachmentTtlHours: config.attachmentTtlHours,
     publicBaseUrl: config.publicBaseUrl,
     rawEmailDir: config.rawEmailDir,
+    rawEmailTtlHours: config.rawEmailTtlHours,
   };
 }

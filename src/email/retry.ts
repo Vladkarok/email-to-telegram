@@ -4,7 +4,12 @@ import type * as schema from "../db/schema.js";
 import { queueInboundEmail, deliverQueuedEmail } from "./pipeline.js";
 import { parseEmail } from "./parser.js";
 import { cleanEmailBody } from "./cleaner.js";
-import { renderEmail, renderAttachmentFallback, parseModeForRenderMode } from "./renderer.js";
+import {
+  renderEmail,
+  renderAttachmentFallback,
+  renderPrivacyAlert,
+  parseModeForRenderMode,
+} from "./renderer.js";
 import { isImageContentType } from "./imageTypes.js";
 import { sendTelegramMessage, sendTelegramPhotos } from "../telegram/sender.js";
 import {
@@ -21,6 +26,7 @@ import { readRawEmail, listPendingRawEmails, deletePendingRawEmailMeta } from ".
 import { generateDownloadToken } from "../utils/tokens.js";
 import { getLogger } from "../utils/logger.js";
 import { pipelineTracker } from "../utils/inFlight.js";
+import { createPrivacyViewUrl } from "./privacy.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -36,11 +42,13 @@ export async function runRetryWorker(
   api: Api | null,
   {
     attachmentTtlHours = 24,
+    rawEmailTtlHours = 24,
     publicBaseUrl = "",
     attachmentDir = "",
     rawEmailDir,
   }: {
     attachmentTtlHours?: number;
+    rawEmailTtlHours?: number;
     publicBaseUrl?: string;
     attachmentDir?: string;
     rawEmailDir?: string;
@@ -54,6 +62,7 @@ export async function runRetryWorker(
     await recoverPendingRawEmails(db, api, {
       attachmentDir,
       attachmentTtlHours,
+      rawEmailTtlHours,
       publicBaseUrl,
       rawEmailDir,
     });
@@ -75,6 +84,7 @@ export async function runRetryWorker(
       await pipelineTracker.runFor(deliveryLog.id, () =>
         retryDelivery(db, api, deliveryLog, {
           attachmentTtlHours,
+          rawEmailTtlHours,
           publicBaseUrl,
         }),
       );
@@ -95,6 +105,7 @@ async function recoverPendingRawEmails(
   api: Api,
   opts: {
     attachmentTtlHours: number;
+    rawEmailTtlHours: number;
     publicBaseUrl: string;
     attachmentDir: string;
     rawEmailDir: string;
@@ -131,6 +142,7 @@ async function recoverPendingRawEmails(
         publicBaseUrl: opts.publicBaseUrl,
         attachmentDir: opts.attachmentDir,
         attachmentTtlHours: opts.attachmentTtlHours,
+        rawEmailTtlHours: opts.rawEmailTtlHours,
       });
 
       if (!queued.queued) {
@@ -162,7 +174,7 @@ async function retryDelivery(
   db: Db,
   api: Api,
   deliveryLog: { id: string; emailAddressId: string; rawEmailPath: string | null },
-  opts: { attachmentTtlHours: number; publicBaseUrl: string },
+  opts: { attachmentTtlHours: number; rawEmailTtlHours: number; publicBaseUrl: string },
 ): Promise<void> {
   const log = getLogger();
 
@@ -225,9 +237,12 @@ async function retryDelivery(
       filename: attachment.originalFilename ?? "attachment",
     }));
 
+  const privacyMode = alias.privacyModeEnabled ?? false;
   const renderMode = (alias.renderMode ?? "plaintext") as "plaintext" | "html" | "markdown";
-  const text = renderEmail(parsed, renderMode, alias.fullAddress, attachmentLinks);
-  const parseMode = parseModeForRenderMode(renderMode);
+  const text = privacyMode
+    ? await buildPrivacyRetryMessage(db, deliveryLog, parsed, alias.fullAddress, opts)
+    : renderEmail(parsed, renderMode, alias.fullAddress, attachmentLinks);
+  const parseMode = privacyMode ? "HTML" : parseModeForRenderMode(renderMode);
 
   const result = await sendTelegramMessage(api, {
     chatId: alias.chatId,
@@ -252,7 +267,7 @@ async function retryDelivery(
     log.info({ deliveryLogId: deliveryLog.id, attemptNo: newAttemptNo }, "retry worker: delivered");
     await updateDeliveryLogStatus(db, deliveryLog.id, "delivered");
 
-    if (imageAttachments.length > 0) {
+    if (!privacyMode && imageAttachments.length > 0) {
       try {
         const photoResult = await sendTelegramPhotos(api, {
           chatId: alias.chatId,
@@ -317,4 +332,25 @@ async function retryDelivery(
     );
     await updateDeliveryLogStatus(db, deliveryLog.id, "failed");
   }
+}
+
+async function buildPrivacyRetryMessage(
+  db: Db,
+  deliveryLog: { id: string; rawEmailPath: string | null },
+  parsed: Awaited<ReturnType<typeof parseEmail>>,
+  aliasFullAddress: string,
+  opts: { publicBaseUrl: string; rawEmailTtlHours: number },
+): Promise<string> {
+  if (!deliveryLog.rawEmailPath) {
+    throw new Error("privacy mode requires a durable raw email path");
+  }
+
+  const viewUrl = await createPrivacyViewUrl(
+    db,
+    deliveryLog.id,
+    opts.publicBaseUrl,
+    opts.rawEmailTtlHours,
+  );
+
+  return renderPrivacyAlert(parsed, aliasFullAddress, viewUrl, parsed.attachments.length > 0);
 }

@@ -27,6 +27,7 @@ export async function createAlias(
     | "messageThreadId"
     | "createdBy"
     | "renderMode"
+    | "privacyModeEnabled"
     | "bodyDedupEnabled"
     | "status"
   >,
@@ -96,5 +97,16 @@ export async function updateAliasBodyDedup(
   await db
     .update(emailAddresses)
     .set({ bodyDedupEnabled, updatedAt: new Date() })
+    .where(eq(emailAddresses.id, id));
+}
+
+export async function updateAliasPrivacyMode(
+  db: Db,
+  id: string,
+  privacyModeEnabled: boolean,
+): Promise<void> {
+  await db
+    .update(emailAddresses)
+    .set({ privacyModeEnabled, updatedAt: new Date() })
     .where(eq(emailAddresses.id, id));
 }

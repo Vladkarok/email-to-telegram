@@ -14,7 +14,7 @@ export async function helpHandler(ctx: Context): Promise<void> {
 /pauseemail &lt;alias&gt; — pause an alias
 /resumeemail &lt;alias&gt; — resume a paused alias
 /deleteemail &lt;alias&gt; — delete an alias
-/settings &lt;alias&gt; — change render mode or body dedup
+/settings &lt;alias&gt; — change render mode, body dedup, or privacy mode
 
 ${settingsHelpText()}
 

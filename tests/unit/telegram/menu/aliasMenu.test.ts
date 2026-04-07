@@ -26,6 +26,7 @@ const fakeAlias = {
   chatId: -100n,
   status: "active",
   renderMode: "plaintext",
+  privacyModeEnabled: false,
   bodyDedupEnabled: false,
 };
 
@@ -65,6 +66,7 @@ describe("editAliasDetailMenu", () => {
     const [text] = (ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
     expect(text).toContain(fakeAlias.fullAddress);
     expect(text).toContain("github.com");
+    expect(text).toContain("Privacy mode: <code>off</code>");
     expect(text).toContain("Body dedup: <code>off</code>");
   });
 

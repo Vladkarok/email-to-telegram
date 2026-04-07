@@ -70,7 +70,7 @@ can be served from `https://mail.example.com`.
 | `/deleteemail <name>`                    | Delete an alias                                     |
 | `/pauseemail <name>`                     | Pause an alias                                      |
 | `/resumeemail <name>`                    | Resume an alias                                     |
-| `/settings <name>`                       | Change render mode and body dedup                   |
+| `/settings <name>`                       | Change render mode, body dedup, and privacy mode    |
 | `/allow add <name> <email_or_domain>`    | Add an allow rule                                   |
 | `/allow remove <name> <email_or_domain>` | Remove an allow rule                                |
 | `/allow list <name>`                     | List allow rules                                    |
@@ -246,10 +246,15 @@ Without an allow rule, all mail to that alias is rejected.
 
 ### Alias settings
 
-Each alias currently has two delivery-format settings:
+Each alias currently has three delivery-format settings:
 
 - Render mode: `plaintext`, `html`, or `markdown`
+- Privacy mode: `on` or `off`
 - Body dedup: `on` or `off`
+
+Privacy mode is off by default for new aliases. When enabled, Telegram receives
+only a minimal alert and a one-time web view link instead of the email body or
+attachments.
 
 Message-ID duplicates are still blocked when that header is present.
 

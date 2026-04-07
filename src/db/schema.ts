@@ -39,6 +39,7 @@ export const emailAddresses = pgTable(
       .notNull()
       .references(() => users.id),
     renderMode: varchar("render_mode", { length: 20 }).notNull().default("plaintext"),
+    privacyModeEnabled: boolean("privacy_mode_enabled").notNull().default(false),
     bodyDedupEnabled: boolean("body_dedup_enabled").notNull().default(false),
     status: varchar("status", { length: 20 }).notNull().default("active"),
     maxEmailsHour: integer("max_emails_hour").notNull().default(60),
@@ -169,6 +170,28 @@ export const attachmentLinks = pgTable(
   (t) => [uniqueIndex("idx_link_token").on(t.token), index("idx_link_expires").on(t.expiresAt)],
 );
 
+// ─── delivery_view_links ─────────────────────────────────────────────────────
+
+export const deliveryViewLinks = pgTable(
+  "delivery_view_links",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    deliveryLogId: uuid("delivery_log_id")
+      .notNull()
+      .references(() => deliveryLogs.id, { onDelete: "cascade" }),
+    token: varchar("token", { length: 96 }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    viewedAt: timestamp("viewed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("idx_delivery_view_link_token").on(t.token),
+    index("idx_delivery_view_link_expires").on(t.expiresAt),
+  ],
+);
+
 // ─── chats ───────────────────────────────────────────────────────────────────
 
 export const chats = pgTable("chats", {
@@ -196,5 +219,7 @@ export type Attachment = typeof attachments.$inferSelect;
 export type NewAttachment = typeof attachments.$inferInsert;
 export type AttachmentLink = typeof attachmentLinks.$inferSelect;
 export type NewAttachmentLink = typeof attachmentLinks.$inferInsert;
+export type DeliveryViewLink = typeof deliveryViewLinks.$inferSelect;
+export type NewDeliveryViewLink = typeof deliveryViewLinks.$inferInsert;
 export type Chat = typeof chats.$inferSelect;
 export type NewChat = typeof chats.$inferInsert;

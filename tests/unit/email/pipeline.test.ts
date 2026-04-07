@@ -17,6 +17,7 @@ const mockUpdateLogStatus = vi.fn();
 const mockCountRecentDeliveries = vi.fn();
 const mockCreateAttachment = vi.fn();
 const mockCreateAttachmentLink = vi.fn();
+const mockCreateDeliveryViewLink = vi.fn();
 const mockSendTelegramPhotos = vi.fn();
 
 vi.mock("../../../src/db/repos/aliases.js", () => ({
@@ -49,6 +50,9 @@ vi.mock("../../../src/db/repos/attachments.js", () => ({
 vi.mock("../../../src/db/repos/attachmentLinks.js", () => ({
   createAttachmentLink: (...args: unknown[]): unknown => mockCreateAttachmentLink(...args),
 }));
+vi.mock("../../../src/db/repos/deliveryViewLinks.js", () => ({
+  createDeliveryViewLink: (...args: unknown[]): unknown => mockCreateDeliveryViewLink(...args),
+}));
 vi.mock("../../../src/storage/disk.js", () => ({
   writeAttachment: vi.fn(() => Promise.resolve()),
 }));
@@ -61,6 +65,7 @@ const PIPELINE_CONFIG = {
   publicBaseUrl: "https://mail.example.com",
   attachmentDir: "/tmp/att",
   attachmentTtlHours: 24,
+  rawEmailTtlHours: 24,
 };
 
 const activeAlias = {
@@ -71,6 +76,7 @@ const activeAlias = {
   messageThreadId: null,
   status: "active",
   renderMode: "plaintext",
+  privacyModeEnabled: false,
   bodyDedupEnabled: false,
   maxEmailsHour: 60,
 };
@@ -99,6 +105,7 @@ describe("processInboundEmail", () => {
     mockCountRecentDeliveries.mockResolvedValue(0);
     mockCreateAttachment.mockResolvedValue({ id: "att-uuid-1" });
     mockCreateAttachmentLink.mockResolvedValue(undefined);
+    mockCreateDeliveryViewLink.mockResolvedValue(undefined);
     mockSendTelegramPhotos.mockResolvedValue({ ok: true, failedPhotos: [] });
     process.env["HMAC_SECRET"] = "hmac-secret-test-32chars-abcdef";
   });
@@ -233,6 +240,38 @@ describe("processInboundEmail", () => {
     expect(mockCreateLog).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ bodyDedupApplied: true }),
+    );
+  });
+
+  it("sends a privacy-mode alert with a one-time view link instead of the email body", async () => {
+    mockFindAlias.mockResolvedValue({ ...activeAlias, privacyModeEnabled: true });
+    mockCheckAllow.mockResolvedValue(true);
+    mockIsDuplicate.mockResolvedValue(false);
+    mockCreateLog.mockResolvedValue({ id: "log-privacy", rawEmailPath: "/tmp/raw/privacy.eml" });
+    mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 321 });
+
+    await processInboundEmail(fakeDb() as Parameters<typeof processInboundEmail>[0], {} as never, {
+      rawEmail: simpleEmail(),
+      rawEmailPath: "/tmp/raw/privacy.eml",
+      localPart: "alerts",
+      ...PIPELINE_CONFIG,
+    });
+
+    const [, opts] = mockSendTelegram.mock.calls[0] as [
+      unknown,
+      { text: string; parseMode?: string },
+    ];
+    expect(opts.parseMode).toBe("HTML");
+    expect(opts.text).toContain("Private email alert");
+    expect(opts.text).toContain("/view/");
+    expect(opts.text).not.toContain("CPU usage");
+    expect(mockSendTelegramPhotos).not.toHaveBeenCalled();
+    expect(mockCreateDeliveryViewLink).toHaveBeenCalledWith(
+      expect.anything(),
+      "log-privacy",
+      expect.any(String),
+      expect.any(Date),
     );
   });
 

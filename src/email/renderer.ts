@@ -60,6 +60,28 @@ export function renderAttachmentFallback(
   return [intro, "", "Attachments:", ...links.map((a) => `${a.filename}: ${a.url}`)].join("\n");
 }
 
+export function renderPrivacyAlert(
+  email: ParsedEmail,
+  aliasFullAddress: string,
+  viewUrl: string,
+  hasAttachments: boolean,
+): string {
+  const sender = escapeHtml(extractSenderHint(email));
+  const alias = escapeHtml(aliasFullAddress);
+  const attachmentLine = hasAttachments ? "\nAttachments: hidden by privacy mode" : "";
+
+  return [
+    "<b>Private email alert</b>",
+    `Alias: <code>${alias}</code>`,
+    `Sender: ${sender}`,
+    "Subject: hidden by privacy mode",
+    attachmentLine ? attachmentLine.trimStart() : "",
+    `Open: <a href="${escapeHtmlAttribute(viewUrl)}">view email</a>`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function buildAttachmentsSection(links: AttachmentLink[], mode: RenderMode): string {
   if (links.length === 0) return "";
   const items = links.map((a) => {
@@ -70,6 +92,16 @@ function buildAttachmentsSection(links: AttachmentLink[], mode: RenderMode): str
     return `${a.filename}: ${a.url}`;
   });
   return "Attachments:\n" + items.join("\n");
+}
+
+function extractSenderHint(email: ParsedEmail): string {
+  const source = email.headerFrom ?? email.envelopeFrom ?? "unknown sender";
+  const lowered = source.toLowerCase();
+  const angleMatch = lowered.match(/<([^>]+)>/);
+  const address = angleMatch?.[1] ?? lowered.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/)?.[0];
+  if (!address) return source;
+  const [, domain] = address.split("@");
+  return domain ?? address;
 }
 
 function clampToMaxLen(parts: string[], mode: RenderMode): string {

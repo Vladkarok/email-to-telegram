@@ -63,6 +63,7 @@ export async function editAliasDetailMenu(ctx: Context, db: Db, aliasId: string)
     `📧 <code>${escapeHtml(alias.fullAddress)}</code>\n` +
     `Status: ${statusIcon(alias.status)} ${alias.status}\n` +
     `Render: <code>${alias.renderMode}</code>\n` +
+    `Privacy mode: <code>${alias.privacyModeEnabled ? "on" : "off"}</code>\n` +
     `Body dedup: <code>${alias.bodyDedupEnabled ? "on" : "off"}</code>\n\n` +
     `<b>Allow rules:</b>\n${rulesText}`;
 

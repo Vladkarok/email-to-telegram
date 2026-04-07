@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { generateDownloadToken, verifyDownloadToken } from "../../../src/utils/tokens.js";
+import {
+  generateDeliveryViewToken,
+  generateDownloadToken,
+  verifyDeliveryViewToken,
+  verifyDownloadToken,
+} from "../../../src/utils/tokens.js";
 
 const SECRET = "test-secret-that-is-long-enough-abc";
 const ATTACHMENT_ID = "uuid-attach-1234";
@@ -52,5 +57,28 @@ describe("download tokens", () => {
     const expected = before + 24 * 60 * 60 * 1000;
     expect(expiresAt.getTime()).toBeGreaterThanOrEqual(expected - 1000);
     expect(expiresAt.getTime()).toBeLessThanOrEqual(after + 24 * 60 * 60 * 1000 + 1000);
+  });
+});
+
+describe("delivery view tokens", () => {
+  let savedSecret: string | undefined;
+
+  beforeEach(() => {
+    savedSecret = process.env["HMAC_SECRET"];
+    process.env["HMAC_SECRET"] = SECRET;
+  });
+
+  afterEach(() => {
+    process.env["HMAC_SECRET"] = savedSecret;
+  });
+
+  it("generates a delivery-view token that verifies successfully", () => {
+    const { token, expiresAt } = generateDeliveryViewToken("log-uuid-1");
+    expect(verifyDeliveryViewToken(token, "log-uuid-1", expiresAt)).toBe(true);
+  });
+
+  it("rejects a delivery-view token for the wrong delivery log", () => {
+    const { token, expiresAt } = generateDeliveryViewToken("log-uuid-1");
+    expect(verifyDeliveryViewToken(token, "log-uuid-2", expiresAt)).toBe(false);
   });
 });

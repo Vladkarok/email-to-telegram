@@ -55,9 +55,10 @@ describe("/newemail command", () => {
     expect(mockCreateAlias).toHaveBeenCalledOnce();
     const [, aliasData] = mockCreateAlias.mock.calls[0] as [
       unknown,
-      { localPart: string; bodyDedupEnabled: boolean },
+      { localPart: string; privacyModeEnabled: boolean; bodyDedupEnabled: boolean },
     ];
     expect(aliasData.localPart).toMatch(/^alerts-[a-z0-9]{6}$/);
+    expect(aliasData.privacyModeEnabled).toBe(false);
     expect(aliasData.bodyDedupEnabled).toBe(false);
     expect(ctx.reply).toHaveBeenCalledOnce();
     expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain(

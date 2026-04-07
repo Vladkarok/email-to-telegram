@@ -41,6 +41,22 @@ export function bodyDedupHelpText(): string {
   ].join("\n");
 }
 
+export function privacyModeGuidance(enabled: boolean): string {
+  if (enabled) {
+    return "Privacy mode: on. Telegram gets a minimal alert and a one-time web view link instead of the email body or attachments.";
+  }
+
+  return "Privacy mode: off. Telegram receives the rendered email body and any attachment handling allowed by the alias settings.";
+}
+
+export function privacyModeHelpText(): string {
+  return [
+    "<b>Privacy Mode</b>",
+    "privacy off — Telegram receives the rendered email body",
+    "privacy on — Telegram receives only a minimal alert and a one-time web view link",
+  ].join("\n");
+}
+
 export function safetyDisclaimerText(): string {
   return [
     "<b>Safety Notes</b>",
@@ -51,5 +67,5 @@ export function safetyDisclaimerText(): string {
 }
 
 export function settingsHelpText(): string {
-  return [renderModeHelpText(), "", bodyDedupHelpText()].join("\n");
+  return [renderModeHelpText(), "", bodyDedupHelpText(), "", privacyModeHelpText()].join("\n");
 }

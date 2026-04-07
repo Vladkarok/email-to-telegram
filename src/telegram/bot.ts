@@ -21,6 +21,7 @@ import { sendAllowRulesMenu, editAllowRulesMenu } from "./menu/allowRulesMenu.js
 import {
   findAliasById,
   updateAliasBodyDedup,
+  updateAliasPrivacyMode,
   updateAliasStatus,
   updateAliasRenderMode,
 } from "../db/repos/aliases.js";
@@ -301,6 +302,28 @@ export function createBot(token: string): Bot {
     const nextValue = !alias.bodyDedupEnabled;
     await updateAliasBodyDedup(getDb(), aliasId, nextValue);
     await ctx.answerCallbackQuery(`Body dedup ${nextValue ? "enabled" : "disabled"}`);
+
+    const updatedAlias = await findAliasById(getDb(), aliasId);
+    if (!updatedAlias) return;
+    await ctx.editMessageText(buildAliasSettingsText(updatedAlias), {
+      parse_mode: "HTML",
+      reply_markup: buildAliasSettingsKeyboard(updatedAlias, true),
+    });
+  });
+
+  // toggle_privacy_mode:{aliasId} — toggle privacy mode for an alias
+  bot.callbackQuery(/^toggle_privacy_mode:([0-9a-f-]{36})$/, async (ctx) => {
+    const aliasId = ctx.match[1];
+    if (!(await assertAliasAccess(ctx, aliasId))) return;
+    const alias = await findAliasById(getDb(), aliasId);
+    if (!alias) {
+      await ctx.answerCallbackQuery("Alias not found");
+      return;
+    }
+
+    const nextValue = !alias.privacyModeEnabled;
+    await updateAliasPrivacyMode(getDb(), aliasId, nextValue);
+    await ctx.answerCallbackQuery(`Privacy mode ${nextValue ? "enabled" : "disabled"}`);
 
     const updatedAlias = await findAliasById(getDb(), aliasId);
     if (!updatedAlias) return;

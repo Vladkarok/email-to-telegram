@@ -5,12 +5,14 @@ import type { EmailAddress } from "../../db/schema.js";
 import {
   findAliasByIdAndChat,
   updateAliasBodyDedup,
+  updateAliasPrivacyMode,
   updateAliasRenderMode,
 } from "../../db/repos/aliases.js";
 import { canManageAlias } from "../authorization.js";
 import {
   RENDER_MODES,
   bodyDedupGuidance,
+  privacyModeGuidance,
   settingsHelpText,
   renderModeGuidance,
   type TelegramRenderMode,
@@ -66,6 +68,20 @@ export async function settingsHandler(ctx: CommandContext<Context>): Promise<voi
     return;
   }
 
+  if (setting === "privacy") {
+    if (value !== "on" && value !== "off") {
+      await ctx.reply(settingsUsageText(), { parse_mode: "HTML" });
+      return;
+    }
+    const privacyModeEnabled = value === "on";
+    await updateAliasPrivacyMode(getDb(), alias.id, privacyModeEnabled);
+    await ctx.reply(
+      `✅ Privacy mode for <code>${alias.fullAddress}</code> set to <b>${privacyModeEnabled ? "on" : "off"}</b>.\n${privacyModeGuidance(privacyModeEnabled)}`,
+      { parse_mode: "HTML" },
+    );
+    return;
+  }
+
   if (setting) {
     await ctx.reply(settingsUsageText(), { parse_mode: "HTML" });
     return;
@@ -78,12 +94,18 @@ export async function settingsHandler(ctx: CommandContext<Context>): Promise<voi
 }
 
 export function buildAliasSettingsText(
-  alias: Pick<EmailAddress, "fullAddress" | "renderMode" | "bodyDedupEnabled">,
+  alias: Pick<
+    EmailAddress,
+    "fullAddress" | "renderMode" | "bodyDedupEnabled" | "privacyModeEnabled"
+  >,
 ): string {
   return [
     `⚙️ Settings for <code>${escapeHtml(alias.fullAddress)}</code>`,
     `Render mode: <b>${alias.renderMode}</b>`,
     renderModeGuidance(alias.renderMode as TelegramRenderMode),
+    "",
+    `Privacy mode: <b>${alias.privacyModeEnabled ? "on" : "off"}</b>`,
+    privacyModeGuidance(alias.privacyModeEnabled),
     "",
     `Body dedup: <b>${alias.bodyDedupEnabled ? "on" : "off"}</b>`,
     bodyDedupGuidance(alias.bodyDedupEnabled),
@@ -91,7 +113,7 @@ export function buildAliasSettingsText(
 }
 
 export function buildAliasSettingsKeyboard(
-  alias: Pick<EmailAddress, "id" | "renderMode" | "bodyDedupEnabled">,
+  alias: Pick<EmailAddress, "id" | "renderMode" | "bodyDedupEnabled" | "privacyModeEnabled">,
   includeBack = false,
 ): InlineKeyboard {
   const keyboard = new InlineKeyboard();
@@ -103,6 +125,7 @@ export function buildAliasSettingsKeyboard(
 
   keyboard
     .row()
+    .text(`${alias.privacyModeEnabled ? "✓" : "○"} Privacy`, `toggle_privacy_mode:${alias.id}`)
     .text(`${alias.bodyDedupEnabled ? "✓" : "○"} Body Dedup`, `toggle_body_dedup:${alias.id}`);
 
   if (includeBack) {
@@ -116,6 +139,7 @@ function settingsUsageText(): string {
   return [
     "Usage: /settings <alias-name> [plaintext|html|markdown]",
     "Usage: /settings <alias-name> dedup <on|off>",
+    "Usage: /settings <alias-name> privacy <on|off>",
     "",
     settingsHelpText(),
   ].join("\n");

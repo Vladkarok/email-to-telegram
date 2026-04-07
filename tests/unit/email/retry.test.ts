@@ -13,6 +13,7 @@ const mockSendTelegramMessage = vi.fn();
 const mockSendTelegramPhotos = vi.fn();
 const mockListAttachments = vi.fn();
 const mockCreateAttachmentLink = vi.fn();
+const mockCreateDeliveryViewLink = vi.fn();
 const mockFindDeliveryLogByRawEmailPath = vi.fn();
 const mockListPendingRawEmails = vi.fn();
 const mockDeletePendingRawEmailMeta = vi.fn();
@@ -36,6 +37,9 @@ vi.mock("../../../src/db/repos/attachments.js", () => ({
 }));
 vi.mock("../../../src/db/repos/attachmentLinks.js", () => ({
   createAttachmentLink: (...args: unknown[]): unknown => mockCreateAttachmentLink(...args),
+}));
+vi.mock("../../../src/db/repos/deliveryViewLinks.js", () => ({
+  createDeliveryViewLink: (...args: unknown[]): unknown => mockCreateDeliveryViewLink(...args),
 }));
 vi.mock("../../../src/db/repos/deliveryAttempts.js", () => ({
   countAttemptsByLog: (...args: unknown[]): unknown => mockCountAttempts(...args),
@@ -78,6 +82,7 @@ const fakeAlias = {
   messageThreadId: null,
   status: "active",
   renderMode: "plaintext",
+  privacyModeEnabled: false,
   bodyDedupEnabled: false,
 };
 
@@ -105,6 +110,7 @@ describe("runRetryWorker", () => {
     mockSendTelegramPhotos.mockResolvedValue({ ok: true, failedPhotos: [] });
     mockListAttachments.mockResolvedValue([]);
     mockCreateAttachmentLink.mockResolvedValue(undefined);
+    mockCreateDeliveryViewLink.mockResolvedValue(undefined);
     mockFindDeliveryLogByRawEmailPath.mockResolvedValue(null);
     mockListPendingRawEmails.mockResolvedValue([]);
     mockDeletePendingRawEmailMeta.mockResolvedValue(undefined);
@@ -258,6 +264,37 @@ describe("runRetryWorker", () => {
     );
     const [, opts] = mockSendTelegramMessage.mock.calls[0] as [unknown, { text: string }];
     expect(opts.text).toContain("/dl/");
+  });
+
+  it("uses a privacy-mode alert and skips Telegram photo upload when privacy mode is enabled", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockFindAliasById.mockResolvedValue({ ...fakeAlias, privacyModeEnabled: true });
+    mockListAttachments.mockResolvedValue([
+      {
+        id: "att-image-1",
+        originalFilename: "graph.png",
+        sizeBytes: 123,
+        storagePath: "/data/attachments/log-uuid/graph.png",
+        contentType: "image/png",
+      },
+    ]);
+
+    await runRetryWorker(fakeDb, fakeApi, {
+      attachmentTtlHours: 24,
+      rawEmailTtlHours: 24,
+      publicBaseUrl: "https://mail.example.com",
+    });
+
+    const [, opts] = mockSendTelegramMessage.mock.calls[0] as [unknown, { text: string }];
+    expect(opts.text).toContain("/view/");
+    expect(opts.text).not.toContain("Hello world");
+    expect(mockSendTelegramPhotos).not.toHaveBeenCalled();
+    expect(mockCreateDeliveryViewLink).toHaveBeenCalledWith(
+      fakeDb,
+      fakeLog.id,
+      expect.any(String),
+      expect.any(Date),
+    );
   });
 
   it("uses HTML parse mode for markdown-rendered retries", async () => {

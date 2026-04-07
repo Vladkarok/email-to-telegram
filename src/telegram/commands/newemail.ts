@@ -90,6 +90,7 @@ export async function createEmailAlias(
       messageThreadId: threadId,
       createdBy: BigInt(ctx.from.id),
       renderMode: "plaintext",
+      privacyModeEnabled: false,
       bodyDedupEnabled: false,
       status: "active",
     });

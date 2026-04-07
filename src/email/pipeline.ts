@@ -10,6 +10,7 @@ import { cleanEmailBody } from "./cleaner.js";
 import {
   renderEmail,
   renderAttachmentFallback,
+  renderPrivacyAlert,
   parseModeForRenderMode,
   type AttachmentLink,
 } from "./renderer.js";
@@ -29,6 +30,7 @@ import { createAttachmentLink } from "../db/repos/attachmentLinks.js";
 import { writeAttachment } from "../storage/disk.js";
 import { generateDownloadToken } from "../utils/tokens.js";
 import { getLogger } from "../utils/logger.js";
+import { createPrivacyViewUrl } from "./privacy.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -51,6 +53,8 @@ export interface PipelineInput {
   attachmentDir: string;
   /** Attachment download link TTL in hours */
   attachmentTtlHours: number;
+  /** Raw email retention window in hours; privacy-mode links must not outlive it. */
+  rawEmailTtlHours: number;
 }
 
 export interface PipelineResult {
@@ -66,6 +70,7 @@ export interface QueuedInboundEmail {
   publicBaseUrl: string;
   attachmentDir: string;
   attachmentTtlHours: number;
+  rawEmailTtlHours: number;
   correlationId?: string;
 }
 
@@ -83,7 +88,14 @@ function getPipelineLogger(correlationId?: string) {
 }
 
 export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<QueueInboundResult> {
-  const { rawEmail, localPart, publicBaseUrl, attachmentDir, attachmentTtlHours } = input;
+  const {
+    rawEmail,
+    localPart,
+    publicBaseUrl,
+    attachmentDir,
+    attachmentTtlHours,
+    rawEmailTtlHours,
+  } = input;
 
   // 1. Resolve alias
   const alias = await findAliasByLocalPart(db, localPart);
@@ -165,6 +177,7 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
       publicBaseUrl,
       attachmentDir,
       attachmentTtlHours,
+      rawEmailTtlHours,
       correlationId: input.correlationId,
     },
   };
@@ -176,7 +189,8 @@ export async function deliverQueuedEmail(
   job: QueuedInboundEmail,
 ): Promise<PipelineResult> {
   const log = getPipelineLogger(job.correlationId);
-  const { alias, deliveryLog, publicBaseUrl, attachmentDir, attachmentTtlHours } = job;
+  const { alias, deliveryLog, publicBaseUrl, attachmentDir, attachmentTtlHours, rawEmailTtlHours } =
+    job;
   const parsed = {
     ...job.parsed,
     attachments: [...job.parsed.attachments],
@@ -231,13 +245,18 @@ export async function deliverQueuedEmail(
     }
 
     // 8. Render
+    const privacyMode = alias.privacyModeEnabled ?? false;
     const renderMode = (alias.renderMode ?? "plaintext") as "plaintext" | "html" | "markdown";
-    const text = renderEmail(parsed, renderMode, alias.fullAddress, attachmentLinks);
+    const text = privacyMode
+      ? await buildPrivacyModeMessage(db, deliveryLog, parsed, alias.fullAddress, publicBaseUrl, {
+          rawEmailTtlHours,
+        })
+      : renderEmail(parsed, renderMode, alias.fullAddress, attachmentLinks);
 
     // 9. Send — parse_mode depends on render mode; plaintext uses none (avoids HTML metachar issues)
     if (api) {
       const { sendTelegramMessage, sendTelegramPhotos } = await import("../telegram/sender.js");
-      const parseMode = parseModeForRenderMode(renderMode);
+      const parseMode = privacyMode ? "HTML" : parseModeForRenderMode(renderMode);
 
       const result = await sendTelegramMessage(api, {
         chatId: alias.chatId,
@@ -266,7 +285,7 @@ export async function deliverQueuedEmail(
       }
 
       // Send image attachments as Telegram photos (replied to the text message)
-      if (imageAttachments.length > 0) {
+      if (!privacyMode && imageAttachments.length > 0) {
         try {
           const photoResult = await sendTelegramPhotos(api, {
             chatId: alias.chatId,
@@ -341,4 +360,25 @@ export async function processInboundEmail(
     return queued.result;
   }
   return deliverQueuedEmail(db, api, queued.job);
+}
+
+async function buildPrivacyModeMessage(
+  db: Db,
+  deliveryLog: Pick<DeliveryLog, "id" | "rawEmailPath">,
+  parsed: Awaited<ReturnType<typeof parseEmail>>,
+  aliasFullAddress: string,
+  publicBaseUrl: string,
+  opts: { rawEmailTtlHours: number },
+): Promise<string> {
+  if (!deliveryLog.rawEmailPath) {
+    throw new Error("privacy mode requires a durable raw email path");
+  }
+
+  const viewUrl = await createPrivacyViewUrl(
+    db,
+    deliveryLog.id,
+    publicBaseUrl,
+    opts.rawEmailTtlHours,
+  );
+  return renderPrivacyAlert(parsed, aliasFullAddress, viewUrl, parsed.attachments.length > 0);
 }

@@ -17,12 +17,14 @@ describe("startup runtime helpers", () => {
         attachmentTtlHours: 24,
         publicBaseUrl: "https://mail.example.com",
         rawEmailDir: "/data/rawemails",
+        rawEmailTtlHours: 48,
       }),
     ).toEqual({
       attachmentDir: "/data/attachments",
       attachmentTtlHours: 24,
       publicBaseUrl: "https://mail.example.com",
       rawEmailDir: "/data/rawemails",
+      rawEmailTtlHours: 48,
     });
   });
 });

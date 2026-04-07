@@ -28,7 +28,12 @@ export function rawRoute(
   app: FastifyInstance,
   config: Pick<
     AppConfig,
-    "publicBaseUrl" | "attachmentDir" | "attachmentTtlHours" | "rawEmailDir" | "maxSizeBytes"
+    | "publicBaseUrl"
+    | "attachmentDir"
+    | "attachmentTtlHours"
+    | "rawEmailDir"
+    | "rawEmailTtlHours"
+    | "maxSizeBytes"
   >,
 ): void {
   app.post(
@@ -94,6 +99,7 @@ export function rawRoute(
         publicBaseUrl: config.publicBaseUrl,
         attachmentDir: config.attachmentDir,
         attachmentTtlHours: config.attachmentTtlHours,
+        rawEmailTtlHours: config.rawEmailTtlHours,
       });
 
       if (queued.queued || shouldDeletePendingMeta(queued.result.reason)) {

@@ -52,6 +52,7 @@ describe("/help command", () => {
     const text = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as unknown;
     expect(String(text)).toContain("use Gmail or mail-client formatting buttons");
     expect(String(text)).toContain("type markdown syntax literally");
+    expect(String(text)).toContain("one-time web view link");
   });
 
   it("includes the operational-use disclaimer", async () => {
