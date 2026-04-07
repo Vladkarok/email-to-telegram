@@ -2,6 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Fastify from "fastify";
 import { registerRoutes } from "../../../src/http/routes/index.js";
 import { generateDeliveryViewToken, verifyDownloadToken } from "../../../src/utils/tokens.js";
+import {
+  configureStorageEncryption,
+  resetStorageEncryptionForTests,
+} from "../../../src/security/encryption.js";
+import { prepareDeliveryLogMetadataWrite } from "../../../src/security/deliveryLogMetadata.js";
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
@@ -92,6 +97,7 @@ describe("/view/:token", () => {
     process.env["HMAC_SECRET"] = "test-secret-that-is-long-enough-abc";
     vi.useRealTimers();
     vi.clearAllMocks();
+    resetStorageEncryptionForTests();
     mockMarkDeliveryViewLinkViewed.mockResolvedValue(true);
     mockCreateAttachmentLink.mockResolvedValue(undefined);
     mockReadRawEmail.mockResolvedValue(RAW_EMAIL);
@@ -100,6 +106,7 @@ describe("/view/:token", () => {
 
   afterEach(() => {
     process.env["HMAC_SECRET"] = savedSecret;
+    resetStorageEncryptionForTests();
   });
 
   it("renders a confirmation page on GET without consuming the link", async () => {
@@ -216,5 +223,46 @@ describe("/view/:token", () => {
     expect(res.body).not.toContain("/dl/");
     expect(res.body).not.toContain("report.pdf");
     expect(mockCreateAttachmentLink).not.toHaveBeenCalled();
+  });
+
+  it("decrypts stored delivery metadata for privacy views", async () => {
+    configureStorageEncryption({
+      mode: "local-v1",
+      masterKey: Buffer.alloc(32, 5).toString("base64"),
+      masterKeyId: "view-meta-key",
+    });
+    const encryptedMetadata = await prepareDeliveryLogMetadataWrite("log-uuid-1", {
+      envelopeFrom: "relay@example.com",
+      headerFrom: "Encrypted Sender <sender@example.com>",
+      subject: "Encrypted Subject",
+    });
+    const { token, expiresAt } = generateDeliveryViewToken("log-uuid-1", 24);
+    mockFindDeliveryViewLinkByTokenHash.mockResolvedValue({
+      ...viewLinkRow(expiresAt),
+      deliveryLog: {
+        ...viewLinkRow(expiresAt).deliveryLog,
+        envelopeFrom: encryptedMetadata.envelopeFrom,
+        headerFrom: encryptedMetadata.headerFrom,
+        subject: encryptedMetadata.subject,
+        metadataCiphertext: encryptedMetadata.metadataCiphertext,
+        metadataEncryptionMode: encryptedMetadata.metadataEncryptionMode,
+        metadataWrappedDek: encryptedMetadata.metadataWrappedDek,
+        metadataKekKeyId: encryptedMetadata.metadataKekKeyId,
+        metadataEncryptedAt: encryptedMetadata.metadataEncryptedAt,
+      },
+    });
+    mockReadRawEmail.mockResolvedValue(
+      Buffer.from(
+        "From: parsed@example.com\r\nTo: alerts@example.com\r\nSubject: Parsed Subject\r\n\r\nBody",
+      ),
+    );
+
+    const app = await buildApp();
+    const res = await app.inject({ method: "POST", url: `/view/${token}` });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("Encrypted Sender &lt;sender@example.com&gt;");
+    expect(res.body).toContain("Encrypted Subject");
+    expect(res.body).not.toContain("Parsed Subject");
   });
 });

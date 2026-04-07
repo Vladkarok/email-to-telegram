@@ -32,6 +32,7 @@ import { generateDownloadToken } from "../utils/tokens.js";
 import { getLogger } from "../utils/logger.js";
 import { createPrivacyViewUrl } from "./privacy.js";
 import type { StorageEncryptionMetadata } from "../security/encryption.js";
+import { prepareDeliveryLogMetadataWrite } from "../security/deliveryLogMetadata.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -141,15 +142,28 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
       return { kind: "rate_limited" as const };
     }
 
+    const deliveryLogId = randomUUID();
+    const deliveryLogMetadata = await prepareDeliveryLogMetadataWrite(deliveryLogId, {
+      envelopeFrom,
+      headerFrom: parsed.headerFrom,
+      subject: parsed.subject,
+    });
+
     // 5. Create delivery log — null means a concurrent pipeline beat us (race dedup)
     const deliveryLog = await createDeliveryLog(tx as Db, {
+      id: deliveryLogId,
       emailAddressId: alias.id,
       messageIdHeader: parsed.messageId,
       bodySha256: parsed.bodySha256,
       bodyDedupApplied: alias.bodyDedupEnabled ?? false,
-      envelopeFrom: envelopeFrom,
-      headerFrom: parsed.headerFrom,
-      subject: parsed.subject,
+      envelopeFrom: deliveryLogMetadata.envelopeFrom,
+      headerFrom: deliveryLogMetadata.headerFrom,
+      subject: deliveryLogMetadata.subject,
+      metadataCiphertext: deliveryLogMetadata.metadataCiphertext,
+      metadataEncryptionMode: deliveryLogMetadata.metadataEncryptionMode,
+      metadataWrappedDek: deliveryLogMetadata.metadataWrappedDek,
+      metadataKekKeyId: deliveryLogMetadata.metadataKekKeyId,
+      metadataEncryptedAt: deliveryLogMetadata.metadataEncryptedAt,
       rawSizeBytes: parsed.rawSizeBytes,
       rawEmailPath: input.rawEmailPath ?? null,
       rawEmailEncryptionMode: input.rawEmailEncryption?.encryptionMode ?? "none",

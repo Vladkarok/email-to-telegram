@@ -11,7 +11,7 @@ type Db = NodePgDatabase<typeof schema>;
  */
 export async function createDeliveryLog(
   db: Db,
-  data: Omit<NewDeliveryLog, "id" | "createdAt" | "receivedAt">,
+  data: Omit<NewDeliveryLog, "createdAt" | "receivedAt">,
 ): Promise<DeliveryLog | null> {
   try {
     const [log] = await db.insert(deliveryLogs).values(data).returning();

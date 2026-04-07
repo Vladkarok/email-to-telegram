@@ -4,11 +4,15 @@ import { assertStorageEncryptionReadiness } from "../../../src/startup/storageRe
 const mockReadAttachmentBytes = vi.fn();
 const mockReadRawEmail = vi.fn();
 const mockListPendingRawEmails = vi.fn();
+const mockReadDeliveryLogMetadata = vi.fn();
 
 vi.mock("../../../src/storage/disk.js", () => ({
   listPendingRawEmails: (...args: unknown[]): unknown => mockListPendingRawEmails(...args),
   readAttachmentBytes: (...args: unknown[]): unknown => mockReadAttachmentBytes(...args),
   readRawEmail: (...args: unknown[]): unknown => mockReadRawEmail(...args),
+}));
+vi.mock("../../../src/security/deliveryLogMetadata.js", () => ({
+  readDeliveryLogMetadata: (...args: unknown[]): unknown => mockReadDeliveryLogMetadata(...args),
 }));
 
 function fakeDbWithRows(rowSets: unknown[][]) {
@@ -30,11 +34,17 @@ describe("assertStorageEncryptionReadiness", () => {
     mockReadAttachmentBytes.mockReset();
     mockReadRawEmail.mockReset();
     mockListPendingRawEmails.mockReset();
+    mockReadDeliveryLogMetadata.mockReset();
     mockListPendingRawEmails.mockResolvedValue([]);
+    mockReadDeliveryLogMetadata.mockResolvedValue({
+      envelopeFrom: "sender@example.com",
+      headerFrom: "Sender <sender@example.com>",
+      subject: "Alert",
+    });
   });
 
   it("rejects disabling encryption while encrypted rows still exist", async () => {
-    const db = fakeDbWithRows([[{ present: 1 }], []]);
+    const db = fakeDbWithRows([[{ present: 1 }], [], []]);
 
     await expect(
       assertStorageEncryptionReadiness(db, {
@@ -45,7 +55,7 @@ describe("assertStorageEncryptionReadiness", () => {
   });
 
   it("rejects startup when encrypted attachments were written with another key id", async () => {
-    const db = fakeDbWithRows([[{ id: "a1", kek_key_id: "legacy-key" }], []]);
+    const db = fakeDbWithRows([[{ id: "a1", kek_key_id: "legacy-key" }], [], [], [], [], []]);
 
     await expect(assertStorageEncryptionReadiness(db, baseConfig)).rejects.toThrow(
       /Encrypted attachments were written with a different key id/i,
@@ -53,10 +63,32 @@ describe("assertStorageEncryptionReadiness", () => {
   });
 
   it("rejects startup when encrypted raw emails were written with another key id", async () => {
-    const db = fakeDbWithRows([[], [{ id: "d1", raw_email_kek_key_id: "legacy-key" }], [], []]);
+    const db = fakeDbWithRows([
+      [],
+      [{ id: "d1", raw_email_kek_key_id: "legacy-key" }],
+      [],
+      [],
+      [],
+      [],
+    ]);
 
     await expect(assertStorageEncryptionReadiness(db, baseConfig)).rejects.toThrow(
       /Encrypted raw emails were written with a different key id/i,
+    );
+  });
+
+  it("rejects startup when encrypted delivery metadata was written with another key id", async () => {
+    const db = fakeDbWithRows([
+      [],
+      [],
+      [{ id: "d1", metadata_kek_key_id: "legacy-key" }],
+      [],
+      [],
+      [],
+    ]);
+
+    await expect(assertStorageEncryptionReadiness(db, baseConfig)).rejects.toThrow(
+      /Encrypted delivery metadata was written with a different key id/i,
     );
   });
 
@@ -66,6 +98,7 @@ describe("assertStorageEncryptionReadiness", () => {
     const db = fakeDbWithRows([
       [{ id: "a1", kek_key_id: "legacy-key" }],
       [{ id: "d1", raw_email_kek_key_id: "legacy-key" }],
+      [{ id: "d1", metadata_kek_key_id: "legacy-key" }],
       [
         {
           id: "a1",
@@ -81,6 +114,19 @@ describe("assertStorageEncryptionReadiness", () => {
           raw_email_encryption_mode: "local-v1",
           raw_email_wrapped_dek: "wrapped-raw",
           raw_email_kek_key_id: "legacy-key",
+        },
+      ],
+      [
+        {
+          id: "d1",
+          envelope_from: null,
+          header_from: null,
+          subject: null,
+          metadata_ciphertext: "ciphertext",
+          metadata_encryption_mode: "local-v1",
+          metadata_wrapped_dek: "wrapped-metadata",
+          metadata_kek_key_id: "legacy-key",
+          metadata_encrypted_at: new Date("2026-04-07T12:00:00.000Z"),
         },
       ],
     ]);
@@ -101,6 +147,7 @@ describe("assertStorageEncryptionReadiness", () => {
     const db = fakeDbWithRows([
       [],
       [],
+      [],
       [
         {
           id: "a1",
@@ -116,6 +163,19 @@ describe("assertStorageEncryptionReadiness", () => {
           raw_email_encryption_mode: "local-v1",
           raw_email_wrapped_dek: "wrapped-raw",
           raw_email_kek_key_id: "local-env-v1",
+        },
+      ],
+      [
+        {
+          id: "d1",
+          envelope_from: null,
+          header_from: null,
+          subject: null,
+          metadata_ciphertext: "ciphertext",
+          metadata_encryption_mode: "local-v1",
+          metadata_wrapped_dek: "wrapped-metadata",
+          metadata_kek_key_id: "local-env-v1",
+          metadata_encrypted_at: new Date("2026-04-07T12:00:00.000Z"),
         },
       ],
     ]);
@@ -134,11 +194,23 @@ describe("assertStorageEncryptionReadiness", () => {
       rawEmailWrappedDek: "wrapped-raw",
       rawEmailKekKeyId: "local-env-v1",
     });
+    expect(mockReadDeliveryLogMetadata).toHaveBeenCalledWith({
+      id: "d1",
+      envelopeFrom: null,
+      headerFrom: null,
+      subject: null,
+      metadataCiphertext: "ciphertext",
+      metadataEncryptionMode: "local-v1",
+      metadataWrappedDek: "wrapped-metadata",
+      metadataKekKeyId: "local-env-v1",
+      metadataEncryptedAt: new Date("2026-04-07T12:00:00.000Z"),
+    });
   });
 
   it("fails startup when an encrypted attachment sample cannot be decrypted", async () => {
     mockReadAttachmentBytes.mockRejectedValue(new Error("bad key"));
     const db = fakeDbWithRows([
+      [],
       [],
       [],
       [
@@ -150,6 +222,7 @@ describe("assertStorageEncryptionReadiness", () => {
           kek_key_id: "local-env-v1",
         },
       ],
+      [],
       [],
     ]);
 
@@ -167,7 +240,7 @@ describe("assertStorageEncryptionReadiness", () => {
         rawEmailKekKeyId: "local-env-v1",
       },
     ]);
-    const db = fakeDbWithRows([[], []]);
+    const db = fakeDbWithRows([[], [], []]);
 
     await expect(
       assertStorageEncryptionReadiness(db, {
@@ -186,7 +259,7 @@ describe("assertStorageEncryptionReadiness", () => {
         rawEmailKekKeyId: "legacy-key",
       },
     ]);
-    const db = fakeDbWithRows([[], [], [], []]);
+    const db = fakeDbWithRows([[], [], [], [], [], []]);
 
     await expect(assertStorageEncryptionReadiness(db, baseConfig)).rejects.toThrow(
       /Encrypted pending raw emails were written with a different key id/i,
@@ -203,7 +276,7 @@ describe("assertStorageEncryptionReadiness", () => {
         rawEmailKekKeyId: "local-env-v1",
       },
     ]);
-    const db = fakeDbWithRows([[], [], [], []]);
+    const db = fakeDbWithRows([[], [], [], [], [], []]);
 
     await expect(assertStorageEncryptionReadiness(db, baseConfig)).rejects.toThrow(
       /Failed to decrypt a pending raw email/i,

@@ -10,12 +10,14 @@ import {
   type PendingRawEmailMeta,
 } from "../storage/disk.js";
 import { rewrapStorageEncryptionMetadata, type StorageEncryptionMetadata } from "./encryption.js";
+import { backfillDeliveryLogMetadata, rewrapDeliveryLogMetadata } from "./deliveryLogMetadata.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
 export interface StorageMaintenanceSummary {
   attachments: number;
   rawEmails: number;
+  metadataLogs: number;
   pendingRawEmails: number;
   skippedMissingFiles: number;
 }
@@ -27,6 +29,7 @@ export async function rewrapStoredEncryptionKeys(
   const summary: StorageMaintenanceSummary = {
     attachments: 0,
     rawEmails: 0,
+    metadataLogs: 0,
     pendingRawEmails: 0,
     skippedMissingFiles: 0,
   };
@@ -99,6 +102,50 @@ export async function rewrapStoredEncryptionKeys(
     summary.rawEmails++;
   }
 
+  const encryptedMetadataLogs = await db
+    .select({
+      id: deliveryLogs.id,
+      metadataWrappedDek: deliveryLogs.metadataWrappedDek,
+      metadataKekKeyId: deliveryLogs.metadataKekKeyId,
+      metadataEncryptedAt: deliveryLogs.metadataEncryptedAt,
+      metadataEncryptionMode: deliveryLogs.metadataEncryptionMode,
+      metadataCiphertext: deliveryLogs.metadataCiphertext,
+      envelopeFrom: deliveryLogs.envelopeFrom,
+      headerFrom: deliveryLogs.headerFrom,
+      subject: deliveryLogs.subject,
+    })
+    .from(deliveryLogs)
+    .where(eq(deliveryLogs.metadataEncryptionMode, "local-v1"));
+
+  for (const deliveryLog of encryptedMetadataLogs) {
+    const next = await rewrapDeliveryLogMetadata({
+      id: deliveryLog.id,
+      metadataCiphertext: deliveryLog.metadataCiphertext,
+      metadataEncryptionMode:
+        deliveryLog.metadataEncryptionMode === "local-v1" ? "local-v1" : "none",
+      metadataWrappedDek: deliveryLog.metadataWrappedDek,
+      metadataKekKeyId: deliveryLog.metadataKekKeyId,
+      metadataEncryptedAt: deliveryLog.metadataEncryptedAt,
+      envelopeFrom: deliveryLog.envelopeFrom,
+      headerFrom: deliveryLog.headerFrom,
+      subject: deliveryLog.subject,
+    });
+    if (
+      next.metadataWrappedDek === deliveryLog.metadataWrappedDek &&
+      next.metadataKekKeyId === deliveryLog.metadataKekKeyId
+    ) {
+      continue;
+    }
+    await db
+      .update(deliveryLogs)
+      .set({
+        metadataWrappedDek: next.metadataWrappedDek,
+        metadataKekKeyId: next.metadataKekKeyId,
+      })
+      .where(eq(deliveryLogs.id, deliveryLog.id));
+    summary.metadataLogs++;
+  }
+
   const pendingRawEmails = await listPendingRawEmails(rawEmailDir);
   for (const pendingRawEmail of pendingRawEmails) {
     if ((pendingRawEmail.rawEmailEncryptionMode ?? "none") !== "local-v1") continue;
@@ -132,6 +179,7 @@ export async function backfillStoredEncryption(
   const summary: StorageMaintenanceSummary = {
     attachments: 0,
     rawEmails: 0,
+    metadataLogs: 0,
     pendingRawEmails: 0,
     skippedMissingFiles: 0,
   };
@@ -200,6 +248,63 @@ export async function backfillStoredEncryption(
       }
       throw err;
     }
+  }
+
+  const plaintextMetadataLogs = await db
+    .select({
+      id: deliveryLogs.id,
+      envelopeFrom: deliveryLogs.envelopeFrom,
+      headerFrom: deliveryLogs.headerFrom,
+      subject: deliveryLogs.subject,
+      metadataCiphertext: deliveryLogs.metadataCiphertext,
+      metadataEncryptionMode: deliveryLogs.metadataEncryptionMode,
+      metadataWrappedDek: deliveryLogs.metadataWrappedDek,
+      metadataKekKeyId: deliveryLogs.metadataKekKeyId,
+      metadataEncryptedAt: deliveryLogs.metadataEncryptedAt,
+    })
+    .from(deliveryLogs)
+    .where(eq(deliveryLogs.metadataEncryptionMode, "none"));
+
+  for (const deliveryLog of plaintextMetadataLogs) {
+    if (
+      deliveryLog.envelopeFrom == null &&
+      deliveryLog.headerFrom == null &&
+      deliveryLog.subject == null
+    ) {
+      continue;
+    }
+
+    const encryptedMetadata = await backfillDeliveryLogMetadata({
+      id: deliveryLog.id,
+      envelopeFrom: deliveryLog.envelopeFrom,
+      headerFrom: deliveryLog.headerFrom,
+      subject: deliveryLog.subject,
+      metadataCiphertext: deliveryLog.metadataCiphertext,
+      metadataEncryptionMode:
+        deliveryLog.metadataEncryptionMode === "local-v1" ? "local-v1" : "none",
+      metadataWrappedDek: deliveryLog.metadataWrappedDek,
+      metadataKekKeyId: deliveryLog.metadataKekKeyId,
+      metadataEncryptedAt: deliveryLog.metadataEncryptedAt,
+    });
+
+    if (encryptedMetadata.metadataEncryptionMode === "none") {
+      continue;
+    }
+
+    await db
+      .update(deliveryLogs)
+      .set({
+        envelopeFrom: encryptedMetadata.envelopeFrom,
+        headerFrom: encryptedMetadata.headerFrom,
+        subject: encryptedMetadata.subject,
+        metadataCiphertext: encryptedMetadata.metadataCiphertext,
+        metadataEncryptionMode: encryptedMetadata.metadataEncryptionMode,
+        metadataWrappedDek: encryptedMetadata.metadataWrappedDek,
+        metadataKekKeyId: encryptedMetadata.metadataKekKeyId,
+        metadataEncryptedAt: encryptedMetadata.metadataEncryptedAt,
+      })
+      .where(eq(deliveryLogs.id, deliveryLog.id));
+    summary.metadataLogs++;
   }
 
   const pendingRawEmails = await listPendingRawEmails(rawEmailDir);

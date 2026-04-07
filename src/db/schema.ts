@@ -90,6 +90,13 @@ export const deliveryLogs = pgTable(
     envelopeFrom: varchar("envelope_from", { length: 320 }),
     headerFrom: varchar("header_from", { length: 320 }),
     subject: text("subject"),
+    metadataCiphertext: text("metadata_ciphertext"),
+    metadataEncryptionMode: varchar("metadata_encryption_mode", { length: 20 })
+      .notNull()
+      .default("none"),
+    metadataWrappedDek: text("metadata_wrapped_dek"),
+    metadataKekKeyId: varchar("metadata_kek_key_id", { length: 255 }),
+    metadataEncryptedAt: timestamp("metadata_encrypted_at", { withTimezone: true }),
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
     rawSizeBytes: integer("raw_size_bytes"),
     rawEmailPath: varchar("raw_email_path", { length: 512 }),

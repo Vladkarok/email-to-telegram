@@ -11,6 +11,7 @@ import {
   encryptBufferForStorage,
   resetStorageEncryptionForTests,
 } from "../../../src/security/encryption.js";
+import { readDeliveryLogMetadata } from "../../../src/security/deliveryLogMetadata.js";
 import {
   listPendingRawEmails,
   openAttachmentStream,
@@ -24,6 +25,17 @@ const tempDirs: string[] = [];
 function makeDb(rows: {
   plaintextAttachments?: Array<{ id: string; storagePath: string }>;
   plaintextRawEmails?: Array<{ id: string; rawEmailPath: string | null }>;
+  plaintextMetadataLogs?: Array<{
+    id: string;
+    envelopeFrom: string | null;
+    headerFrom: string | null;
+    subject: string | null;
+    metadataCiphertext: string | null;
+    metadataEncryptionMode: string | null;
+    metadataWrappedDek: string | null;
+    metadataKekKeyId: string | null;
+    metadataEncryptedAt: Date | null;
+  }>;
   encryptedAttachments?: Array<{
     id: string;
     wrappedDek: string | null;
@@ -36,24 +48,40 @@ function makeDb(rows: {
     rawEmailKekKeyId: string | null;
     rawEmailEncryptedAt: Date | null;
   }>;
+  encryptedMetadataLogs?: Array<{
+    id: string;
+    envelopeFrom: string | null;
+    headerFrom: string | null;
+    subject: string | null;
+    metadataCiphertext: string | null;
+    metadataEncryptionMode: string | null;
+    metadataWrappedDek: string | null;
+    metadataKekKeyId: string | null;
+    metadataEncryptedAt: Date | null;
+  }>;
 }) {
   const updates = {
     attachments: [] as Array<{ where: string; values: Record<string, unknown> }>,
     deliveryLogs: [] as Array<{ where: string; values: Record<string, unknown> }>,
   };
 
+  const attachmentSelects = [rows.plaintextAttachments ?? rows.encryptedAttachments ?? []];
+  const deliveryLogSelects = [
+    rows.plaintextRawEmails ?? rows.encryptedRawEmails ?? [],
+    rows.plaintextMetadataLogs ?? rows.encryptedMetadataLogs ?? [],
+  ];
+
   return {
     select: () => ({
       from: (table: unknown) => {
         if (table === attachments) {
           return {
-            where: () =>
-              Promise.resolve(rows.plaintextAttachments ?? rows.encryptedAttachments ?? []),
+            where: () => Promise.resolve(attachmentSelects.shift() ?? []),
           };
         }
         if (table === deliveryLogs) {
           return {
-            where: () => Promise.resolve(rows.plaintextRawEmails ?? rows.encryptedRawEmails ?? []),
+            where: () => Promise.resolve(deliveryLogSelects.shift() ?? []),
           };
         }
         return { where: () => Promise.resolve([]) };
@@ -109,11 +137,29 @@ describe("storage maintenance", () => {
     const db = makeDb({
       plaintextAttachments: [{ id: "att-1", storagePath: attachmentPath }],
       plaintextRawEmails: [{ id: "log-1", rawEmailPath }],
+      plaintextMetadataLogs: [
+        {
+          id: "log-1",
+          envelopeFrom: "sender@example.com",
+          headerFrom: "Sender <sender@example.com>",
+          subject: "Plain metadata",
+          metadataCiphertext: null,
+          metadataEncryptionMode: "none",
+          metadataWrappedDek: null,
+          metadataKekKeyId: null,
+          metadataEncryptedAt: null,
+        },
+      ],
     });
 
     const summary = await backfillStoredEncryption(db as never, join(root, "raw"));
 
-    expect(summary).toMatchObject({ attachments: 1, rawEmails: 1, pendingRawEmails: 1 });
+    expect(summary).toMatchObject({
+      attachments: 1,
+      rawEmails: 1,
+      metadataLogs: 1,
+      pendingRawEmails: 1,
+    });
     const attachmentUpdate = db._updates.attachments[0];
     expect(attachmentUpdate?.values).toMatchObject({
       encryptionMode: "local-v1",
@@ -123,6 +169,14 @@ describe("storage maintenance", () => {
     expect(rawUpdate?.values).toMatchObject({
       rawEmailEncryptionMode: "local-v1",
       rawEmailKekKeyId: "current-v2",
+    });
+    const metadataUpdate = db._updates.deliveryLogs[1];
+    expect(metadataUpdate?.values).toMatchObject({
+      envelopeFrom: null,
+      headerFrom: null,
+      subject: null,
+      metadataEncryptionMode: "local-v1",
+      metadataKekKeyId: "current-v2",
     });
 
     const pending = await listPendingRawEmails(join(root, "raw"));
@@ -150,6 +204,26 @@ describe("storage maintenance", () => {
         rawEmailKekKeyId: String(rawUpdate?.values.rawEmailKekKeyId),
       }),
     ).resolves.toEqual(Buffer.from("From: sender@example.com\r\n\r\nplain raw"));
+
+    await expect(
+      readDeliveryLogMetadata({
+        id: "log-1",
+        envelopeFrom: metadataUpdate?.values.envelopeFrom as string | null,
+        headerFrom: metadataUpdate?.values.headerFrom as string | null,
+        subject: metadataUpdate?.values.subject as string | null,
+        metadataCiphertext: metadataUpdate?.values.metadataCiphertext as string | null,
+        metadataEncryptionMode: metadataUpdate?.values.metadataEncryptionMode as
+          | "none"
+          | "local-v1",
+        metadataWrappedDek: metadataUpdate?.values.metadataWrappedDek as string | null,
+        metadataKekKeyId: metadataUpdate?.values.metadataKekKeyId as string | null,
+        metadataEncryptedAt: metadataUpdate?.values.metadataEncryptedAt as Date | null,
+      }),
+    ).resolves.toEqual({
+      envelopeFrom: "sender@example.com",
+      headerFrom: "Sender <sender@example.com>",
+      subject: "Plain metadata",
+    });
   });
 
   it("rewraps stored DEKs to the current key id", async () => {
@@ -168,6 +242,16 @@ describe("storage maintenance", () => {
     const { metadata: rawMetadata } = await encryptBufferForStorage(
       Buffer.from("raw"),
       "raw-email:message.eml",
+    );
+    const { metadata: logMetadata, blob: logMetadataBlob } = await encryptBufferForStorage(
+      Buffer.from(
+        JSON.stringify({
+          envelopeFrom: "sender@example.com",
+          headerFrom: "Sender <sender@example.com>",
+          subject: "Encrypted metadata",
+        }),
+      ),
+      "delivery-log-meta:log-1",
     );
 
     const rawEmailPath = join(root, "2026-04-07", "message.eml");
@@ -205,13 +289,32 @@ describe("storage maintenance", () => {
           rawEmailEncryptedAt: rawMetadata.encryptedAt,
         },
       ],
+      encryptedMetadataLogs: [
+        {
+          id: "log-1",
+          envelopeFrom: null,
+          headerFrom: null,
+          subject: null,
+          metadataCiphertext: logMetadataBlob.toString("base64"),
+          metadataEncryptionMode: logMetadata.encryptionMode,
+          metadataWrappedDek: logMetadata.wrappedDek,
+          metadataKekKeyId: logMetadata.kekKeyId,
+          metadataEncryptedAt: logMetadata.encryptedAt,
+        },
+      ],
     });
 
     const summary = await rewrapStoredEncryptionKeys(db as never, root);
 
-    expect(summary).toMatchObject({ attachments: 1, rawEmails: 1, pendingRawEmails: 1 });
+    expect(summary).toMatchObject({
+      attachments: 1,
+      rawEmails: 1,
+      metadataLogs: 1,
+      pendingRawEmails: 1,
+    });
     expect(db._updates.attachments[0]?.values).toMatchObject({ kekKeyId: "current-v2" });
     expect(db._updates.deliveryLogs[0]?.values).toMatchObject({ rawEmailKekKeyId: "current-v2" });
+    expect(db._updates.deliveryLogs[1]?.values).toMatchObject({ metadataKekKeyId: "current-v2" });
     const pending = await listPendingRawEmails(root);
     expect(pending[0]?.rawEmailKekKeyId).toBe("current-v2");
   });

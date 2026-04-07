@@ -3,6 +3,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema.js";
 import { listPendingRawEmails, readAttachmentBytes, readRawEmail } from "../storage/disk.js";
 import type { AppConfig } from "../config.js";
+import { readDeliveryLogMetadata } from "../security/deliveryLogMetadata.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -35,14 +36,24 @@ export async function assertStorageEncryptionReadiness(
         sql`select 1 as present from delivery_logs where raw_email_encryption_mode <> 'none' and raw_email_path is not null limit 1`,
       ),
     );
+    const encryptedMetadataRows = rowsFromResult<{ present: number }>(
+      await db.execute(
+        sql`select 1 as present from delivery_logs where metadata_encryption_mode <> 'none' limit 1`,
+      ),
+    );
 
     const encryptedPendingRaw = pendingRawEmails.find(
       (email) => (email.rawEmailEncryptionMode ?? "none") !== "none",
     );
 
-    if (encryptedAttachmentRows[0] || encryptedRawRows[0] || encryptedPendingRaw) {
+    if (
+      encryptedAttachmentRows[0] ||
+      encryptedRawRows[0] ||
+      encryptedMetadataRows[0] ||
+      encryptedPendingRaw
+    ) {
       throw new Error(
-        "STORAGE_ENCRYPTION_MODE=none is not allowed while encrypted attachments, raw emails, or pending raw emails still exist",
+        "STORAGE_ENCRYPTION_MODE=none is not allowed while encrypted attachments, raw emails, delivery metadata, or pending raw emails still exist",
       );
     }
     return;
@@ -67,6 +78,17 @@ export async function assertStorageEncryptionReadiness(
   if (unexpectedRawKey) {
     throw new Error(
       `Encrypted raw emails were written with a different key id. Rotation is not supported yet; expected ${config.masterEncryptionKeyId}.`,
+    );
+  }
+
+  const unexpectedMetadataKey = rowsFromResult<{ id: string; metadata_kek_key_id: string | null }>(
+    await db.execute(
+      sql`select id, metadata_kek_key_id from delivery_logs where metadata_encryption_mode = 'local-v1' limit 100`,
+    ),
+  ).find((row) => !acceptsKeyId(row.metadata_kek_key_id));
+  if (unexpectedMetadataKey) {
+    throw new Error(
+      `Encrypted delivery metadata was written with a different key id. Rotation is not supported yet; expected ${config.masterEncryptionKeyId}.`,
     );
   }
 
@@ -128,6 +150,42 @@ export async function assertStorageEncryptionReadiness(
       });
     } catch (err: unknown) {
       throw new Error("Failed to decrypt a stored raw email with the configured key", {
+        cause: err,
+      });
+    }
+  }
+
+  const sampleMetadataLog = rowsFromResult<{
+    id: string;
+    envelope_from: string | null;
+    header_from: string | null;
+    subject: string | null;
+    metadata_ciphertext: string | null;
+    metadata_encryption_mode: string | null;
+    metadata_wrapped_dek: string | null;
+    metadata_kek_key_id: string | null;
+    metadata_encrypted_at: Date | null;
+  }>(
+    await db.execute(
+      sql`select id, envelope_from, header_from, subject, metadata_ciphertext, metadata_encryption_mode, metadata_wrapped_dek, metadata_kek_key_id, metadata_encrypted_at from delivery_logs where metadata_encryption_mode = 'local-v1' order by received_at desc limit 1`,
+    ),
+  )[0];
+  if (sampleMetadataLog) {
+    try {
+      await readDeliveryLogMetadata({
+        id: sampleMetadataLog.id,
+        envelopeFrom: sampleMetadataLog.envelope_from,
+        headerFrom: sampleMetadataLog.header_from,
+        subject: sampleMetadataLog.subject,
+        metadataCiphertext: sampleMetadataLog.metadata_ciphertext,
+        metadataEncryptionMode:
+          sampleMetadataLog.metadata_encryption_mode === "local-v1" ? "local-v1" : "none",
+        metadataWrappedDek: sampleMetadataLog.metadata_wrapped_dek,
+        metadataKekKeyId: sampleMetadataLog.metadata_kek_key_id,
+        metadataEncryptedAt: sampleMetadataLog.metadata_encrypted_at,
+      });
+    } catch (err: unknown) {
+      throw new Error("Failed to decrypt stored delivery metadata with the configured key", {
         cause: err,
       });
     }

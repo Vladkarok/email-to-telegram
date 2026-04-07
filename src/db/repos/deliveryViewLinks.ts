@@ -18,6 +18,11 @@ export interface DeliveryViewLinkWithLog {
     envelopeFrom: string | null;
     headerFrom: string | null;
     subject: string | null;
+    metadataCiphertext: string | null;
+    metadataEncryptionMode: string | null;
+    metadataWrappedDek: string | null;
+    metadataKekKeyId: string | null;
+    metadataEncryptedAt: Date | null;
     receivedAt: Date;
     rawEmailEncryptionMode: string | null;
     rawEmailWrappedDek: string | null;
@@ -62,6 +67,11 @@ export async function findDeliveryViewLinkByTokenHash(
       envelopeFrom: deliveryLogs.envelopeFrom,
       headerFrom: deliveryLogs.headerFrom,
       subject: deliveryLogs.subject,
+      metadataCiphertext: deliveryLogs.metadataCiphertext,
+      metadataEncryptionMode: deliveryLogs.metadataEncryptionMode,
+      metadataWrappedDek: deliveryLogs.metadataWrappedDek,
+      metadataKekKeyId: deliveryLogs.metadataKekKeyId,
+      metadataEncryptedAt: deliveryLogs.metadataEncryptedAt,
       receivedAt: deliveryLogs.receivedAt,
       rawEmailEncryptionMode: deliveryLogs.rawEmailEncryptionMode,
       rawEmailWrappedDek: deliveryLogs.rawEmailWrappedDek,
@@ -86,6 +96,11 @@ export async function findDeliveryViewLinkByTokenHash(
       envelopeFrom: row.envelopeFrom,
       headerFrom: row.headerFrom,
       subject: row.subject,
+      metadataCiphertext: row.metadataCiphertext,
+      metadataEncryptionMode: row.metadataEncryptionMode,
+      metadataWrappedDek: row.metadataWrappedDek,
+      metadataKekKeyId: row.metadataKekKeyId,
+      metadataEncryptedAt: row.metadataEncryptedAt,
       receivedAt: row.receivedAt,
       rawEmailEncryptionMode: row.rawEmailEncryptionMode,
       rawEmailWrappedDek: row.rawEmailWrappedDek,

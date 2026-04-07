@@ -16,6 +16,7 @@ import {
   verifyDeliveryViewToken,
 } from "../../utils/tokens.js";
 import { getLogger } from "../../utils/logger.js";
+import { readDeliveryLogMetadata } from "../../security/deliveryLogMetadata.js";
 
 export function deliveryViewRoute(
   app: FastifyInstance,
@@ -90,6 +91,32 @@ export function deliveryViewRoute(
       }
 
       const parsed = await parseEmail(rawEmail, rawEmail.length);
+      let deliveryMetadata;
+      try {
+        deliveryMetadata = await readDeliveryLogMetadata({
+          id: link.deliveryLog.id,
+          envelopeFrom: link.deliveryLog.envelopeFrom,
+          headerFrom: link.deliveryLog.headerFrom,
+          subject: link.deliveryLog.subject,
+          metadataCiphertext: link.deliveryLog.metadataCiphertext,
+          metadataEncryptionMode:
+            link.deliveryLog.metadataEncryptionMode === "local-v1" ? "local-v1" : "none",
+          metadataWrappedDek: link.deliveryLog.metadataWrappedDek,
+          metadataKekKeyId: link.deliveryLog.metadataKekKeyId,
+          metadataEncryptedAt: link.deliveryLog.metadataEncryptedAt,
+        });
+      } catch (err: unknown) {
+        getLogger().error(
+          { err, deliveryLogId: link.deliveryLog.id },
+          "failed to decrypt delivery-log metadata",
+        );
+        await sendHtml(
+          reply,
+          500,
+          renderErrorPage("View failed", "The server could not prepare this email view."),
+        );
+        return;
+      }
       const now = new Date();
       const claimed = await markDeliveryViewLinkViewed(getDb(), link.id, now);
       if (!claimed) {
@@ -135,8 +162,8 @@ export function deliveryViewRoute(
         reply,
         200,
         renderPrivacyPage({
-          from: link.deliveryLog.headerFrom ?? link.deliveryLog.envelopeFrom ?? "unknown",
-          subject: link.deliveryLog.subject ?? parsed.subject ?? "(no subject)",
+          from: deliveryMetadata.headerFrom ?? deliveryMetadata.envelopeFrom ?? "unknown",
+          subject: deliveryMetadata.subject ?? parsed.subject ?? "(no subject)",
           receivedAt: link.deliveryLog.receivedAt,
           bodyHtml: renderEmailBodyHtml(parsed),
           attachments: attachmentLinks.filter(
