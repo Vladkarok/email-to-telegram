@@ -5,7 +5,11 @@ import { parseEmail } from "./parser.js";
 import { cleanEmailBody } from "./cleaner.js";
 import { renderEmail } from "./renderer.js";
 import { sendTelegramMessage } from "../telegram/sender.js";
-import { findFailedLogs, updateDeliveryLogStatus } from "../db/repos/deliveryLogs.js";
+import {
+  findLogsNeedingRetry,
+  claimDeliveryLogForRetry,
+  updateDeliveryLogStatus,
+} from "../db/repos/deliveryLogs.js";
 import { insertDeliveryAttempt, countAttemptsByLog } from "../db/repos/deliveryAttempts.js";
 import { findAliasById } from "../db/repos/aliases.js";
 import { readRawEmail } from "../storage/disk.js";
@@ -14,22 +18,32 @@ import { getLogger } from "../utils/logger.js";
 type Db = NodePgDatabase<typeof schema>;
 
 const MAX_RETRIES = 3;
+const STALE_DELIVERY_MS = 2 * 60 * 1000;
 
 export async function runRetryWorker(db: Db, api: Api | null): Promise<void> {
   if (!api) return;
 
   const log = getLogger();
-  const failedLogs = await findFailedLogs(db);
+  const retryableLogs = await findLogsNeedingRetry(db, new Date(Date.now() - STALE_DELIVERY_MS));
 
-  if (failedLogs.length === 0) return;
+  if (retryableLogs.length === 0) return;
 
-  log.info({ count: failedLogs.length }, "retry worker: processing failed deliveries");
+  log.info({ count: retryableLogs.length }, "retry worker: processing retryable deliveries");
 
-  for (const deliveryLog of failedLogs) {
+  for (const deliveryLog of retryableLogs) {
+    const claimed = await claimDeliveryLogForRetry(db, deliveryLog.id);
+    if (!claimed) continue;
+
     try {
       await retryDelivery(db, api, deliveryLog);
     } catch (err: unknown) {
       log.error({ err, deliveryLogId: deliveryLog.id }, "retry worker: unexpected error");
+      await updateDeliveryLogStatus(db, deliveryLog.id, "failed").catch((statusErr: unknown) => {
+        log.error(
+          { err: statusErr, deliveryLogId: deliveryLog.id },
+          "retry worker: failed to reset delivery status after error",
+        );
+      });
     }
   }
 }

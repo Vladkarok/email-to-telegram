@@ -4,7 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { verifyWorkerRequest } from "../../utils/workerAuth.js";
 import { getDb } from "../../db/client.js";
 import { getApi } from "../../telegram/api.js";
-import { processInboundEmail } from "../../email/pipeline.js";
+import { queueInboundEmail, deliverQueuedEmail } from "../../email/pipeline.js";
 import { writeRawEmail } from "../../storage/disk.js";
 import { getLogger } from "../../utils/logger.js";
 import { pipelineTracker } from "../../utils/inFlight.js";
@@ -60,29 +60,31 @@ export function rawRoute(
         return;
       }
 
-      // Acknowledge immediately, process async
-      await reply.status(202).send({ status: "accepted" });
-
       const storedPath = rawEmailPath(config.rawEmailDir);
 
-      // Save raw email to disk for potential retry
-      writeRawEmail(storedPath, body).catch((err: unknown) => {
-        getLogger().error({ err }, "failed to save raw email");
+      // Persist the raw email and create its delivery log before acknowledging.
+      // After 202, the VPS must already have a durable record for retry/recovery.
+      await writeRawEmail(storedPath, body);
+
+      const queued = await queueInboundEmail(getDb(), {
+        rawEmail: body,
+        rawEmailPath: storedPath,
+        localPart,
+        envelopeFrom,
+        correlationId: req.id,
+        publicBaseUrl: config.publicBaseUrl,
+        attachmentDir: config.attachmentDir,
+        attachmentTtlHours: config.attachmentTtlHours,
       });
 
+      await reply.status(202).send({ status: "accepted" });
+
+      if (!queued.queued) {
+        return;
+      }
+
       pipelineTracker
-        .run(() =>
-          processInboundEmail(getDb(), getApi(), {
-            rawEmail: body,
-            rawEmailPath: storedPath,
-            localPart,
-            envelopeFrom,
-            correlationId: req.id,
-            publicBaseUrl: config.publicBaseUrl,
-            attachmentDir: config.attachmentDir,
-            attachmentTtlHours: config.attachmentTtlHours,
-          }),
-        )
+        .run(() => deliverQueuedEmail(getDb(), getApi(), queued.job))
         .catch((err: unknown) => {
           getLogger().error({ err, localPart }, "pipeline error");
         });

@@ -4,8 +4,17 @@ import { registerRoutes } from "../../../src/http/routes/index.js";
 import { signWorkerRequest } from "../../../src/utils/workerAuth.js";
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
+
+const mockQueueInboundEmail = vi.fn();
+const mockDeliverQueuedEmail = vi.fn();
+const mockWriteRawEmail = vi.fn();
+
 vi.mock("../../../src/email/pipeline.js", () => ({
-  processInboundEmail: vi.fn(() => Promise.resolve({ ok: true })),
+  queueInboundEmail: (...args: unknown[]): unknown => mockQueueInboundEmail(...args),
+  deliverQueuedEmail: (...args: unknown[]): unknown => mockDeliverQueuedEmail(...args),
+}));
+vi.mock("../../../src/storage/disk.js", () => ({
+  writeRawEmail: (...args: unknown[]): unknown => mockWriteRawEmail(...args),
 }));
 
 const mockFindAlias = vi.fn();
@@ -24,6 +33,8 @@ const TEST_CONFIG = {
   publicBaseUrl: "https://mail.example.com",
   attachmentDir: "/tmp/attachments",
   attachmentTtlHours: 24,
+  rawEmailDir: "/tmp/rawemails",
+  maxSizeBytes: 1024 * 1024,
 };
 
 async function buildApp() {
@@ -188,6 +199,15 @@ describe("POST /inbound/raw", () => {
   beforeEach(() => {
     savedSecret = process.env["WORKER_SECRET"];
     process.env["WORKER_SECRET"] = WORKER_SECRET;
+    mockWriteRawEmail.mockReset();
+    mockWriteRawEmail.mockResolvedValue(undefined);
+    mockQueueInboundEmail.mockReset();
+    mockQueueInboundEmail.mockResolvedValue({
+      queued: true,
+      job: { deliveryLog: { id: "log-1" } },
+    });
+    mockDeliverQueuedEmail.mockReset();
+    mockDeliverQueuedEmail.mockResolvedValue({ ok: true });
   });
 
   afterEach(() => {
@@ -211,6 +231,29 @@ describe("POST /inbound/raw", () => {
       payload: rawEmail,
     });
     expect(res.statusCode).toBe(202);
+  });
+
+  it("does not acknowledge raw mail before durable persistence succeeds", async () => {
+    mockWriteRawEmail.mockRejectedValueOnce(new Error("disk full"));
+
+    const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
+    const { signature, timestamp } = signWorkerRequest(rawEmail);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/raw",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+        "x-local-part": "alerts",
+      },
+      payload: rawEmail,
+    });
+
+    expect(res.statusCode).toBe(500);
+    expect(mockQueueInboundEmail).not.toHaveBeenCalled();
   });
 
   it("returns 401 for unsigned request", async () => {

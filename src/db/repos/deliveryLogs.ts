@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { eq, and, isNotNull } from "drizzle-orm";
+import { eq, and, isNotNull, inArray, lt } from "drizzle-orm";
 import { deliveryLogs, type DeliveryLog, type NewDeliveryLog } from "../schema.js";
 import type * as schema from "../schema.js";
 
@@ -66,9 +66,28 @@ export async function updateDeliveryLogStatus(
   await db.update(deliveryLogs).set({ finalStatus }).where(eq(deliveryLogs.id, id));
 }
 
-export async function findFailedLogs(db: Db): Promise<DeliveryLog[]> {
+export async function findLogsNeedingRetry(db: Db, receivedBefore: Date): Promise<DeliveryLog[]> {
   return db
     .select()
     .from(deliveryLogs)
-    .where(and(eq(deliveryLogs.finalStatus, "failed"), isNotNull(deliveryLogs.rawEmailPath)));
+    .where(
+      and(
+        isNotNull(deliveryLogs.rawEmailPath),
+        lt(deliveryLogs.receivedAt, receivedBefore),
+        inArray(deliveryLogs.finalStatus, ["failed", "received", "processing"]),
+      ),
+    );
+}
+
+export async function claimDeliveryLogForRetry(
+  db: Db,
+  id: string,
+  expectedStatuses: readonly string[] = ["failed", "received", "processing"],
+): Promise<boolean> {
+  const rows = await db
+    .update(deliveryLogs)
+    .set({ finalStatus: "retrying" })
+    .where(and(eq(deliveryLogs.id, id), inArray(deliveryLogs.finalStatus, [...expectedStatuses])))
+    .returning({ id: deliveryLogs.id });
+  return rows.length > 0;
 }

@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { processInboundEmail } from "../../../src/email/pipeline.js";
+import {
+  processInboundEmail,
+  queueInboundEmail,
+  deliverQueuedEmail,
+} from "../../../src/email/pipeline.js";
 import { readFileSync } from "fs";
 import { join } from "path";
 
@@ -215,5 +219,73 @@ describe("processInboundEmail", () => {
     );
     expect(result).toEqual({ ok: false, reason: "send_failed" });
     expect(mockUpdateLogStatus).toHaveBeenCalledWith(expect.anything(), "log-uuid-3", "failed");
+  });
+});
+
+describe("queueInboundEmail", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("queues a delivery log before async delivery begins", async () => {
+    mockFindAlias.mockResolvedValue(activeAlias);
+    mockCheckAllow.mockResolvedValue(true);
+    mockIsDuplicate.mockResolvedValue(false);
+    mockCreateLog.mockResolvedValue({ id: "log-queued" });
+
+    const result = await queueInboundEmail({} as Parameters<typeof processInboundEmail>[0], {
+      rawEmail: simpleEmail(),
+      rawEmailPath: "/data/rawemails/test.eml",
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+      ...PIPELINE_CONFIG,
+    });
+
+    expect(result).toMatchObject({ queued: true });
+    expect(mockCreateLog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        rawEmailPath: "/data/rawemails/test.eml",
+        finalStatus: "received",
+      }),
+    );
+  });
+});
+
+describe("deliverQueuedEmail", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockUpdateLogStatus.mockResolvedValue(undefined);
+  });
+
+  it("marks the queued delivery failed when an unexpected error escapes", async () => {
+    mockSendTelegram.mockRejectedValue(new Error("telegram exploded"));
+
+    await expect(
+      deliverQueuedEmail(
+        {} as Parameters<typeof processInboundEmail>[0],
+        {} as Parameters<typeof processInboundEmail>[1],
+        {
+          alias: activeAlias,
+          parsed: {
+            messageId: "<id@test>",
+            subject: "Hi",
+            envelopeFrom: "sender@example.com",
+            headerFrom: "Sender <sender@example.com>",
+            textBody: "hello",
+            htmlBody: null,
+            bodySha256: "hash",
+            attachments: [],
+            rawSizeBytes: 5,
+          },
+          deliveryLog: { id: "log-failed" } as never,
+          envelopeFrom: "sender@example.com",
+          ...PIPELINE_CONFIG,
+        },
+      ),
+    ).rejects.toThrow("telegram exploded");
+
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(expect.anything(), "log-failed", "processing");
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(expect.anything(), "log-failed", "failed");
   });
 });

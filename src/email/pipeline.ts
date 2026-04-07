@@ -3,6 +3,7 @@ import { join } from "path";
 import type { Api } from "grammy";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema.js";
+import type { EmailAddress, DeliveryLog } from "../db/schema.js";
 import { parseEmail } from "./parser.js";
 import { cleanEmailBody } from "./cleaner.js";
 import { renderEmail, type AttachmentLink } from "./renderer.js";
@@ -47,20 +48,32 @@ export interface PipelineResult {
   reason?: string;
 }
 
-export async function processInboundEmail(
-  db: Db,
-  api: Api | null,
-  input: PipelineInput,
-): Promise<PipelineResult> {
-  const log = input.correlationId
-    ? getLogger().child({ correlationId: input.correlationId })
-    : getLogger();
+export interface QueuedInboundEmail {
+  alias: EmailAddress;
+  parsed: Awaited<ReturnType<typeof parseEmail>>;
+  deliveryLog: DeliveryLog;
+  envelopeFrom: string | null;
+  publicBaseUrl: string;
+  attachmentDir: string;
+  attachmentTtlHours: number;
+  correlationId?: string;
+}
+
+export type QueueInboundResult =
+  | { queued: true; job: QueuedInboundEmail }
+  | { queued: false; result: PipelineResult };
+
+function getPipelineLogger(correlationId?: string) {
+  return correlationId ? getLogger().child({ correlationId }) : getLogger();
+}
+
+export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<QueueInboundResult> {
   const { rawEmail, localPart, publicBaseUrl, attachmentDir, attachmentTtlHours } = input;
 
   // 1. Resolve alias
   const alias = await findAliasByLocalPart(db, localPart);
   if (!alias || alias.status !== "active") {
-    return { ok: false, reason: "alias_not_found" };
+    return { queued: false, result: { ok: false, reason: "alias_not_found" } };
   }
 
   // 2. Parse email
@@ -73,7 +86,7 @@ export async function processInboundEmail(
   if (envelopeFrom) {
     const allowed = await checkAllowRule(db, alias.id, envelopeFrom);
     if (!allowed) {
-      return { ok: false, reason: "sender_not_allowed" };
+      return { queued: false, result: { ok: false, reason: "sender_not_allowed" } };
     }
   }
 
@@ -84,7 +97,7 @@ export async function processInboundEmail(
     aliasId: alias.id,
   });
   if (dup) {
-    return { ok: false, reason: "duplicate" };
+    return { queued: false, result: { ok: false, reason: "duplicate" } };
   }
 
   // 5. Create delivery log — null means a concurrent pipeline beat us (race dedup)
@@ -101,95 +114,146 @@ export async function processInboundEmail(
     finalStatus: "received",
   });
   if (!deliveryLog) {
-    return { ok: false, reason: "duplicate" };
+    return { queued: false, result: { ok: false, reason: "duplicate" } };
   }
 
-  // 6. Clean body
-  if (parsed.textBody) {
-    parsed.textBody = cleanEmailBody(parsed.textBody);
-  }
+  return {
+    queued: true,
+    job: {
+      alias,
+      parsed,
+      deliveryLog,
+      envelopeFrom,
+      publicBaseUrl,
+      attachmentDir,
+      attachmentTtlHours,
+      correlationId: input.correlationId,
+    },
+  };
+}
 
-  // 7. Save attachments — images go to Telegram directly, others become download links
-  const attachmentLinks: AttachmentLink[] = [];
-  const imageAttachments: PhotoItem[] = [];
+export async function deliverQueuedEmail(
+  db: Db,
+  api: Api | null,
+  job: QueuedInboundEmail,
+): Promise<PipelineResult> {
+  const log = getPipelineLogger(job.correlationId);
+  const { alias, deliveryLog, publicBaseUrl, attachmentDir, attachmentTtlHours } = job;
+  const parsed = {
+    ...job.parsed,
+    attachments: [...job.parsed.attachments],
+  };
 
-  for (const att of parsed.attachments) {
-    try {
-      const fileId = randomUUID();
-      const storagePath = join(attachmentDir, deliveryLog.id, `${fileId}.bin`);
-      await writeAttachment(storagePath, att.content);
+  try {
+    await updateDeliveryLogStatus(db, deliveryLog.id, "processing");
 
-      const dbAtt = await createAttachment(db, {
-        deliveryLogId: deliveryLog.id,
-        originalFilename: att.filename,
-        contentType: att.contentType,
-        sizeBytes: att.sizeBytes,
-        sha256: att.sha256,
-        storagePath,
-      });
+    // 6. Clean body
+    if (parsed.textBody) {
+      parsed.textBody = cleanEmailBody(parsed.textBody);
+    }
 
-      if (isImageContentType(att.contentType)) {
-        imageAttachments.push({ storagePath, filename: att.filename });
-      } else {
-        const { token, expiresAt } = generateDownloadToken(dbAtt.id, attachmentTtlHours);
-        await createAttachmentLink(db, dbAtt.id, token, expiresAt);
-        attachmentLinks.push({
-          filename: att.filename,
+    // 7. Save attachments — images go to Telegram directly, others become download links
+    const attachmentLinks: AttachmentLink[] = [];
+    const imageAttachments: PhotoItem[] = [];
+
+    for (const att of parsed.attachments) {
+      try {
+        const fileId = randomUUID();
+        const storagePath = join(attachmentDir, deliveryLog.id, `${fileId}.bin`);
+        await writeAttachment(storagePath, att.content);
+
+        const dbAtt = await createAttachment(db, {
+          deliveryLogId: deliveryLog.id,
+          originalFilename: att.filename,
+          contentType: att.contentType,
           sizeBytes: att.sizeBytes,
-          url: `${publicBaseUrl}/dl/${token}`,
+          sha256: att.sha256,
+          storagePath,
         });
+
+        if (isImageContentType(att.contentType)) {
+          imageAttachments.push({ storagePath, filename: att.filename });
+        } else {
+          const { token, expiresAt } = generateDownloadToken(dbAtt.id, attachmentTtlHours);
+          await createAttachmentLink(db, dbAtt.id, token, expiresAt);
+          attachmentLinks.push({
+            filename: att.filename,
+            sizeBytes: att.sizeBytes,
+            url: `${publicBaseUrl}/dl/${token}`,
+          });
+        }
+      } catch (err: unknown) {
+        log.error({ err, filename: att.filename }, "failed to store attachment");
       }
-    } catch (err: unknown) {
-      log.error({ err, filename: att.filename }, "failed to store attachment");
-    }
-  }
-
-  // 8. Render
-  const renderMode = (alias.renderMode ?? "plaintext") as "plaintext" | "html" | "markdown";
-  const text = renderEmail(parsed, renderMode, alias.fullAddress, attachmentLinks);
-
-  // 9. Send — parse_mode depends on render mode; plaintext uses none (avoids HTML metachar issues)
-  if (api) {
-    const { sendTelegramMessage, sendTelegramPhotos } = await import("../telegram/sender.js");
-    const parseMode =
-      renderMode === "html" ? "HTML" : renderMode === "markdown" ? "MarkdownV2" : undefined;
-
-    const result = await sendTelegramMessage(api, {
-      chatId: alias.chatId,
-      threadId: alias.messageThreadId ?? null,
-      text,
-      parseMode,
-    });
-
-    // Record attempt in DB
-    await insertDeliveryAttempt(db, {
-      deliveryLogId: deliveryLog.id,
-      attemptNo: 1,
-      targetChatId: alias.chatId,
-      targetThreadId: alias.messageThreadId ?? null,
-      telegramMessageId: result.telegramMessageId ? BigInt(result.telegramMessageId) : null,
-      status: result.ok ? "succeeded" : "failed",
-      errorText: result.error ?? null,
-    });
-
-    const finalStatus = result.ok ? "delivered" : "failed";
-    await updateDeliveryLogStatus(db, deliveryLog.id, finalStatus);
-
-    if (!result.ok) {
-      log.error({ deliveryLogId: deliveryLog.id, error: result.error }, "delivery failed");
-      return { ok: false, reason: "send_failed" };
     }
 
-    // Send image attachments as Telegram photos (replied to the text message)
-    if (imageAttachments.length > 0) {
-      await sendTelegramPhotos(api, {
+    // 8. Render
+    const renderMode = (alias.renderMode ?? "plaintext") as "plaintext" | "html" | "markdown";
+    const text = renderEmail(parsed, renderMode, alias.fullAddress, attachmentLinks);
+
+    // 9. Send — parse_mode depends on render mode; plaintext uses none (avoids HTML metachar issues)
+    if (api) {
+      const { sendTelegramMessage, sendTelegramPhotos } = await import("../telegram/sender.js");
+      const parseMode =
+        renderMode === "html" ? "HTML" : renderMode === "markdown" ? "MarkdownV2" : undefined;
+
+      const result = await sendTelegramMessage(api, {
         chatId: alias.chatId,
         threadId: alias.messageThreadId ?? null,
-        replyToMessageId: result.telegramMessageId,
-        photos: imageAttachments,
+        text,
+        parseMode,
       });
-    }
-  }
 
-  return { ok: true };
+      // Record attempt in DB
+      await insertDeliveryAttempt(db, {
+        deliveryLogId: deliveryLog.id,
+        attemptNo: 1,
+        targetChatId: alias.chatId,
+        targetThreadId: alias.messageThreadId ?? null,
+        telegramMessageId: result.telegramMessageId ? BigInt(result.telegramMessageId) : null,
+        status: result.ok ? "succeeded" : "failed",
+        errorText: result.error ?? null,
+      });
+
+      const finalStatus = result.ok ? "delivered" : "failed";
+      await updateDeliveryLogStatus(db, deliveryLog.id, finalStatus);
+
+      if (!result.ok) {
+        log.error({ deliveryLogId: deliveryLog.id, error: result.error }, "delivery failed");
+        return { ok: false, reason: "send_failed" };
+      }
+
+      // Send image attachments as Telegram photos (replied to the text message)
+      if (imageAttachments.length > 0) {
+        await sendTelegramPhotos(api, {
+          chatId: alias.chatId,
+          threadId: alias.messageThreadId ?? null,
+          replyToMessageId: result.telegramMessageId,
+          photos: imageAttachments,
+        });
+      }
+    }
+
+    return { ok: true };
+  } catch (err: unknown) {
+    await updateDeliveryLogStatus(db, deliveryLog.id, "failed").catch((statusErr: unknown) => {
+      log.error(
+        { err: statusErr, deliveryLogId: deliveryLog.id },
+        "failed to mark delivery failed",
+      );
+    });
+    throw err;
+  }
+}
+
+export async function processInboundEmail(
+  db: Db,
+  api: Api | null,
+  input: PipelineInput,
+): Promise<PipelineResult> {
+  const queued = await queueInboundEmail(db, input);
+  if (!queued.queued) {
+    return queued.result;
+  }
+  return deliverQueuedEmail(db, api, queued.job);
 }

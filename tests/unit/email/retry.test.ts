@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
 const mockFindFailedLogs = vi.fn();
+const mockClaimLog = vi.fn();
 const mockUpdateLogStatus = vi.fn();
 const mockFindAliasById = vi.fn();
 const mockCountAttempts = vi.fn();
@@ -11,7 +12,8 @@ const mockReadRawEmail = vi.fn();
 const mockSendTelegramMessage = vi.fn();
 
 vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
-  findFailedLogs: (...args: unknown[]): unknown => mockFindFailedLogs(...args),
+  findLogsNeedingRetry: (...args: unknown[]): unknown => mockFindFailedLogs(...args),
+  claimDeliveryLogForRetry: (...args: unknown[]): unknown => mockClaimLog(...args),
   updateDeliveryLogStatus: (...args: unknown[]): unknown => mockUpdateLogStatus(...args),
 }));
 vi.mock("../../../src/db/repos/aliases.js", () => ({
@@ -61,6 +63,7 @@ describe("runRetryWorker", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFindAliasById.mockResolvedValue(fakeAlias);
+    mockClaimLog.mockResolvedValue(true);
     mockCountAttempts.mockResolvedValue(0);
     mockInsertAttempt.mockResolvedValue(undefined);
     mockUpdateLogStatus.mockResolvedValue(undefined);
@@ -84,6 +87,7 @@ describe("runRetryWorker", () => {
     mockFindFailedLogs.mockResolvedValue([fakeLog]);
     await runRetryWorker(fakeDb, fakeApi);
 
+    expect(mockClaimLog).toHaveBeenCalledWith(fakeDb, fakeLog.id);
     expect(mockReadRawEmail).toHaveBeenCalledWith(fakeLog.rawEmailPath);
     expect(mockSendTelegramMessage).toHaveBeenCalledOnce();
     expect(mockInsertAttempt).toHaveBeenCalledWith(
@@ -149,5 +153,24 @@ describe("runRetryWorker", () => {
     await runRetryWorker(fakeDb, fakeApi);
 
     expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+  });
+
+  it("skips logs that another worker already claimed", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockClaimLog.mockResolvedValue(false);
+
+    await runRetryWorker(fakeDb, fakeApi);
+
+    expect(mockSendTelegramMessage).not.toHaveBeenCalled();
+    expect(mockReadRawEmail).not.toHaveBeenCalled();
+  });
+
+  it("resets the status to failed when retry crashes unexpectedly", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockInsertAttempt.mockRejectedValueOnce(new Error("db exploded"));
+
+    await runRetryWorker(fakeDb, fakeApi);
+
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
   });
 });
