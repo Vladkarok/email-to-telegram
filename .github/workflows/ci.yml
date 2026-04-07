@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -73,3 +73,6 @@ jobs:
 
       - name: Test
         run: npm run test:coverage
+
+      - name: Build
+        run: npm run build

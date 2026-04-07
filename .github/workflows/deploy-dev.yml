@@ -1,0 +1,58 @@
+name: Deploy Dev
+
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy dev image to VPS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT }}
+          key: ${{ secrets.SSH_KEY }}
+          envs: GHCR_TOKEN
+          script: |
+            set -e
+            cd ~/email-to-telegram
+
+            # Keep the VPS repo on the current dev branch so compose/docs match the dev image.
+            git fetch origin dev --tags
+            git checkout -B dev origin/dev
+
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u vladkarok --password-stdin
+            IMAGE_TAG="dev" docker compose --env-file .env pull app
+            IMAGE_TAG="dev" docker compose --env-file .env up -d --remove-orphans --no-build
+
+            container_id=$(IMAGE_TAG="dev" docker compose --env-file .env ps -q app)
+            test -n "$container_id"
+
+            attempts=0
+            while true; do
+              attempts=$((attempts + 1))
+              health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id")
+              if [ "$health" = "healthy" ]; then
+                break
+              fi
+              if [ "$health" = "unhealthy" ] || [ "$health" = "exited" ] || [ "$health" = "dead" ] || [ "$attempts" -ge 30 ]; then
+                docker logs "$container_id" --tail 100
+                exit 1
+              fi
+              sleep 5
+            done
+
+            echo "Dev deploy complete at $(date)"
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}

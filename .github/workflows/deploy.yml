@@ -7,6 +7,10 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+concurrency:
+  group: deploy-release
+  cancel-in-progress: false
+
 jobs:
   build-and-push:
     name: Build and push Docker image
@@ -29,7 +33,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.GHCR_TOKEN }}
 
       - name: Build and push
@@ -66,12 +70,12 @@ jobs:
 
             # Authenticate to GHCR and pull new image
             echo "$GHCR_TOKEN" | docker login ghcr.io -u vladkarok --password-stdin
-            IMAGE_TAG="$GITHUB_REF_NAME" docker compose pull app
+            IMAGE_TAG="$GITHUB_REF_NAME" docker compose --env-file .env pull app
 
             # Restart with the exact tagged image; the app entrypoint runs migrations on startup.
-            IMAGE_TAG="$GITHUB_REF_NAME" docker compose up -d --remove-orphans --no-build
+            IMAGE_TAG="$GITHUB_REF_NAME" docker compose --env-file .env up -d --remove-orphans --no-build
 
-            container_id=$(IMAGE_TAG="$GITHUB_REF_NAME" docker compose ps -q app)
+            container_id=$(IMAGE_TAG="$GITHUB_REF_NAME" docker compose --env-file .env ps -q app)
             test -n "$container_id"
 
             attempts=0

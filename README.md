@@ -374,12 +374,23 @@ npm --prefix cloudflare-worker run typecheck
 
 Tag-based releases are optional.
 
-If you use the included GitHub Actions deploy workflow:
+If you use the included GitHub Actions workflows:
 
-1. CI runs on `main`
-2. Pushing a tag like `v1.2.3` builds the repository's GHCR image
-3. The VPS deploy job checks out the exact tagged commit
-4. The checked-in VPS compose file pulls the matching image tag and restarts the stack
+1. CI runs on both `dev` and `main`, and on pull requests targeting either branch
+2. After a successful `CI` run for a push to `dev`, GitHub Actions publishes
+   `ghcr.io/vladkarok/email-to-telegram:dev` and a matching
+   `ghcr.io/vladkarok/email-to-telegram:sha-<commit>` image
+3. The manual `Deploy Dev` workflow updates the VPS repo to `origin/dev`,
+   pulls the `:dev` image, and recreates the app container
+4. Pushing a release tag like `v1.2.3` builds `:latest` plus `:v1.2.3`
+5. The release deploy job checks out the exact tagged commit on the VPS,
+   pulls the matching image tag, and restarts the stack
+
+The important operational detail is that the checked-out VPS repo and the
+running app image are related but not identical concerns. `git pull` updates the
+compose/config files on disk; the running bot version changes only after Docker
+pulls the matching GHCR image and recreates the container with the desired
+`IMAGE_TAG`.
 
 That workflow is for this repository's existing VPS layout. A fresh install does
 not need GHCR and can be done entirely with the standalone example compose file.
