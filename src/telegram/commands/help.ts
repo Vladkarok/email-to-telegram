@@ -19,9 +19,6 @@ Use /start to open the management menu where you can:
 /allow add &lt;alias&gt; &lt;email_or_domain&gt;
 /allow remove &lt;alias&gt; &lt;email_or_domain&gt;
 /allow list &lt;alias&gt;
-
-<b>Admin</b>
-/allow &lt;telegram_id&gt; — authorize a user (owner only)
 /help — show this message
 
 💡 After creating an alias, add at least one allow rule — otherwise all mail is rejected.`,

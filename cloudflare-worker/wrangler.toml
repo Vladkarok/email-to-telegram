@@ -10,5 +10,6 @@ preview_urls = false
 #
 # VPS_URL example: https://mail.example.com
 #
-# Email routing is configured in the Cloudflare dashboard:
-#   Email → Email Routing → Routing Rules → catch-all → Send to Worker → email-to-telegram
+# Email routing is configured in the Cloudflare dashboard for the zone root
+# (for example `example.com`):
+#   Email → Email Routing → Routing rules → Catch-all → Send to Worker → <this worker>

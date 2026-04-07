@@ -32,8 +32,8 @@ jobs:
     env:
       DATABASE_URL: postgres://app:test@localhost:5432/emailbot_test
       TELEGRAM_BOT_TOKEN: 123456:test
-      MAIL_DOMAIN: tgmail.example.com
-      INGEST_MODE: cloudflare
+      MAIL_DOMAIN: example.com
+      PUBLIC_BASE_URL: https://mail.example.com
       HTTP_PORT: "3000"
       HMAC_SECRET: test-hmac-secret-32-chars-minimum-x
       WORKER_SECRET: test-worker-secret-32-chars-min-x
