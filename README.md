@@ -284,27 +284,34 @@ Verify:
 
 See [`.env.example`](./.env.example) for the authoritative template.
 
-| Variable                | Required | Description                                             |
-| ----------------------- | -------- | ------------------------------------------------------- |
-| `POSTGRES_PASSWORD`     | Yes      | PostgreSQL password                                     |
-| `DATABASE_URL`          | Yes      | PostgreSQL connection string                            |
-| `TELEGRAM_BOT_TOKEN`    | Yes      | Telegram bot token                                      |
-| `MAIL_DOMAIN`           | Yes      | Zone root mail domain, for example `example.com`        |
-| `PUBLIC_BASE_URL`       | Yes      | Public HTTPS URL for downloads and Worker callbacks     |
-| `HTTP_PORT`             | Yes      | Internal app port, default `3000`                       |
-| `HMAC_SECRET`           | Yes      | Secret for attachment download tokens                   |
-| `WORKER_SECRET`         | Yes      | Shared secret between Worker and VPS                    |
-| `ATTACHMENT_DIR`        | Yes      | Attachment storage path                                 |
-| `RAW_EMAIL_DIR`         | Yes      | Raw email storage path                                  |
-| `ATTACHMENT_TTL_HOURS`  | No       | Attachment retention window                             |
-| `RAW_EMAIL_TTL_HOURS`   | No       | Raw email retention window                              |
-| `MAX_SIZE_BYTES`        | No       | Max accepted inbound body size                          |
-| `INITIAL_ALLOWED_USERS` | No       | Initial Telegram operators; recommended on first deploy |
-| `BACKUP_DIR`            | No       | Nightly backup directory                                |
-| `HEALTHCHECKS_URL`      | No       | External heartbeat URL                                  |
-| `ALERT_CHAT_ID`         | No       | Telegram chat for critical alerts                       |
-| `LOG_LEVEL`             | No       | Log verbosity                                           |
-| `NODE_ENV`              | No       | Environment name                                        |
+| Variable                   | Required | Description                                             |
+| -------------------------- | -------- | ------------------------------------------------------- |
+| `POSTGRES_PASSWORD`        | Yes      | PostgreSQL password                                     |
+| `DATABASE_URL`             | Yes      | PostgreSQL connection string                            |
+| `TELEGRAM_BOT_TOKEN`       | Yes      | Telegram bot token                                      |
+| `MAIL_DOMAIN`              | Yes      | Zone root mail domain, for example `example.com`        |
+| `PUBLIC_BASE_URL`          | Yes      | Public HTTPS URL for downloads and Worker callbacks     |
+| `HTTP_PORT`                | Yes      | Internal app port, default `3000`                       |
+| `HMAC_SECRET`              | Yes      | Secret for attachment download tokens                   |
+| `WORKER_SECRET`            | Yes      | Shared secret between Worker and VPS                    |
+| `ATTACHMENT_DIR`           | Yes      | Attachment storage path                                 |
+| `RAW_EMAIL_DIR`            | Yes      | Raw email storage path                                  |
+| `ATTACHMENT_TTL_HOURS`     | No       | Attachment retention window                             |
+| `RAW_EMAIL_TTL_HOURS`      | No       | Raw email retention window                              |
+| `STORAGE_ENCRYPTION_MODE`  | No       | `none` or `local-v1` for at-rest file encryption        |
+| `MASTER_ENCRYPTION_KEY`    | No       | Required for `local-v1`; 32-byte base64 or hex key      |
+| `MASTER_ENCRYPTION_KEY_ID` | No       | Optional key label stored with wrapped DEKs             |
+| `MAX_SIZE_BYTES`           | No       | Max accepted inbound body size                          |
+| `INITIAL_ALLOWED_USERS`    | No       | Initial Telegram operators; recommended on first deploy |
+| `BACKUP_DIR`               | No       | Nightly backup directory                                |
+| `HEALTHCHECKS_URL`         | No       | External heartbeat URL                                  |
+| `ALERT_CHAT_ID`            | No       | Telegram chat for critical alerts                       |
+| `LOG_LEVEL`                | No       | Log verbosity                                           |
+| `NODE_ENV`                 | No       | Environment name                                        |
+
+`STORAGE_ENCRYPTION_MODE=local-v1` encrypts new attachment files at rest with
+envelope encryption. Existing plaintext files remain downloadable, so you can
+enable this on a running system without breaking old rows.
 
 ## Development
 

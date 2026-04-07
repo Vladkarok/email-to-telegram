@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseMasterEncryptionKey, type StorageEncryptionMode } from "./security/encryption.js";
 
 const portSchema = z.coerce
   .number()
@@ -23,6 +24,9 @@ const envSchema = z.object({
   RAW_EMAIL_DIR: z.string().min(1),
   ATTACHMENT_TTL_HOURS: z.coerce.number().int().positive().default(336),
   RAW_EMAIL_TTL_HOURS: z.coerce.number().int().positive().default(336),
+  STORAGE_ENCRYPTION_MODE: z.enum(["none", "local-v1"]).default("none"),
+  MASTER_ENCRYPTION_KEY: z.string().optional(),
+  MASTER_ENCRYPTION_KEY_ID: z.string().default("local-env-v1"),
   MAX_SIZE_BYTES: z.coerce.number().int().positive().default(10485760),
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "silent"]).default("info"),
   NODE_ENV: z.enum(["development", "production", "test"]).default("production"),
@@ -66,6 +70,9 @@ export interface AppConfig {
   rawEmailDir: string;
   attachmentTtlHours: number;
   rawEmailTtlHours: number;
+  storageEncryptionMode: StorageEncryptionMode;
+  masterEncryptionKey: string | undefined;
+  masterEncryptionKeyId: string;
   maxSizeBytes: number;
   logLevel: string;
   nodeEnv: string;
@@ -91,6 +98,23 @@ export function loadConfig(): AppConfig {
     throw new Error("Invalid configuration:\n  PUBLIC_BASE_URL must use HTTPS in production");
   }
 
+  if (env.STORAGE_ENCRYPTION_MODE === "local-v1") {
+    if (!env.MASTER_ENCRYPTION_KEY) {
+      throw new Error(
+        "Invalid configuration:\n  MASTER_ENCRYPTION_KEY is required when STORAGE_ENCRYPTION_MODE=local-v1",
+      );
+    }
+
+    try {
+      parseMasterEncryptionKey(env.MASTER_ENCRYPTION_KEY);
+    } catch (err: unknown) {
+      throw new Error(
+        `Invalid configuration:\n  MASTER_ENCRYPTION_KEY ${(err as Error).message.toLowerCase()}`,
+        { cause: err },
+      );
+    }
+  }
+
   return {
     databaseUrl: env.DATABASE_URL,
     telegramBotToken: env.TELEGRAM_BOT_TOKEN,
@@ -103,6 +127,9 @@ export function loadConfig(): AppConfig {
     rawEmailDir: env.RAW_EMAIL_DIR,
     attachmentTtlHours: env.ATTACHMENT_TTL_HOURS,
     rawEmailTtlHours: env.RAW_EMAIL_TTL_HOURS,
+    storageEncryptionMode: env.STORAGE_ENCRYPTION_MODE,
+    masterEncryptionKey: env.MASTER_ENCRYPTION_KEY,
+    masterEncryptionKeyId: env.MASTER_ENCRYPTION_KEY_ID,
     maxSizeBytes: env.MAX_SIZE_BYTES,
     logLevel: env.LOG_LEVEL,
     nodeEnv: env.NODE_ENV,

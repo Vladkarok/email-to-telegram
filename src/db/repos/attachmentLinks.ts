@@ -12,10 +12,14 @@ export interface AttachmentLinkWithAttachment {
   downloadedAt: Date | null;
   attachmentId: string;
   attachment: {
+    id: string;
     storagePath: string;
     originalFilename: string | null;
     contentType: string | null;
     sizeBytes: number | null;
+    encryptionMode: string | null;
+    wrappedDek: string | null;
+    kekKeyId: string | null;
   };
 }
 
@@ -30,10 +34,14 @@ export async function findAttachmentLinkByToken(
       expiresAt: attachmentLinks.expiresAt,
       downloadedAt: attachmentLinks.downloadedAt,
       attachmentId: attachmentLinks.attachmentId,
+      attachedId: attachments.id,
       storagePath: attachments.storagePath,
       originalFilename: attachments.originalFilename,
       contentType: attachments.contentType,
       sizeBytes: attachments.sizeBytes,
+      encryptionMode: attachments.encryptionMode,
+      wrappedDek: attachments.wrappedDek,
+      kekKeyId: attachments.kekKeyId,
     })
     .from(attachmentLinks)
     .innerJoin(attachments, eq(attachmentLinks.attachmentId, attachments.id))
@@ -48,10 +56,14 @@ export async function findAttachmentLinkByToken(
     downloadedAt: row.downloadedAt,
     attachmentId: row.attachmentId,
     attachment: {
+      id: row.attachedId,
       storagePath: row.storagePath,
       originalFilename: row.originalFilename,
       contentType: row.contentType,
       sizeBytes: row.sizeBytes,
+      encryptionMode: row.encryptionMode,
+      wrappedDek: row.wrappedDek,
+      kekKeyId: row.kekKeyId,
     },
   };
 }

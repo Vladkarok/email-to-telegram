@@ -152,4 +152,35 @@ describe("GET /dl/:token", () => {
     const res = await app.inject({ method: "GET", url: `/dl/${token}` });
     expect(res.statusCode).toBe(410);
   });
+
+  it("returns 500 when attachment storage cannot be opened or decrypted", async () => {
+    const attachmentId = "attach-uuid-6";
+    const { token, expiresAt } = generateDownloadToken(attachmentId);
+
+    mockFindLink.mockResolvedValue({
+      id: "link-3",
+      token,
+      expiresAt,
+      downloadedAt: null,
+      attachmentId,
+      attachment: {
+        id: attachmentId,
+        storagePath: "/data/attachments/broken.bin",
+        originalFilename: "broken.pdf",
+        contentType: "application/pdf",
+        sizeBytes: 42,
+        encryptionMode: "local-v1",
+        wrappedDek: "wrapped",
+        kekKeyId: "test-key",
+      },
+    });
+    mockMarkDownloaded.mockResolvedValue(true);
+    mockOpenAttachment.mockRejectedValue(new Error("decrypt failed"));
+
+    const app = buildApp();
+    const res = await app.inject({ method: "GET", url: `/dl/${token}` });
+
+    expect(res.statusCode).toBe(500);
+    expect(res.json()).toEqual({ error: "download failed" });
+  });
 });

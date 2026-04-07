@@ -211,17 +211,23 @@ export async function deliverQueuedEmail(
 
     for (const att of parsed.attachments) {
       try {
+        const attachmentId = randomUUID();
         const fileId = randomUUID();
         const storagePath = join(attachmentDir, deliveryLog.id, `${fileId}.bin`);
-        await writeAttachment(storagePath, att.content);
+        const storageMetadata = await writeAttachment(storagePath, attachmentId, att.content);
 
         const dbAtt = await createAttachment(db, {
+          id: attachmentId,
           deliveryLogId: deliveryLog.id,
           originalFilename: att.filename,
           contentType: att.contentType,
           sizeBytes: att.sizeBytes,
           sha256: att.sha256,
           storagePath,
+          encryptionMode: storageMetadata.encryptionMode,
+          wrappedDek: storageMetadata.wrappedDek,
+          kekKeyId: storageMetadata.kekKeyId,
+          encryptedAt: storageMetadata.encryptedAt,
         });
 
         if (isImageContentType(att.contentType)) {

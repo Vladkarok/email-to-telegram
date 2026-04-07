@@ -41,6 +41,7 @@ const mockCountRecentDeliveries = vi.fn();
 const mockInsertAttempt = vi.fn();
 const mockSendTelegram = vi.fn();
 const mockCreateDeliveryViewLink = vi.fn();
+const mockWriteAttachment = vi.fn();
 
 vi.mock("../../../src/db/repos/aliases.js", () => ({
   findAliasByLocalPart: (...a: unknown[]): unknown => mockFindAlias(...a),
@@ -69,7 +70,7 @@ vi.mock("../../../src/db/repos/deliveryViewLinks.js", () => ({
   createDeliveryViewLink: (...a: unknown[]): unknown => mockCreateDeliveryViewLink(...a),
 }));
 vi.mock("../../../src/storage/disk.js", () => ({
-  writeAttachment: vi.fn().mockResolvedValue(undefined),
+  writeAttachment: (...a: unknown[]): unknown => mockWriteAttachment(...a),
 }));
 vi.mock("../../../src/telegram/sender.js", () => ({
   sendTelegramMessage: (...a: unknown[]): unknown => mockSendTelegram(...a),
@@ -123,6 +124,12 @@ function setupHappyPath(logId = "log-1") {
   mockInsertAttempt.mockResolvedValue(undefined);
   mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 99 });
   mockCreateDeliveryViewLink.mockResolvedValue(undefined);
+  mockWriteAttachment.mockResolvedValue({
+    encryptionMode: "none",
+    wrappedDek: null,
+    kekKeyId: null,
+    encryptedAt: null,
+  });
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────

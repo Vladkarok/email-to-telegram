@@ -19,6 +19,7 @@ const mockCreateAttachment = vi.fn();
 const mockCreateAttachmentLink = vi.fn();
 const mockCreateDeliveryViewLink = vi.fn();
 const mockSendTelegramPhotos = vi.fn();
+const mockWriteAttachment = vi.fn();
 
 vi.mock("../../../src/db/repos/aliases.js", () => ({
   findAliasByLocalPart: (...args: unknown[]): unknown => mockFindAlias(...args),
@@ -54,7 +55,7 @@ vi.mock("../../../src/db/repos/deliveryViewLinks.js", () => ({
   createDeliveryViewLink: (...args: unknown[]): unknown => mockCreateDeliveryViewLink(...args),
 }));
 vi.mock("../../../src/storage/disk.js", () => ({
-  writeAttachment: vi.fn(() => Promise.resolve()),
+  writeAttachment: (...args: unknown[]): unknown => mockWriteAttachment(...args),
 }));
 
 function simpleEmail() {
@@ -106,6 +107,12 @@ describe("processInboundEmail", () => {
     mockCreateAttachment.mockResolvedValue({ id: "att-uuid-1" });
     mockCreateAttachmentLink.mockResolvedValue(undefined);
     mockCreateDeliveryViewLink.mockResolvedValue(undefined);
+    mockWriteAttachment.mockResolvedValue({
+      encryptionMode: "none",
+      wrappedDek: null,
+      kekKeyId: null,
+      encryptedAt: null,
+    });
     mockSendTelegramPhotos.mockResolvedValue({ ok: true, failedPhotos: [] });
     process.env["HMAC_SECRET"] = "hmac-secret-test-32chars-abcdef";
   });
@@ -401,6 +408,12 @@ describe("deliverQueuedEmail", () => {
     mockUpdateLogStatus.mockResolvedValue(undefined);
     mockCreateAttachment.mockResolvedValue({ id: "att-uuid-1" });
     mockCreateAttachmentLink.mockResolvedValue(undefined);
+    mockWriteAttachment.mockResolvedValue({
+      encryptionMode: "none",
+      wrappedDek: null,
+      kekKeyId: null,
+      encryptedAt: null,
+    });
     mockSendTelegramPhotos.mockResolvedValue({ ok: true, failedPhotos: [] });
     process.env["HMAC_SECRET"] = "hmac-secret-test-32chars-abcdef";
   });
@@ -579,6 +592,56 @@ describe("deliverQueuedEmail", () => {
       "att-image",
       expect.any(String),
       expect.any(Date),
+    );
+  });
+
+  it("persists attachment encryption metadata returned by storage", async () => {
+    mockWriteAttachment.mockResolvedValueOnce({
+      encryptionMode: "local-v1",
+      wrappedDek: "wrapped-dek",
+      kekKeyId: "test-key",
+      encryptedAt: new Date("2026-04-07T12:30:00.000Z"),
+    });
+    mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 99 });
+
+    await deliverQueuedEmail(
+      {} as Parameters<typeof processInboundEmail>[0],
+      {} as Parameters<typeof processInboundEmail>[1],
+      {
+        alias: activeAlias,
+        parsed: {
+          messageId: "<id@test>",
+          subject: "Encrypted attachment",
+          envelopeFrom: "sender@example.com",
+          headerFrom: "Sender <sender@example.com>",
+          textBody: "hello",
+          htmlBody: null,
+          bodySha256: "hash",
+          attachments: [
+            {
+              filename: "report.pdf",
+              contentType: "application/pdf",
+              sizeBytes: 12,
+              sha256: "pdf-hash",
+              content: Buffer.from("pdf-bytes"),
+            },
+          ],
+          rawSizeBytes: 12,
+        },
+        deliveryLog: { id: "log-encrypted" } as never,
+        envelopeFrom: "sender@example.com",
+        ...PIPELINE_CONFIG,
+      },
+    );
+
+    expect(mockCreateAttachment).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        encryptionMode: "local-v1",
+        wrappedDek: "wrapped-dek",
+        kekKeyId: "test-key",
+        encryptedAt: new Date("2026-04-07T12:30:00.000Z"),
+      }),
     );
   });
 

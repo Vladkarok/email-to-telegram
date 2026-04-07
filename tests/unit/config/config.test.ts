@@ -16,6 +16,9 @@ const REQUIRED_ENV: Record<string, string> = {
 const OPTIONAL_ENV = [
   "ATTACHMENT_TTL_HOURS",
   "RAW_EMAIL_TTL_HOURS",
+  "STORAGE_ENCRYPTION_MODE",
+  "MASTER_ENCRYPTION_KEY",
+  "MASTER_ENCRYPTION_KEY_ID",
   "MAX_SIZE_BYTES",
   "LOG_LEVEL",
   "NODE_ENV",
@@ -56,6 +59,7 @@ describe("loadConfig", () => {
     const config = loadConfig();
     expect(config.attachmentTtlHours).toBe(336);
     expect(config.rawEmailTtlHours).toBe(336);
+    expect(config.storageEncryptionMode).toBe("none");
     expect(config.maxSizeBytes).toBe(10485760);
     expect(config.logLevel).toBe("info");
   });
@@ -90,6 +94,29 @@ describe("loadConfig", () => {
   it("returns empty array when INITIAL_ALLOWED_USERS is not set", () => {
     const config = loadConfig();
     expect(config.initialAllowedUsers).toEqual([]);
+  });
+
+  it("requires a valid master key when local storage encryption is enabled", () => {
+    process.env["STORAGE_ENCRYPTION_MODE"] = "local-v1";
+    process.env["MASTER_ENCRYPTION_KEY"] = Buffer.alloc(32, 7).toString("base64");
+
+    const config = loadConfig();
+    expect(config.storageEncryptionMode).toBe("local-v1");
+    expect(config.masterEncryptionKey).toBe(process.env["MASTER_ENCRYPTION_KEY"]);
+  });
+
+  it("rejects local storage encryption without a master key", () => {
+    process.env["STORAGE_ENCRYPTION_MODE"] = "local-v1";
+    delete process.env["MASTER_ENCRYPTION_KEY"];
+
+    expect(() => loadConfig()).toThrow(/MASTER_ENCRYPTION_KEY is required/);
+  });
+
+  it("rejects an invalid master key value", () => {
+    process.env["STORAGE_ENCRYPTION_MODE"] = "local-v1";
+    process.env["MASTER_ENCRYPTION_KEY"] = "not-a-valid-key";
+
+    expect(() => loadConfig()).toThrow(/MASTER_ENCRYPTION_KEY must decode to exactly 32 bytes/i);
   });
 
   it("rejects non-https PUBLIC_BASE_URL in production", () => {

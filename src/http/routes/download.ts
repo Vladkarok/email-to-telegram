@@ -60,8 +60,14 @@ export function downloadRoute(app: FastifyInstance): void {
         return;
       }
 
-      // Stream the file to avoid buffering large attachments in memory.
-      const { stream, size } = await openAttachmentStream(link.attachment.storagePath);
+      let opened;
+      try {
+        opened = await openAttachmentStream(link.attachment);
+      } catch {
+        await reply.status(500).send({ error: "download failed" });
+        return;
+      }
+      const { stream, size } = opened;
 
       // Strip characters that would break the quoted-string in Content-Disposition (RFC 6266)
       const safeFilename = (link.attachment.originalFilename ?? "attachment").replace(

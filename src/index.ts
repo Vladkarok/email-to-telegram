@@ -19,6 +19,7 @@ import { runCleanup } from "./storage/cleanup.js";
 import { runUptimeCheck } from "./utils/uptime.js";
 import { pipelineTracker } from "./utils/inFlight.js";
 import { startSessionSweep, destroySessionStore } from "./telegram/session.js";
+import { configureStorageEncryption } from "./security/encryption.js";
 
 async function main() {
   const startup = parseStartupOptions(process.argv.slice(2));
@@ -30,6 +31,11 @@ async function main() {
   const logger = createLogger(config.logLevel);
   setLogger(logger);
   logger.info("Starting email-to-telegram");
+  configureStorageEncryption({
+    mode: config.storageEncryptionMode,
+    masterKey: config.masterEncryptionKey,
+    masterKeyId: config.masterEncryptionKeyId,
+  });
 
   // 3. Connect to DB and run migrations
   initDb(config.databaseUrl);

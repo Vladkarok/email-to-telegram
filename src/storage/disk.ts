@@ -1,8 +1,13 @@
 import { createReadStream } from "fs";
 import { readFile, writeFile, mkdir, unlink, rm, stat, readdir, rename } from "fs/promises";
 import { dirname, join } from "path";
-import type { Readable } from "stream";
+import { Readable } from "stream";
 import { getLogger } from "../utils/logger.js";
+import {
+  decryptBufferFromStorage,
+  encryptBufferForStorage,
+  type StorageEncryptionMetadata,
+} from "../security/encryption.js";
 
 export interface PendingRawEmailMeta {
   rawEmailPath: string;
@@ -21,17 +26,53 @@ function pendingRawEmailMetaPath(rawEmailPath: string): string {
  * Returns the size (for Content-Length) and a read stream.
  * Streaming avoids buffering the entire attachment into memory.
  */
-export async function openAttachmentStream(
-  storagePath: string,
-): Promise<{ stream: Readable; size: number }> {
-  const { size } = await stat(storagePath);
-  const stream = createReadStream(storagePath);
-  return { stream, size };
+export async function openAttachmentStream(attachment: {
+  id: string;
+  storagePath: string;
+  sizeBytes: number | null;
+  encryptionMode: string | null;
+  wrappedDek: string | null;
+  kekKeyId: string | null;
+}): Promise<{ stream: Readable; size: number }> {
+  if ((attachment.encryptionMode ?? "none") === "none") {
+    const { size } = await stat(attachment.storagePath);
+    const stream = createReadStream(attachment.storagePath);
+    return { stream, size };
+  }
+
+  const encrypted = await readFile(attachment.storagePath);
+  const encryptionMode =
+    attachment.encryptionMode === "local-v1"
+      ? "local-v1"
+      : attachment.encryptionMode === "none" || attachment.encryptionMode == null
+        ? "none"
+        : (() => {
+            throw new Error(`Unsupported attachment encryption mode: ${attachment.encryptionMode}`);
+          })();
+  const plaintext = await decryptBufferFromStorage(
+    encrypted,
+    {
+      encryptionMode,
+      wrappedDek: attachment.wrappedDek,
+      kekKeyId: attachment.kekKeyId,
+    },
+    `attachment:${attachment.id}`,
+  );
+  return {
+    stream: Readable.from(plaintext),
+    size: attachment.sizeBytes ?? plaintext.length,
+  };
 }
 
-export async function writeAttachment(storagePath: string, data: Buffer): Promise<void> {
+export async function writeAttachment(
+  storagePath: string,
+  attachmentId: string,
+  data: Buffer,
+): Promise<StorageEncryptionMetadata> {
   await mkdir(dirname(storagePath), { recursive: true });
-  await writeFile(storagePath, data);
+  const { blob, metadata } = await encryptBufferForStorage(data, `attachment:${attachmentId}`);
+  await writeFile(storagePath, blob);
+  return metadata;
 }
 
 export async function writeRawEmail(storagePath: string, data: Buffer): Promise<void> {

@@ -148,6 +148,10 @@ export const attachments = pgTable("attachments", {
   sizeBytes: integer("size_bytes"),
   sha256: varchar("sha256", { length: 64 }),
   storagePath: varchar("storage_path", { length: 512 }).notNull(),
+  encryptionMode: varchar("encryption_mode", { length: 20 }).notNull().default("none"),
+  wrappedDek: text("wrapped_dek"),
+  kekKeyId: varchar("kek_key_id", { length: 255 }),
+  encryptedAt: timestamp("encrypted_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

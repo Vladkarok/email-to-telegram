@@ -1,6 +1,6 @@
 {
-  "id": "0a97eda3-670b-4896-8ab6-ba986ccad6a4",
-  "prevId": "659237b8-30fb-48a0-9fb1-66db8a0dc47f",
+  "id": "d473d3ee-94f1-4bd7-a4e5-39d254df93a3",
+  "prevId": "0a97eda3-670b-4896-8ab6-ba986ccad6a4",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -221,6 +221,31 @@
           "type": "varchar(512)",
           "primaryKey": false,
           "notNull": true
+        },
+        "encryption_mode": {
+          "name": "encryption_mode",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'none'"
+        },
+        "wrapped_dek": {
+          "name": "wrapped_dek",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "kek_key_id": {
+          "name": "kek_key_id",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "encrypted_at": {
+          "name": "encrypted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
