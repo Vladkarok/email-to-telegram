@@ -81,6 +81,7 @@ describe("renderEmail", () => {
       }));
       const result = renderEmail(BASE, "html", "alerts@example.com", manyLinks);
       expect(result.length).toBeLessThanOrEqual(4096);
+      expect(result.match(/<a\b/g)?.length ?? 0).toBe(result.match(/<\/a>/g)?.length ?? 0);
     });
   });
 
@@ -107,6 +108,7 @@ describe("renderEmail", () => {
       }));
       const result = renderEmail(BASE, "markdown", "alerts@example.com", manyLinks);
       expect(result.length).toBeLessThanOrEqual(4096);
+      expect(result.match(/<a\b/g)?.length ?? 0).toBe(result.match(/<\/a>/g)?.length ?? 0);
     });
   });
 

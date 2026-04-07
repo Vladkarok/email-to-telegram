@@ -27,7 +27,7 @@ export function renderEmail(
   const header = buildHeader(mode, from, aliasFullAddress, subject);
 
   // Attachments section is built with mode-appropriate escaping so filenames
-  // and URLs are safe in HTML / MarkdownV2 parse modes.
+  // and URLs are safe in rich Telegram parse modes.
   const attachmentsSection = buildAttachmentsSection(attachmentLinks, mode);
 
   const fixedCost =
@@ -45,7 +45,7 @@ export function renderEmail(
 
   // Safety clamp: if header + attachments alone exceed MAX_LEN (many attachments),
   // drop trailing attachment entries until the message fits.
-  return clampToMaxLen(parts);
+  return clampToMaxLen(parts, mode);
 }
 
 export function parseModeForRenderMode(mode: RenderMode): HtmlParseMode | undefined {
@@ -65,20 +65,20 @@ function buildAttachmentsSection(links: AttachmentLink[], mode: RenderMode): str
   const items = links.map((a) => {
     if (mode === "html" || mode === "markdown") {
       // Use anchor tags so filenames are HTML-safe and URLs are clickable.
-      return `<a href="${a.url}">${escapeHtml(a.filename)}</a>`;
+      return `<a href="${escapeHtmlAttribute(a.url)}">${escapeHtml(a.filename)}</a>`;
     }
     return `${a.filename}: ${a.url}`;
   });
   return "Attachments:\n" + items.join("\n");
 }
 
-function clampToMaxLen(parts: string[]): string {
+function clampToMaxLen(parts: string[], mode: RenderMode): string {
   const joined = parts.join(SEPARATOR);
   if (joined.length <= MAX_LEN) return joined;
 
   // Drop trailing attachment entries one by one until the message fits.
   // parts = [header, body, attachmentsSection?]
-  if (parts.length < 3) return joined.slice(0, MAX_LEN);
+  if (parts.length < 3) return finalizeTruncatedRichText(joined.slice(0, MAX_LEN), mode);
 
   const attLines = parts[2].split("\n"); // "Attachments:\nline1\nline2..."
   while (attLines.length > 1 && parts.join(SEPARATOR).length > MAX_LEN) {
@@ -88,7 +88,8 @@ function clampToMaxLen(parts: string[]): string {
 
   const result = parts.join(SEPARATOR);
   // Last resort: if even the label line alone overflows, hard-slice.
-  return result.length <= MAX_LEN ? result : result.slice(0, MAX_LEN);
+  if (result.length <= MAX_LEN) return result;
+  return finalizeTruncatedRichText(result.slice(0, MAX_LEN), mode);
 }
 
 function buildHeader(mode: RenderMode, from: string, to: string, subject: string): string {
@@ -316,4 +317,9 @@ function replaceDelimited(
 
 function escapeHtmlAttribute(text: string): string {
   return escapeHtml(text).replace(/"/g, "&quot;");
+}
+
+function finalizeTruncatedRichText(text: string, mode: RenderMode): string {
+  if (mode === "plaintext") return text;
+  return sanitizeTelegramHtml(text);
 }
