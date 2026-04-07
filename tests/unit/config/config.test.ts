@@ -6,7 +6,6 @@ const REQUIRED_ENV: Record<string, string> = {
   TELEGRAM_BOT_TOKEN: "123456:ABC",
   MAIL_DOMAIN: "tgmail.example.com",
   PUBLIC_BASE_URL: "https://tgmail.example.com",
-  INGEST_MODE: "cloudflare",
   HTTP_PORT: "3000",
   HMAC_SECRET: "a".repeat(32),
   WORKER_SECRET: "b".repeat(32),
@@ -21,7 +20,6 @@ const OPTIONAL_ENV = [
   "LOG_LEVEL",
   "NODE_ENV",
   "INITIAL_ALLOWED_USERS",
-  "SMTP_PORT",
 ];
 
 describe("loadConfig", () => {
@@ -42,7 +40,6 @@ describe("loadConfig", () => {
     const config = loadConfig();
     expect(config.mailDomain).toBe("tgmail.example.com");
     expect(config.httpPort).toBe(3000);
-    expect(config.ingestMode).toBe("cloudflare");
   });
 
   it("throws when DATABASE_URL is missing", () => {
@@ -53,17 +50,6 @@ describe("loadConfig", () => {
   it("throws when TELEGRAM_BOT_TOKEN is missing", () => {
     delete process.env["TELEGRAM_BOT_TOKEN"];
     expect(() => loadConfig()).toThrow();
-  });
-
-  it("throws when INGEST_MODE is invalid value", () => {
-    process.env["INGEST_MODE"] = "ftp";
-    expect(() => loadConfig()).toThrow();
-  });
-
-  it("accepts smtp as valid INGEST_MODE", () => {
-    process.env["INGEST_MODE"] = "smtp";
-    const config = loadConfig();
-    expect(config.ingestMode).toBe("smtp");
   });
 
   it("uses default values for optional vars", () => {

@@ -27,7 +27,7 @@ async function main() {
   // 2. Initialize logger
   const logger = createLogger(config.logLevel);
   setLogger(logger);
-  logger.info({ ingestMode: config.ingestMode }, "Starting email-to-telegram");
+  logger.info("Starting email-to-telegram");
 
   // 3. Connect to DB and run migrations
   initDb(config.databaseUrl);

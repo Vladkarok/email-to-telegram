@@ -9,7 +9,7 @@ Self-hosted replacement for the defunct **etlgr.io** service. Create email alias
 3. Add allowed senders with `/allow add alerts-k3x9m2 github.com`
 4. Any email from an allowed sender to that alias appears in the chat
 
-Attachments are stored on the VPS and served as expiring download links (not uploaded to Telegram).
+Attachments are stored on the VPS and served as expiring download links. Image attachments are also sent to Telegram directly when possible.
 
 > **Note:** `MAIL_DOMAIN` must be your zone-level domain (e.g. `example.com`), not a subdomain. Cloudflare Email Routing only supports catch-all rules at the zone root.
 
@@ -20,6 +20,8 @@ Attachments are stored on the VPS and served as expiring download links (not upl
 ```
 
 The Cloudflare Email Worker handles ingestion: it does a preflight check (is this alias valid? is this sender allowed?), rejects unknown mail at the edge, and streams accepted raw MIME to the VPS.
+
+Direct SMTP ingestion is not implemented in this repository today. If you need it, treat it as future work rather than an available deployment mode.
 
 ## Tech stack
 
@@ -68,13 +70,11 @@ docker compose up -d
 | `TELEGRAM_BOT_TOKEN`    | Yes      | Bot token from @BotFather                                                 |
 | `MAIL_DOMAIN`           | Yes      | Zone-level domain for email aliases (e.g. `example.com`)                  |
 | `PUBLIC_BASE_URL`       | Yes      | Public HTTPS URL of the VPS API (for attachment links)                    |
-| `INGEST_MODE`           | Yes      | `cloudflare` or `smtp`                                                    |
 | `HTTP_PORT`             | Yes      | HTTP listen port (default `3000`)                                         |
 | `HMAC_SECRET`           | Yes      | Secret for signing attachment tokens (`openssl rand -hex 32`)             |
 | `WORKER_SECRET`         | Yes      | Shared secret between Cloudflare Worker and VPS (`openssl rand -hex 32`)  |
 | `ATTACHMENT_DIR`        | Yes      | Path to attachment storage directory                                      |
 | `RAW_EMAIL_DIR`         | Yes      | Path to raw email storage directory                                       |
-| `SMTP_PORT`             | No       | SMTP listen port (smtp mode only, default `2525`)                         |
 | `ATTACHMENT_TTL_HOURS`  | No       | Attachment retention in hours (default `336` = 14 days)                   |
 | `RAW_EMAIL_TTL_HOURS`   | No       | Raw email retention in hours (default `336`)                              |
 | `MAX_SIZE_BYTES`        | No       | Max accepted message size in bytes (default `10485760` = 10 MiB)          |

@@ -148,13 +148,13 @@ describe("processInboundEmail", () => {
     await processInboundEmail({} as Parameters<typeof processInboundEmail>[0], null, {
       rawEmail: simpleEmail(),
       localPart: "alerts",
-      envelopeFrom: "real-sender@smtp.example.com",
+      envelopeFrom: "real-sender@sender.example.com",
       ...PIPELINE_CONFIG,
     });
 
     expect(mockCreateLog).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ envelopeFrom: "real-sender@smtp.example.com" }),
+      expect.objectContaining({ envelopeFrom: "real-sender@sender.example.com" }),
     );
   });
 
