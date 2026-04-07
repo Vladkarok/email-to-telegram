@@ -7,17 +7,18 @@ Already implemented on `dev`:
 - Attachment encryption at rest with envelope encryption
 - Raw-email encryption at rest, including retry and pending-email recovery paths
 - Privacy mode with one-time browser view links instead of mirroring bodies into Telegram
+- Delivery-log metadata encryption for `subject`, `headerFrom`, and `envelopeFrom`
+- Local key rotation support with read-only keyrings plus DEK re-wrap jobs
+- Historical plaintext backfill jobs for attachments, raw email, and delivery metadata
+- Streaming decryption for encrypted attachment downloads
+- Optional encrypted PostgreSQL backup archives plus a restore CLI
 - Startup guards for unsupported downgrade / key-id mismatch states
 - Backup metadata and restore guidance for encrypted storage
 
 Still remaining:
 
-- Real key rotation and DEK re-wrap support
 - Optional KMS/Vault-style wrapping backend
-- Metadata encryption for selected DB fields
-- Optional backfill of older plaintext attachment/raw-email blobs
-- Streaming decryption for encrypted downloads instead of buffering whole files
-- Optional separate encryption of backup archives themselves
+- Optional encryption for additional DB metadata beyond the delivery-log sender/subject fields
 
 ## Why this exists
 
@@ -32,8 +33,8 @@ Today the server can still read:
 - Delivery metadata in Postgres
 - Telegram messages sent by the bot
 
-The biggest remaining gaps are around key management, backup hardening, and
-limiting what metadata stays readable in Postgres. This document tracks that
+The biggest remaining gaps are around external key management and deciding
+whether even more Postgres metadata should be hidden. This document tracks that
 remaining work after the first encryption/privacy rollout.
 
 ---
@@ -237,8 +238,8 @@ Keep `sizeBytes` as the plaintext size.
 
 - One-time download link semantics are preserved
 - AAD is bound to `attachment:<attachmentId>`
-- Current limitation: encrypted attachment downloads still decrypt in memory
-  before streaming; that is a remaining improvement item
+- Current implementation now decrypts encrypted attachment downloads as streams
+  instead of buffering the whole file first
 
 ---
 
@@ -327,9 +328,10 @@ at-rest encryption primitives.
 
 ## Phase 4: Metadata encryption
 
-Status: not implemented
+Status: implemented
 
-This is optional and lower priority.
+This is now in place for the delivery-log sender/subject fields. Additional DB
+metadata can still be reviewed later if the trust model requires it.
 
 Candidate fields:
 
@@ -358,7 +360,6 @@ Current implementation:
 Not implemented yet:
 
 - KMS-backed wrapping config
-- automatic key-version rotation workflow
 
 Possible future config fields:
 
@@ -381,9 +382,9 @@ when encrypted data still exists.
 
 ## Key rotation
 
-Status: not implemented
+Status: implemented
 
-Plan for rotation from the start.
+Local key rotation is now supported.
 
 ### Minimum viable rotation support
 
@@ -393,7 +394,7 @@ Plan for rotation from the start.
 
 ### Rewrap workflow
 
-Later, add an admin job that:
+The current admin job now:
 
 1. Reads row metadata
 2. Unwraps the old wrapped DEK
@@ -411,9 +412,10 @@ Current rollout status:
 - Reader compatibility for mixed plaintext/encrypted datasets: implemented
 - Encrypted writes for attachments: implemented
 - Encrypted writes for raw email: implemented
+- Encrypted writes for delivery metadata: implemented
 - Privacy mode: implemented
 - Startup downgrade / key-id safeguards: implemented
-- Historical plaintext backfill: not implemented
+- Historical plaintext backfill: implemented
 
 Roll this out in backward-compatible steps.
 
@@ -434,7 +436,7 @@ Status: done
 
 ### Step 3: Backfill old data only if worth it
 
-Status: not implemented
+Status: implemented
 
 Optional migration job:
 
@@ -443,12 +445,12 @@ Optional migration job:
 3. Write encrypted replacement atomically
 4. Update DB metadata
 
-Because this project is mostly for alerts with TTL cleanup, a full backfill may
-not be worth the operational risk if old data expires quickly anyway.
+The current codebase exposes admin jobs that can backfill attachments, raw
+emails, and delivery metadata in place without forcing it during normal startup.
 
 ### Step 4: Rotate backup expectations
 
-Status: partially implemented
+Status: implemented
 
 After rollout:
 
@@ -456,8 +458,9 @@ After rollout:
 - Treat backups without the KEK as incomplete for recovery
 - Consider encrypting backup archives separately as well
 
-The current codebase already documents the KEK dependency and emits backup
-metadata files, but it does not encrypt the backup archives themselves.
+The current codebase now supports `BACKUP_ARCHIVE_ENCRYPTION=storage-key`, which
+stores the PostgreSQL dump as an encrypted `.sql.gz.etg` archive and ships a
+`backupArchiveCli` restore path.
 
 ---
 
@@ -492,11 +495,9 @@ Add focused tests before rollout.
 
 ## Recommended implementation order
 
-1. Add key rotation and DEK re-wrap support
-2. Add a KMS/Vault-backed wrapping backend if needed
-3. Decide whether historical plaintext backfill is worth the operational risk
-4. Add metadata encryption only after the above is stable
-5. Replace in-memory encrypted-download buffering with true streaming decryption
+1. Add a KMS/Vault-backed wrapping backend if needed
+2. Decide whether encrypting more DB metadata is worth the added complexity
+3. Keep backup restore instructions aligned with the shipped archive format
 
 ---
 
@@ -504,10 +505,9 @@ Add focused tests before rollout.
 
 For `email-to-telegram`, the best next sequence is:
 
-1. Implement key rotation / re-wrap support
-2. Decide whether encrypted-download streaming is worth the added complexity
-3. Add metadata encryption only if the trust model requires it
-4. Consider a KMS backend only if the project grows beyond single-host self-hosting
+1. Keep the local key-rotation / backfill workflows exercised in docs and release notes
+2. Consider a KMS backend only if the project grows beyond single-host self-hosting
+3. Add more DB metadata encryption only if the trust model clearly justifies the complexity
 
 That keeps the work proportional to the project’s actual role: a hardened
 alert-forwarder, not a secure vault.
