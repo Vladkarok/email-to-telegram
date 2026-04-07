@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { Readable } from "stream";
 import {
   canUseStorageKeyId,
   configureStorageEncryption,
   decryptBufferFromStorage,
+  decryptStreamFromStorage,
   encryptBufferForStorage,
   parseMasterEncryptionKey,
   parseMasterEncryptionKeyring,
@@ -116,5 +118,34 @@ describe("storage encryption", () => {
     await expect(decryptBufferFromStorage(blob, rewrapped, "attachment:att-4")).resolves.toEqual(
       Buffer.from("rotate me"),
     );
+  });
+
+  it("streams encrypted blobs without buffering the entire ciphertext first", async () => {
+    configureStorageEncryption({
+      mode: "local-v1",
+      masterKey: Buffer.alloc(32, 6).toString("base64"),
+      masterKeyId: "stream-key",
+    });
+
+    const plaintext = Buffer.from("stream me in small chunks");
+    const { blob, metadata } = await encryptBufferForStorage(plaintext, "attachment:att-5");
+    const stream = await decryptStreamFromStorage(
+      Readable.from([blob.subarray(0, 5), blob.subarray(5, 17), blob.subarray(17)]),
+      metadata,
+      "attachment:att-5",
+    );
+
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) {
+      if (Buffer.isBuffer(chunk)) {
+        chunks.push(chunk);
+      } else if (chunk instanceof Uint8Array) {
+        chunks.push(Buffer.from(chunk));
+      } else {
+        throw new Error("unexpected stream chunk type");
+      }
+    }
+
+    expect(Buffer.concat(chunks)).toEqual(plaintext);
   });
 });

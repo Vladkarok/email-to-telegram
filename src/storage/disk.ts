@@ -4,6 +4,7 @@ import { basename, dirname, join } from "path";
 import { Readable } from "stream";
 import { getLogger } from "../utils/logger.js";
 import {
+  decryptStreamFromStorage,
   decryptBufferFromStorage,
   encryptBufferForStorage,
   type StorageEncryptionMetadata,
@@ -34,8 +35,8 @@ async function replaceFileAtomically(filePath: string, contents: Buffer | string
 /**
  * Open a storage file for streaming download.
  * Returns the size (for Content-Length) and a read stream.
- * Plaintext files stream directly; encrypted files currently decrypt into
- * memory first because the storage format is whole-blob authenticated.
+ * Plaintext files stream directly; encrypted files are decrypted on the fly
+ * while still authenticating the whole blob before the stream finishes.
  */
 export async function openAttachmentStream(attachment: {
   id: string;
@@ -51,10 +52,29 @@ export async function openAttachmentStream(attachment: {
     return { stream, size };
   }
 
-  const plaintext = await readAttachmentBytes(attachment);
+  const size =
+    attachment.sizeBytes ??
+    (
+      await readAttachmentBytes({
+        id: attachment.id,
+        storagePath: attachment.storagePath,
+        encryptionMode: attachment.encryptionMode,
+        wrappedDek: attachment.wrappedDek,
+        kekKeyId: attachment.kekKeyId,
+      })
+    ).length;
+  const stream = await decryptStreamFromStorage(
+    createReadStream(attachment.storagePath),
+    {
+      encryptionMode: attachment.encryptionMode === "local-v1" ? "local-v1" : "none",
+      wrappedDek: attachment.wrappedDek,
+      kekKeyId: attachment.kekKeyId,
+    },
+    `attachment:${attachment.id}`,
+  );
   return {
-    stream: Readable.from(plaintext),
-    size: attachment.sizeBytes ?? plaintext.length,
+    stream,
+    size,
   };
 }
 

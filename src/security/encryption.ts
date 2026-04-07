@@ -1,4 +1,5 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
+import { createCipheriv, createDecipheriv, randomBytes, type DecipherGCM } from "crypto";
+import { Readable } from "stream";
 
 const FILE_MAGIC = Buffer.from("ETG1", "ascii");
 const FILE_VERSION = 1;
@@ -225,6 +226,95 @@ export async function decryptBufferFromStorage(
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 }
 
+export async function decryptStreamFromStorage(
+  source: AsyncIterable<Buffer | Uint8Array | string>,
+  metadata: Pick<StorageEncryptionMetadata, "encryptionMode" | "wrappedDek" | "kekKeyId">,
+  aad: string,
+): Promise<Readable> {
+  if ((metadata.encryptionMode ?? "none") === "none") {
+    return Readable.from(source);
+  }
+
+  if (metadata.encryptionMode !== "local-v1") {
+    throw new Error(`Unsupported storage encryption mode: ${metadata.encryptionMode}`);
+  }
+
+  if (!activeProvider) {
+    throw new Error("Storage encryption is not configured");
+  }
+
+  if (!metadata.wrappedDek) {
+    throw new Error("Encrypted blob is missing wrapped DEK metadata");
+  }
+
+  const dek = await activeProvider.unwrapKey(metadata.wrappedDek, metadata.kekKeyId);
+
+  return Readable.from(
+    (async function* () {
+      const headerSize = FILE_MAGIC.length + 1 + IV_LENGTH;
+      let header = Buffer.alloc(0);
+      let pendingTag = Buffer.alloc(0);
+      let decipher: DecipherGCM | null = null;
+
+      for await (const rawChunk of source) {
+        const chunk = toBuffer(rawChunk);
+        if (!decipher) {
+          header = Buffer.concat([header, chunk]);
+          if (header.length < headerSize) {
+            continue;
+          }
+
+          const magic = header.subarray(0, FILE_MAGIC.length);
+          if (!magic.equals(FILE_MAGIC)) {
+            throw new Error("Encrypted blob has invalid magic header");
+          }
+
+          const version = header[FILE_MAGIC.length];
+          if (version !== FILE_VERSION) {
+            throw new Error(`Unsupported encrypted blob version: ${version}`);
+          }
+
+          const ivStart = FILE_MAGIC.length + 1;
+          const iv = header.subarray(ivStart, ivStart + IV_LENGTH);
+          decipher = createDecipheriv("aes-256-gcm", dek, iv);
+          decipher.setAAD(Buffer.from(aad, "utf-8"));
+
+          const remainder = header.subarray(headerSize);
+          header = Buffer.alloc(0);
+          if (remainder.length > 0) {
+            const output = pushCiphertext(decipher, remainder, pendingTag);
+            pendingTag = Buffer.from(output.pendingTag);
+            if (output.plaintext.length > 0) {
+              yield output.plaintext;
+            }
+          }
+          continue;
+        }
+
+        const output = pushCiphertext(decipher, chunk, pendingTag);
+        pendingTag = Buffer.from(output.pendingTag);
+        if (output.plaintext.length > 0) {
+          yield output.plaintext;
+        }
+      }
+
+      if (!decipher) {
+        throw new Error("Encrypted blob is truncated");
+      }
+
+      if (pendingTag.length !== TAG_LENGTH) {
+        throw new Error("Encrypted blob is truncated");
+      }
+
+      decipher.setAuthTag(pendingTag);
+      const finalChunk = decipher.final();
+      if (finalChunk.length > 0) {
+        yield finalChunk;
+      }
+    })(),
+  );
+}
+
 function createLocalKeyProvider(
   masterKey: Buffer,
   keyId: string,
@@ -277,4 +367,31 @@ function createLocalKeyProvider(
       return [...keys.keys()];
     },
   };
+}
+
+function pushCiphertext(
+  decipher: DecipherGCM,
+  chunk: Buffer,
+  pendingTag: Buffer,
+): { plaintext: Buffer; pendingTag: Buffer } {
+  const combined = pendingTag.length > 0 ? Buffer.concat([pendingTag, chunk]) : chunk;
+  if (combined.length <= TAG_LENGTH) {
+    return { plaintext: Buffer.alloc(0), pendingTag: combined };
+  }
+
+  const ciphertext = combined.subarray(0, combined.length - TAG_LENGTH);
+  return {
+    plaintext: decipher.update(ciphertext),
+    pendingTag: combined.subarray(combined.length - TAG_LENGTH),
+  };
+}
+
+function toBuffer(chunk: Buffer | Uint8Array | string): Buffer {
+  if (Buffer.isBuffer(chunk)) {
+    return chunk;
+  }
+  if (typeof chunk === "string") {
+    return Buffer.from(chunk);
+  }
+  return Buffer.from(chunk);
 }
