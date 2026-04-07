@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema.js";
-import { readAttachmentBytes, readRawEmail } from "../storage/disk.js";
+import { listPendingRawEmails, readAttachmentBytes, readRawEmail } from "../storage/disk.js";
 import type { AppConfig } from "../config.js";
 
 type Db = NodePgDatabase<typeof schema>;
@@ -10,9 +10,15 @@ export async function assertStorageEncryptionReadiness(
   db: Db,
   config: Pick<
     AppConfig,
-    "storageEncryptionMode" | "masterEncryptionKeyId" | "attachmentTtlHours" | "rawEmailTtlHours"
+    | "storageEncryptionMode"
+    | "masterEncryptionKeyId"
+    | "attachmentTtlHours"
+    | "rawEmailTtlHours"
+    | "rawEmailDir"
   >,
 ): Promise<void> {
+  const pendingRawEmails = await listPendingRawEmails(config.rawEmailDir);
+
   if (config.storageEncryptionMode === "none") {
     const encryptedAttachmentRows = rowsFromResult<{ present: number }>(
       await db.execute(
@@ -25,9 +31,13 @@ export async function assertStorageEncryptionReadiness(
       ),
     );
 
-    if (encryptedAttachmentRows[0] || encryptedRawRows[0]) {
+    const encryptedPendingRaw = pendingRawEmails.find(
+      (email) => (email.rawEmailEncryptionMode ?? "none") !== "none",
+    );
+
+    if (encryptedAttachmentRows[0] || encryptedRawRows[0] || encryptedPendingRaw) {
       throw new Error(
-        "STORAGE_ENCRYPTION_MODE=none is not allowed while encrypted attachments or raw emails still exist",
+        "STORAGE_ENCRYPTION_MODE=none is not allowed while encrypted attachments, raw emails, or pending raw emails still exist",
       );
     }
     return;
@@ -52,6 +62,17 @@ export async function assertStorageEncryptionReadiness(
   if (unexpectedRawKey[0]) {
     throw new Error(
       `Encrypted raw emails were written with a different key id. Rotation is not supported yet; expected ${config.masterEncryptionKeyId}.`,
+    );
+  }
+
+  const unexpectedPendingKey = pendingRawEmails.find(
+    (email) =>
+      email.rawEmailEncryptionMode === "local-v1" &&
+      (email.rawEmailKekKeyId == null || email.rawEmailKekKeyId !== config.masterEncryptionKeyId),
+  );
+  if (unexpectedPendingKey) {
+    throw new Error(
+      `Encrypted pending raw emails were written with a different key id. Rotation is not supported yet; expected ${config.masterEncryptionKeyId}.`,
     );
   }
 
@@ -103,6 +124,22 @@ export async function assertStorageEncryptionReadiness(
       });
     } catch (err: unknown) {
       throw new Error("Failed to decrypt a stored raw email with the configured key", {
+        cause: err,
+      });
+    }
+  }
+
+  for (const pendingRawEmail of pendingRawEmails) {
+    if (pendingRawEmail.rawEmailEncryptionMode !== "local-v1") continue;
+
+    try {
+      await readRawEmail(pendingRawEmail.rawEmailPath, {
+        rawEmailEncryptionMode: pendingRawEmail.rawEmailEncryptionMode,
+        rawEmailWrappedDek: pendingRawEmail.rawEmailWrappedDek ?? null,
+        rawEmailKekKeyId: pendingRawEmail.rawEmailKekKeyId ?? null,
+      });
+    } catch (err: unknown) {
+      throw new Error("Failed to decrypt a pending raw email with the configured key", {
         cause: err,
       });
     }

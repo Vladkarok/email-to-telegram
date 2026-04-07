@@ -27,7 +27,8 @@ function pendingRawEmailMetaPath(rawEmailPath: string): string {
 /**
  * Open a storage file for streaming download.
  * Returns the size (for Content-Length) and a read stream.
- * Streaming avoids buffering the entire attachment into memory.
+ * Plaintext files stream directly; encrypted files currently decrypt into
+ * memory first because the storage format is whole-blob authenticated.
  */
 export async function openAttachmentStream(attachment: {
   id: string;

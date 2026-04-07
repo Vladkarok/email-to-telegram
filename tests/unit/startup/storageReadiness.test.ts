@@ -3,8 +3,10 @@ import { assertStorageEncryptionReadiness } from "../../../src/startup/storageRe
 
 const mockReadAttachmentBytes = vi.fn();
 const mockReadRawEmail = vi.fn();
+const mockListPendingRawEmails = vi.fn();
 
 vi.mock("../../../src/storage/disk.js", () => ({
+  listPendingRawEmails: (...args: unknown[]): unknown => mockListPendingRawEmails(...args),
   readAttachmentBytes: (...args: unknown[]): unknown => mockReadAttachmentBytes(...args),
   readRawEmail: (...args: unknown[]): unknown => mockReadRawEmail(...args),
 }));
@@ -19,12 +21,15 @@ const baseConfig = {
   masterEncryptionKeyId: "local-env-v1",
   attachmentTtlHours: 24,
   rawEmailTtlHours: 24,
+  rawEmailDir: "/data/rawemails",
 };
 
 describe("assertStorageEncryptionReadiness", () => {
   beforeEach(() => {
     mockReadAttachmentBytes.mockReset();
     mockReadRawEmail.mockReset();
+    mockListPendingRawEmails.mockReset();
+    mockListPendingRawEmails.mockResolvedValue([]);
   });
 
   it("rejects disabling encryption while encrypted rows still exist", async () => {
@@ -114,6 +119,58 @@ describe("assertStorageEncryptionReadiness", () => {
 
     await expect(assertStorageEncryptionReadiness(db, baseConfig)).rejects.toThrow(
       /Failed to decrypt a stored attachment/i,
+    );
+  });
+
+  it("rejects disabling encryption while encrypted pending raw emails still exist", async () => {
+    mockListPendingRawEmails.mockResolvedValue([
+      {
+        rawEmailPath: "/data/rawemails/pending.eml",
+        rawEmailEncryptionMode: "local-v1",
+        rawEmailWrappedDek: "wrapped-pending",
+        rawEmailKekKeyId: "local-env-v1",
+      },
+    ]);
+    const db = fakeDbWithRows([[], []]);
+
+    await expect(
+      assertStorageEncryptionReadiness(db, {
+        ...baseConfig,
+        storageEncryptionMode: "none",
+      }),
+    ).rejects.toThrow(/pending raw emails still exist/i);
+  });
+
+  it("rejects startup when encrypted pending raw emails were written with another key id", async () => {
+    mockListPendingRawEmails.mockResolvedValue([
+      {
+        rawEmailPath: "/data/rawemails/pending.eml",
+        rawEmailEncryptionMode: "local-v1",
+        rawEmailWrappedDek: "wrapped-pending",
+        rawEmailKekKeyId: "legacy-key",
+      },
+    ]);
+    const db = fakeDbWithRows([[], [], [], []]);
+
+    await expect(assertStorageEncryptionReadiness(db, baseConfig)).rejects.toThrow(
+      /Encrypted pending raw emails were written with a different key id/i,
+    );
+  });
+
+  it("fails startup when an encrypted pending raw email cannot be decrypted", async () => {
+    mockReadRawEmail.mockRejectedValue(new Error("bad pending key"));
+    mockListPendingRawEmails.mockResolvedValue([
+      {
+        rawEmailPath: "/data/rawemails/pending.eml",
+        rawEmailEncryptionMode: "local-v1",
+        rawEmailWrappedDek: "wrapped-pending",
+        rawEmailKekKeyId: "local-env-v1",
+      },
+    ]);
+    const db = fakeDbWithRows([[], [], [], []]);
+
+    await expect(assertStorageEncryptionReadiness(db, baseConfig)).rejects.toThrow(
+      /Failed to decrypt a pending raw email/i,
     );
   });
 });

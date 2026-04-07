@@ -92,7 +92,7 @@ mv "$TMP_GZ" "$BACKUP_FILE"
   echo "raw_email_dir=$RAW_EMAIL_DIR"
   echo "requires_matching_master_key=$([ "$STORAGE_ENCRYPTION_MODE" = "local-v1" ] && echo yes || echo no)"
   echo "note=This backup contains only the PostgreSQL dump. Attachment/raw mail files are stored separately."
-  echo "restore_warning=Keep the attachment/raw mail files alongside this dump. If storage encryption is enabled, keep the matching MASTER_ENCRYPTION_KEY. Reuse the ATTACHMENT_DIR/RAW_EMAIL_DIR paths recorded here or rewrite the stored DB file paths before serving old files."
+  echo "restore_warning=Keep the attachment/raw mail files alongside this dump. If storage encryption is enabled, keep the matching MASTER_ENCRYPTION_KEY. Reuse the ATTACHMENT_DIR/RAW_EMAIL_DIR paths recorded here when restoring old files."
 } > "$TMP_META"
 mv "$TMP_META" "$META_FILE"
 

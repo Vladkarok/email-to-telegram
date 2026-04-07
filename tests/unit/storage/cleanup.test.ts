@@ -33,6 +33,9 @@ function makeDb(expiredAttachments: { storagePath: string }[] = []) {
   const attachmentDeleteWhere = vi.fn().mockResolvedValue({ rowCount: expiredAttachments.length });
   const deliveryLogDeleteWhere = vi.fn().mockResolvedValue({ rowCount: 0 });
   const updateWhere = vi.fn().mockResolvedValue({ rowCount: 0 });
+  const updateSet = vi.fn(() => ({
+    where: updateWhere,
+  }));
   return {
     select: vi.fn().mockReturnValue({
       from: vi.fn().mockReturnValue({
@@ -43,19 +46,19 @@ function makeDb(expiredAttachments: { storagePath: string }[] = []) {
       where: table === attachments ? attachmentDeleteWhere : deliveryLogDeleteWhere,
     })),
     update: vi.fn(() => ({
-      set: vi.fn(() => ({
-        where: updateWhere,
-      })),
+      set: updateSet,
     })),
     _mocks: {
       attachmentDeleteWhere,
       deliveryLogDeleteWhere,
+      updateSet,
       updateWhere,
     },
   } as unknown as Parameters<typeof runCleanup>[0] & {
     _mocks: {
       attachmentDeleteWhere: ReturnType<typeof vi.fn>;
       deliveryLogDeleteWhere: ReturnType<typeof vi.fn>;
+      updateSet: ReturnType<typeof vi.fn>;
       updateWhere: ReturnType<typeof vi.fn>;
     };
   };
@@ -113,6 +116,13 @@ describe("runCleanup", () => {
 
     await runCleanup(db, config);
 
+    expect(db._mocks.updateSet).toHaveBeenCalledWith({
+      rawEmailPath: null,
+      rawEmailEncryptionMode: "none",
+      rawEmailWrappedDek: null,
+      rawEmailKekKeyId: null,
+      rawEmailEncryptedAt: null,
+    });
     expect(mockLogger.info).toHaveBeenCalledWith(
       { rows: 2 },
       "cleanup: cleared expired raw email references",
