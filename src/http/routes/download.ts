@@ -65,6 +65,7 @@ export function downloadRoute(app: FastifyInstance): void {
       // This avoids burning one-time URLs on transient decryption/open failures.
       const claimed = await markLinkDownloaded(getDb(), link.id);
       if (!claimed) {
+        await opened.dispose?.();
         await reply.status(410).send({ error: "link expired or already used" });
         return;
       }

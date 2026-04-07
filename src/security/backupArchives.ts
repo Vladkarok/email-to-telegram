@@ -1,5 +1,6 @@
 import { createReadStream, createWriteStream } from "fs";
-import { stat } from "fs/promises";
+import { mkdir, rename, rm, stat } from "fs/promises";
+import { dirname } from "path";
 import { pipeline } from "stream/promises";
 import {
   decryptStreamFromStorage,
@@ -32,6 +33,8 @@ export async function decryptBackupArchive(
   outputPath: string,
   metadata: Pick<BackupArchiveMetadata, "aad" | "encryptionMode" | "wrappedDek" | "kekKeyId">,
 ): Promise<void> {
+  await mkdir(dirname(outputPath), { recursive: true });
+  const tempPath = `${outputPath}.${process.pid}.${Date.now()}.tmp`;
   const stream = await decryptStreamFromStorage(
     createReadStream(inputPath),
     {
@@ -41,7 +44,13 @@ export async function decryptBackupArchive(
     },
     metadata.aad,
   );
-  await pipeline(stream, createWriteStream(outputPath, { mode: 0o600 }));
+  try {
+    await pipeline(stream, createWriteStream(tempPath, { mode: 0o600 }));
+    await rename(tempPath, outputPath);
+  } catch (err: unknown) {
+    await rm(tempPath, { force: true });
+    throw err;
+  }
 }
 
 export function formatBackupArchiveMetadataLines(metadata: BackupArchiveMetadata): string {

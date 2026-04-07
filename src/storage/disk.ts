@@ -58,7 +58,7 @@ export async function openAttachmentStream(attachment: {
   encryptionMode: string | null;
   wrappedDek: string | null;
   kekKeyId: string | null;
-}): Promise<{ stream: Readable; size: number }> {
+}): Promise<{ stream: Readable; size: number; dispose?: () => Promise<void> }> {
   if ((attachment.encryptionMode ?? "none") === "none") {
     const { size } = await stat(attachment.storagePath);
     const stream = createReadStream(attachment.storagePath);
@@ -79,15 +79,26 @@ export async function openAttachmentStream(attachment: {
   await pipeline(decryptedStream, createWriteStream(tempPath, { mode: 0o600 }));
   const size = attachment.sizeBytes ?? (await stat(tempPath)).size;
   const stream = createReadStream(tempPath);
-  const cleanupTemp = () => {
-    void deleteFile(tempPath);
-    void deleteDir(tempDir);
+  let cleaned = false;
+  const cleanupTemp = async () => {
+    if (cleaned) return;
+    cleaned = true;
+    stream.removeAllListeners("close");
+    stream.removeAllListeners("error");
+    stream.destroy();
+    await deleteFile(tempPath);
+    await deleteDir(tempDir);
   };
-  stream.once("close", cleanupTemp);
-  stream.once("error", cleanupTemp);
+  stream.once("close", () => {
+    void cleanupTemp();
+  });
+  stream.once("error", () => {
+    void cleanupTemp();
+  });
   return {
     stream,
     size,
+    dispose: cleanupTemp,
   };
 }
 

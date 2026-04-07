@@ -14,6 +14,7 @@ vi.mock("../../../src/db/repos/aliases.js", () => ({
 
 const mockFindLink = vi.fn();
 const mockMarkDownloaded = vi.fn();
+const mockDisposeOpened = vi.fn();
 vi.mock("../../../src/db/repos/attachmentLinks.js", () => ({
   findAttachmentLinkByToken: (...args: unknown[]): unknown => mockFindLink(...args),
   markLinkDownloaded: (...args: unknown[]): unknown => mockMarkDownloaded(...args),
@@ -47,6 +48,7 @@ describe("GET /dl/:token", () => {
     mockFindLink.mockReset();
     mockMarkDownloaded.mockReset();
     mockOpenAttachment.mockReset();
+    mockDisposeOpened.mockReset();
   });
 
   afterEach(() => {
@@ -149,12 +151,14 @@ describe("GET /dl/:token", () => {
     mockOpenAttachment.mockResolvedValue({
       stream: Readable.from(Buffer.from("doc")),
       size: 3,
+      dispose: mockDisposeOpened,
     });
     mockMarkDownloaded.mockResolvedValue(false); // another request beat us
 
     const app = buildApp();
     const res = await app.inject({ method: "GET", url: `/dl/${token}` });
     expect(res.statusCode).toBe(410);
+    expect(mockDisposeOpened).toHaveBeenCalledOnce();
   });
 
   it("returns 500 when attachment storage cannot be opened or decrypted", async () => {

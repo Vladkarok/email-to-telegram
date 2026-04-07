@@ -107,7 +107,6 @@ if [ "$BACKUP_ARCHIVE_ENCRYPTION" = "storage-key" ]; then
     "$TMP_GZ" \
     "$TMP_ENC" \
     "backup-archive:$(basename "$BACKUP_FILE")" > "$TMP_ARCHIVE_META"
-  mv "$TMP_ENC" "$BACKUP_FILE"
   rm -f "$TMP_GZ"
 else
   mv "$TMP_GZ" "$BACKUP_FILE"
@@ -130,6 +129,9 @@ fi
   fi
 } > "$TMP_META"
 mv "$TMP_META" "$META_FILE"
+if [ "$BACKUP_ARCHIVE_ENCRYPTION" = "storage-key" ]; then
+  mv "$TMP_ENC" "$BACKUP_FILE"
+fi
 
 rm -f "$TMP_SQL" "$TMP_CONN"
 trap - EXIT INT TERM
