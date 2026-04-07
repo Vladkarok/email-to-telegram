@@ -51,4 +51,21 @@ describe("workerAuth", () => {
     const body = Buffer.from("data");
     expect(verifyWorkerRequest(body, "anysig", Date.now().toString())).toBe(false);
   });
+
+  it("throws when signing without WORKER_SECRET", () => {
+    delete process.env["WORKER_SECRET"];
+    expect(() => signWorkerRequest(Buffer.from("data"))).toThrow(/WORKER_SECRET not set/);
+  });
+
+  it("rejects a request with a non-numeric timestamp", () => {
+    const body = Buffer.from("raw email content");
+    const { signature } = signWorkerRequest(body);
+    expect(verifyWorkerRequest(body, signature, "123abc")).toBe(false);
+  });
+
+  it("rejects a request when the signature length is wrong", () => {
+    const body = Buffer.from("raw email content");
+    const { timestamp } = signWorkerRequest(body);
+    expect(verifyWorkerRequest(body, "abcd", timestamp)).toBe(false);
+  });
 });

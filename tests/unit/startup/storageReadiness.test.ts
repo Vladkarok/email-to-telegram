@@ -54,6 +54,25 @@ describe("assertStorageEncryptionReadiness", () => {
     ).rejects.toThrow(/STORAGE_ENCRYPTION_MODE=none is not allowed/i);
   });
 
+  it("allows disabling encryption when no encrypted rows or pending files remain", async () => {
+    mockListPendingRawEmails.mockResolvedValue([
+      {
+        rawEmailPath: "/data/rawemails/plain.eml",
+        rawEmailEncryptionMode: "none",
+        rawEmailWrappedDek: null,
+        rawEmailKekKeyId: null,
+      },
+    ]);
+    const db = fakeDbWithRows([[], [], []]);
+
+    await expect(
+      assertStorageEncryptionReadiness(db, {
+        ...baseConfig,
+        storageEncryptionMode: "none",
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it("rejects startup when encrypted attachments were written with another key id", async () => {
     const db = fakeDbWithRows([[{ id: "a1", kek_key_id: "legacy-key" }], [], [], [], [], []]);
 
@@ -228,6 +247,55 @@ describe("assertStorageEncryptionReadiness", () => {
 
     await expect(assertStorageEncryptionReadiness(db, baseConfig)).rejects.toThrow(
       /Failed to decrypt a stored attachment/i,
+    );
+  });
+
+  it("ignores missing encrypted raw-email sample files during startup probes", async () => {
+    mockReadRawEmail.mockRejectedValue(Object.assign(new Error("missing"), { code: "ENOENT" }));
+    const db = fakeDbWithRows([
+      [],
+      [],
+      [],
+      [],
+      [
+        {
+          raw_email_path: "/data/rawemails/d1.eml",
+          raw_email_encryption_mode: "local-v1",
+          raw_email_wrapped_dek: "wrapped-raw",
+          raw_email_kek_key_id: "local-env-v1",
+        },
+      ],
+      [],
+    ]);
+
+    await expect(assertStorageEncryptionReadiness(db, baseConfig)).resolves.toBeUndefined();
+  });
+
+  it("fails startup when encrypted delivery metadata cannot be decrypted", async () => {
+    mockReadDeliveryLogMetadata.mockRejectedValue(new Error("bad metadata key"));
+    const db = fakeDbWithRows([
+      [],
+      [],
+      [],
+      [],
+      [],
+      [
+        {
+          id: "d1",
+          envelope_from: null,
+          header_from: null,
+          subject: null,
+          metadata_ciphertext: "ciphertext",
+          metadata_encryption_mode: "local-v1",
+          metadata_wrapped_dek: "wrapped-metadata",
+          metadata_kek_key_id: "local-env-v1",
+          metadata_encrypted_at: new Date("2026-04-07T12:00:00.000Z"),
+        },
+      ],
+    ]);
+
+    await expect(assertStorageEncryptionReadiness(db, baseConfig)).rejects.toThrow(
+      /Failed to decrypt stored delivery metadata/i,
     );
   });
 

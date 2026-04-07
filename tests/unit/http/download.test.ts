@@ -192,4 +192,126 @@ describe("GET /dl/:token", () => {
     expect(res.json()).toEqual({ error: "download failed" });
     expect(mockMarkDownloaded).not.toHaveBeenCalled();
   });
+
+  it("returns 403 when the token HMAC does not match the stored attachment", async () => {
+    const { token, expiresAt } = generateDownloadToken("attach-uuid-7");
+
+    mockFindLink.mockResolvedValue({
+      id: "link-4",
+      token,
+      expiresAt,
+      downloadedAt: null,
+      attachmentId: "different-attachment-id",
+      attachment: {
+        storagePath: "/data/attachments/report.pdf",
+        originalFilename: "report.pdf",
+        contentType: "application/pdf",
+        sizeBytes: 10,
+      },
+    });
+
+    const app = buildApp();
+    const res = await app.inject({ method: "GET", url: `/dl/${token}` });
+
+    expect(res.statusCode).toBe(403);
+    expect(mockOpenAttachment).not.toHaveBeenCalled();
+    expect(mockMarkDownloaded).not.toHaveBeenCalled();
+  });
+
+  it("preserves safe text mime charsets and sanitizes attachment filenames", async () => {
+    const attachmentId = "attach-uuid-8";
+    const { token, expiresAt } = generateDownloadToken(attachmentId);
+    const fileContent = Buffer.from("plain text");
+
+    mockFindLink.mockResolvedValue({
+      id: "link-5",
+      token,
+      expiresAt,
+      downloadedAt: null,
+      attachmentId,
+      attachment: {
+        storagePath: "/data/attachments/note.txt",
+        originalFilename: 'report"\r\n2026.txt',
+        contentType: "text/plain; charset=iso-8859-1",
+        sizeBytes: fileContent.length,
+      },
+    });
+    mockMarkDownloaded.mockResolvedValue(true);
+    mockOpenAttachment.mockResolvedValue({
+      stream: Readable.from(fileContent),
+      size: fileContent.length,
+    });
+
+    const app = buildApp();
+    const res = await app.inject({ method: "GET", url: `/dl/${token}` });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toContain("text/plain; charset=iso-8859-1");
+    expect(res.headers["content-disposition"]).toContain(
+      'attachment; filename="report___2026.txt"',
+    );
+  });
+
+  it("preserves safe csv mime variants", async () => {
+    const attachmentId = "attach-uuid-9";
+    const { token, expiresAt } = generateDownloadToken(attachmentId);
+    const fileContent = Buffer.from("a,b\n1,2\n");
+
+    mockFindLink.mockResolvedValue({
+      id: "link-6",
+      token,
+      expiresAt,
+      downloadedAt: null,
+      attachmentId,
+      attachment: {
+        storagePath: "/data/attachments/report.csv",
+        originalFilename: null,
+        contentType: "text/csv; charset=utf-8",
+        sizeBytes: fileContent.length,
+      },
+    });
+    mockMarkDownloaded.mockResolvedValue(true);
+    mockOpenAttachment.mockResolvedValue({
+      stream: Readable.from(fileContent),
+      size: fileContent.length,
+    });
+
+    const app = buildApp();
+    const res = await app.inject({ method: "GET", url: `/dl/${token}` });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toContain("text/csv; charset=utf-8");
+    expect(res.headers["content-disposition"]).toContain('attachment; filename="attachment"');
+  });
+
+  it("falls back to octet-stream for unsafe mime types", async () => {
+    const attachmentId = "attach-uuid-10";
+    const { token, expiresAt } = generateDownloadToken(attachmentId);
+    const fileContent = Buffer.from("<svg />");
+
+    mockFindLink.mockResolvedValue({
+      id: "link-7",
+      token,
+      expiresAt,
+      downloadedAt: null,
+      attachmentId,
+      attachment: {
+        storagePath: "/data/attachments/image.svg",
+        originalFilename: "image.svg",
+        contentType: "image/svg+xml",
+        sizeBytes: fileContent.length,
+      },
+    });
+    mockMarkDownloaded.mockResolvedValue(true);
+    mockOpenAttachment.mockResolvedValue({
+      stream: Readable.from(fileContent),
+      size: fileContent.length,
+    });
+
+    const app = buildApp();
+    const res = await app.inject({ method: "GET", url: `/dl/${token}` });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toContain("application/octet-stream");
+  });
 });

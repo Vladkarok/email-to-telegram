@@ -116,6 +116,25 @@ describe("sendTelegramMessage", () => {
     await vi.runAllTimersAsync();
     await expect(promise).resolves.toMatchObject({ ok: false });
   });
+
+  it("omits parse_mode when one is not provided", async () => {
+    const api = makeApi(() => Promise.resolve({ message_id: 8 }));
+
+    await sendTelegramMessage(api, {
+      chatId: 500n,
+      threadId: null,
+      text: "No parse mode",
+    });
+
+    const [, text, options] = vi.mocked(api.sendMessage).mock.calls[0] as [
+      unknown,
+      string,
+      Record<string, unknown>,
+    ];
+
+    expect(text).toBe("No parse mode");
+    expect(options).not.toHaveProperty("parse_mode");
+  });
 });
 
 describe("sendTelegramPhotos", () => {
@@ -151,5 +170,76 @@ describe("sendTelegramPhotos", () => {
       expect.objectContaining({ id: "att-1", encryptionMode: "local-v1" }),
     );
     expect(api.sendPhoto).toHaveBeenCalledOnce();
+  });
+
+  it("sends multiple photos as a media group with thread and reply metadata", async () => {
+    const api = {
+      sendMessage: vi.fn(),
+      sendPhoto: vi.fn(),
+      sendMediaGroup: vi.fn(() => Promise.resolve([{ message_id: 1 }])),
+    } as unknown as MockApi;
+    mockReadAttachmentBytes.mockResolvedValue(Buffer.from("decrypted-image"));
+
+    const result = await sendTelegramPhotos(api, {
+      chatId: 100n,
+      threadId: 7n,
+      replyToMessageId: 55,
+      photos: [
+        {
+          id: "att-1",
+          storagePath: "/data/attachments/att-1.bin",
+          filename: "graph-1.png",
+          encryptionMode: "local-v1",
+          wrappedDek: "wrapped",
+          kekKeyId: "test-key",
+        },
+        {
+          id: "att-2",
+          storagePath: "/data/attachments/att-2.bin",
+          filename: "graph-2.png",
+          encryptionMode: "local-v1",
+          wrappedDek: "wrapped",
+          kekKeyId: "test-key",
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(api.sendMediaGroup).toHaveBeenCalledWith(
+      100,
+      expect.any(Array),
+      expect.objectContaining({
+        message_thread_id: 7,
+        reply_parameters: { message_id: 55 },
+      }),
+    );
+  });
+
+  it("collects failed photo chunks without throwing", async () => {
+    const api = {
+      sendMessage: vi.fn(),
+      sendPhoto: vi.fn(() => Promise.reject(new Error("telegram down"))),
+      sendMediaGroup: vi.fn(),
+    } as unknown as MockApi;
+    mockReadAttachmentBytes.mockResolvedValue(Buffer.from("decrypted-image"));
+
+    const result = await sendTelegramPhotos(api, {
+      chatId: 100n,
+      threadId: null,
+      photos: [
+        {
+          id: "att-1",
+          storagePath: "/data/attachments/att-1.bin",
+          filename: "graph.png",
+          encryptionMode: "local-v1",
+          wrappedDek: "wrapped",
+          kekKeyId: "test-key",
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.failedPhotos).toHaveLength(1);
+    expect(result.failedPhotos[0]?.id).toBe("att-1");
   });
 });

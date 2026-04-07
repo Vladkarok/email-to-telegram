@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { settingsHandler } from "../../../../src/telegram/commands/settings.js";
+import {
+  buildAliasSettingsKeyboard,
+  settingsHandler,
+} from "../../../../src/telegram/commands/settings.js";
 import { createMockCtx } from "../../../helpers/mockContext.js";
 
 vi.mock("../../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
@@ -15,8 +18,9 @@ vi.mock("../../../../src/db/repos/aliases.js", () => ({
   updateAliasPrivacyMode: (...args: unknown[]): unknown => mockUpdatePrivacyMode(...args),
 }));
 
+const mockCanManageAlias = vi.fn().mockResolvedValue(true);
 vi.mock("../../../../src/telegram/authorization.js", () => ({
-  canManageAlias: vi.fn().mockResolvedValue(true),
+  canManageAlias: (...args: unknown[]): unknown => mockCanManageAlias(...args),
   canManageChat: vi.fn().mockResolvedValue(true),
 }));
 
@@ -106,5 +110,105 @@ describe("/settings command", () => {
     expect(call[0]).toContain("Privacy mode: <b>off</b>");
     expect(call[0]).toContain("Body dedup: <b>off</b>");
     expect(call[1]).toHaveProperty("reply_markup");
+  });
+
+  it("rejects access when the caller cannot manage the alias", async () => {
+    mockFindAlias.mockResolvedValue({
+      id: "uuid-2",
+      fullAddress: "news@example.com",
+      renderMode: "plaintext",
+      privacyModeEnabled: false,
+      bodyDedupEnabled: false,
+    });
+    mockCanManageAlias.mockResolvedValueOnce(false);
+    const ctx = createMockCtx({ commandMatch: "news" });
+
+    await settingsHandler(ctx);
+
+    expect(ctx.reply).toHaveBeenCalledWith("⛔ Access denied.");
+  });
+
+  it("rejects access when the update has no sender", async () => {
+    mockFindAlias.mockResolvedValue({
+      id: "uuid-2",
+      fullAddress: "news@example.com",
+      renderMode: "plaintext",
+      privacyModeEnabled: false,
+      bodyDedupEnabled: false,
+    });
+    const ctx = createMockCtx({ commandMatch: "news" });
+    (ctx as { from?: unknown }).from = undefined;
+
+    await settingsHandler(ctx);
+
+    expect(ctx.reply).toHaveBeenCalledWith("⛔ Access denied.");
+  });
+
+  it("shows usage for invalid dedup values", async () => {
+    mockFindAlias.mockResolvedValue({
+      id: "uuid-1",
+      fullAddress: "alerts@example.com",
+      renderMode: "plaintext",
+      privacyModeEnabled: false,
+      bodyDedupEnabled: false,
+    });
+
+    const ctx = createMockCtx({ commandMatch: "alerts dedup maybe" });
+    await settingsHandler(ctx);
+
+    expect(ctx.reply).toHaveBeenCalledWith(
+      expect.stringContaining("Usage: /settings <alias-name> dedup <on|off>"),
+      expect.anything(),
+    );
+  });
+
+  it("shows usage for invalid privacy values", async () => {
+    mockFindAlias.mockResolvedValue({
+      id: "uuid-1",
+      fullAddress: "alerts@example.com",
+      renderMode: "plaintext",
+      privacyModeEnabled: false,
+      bodyDedupEnabled: false,
+    });
+
+    const ctx = createMockCtx({ commandMatch: "alerts privacy maybe" });
+    await settingsHandler(ctx);
+
+    expect(ctx.reply).toHaveBeenCalledWith(
+      expect.stringContaining("Usage: /settings <alias-name> privacy <on|off>"),
+      expect.anything(),
+    );
+  });
+
+  it("shows usage for unknown settings", async () => {
+    mockFindAlias.mockResolvedValue({
+      id: "uuid-1",
+      fullAddress: "alerts@example.com",
+      renderMode: "plaintext",
+      privacyModeEnabled: false,
+      bodyDedupEnabled: false,
+    });
+
+    const ctx = createMockCtx({ commandMatch: "alerts surprise on" });
+    await settingsHandler(ctx);
+
+    expect(ctx.reply).toHaveBeenCalledWith(
+      expect.stringContaining("Usage: /settings <alias-name>"),
+      expect.anything(),
+    );
+  });
+
+  it("adds a back button when requested in the settings keyboard", () => {
+    const keyboard = buildAliasSettingsKeyboard(
+      {
+        id: "uuid-3",
+        renderMode: "html",
+        privacyModeEnabled: true,
+        bodyDedupEnabled: true,
+      },
+      true,
+    ) as unknown as { inline_keyboard: Array<Array<{ text: string }>> };
+
+    expect(keyboard.inline_keyboard.flat().map((button) => button.text)).toContain("⬅️ Back");
   });
 });

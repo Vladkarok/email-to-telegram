@@ -91,4 +91,47 @@ describe("backup archive encryption", () => {
     ).rejects.toThrow();
     await expect(stat(restoredPath)).rejects.toThrow();
   });
+
+  it("parses metadata sidecars with comments and blank optional fields", () => {
+    const parsed = parseBackupArchiveMetadataLines(`
+# comment
+backup_archive_encryption_mode=none
+backup_archive_wrapped_dek=
+backup_archive_kek_key_id=
+backup_archive_encrypted_at=
+backup_archive_aad=backup-archive:test
+backup_archive_plaintext_size_bytes=42
+`);
+
+    expect(parsed).toEqual({
+      encryptionMode: "none",
+      wrappedDek: null,
+      kekKeyId: null,
+      encryptedAt: null,
+      aad: "backup-archive:test",
+      plaintextSizeBytes: 42,
+    });
+  });
+
+  it("rejects metadata without a supported encryption mode", () => {
+    expect(() => parseBackupArchiveMetadataLines("backup_archive_aad=test")).toThrow(
+      /supported backup_archive_encryption_mode/i,
+    );
+  });
+
+  it("rejects metadata without an aad", () => {
+    expect(() =>
+      parseBackupArchiveMetadataLines(
+        "backup_archive_encryption_mode=local-v1\nbackup_archive_plaintext_size_bytes=1",
+      ),
+    ).toThrow(/backup_archive_aad/i);
+  });
+
+  it("rejects metadata without a valid plaintext size", () => {
+    expect(() =>
+      parseBackupArchiveMetadataLines(
+        "backup_archive_encryption_mode=local-v1\nbackup_archive_aad=test\nbackup_archive_plaintext_size_bytes=-1",
+      ),
+    ).toThrow(/valid backup_archive_plaintext_size_bytes/i);
+  });
 });

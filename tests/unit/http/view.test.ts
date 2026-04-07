@@ -174,6 +174,30 @@ describe("/view/:token", () => {
     expect(res.body).toContain("expired or was already used");
   });
 
+  it("returns 404 when the view link does not exist", async () => {
+    const { token } = generateDeliveryViewToken("log-uuid-1", 24);
+    mockFindDeliveryViewLinkByTokenHash.mockResolvedValue(null);
+
+    const app = await buildApp();
+    const res = await app.inject({ method: "GET", url: `/view/${token}` });
+
+    expect(res.statusCode).toBe(404);
+    expect(res.body).toContain("Link not found");
+  });
+
+  it("returns 403 when the signed token does not match the stored delivery log", async () => {
+    const { token, expiresAt } = generateDeliveryViewToken("log-uuid-1", 24);
+    mockFindDeliveryViewLinkByTokenHash.mockResolvedValue(
+      viewLinkRow(expiresAt, { deliveryLogId: "different-log-id" }),
+    );
+
+    const app = await buildApp();
+    const res = await app.inject({ method: "GET", url: `/view/${token}` });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toContain("Invalid link");
+  });
+
   it("returns 410 when another request claims the link first", async () => {
     const { token, expiresAt } = generateDeliveryViewToken("log-uuid-1", 24);
     mockFindDeliveryViewLinkByTokenHash.mockResolvedValue(viewLinkRow(expiresAt));
@@ -196,6 +220,59 @@ describe("/view/:token", () => {
 
     expect(res.statusCode).toBe(410);
     expect(mockMarkDeliveryViewLinkViewed).not.toHaveBeenCalled();
+  });
+
+  it("returns 410 when the delivery log no longer has a raw email path", async () => {
+    const { token, expiresAt } = generateDeliveryViewToken("log-uuid-1", 24);
+    mockFindDeliveryViewLinkByTokenHash.mockResolvedValue({
+      ...viewLinkRow(expiresAt),
+      deliveryLog: {
+        ...viewLinkRow(expiresAt).deliveryLog,
+        rawEmailPath: null,
+      },
+    });
+
+    const app = await buildApp();
+    const res = await app.inject({ method: "POST", url: `/view/${token}` });
+
+    expect(res.statusCode).toBe(410);
+    expect(res.body).toContain("Email unavailable");
+  });
+
+  it("returns 500 when reading the raw email fails unexpectedly", async () => {
+    const { token, expiresAt } = generateDeliveryViewToken("log-uuid-1", 24);
+    mockFindDeliveryViewLinkByTokenHash.mockResolvedValue(viewLinkRow(expiresAt));
+    mockReadRawEmail.mockRejectedValue(new Error("boom"));
+
+    const app = await buildApp();
+    const res = await app.inject({ method: "POST", url: `/view/${token}` });
+
+    expect(res.statusCode).toBe(500);
+    expect(res.body).toContain("View failed");
+  });
+
+  it("returns 500 when encrypted delivery metadata cannot be decrypted", async () => {
+    const { token, expiresAt } = generateDeliveryViewToken("log-uuid-1", 24);
+    mockFindDeliveryViewLinkByTokenHash.mockResolvedValue({
+      ...viewLinkRow(expiresAt),
+      deliveryLog: {
+        ...viewLinkRow(expiresAt).deliveryLog,
+        envelopeFrom: null,
+        headerFrom: null,
+        subject: null,
+        metadataCiphertext: null,
+        metadataEncryptionMode: "local-v1",
+        metadataWrappedDek: "wrapped",
+        metadataKekKeyId: "key-id",
+        metadataEncryptedAt: new Date(),
+      },
+    });
+
+    const app = await buildApp();
+    const res = await app.inject({ method: "POST", url: `/view/${token}` });
+
+    expect(res.statusCode).toBe(500);
+    expect(res.body).toContain("View failed");
   });
 
   it("does not issue privacy attachment links after attachment retention has already elapsed", async () => {
@@ -223,6 +300,25 @@ describe("/view/:token", () => {
     expect(res.body).not.toContain("/dl/");
     expect(res.body).not.toContain("report.pdf");
     expect(mockCreateAttachmentLink).not.toHaveBeenCalled();
+  });
+
+  it("skips attachments whose privacy download links fail to mint", async () => {
+    const { token, expiresAt } = generateDeliveryViewToken("log-uuid-1", 24);
+    mockFindDeliveryViewLinkByTokenHash.mockResolvedValue(viewLinkRow(expiresAt));
+    mockListAttachments.mockResolvedValue([
+      {
+        id: "att-1",
+        originalFilename: "report.pdf",
+        sizeBytes: 1234,
+      },
+    ]);
+    mockCreateAttachmentLink.mockRejectedValue(new Error("link mint failed"));
+
+    const app = await buildApp();
+    const res = await app.inject({ method: "POST", url: `/view/${token}` });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).not.toContain("report.pdf");
   });
 
   it("decrypts stored delivery metadata for privacy views", async () => {

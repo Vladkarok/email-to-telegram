@@ -67,6 +67,22 @@ describe("download tokens", () => {
     expect(expiresAt.getTime()).toBeGreaterThanOrEqual(expected - 1000);
     expect(expiresAt.getTime()).toBeLessThanOrEqual(after + 24 * 60 * 60 * 1000 + 1000);
   });
+
+  it("rejects malformed token lengths", () => {
+    expect(verifyDownloadToken("short-token", ATTACHMENT_ID, new Date(Date.now() + 60_000))).toBe(
+      false,
+    );
+  });
+
+  it("rejects tokens with invalid hex payloads", () => {
+    const token = `${"a".repeat(32)}${"z".repeat(64)}`;
+    expect(verifyDownloadToken(token, ATTACHMENT_ID, new Date(Date.now() + 60_000))).toBe(false);
+  });
+
+  it("throws when generating tokens without HMAC_SECRET", () => {
+    delete process.env["HMAC_SECRET"];
+    expect(() => generateDownloadToken(ATTACHMENT_ID)).toThrow(/HMAC_SECRET not set/);
+  });
 });
 
 describe("delivery view tokens", () => {

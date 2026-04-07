@@ -372,4 +372,101 @@ describe("storage maintenance", () => {
       }),
     ).resolves.toEqual(Buffer.from("From: sender@example.com\r\n\r\nresume raw"));
   });
+
+  it("skips unchanged rewrap targets and pending rows outside local-v1", async () => {
+    const root = await mkdtemp(join(tmpdir(), "email-to-telegram-maint-"));
+    tempDirs.push(root);
+    configureStorageEncryption({
+      mode: "local-v1",
+      masterKey: Buffer.alloc(32, 12).toString("base64"),
+      masterKeyId: "current-v2",
+    });
+
+    await writePendingRawEmailMeta(join(root, "2026-04-07", "message.eml"), {
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+      rawEmailEncryptionMode: "none",
+      rawEmailWrappedDek: null,
+      rawEmailKekKeyId: null,
+    });
+
+    const metadata = await encryptBufferForStorage(Buffer.from("same"), "attachment:att-1");
+    const db = makeDb({
+      encryptedAttachments: [
+        {
+          id: "att-1",
+          wrappedDek: metadata.metadata.wrappedDek,
+          kekKeyId: metadata.metadata.kekKeyId,
+          encryptedAt: metadata.metadata.encryptedAt,
+        },
+      ],
+      encryptedRawEmails: [],
+      encryptedMetadataLogs: [],
+    });
+
+    const summary = await rewrapStoredEncryptionKeys(db as never, root);
+
+    expect(summary).toEqual({
+      attachments: 0,
+      rawEmails: 0,
+      metadataLogs: 0,
+      pendingRawEmails: 0,
+      skippedMissingFiles: 0,
+    });
+    expect(db._updates.attachments).toHaveLength(0);
+    expect(db._updates.deliveryLogs).toHaveLength(0);
+  });
+
+  it("skips missing files, null raw paths, empty metadata rows, and already encrypted pending rows", async () => {
+    const root = await mkdtemp(join(tmpdir(), "email-to-telegram-maint-"));
+    tempDirs.push(root);
+    configureStorageEncryption({
+      mode: "local-v1",
+      masterKey: Buffer.alloc(32, 13).toString("base64"),
+      masterKeyId: "current-v3",
+    });
+
+    const missingAttachmentPath = join(root, "attachments", "missing.bin");
+    const missingRawEmailPath = join(root, "raw", "2026-04-07", "missing.eml");
+    await writePendingRawEmailMeta(join(root, "raw", "2026-04-07", "already.encrypted.eml"), {
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+      rawEmailEncryptionMode: "local-v1",
+      rawEmailWrappedDek: "wrapped",
+      rawEmailKekKeyId: "current-v3",
+    });
+
+    const db = makeDb({
+      plaintextAttachments: [{ id: "att-missing", storagePath: missingAttachmentPath }],
+      plaintextRawEmails: [
+        { id: "log-null", rawEmailPath: null },
+        { id: "log-missing", rawEmailPath: missingRawEmailPath },
+      ],
+      plaintextMetadataLogs: [
+        {
+          id: "log-empty",
+          envelopeFrom: null,
+          headerFrom: null,
+          subject: null,
+          metadataCiphertext: null,
+          metadataEncryptionMode: "none",
+          metadataWrappedDek: null,
+          metadataKekKeyId: null,
+          metadataEncryptedAt: null,
+        },
+      ],
+    });
+
+    const summary = await backfillStoredEncryption(db as never, join(root, "raw"));
+
+    expect(summary).toEqual({
+      attachments: 0,
+      rawEmails: 0,
+      metadataLogs: 0,
+      pendingRawEmails: 0,
+      skippedMissingFiles: 2,
+    });
+    expect(db._updates.attachments).toHaveLength(0);
+    expect(db._updates.deliveryLogs).toHaveLength(0);
+  });
 });

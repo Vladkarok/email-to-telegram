@@ -22,7 +22,10 @@ function makeApi(): { api: Api; sendMessage: ReturnType<typeof vi.fn> } {
 }
 
 describe("runUptimeCheck", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+  });
 
   it("does not send alert when DB is healthy", async () => {
     const db = makeDb(true);
@@ -56,5 +59,60 @@ describe("runUptimeCheck", () => {
       runUptimeCheck(db, api, { healthchecksUrl: undefined, alertChatId: undefined }),
     ).resolves.not.toThrow();
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("pings the configured healthchecks URL when all probes are healthy", async () => {
+    const db = makeDb(true);
+    const { api, sendMessage } = makeApi();
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runUptimeCheck(db, api, {
+      healthchecksUrl: "https://hc.example/ping",
+      alertChatId: 999n,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith("https://hc.example/ping");
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not throw when the healthchecks ping fails", async () => {
+    const db = makeDb(true);
+    const { api } = makeApi();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
+
+    await expect(
+      runUptimeCheck(db, api, {
+        healthchecksUrl: "https://hc.example/ping",
+        alertChatId: undefined,
+      }),
+    ).resolves.not.toThrow();
+  });
+
+  it("reports disk probe failures through the alert channel", async () => {
+    const db = makeDb(true);
+    const { api, sendMessage } = makeApi();
+
+    await runUptimeCheck(db, api, {
+      healthchecksUrl: undefined,
+      alertChatId: 999n,
+      probeDirs: ["/definitely-missing-email-to-telegram-probe-dir"],
+    });
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      999,
+      expect.stringContaining("disk"),
+      expect.objectContaining({ parse_mode: "HTML" }),
+    );
+  });
+
+  it("does not throw when sending the Telegram alert fails", async () => {
+    const db = makeDb(false);
+    const { api, sendMessage } = makeApi();
+    sendMessage.mockRejectedValueOnce(new Error("telegram down"));
+
+    await expect(
+      runUptimeCheck(db, api, { healthchecksUrl: undefined, alertChatId: 999n }),
+    ).resolves.not.toThrow();
   });
 });

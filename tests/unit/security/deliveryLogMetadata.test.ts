@@ -112,4 +112,83 @@ describe("delivery log metadata encryption", () => {
     expect(backfilled.metadataKekKeyId).toBe("old-v1");
     expect(rewrapped.metadataKekKeyId).toBe("current-v2");
   });
+
+  it("returns already encrypted metadata unchanged during backfill", async () => {
+    configureStorageEncryption({
+      mode: "local-v1",
+      masterKey: Buffer.alloc(32, 7).toString("base64"),
+      masterKeyId: "meta-v1",
+    });
+
+    const stored = await prepareDeliveryLogMetadataWrite("log-4", {
+      envelopeFrom: "sender@example.com",
+      headerFrom: "Sender <sender@example.com>",
+      subject: "Already encrypted",
+    });
+
+    await expect(
+      backfillDeliveryLogMetadata({
+        id: "log-4",
+        envelopeFrom: stored.envelopeFrom,
+        headerFrom: stored.headerFrom,
+        subject: stored.subject,
+        metadataCiphertext: stored.metadataCiphertext,
+        metadataEncryptionMode: stored.metadataEncryptionMode,
+        metadataWrappedDek: stored.metadataWrappedDek,
+        metadataKekKeyId: stored.metadataKekKeyId,
+        metadataEncryptedAt: stored.metadataEncryptedAt,
+      }),
+    ).resolves.toEqual(stored);
+  });
+
+  it("returns unchanged rewrap columns when metadata is not encrypted", async () => {
+    await expect(
+      rewrapDeliveryLogMetadata({
+        id: "log-5",
+        envelopeFrom: "sender@example.com",
+        headerFrom: "Sender <sender@example.com>",
+        subject: "Plain",
+        metadataCiphertext: null,
+        metadataEncryptionMode: "none",
+        metadataWrappedDek: null,
+        metadataKekKeyId: null,
+        metadataEncryptedAt: null,
+      }),
+    ).resolves.toEqual({
+      metadataWrappedDek: null,
+      metadataKekKeyId: null,
+    });
+  });
+
+  it("rejects unsupported encrypted metadata modes", async () => {
+    await expect(
+      readDeliveryLogMetadata({
+        id: "log-6",
+        envelopeFrom: null,
+        headerFrom: null,
+        subject: null,
+        metadataCiphertext: "anything",
+        metadataEncryptionMode: "kms-v1" as never,
+        metadataWrappedDek: "wrapped",
+        metadataKekKeyId: "key-id",
+        metadataEncryptedAt: null,
+      }),
+    ).rejects.toThrow(/unsupported delivery-log metadata encryption mode/i);
+  });
+
+  it("rejects encrypted metadata records without ciphertext", async () => {
+    await expect(
+      readDeliveryLogMetadata({
+        id: "log-7",
+        envelopeFrom: null,
+        headerFrom: null,
+        subject: null,
+        metadataCiphertext: null,
+        metadataEncryptionMode: "local-v1",
+        metadataWrappedDek: "wrapped",
+        metadataKekKeyId: "key-id",
+        metadataEncryptedAt: null,
+      }),
+    ).rejects.toThrow(/missing ciphertext/i);
+  });
 });
