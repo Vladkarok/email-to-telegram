@@ -131,6 +131,45 @@ describe("renderEmail", () => {
       expect(result).toContain("• Second");
     });
 
+    it("renders compact HTML tables as monospace blocks", () => {
+      const email = {
+        ...BASE,
+        htmlBody: [
+          "<table>",
+          "<tr><th>Name</th><th>Status</th><th>Duration</th></tr>",
+          "<tr><td>KM-1C</td><td>Warning</td><td>00:02:29</td></tr>",
+          "</table>",
+        ].join(""),
+        textBody: null,
+      };
+      const result = renderEmail(email, "html", "alerts@example.com", []);
+      expect(result).toContain("<pre>");
+      expect(result).toContain("Name");
+      expect(result).toContain("Status");
+      expect(result).toContain("KM-1C");
+      expect(result).toContain("Warning");
+      expect(result).toContain("Duration");
+    });
+
+    it("renders wide HTML tables as stacked key-value blocks", () => {
+      const email = {
+        ...BASE,
+        htmlBody: [
+          "<table>",
+          "<tr><th>Name</th><th>Status</th><th>Start</th><th>End</th><th>Size</th><th>Details</th></tr>",
+          "<tr><td>KM-1C</td><td>Warning</td><td>23:30:01</td><td>23:32:30</td><td>251.7 GB</td><td>There is not enough space on the disk.</td></tr>",
+          "</table>",
+        ].join(""),
+        textBody: null,
+      };
+      const result = renderEmail(email, "html", "alerts@example.com", []);
+      expect(result).toContain("<pre>");
+      expect(result).toContain("Name: KM-1C");
+      expect(result).toContain("Status: Warning");
+      expect(result).toContain("Details: There is not enough space on the disk.");
+      expect(result).not.toContain("Name    |");
+    });
+
     it("strips dangerous tags (script)", () => {
       const email = {
         ...BASE,
@@ -214,6 +253,24 @@ describe("renderEmail", () => {
       expect(result).toContain("• First");
     });
 
+    it("keeps HTML tables readable when markdown mode falls back to the HTML body", () => {
+      const email = {
+        ...BASE,
+        textBody: "Backup report attached below.",
+        htmlBody: [
+          "<table>",
+          "<tr><th>Name</th><th>Status</th><th>Transferred</th></tr>",
+          "<tr><td>KM-1C</td><td>Warning</td><td>14.9 GB</td></tr>",
+          "</table>",
+        ].join(""),
+      };
+      const result = renderEmail(email, "markdown", "alerts@example.com", []);
+      expect(result).toContain("<pre>");
+      expect(result).toContain("Name");
+      expect(result).toContain("Status");
+      expect(result).toContain("14.9 GB");
+    });
+
     it("prefers markdown-authored plain text over an HTML wrapper copy", () => {
       const email = {
         ...BASE,
@@ -230,6 +287,27 @@ describe("renderEmail", () => {
       const email = { ...BASE, headerFrom: "Alice <alice@example.com>" };
       const result = renderEmail(email, "markdown", "alerts@example.com", []);
       expect(result).toContain("Alice &lt;alice@example.com&gt;");
+    });
+  });
+
+  describe("plaintext mode table fallback", () => {
+    it("keeps table values readable when HTML is stripped to text", () => {
+      const email = {
+        ...BASE,
+        textBody: null,
+        htmlBody: [
+          "<table>",
+          "<tr><th>Name</th><th>Status</th></tr>",
+          "<tr><td>KM-1C</td><td>Warning</td></tr>",
+          "</table>",
+        ].join(""),
+      };
+      const result = renderEmail(email, "plaintext", "alerts@example.com", []);
+      expect(result).toContain("Name");
+      expect(result).toContain("Status");
+      expect(result).toContain("KM-1C");
+      expect(result).toContain("Warning");
+      expect(result).not.toContain("<table>");
     });
   });
 });
