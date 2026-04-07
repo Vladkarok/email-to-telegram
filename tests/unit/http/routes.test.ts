@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Fastify from "fastify";
 import { registerRoutes } from "../../../src/http/routes/index.js";
 import { signWorkerRequest } from "../../../src/utils/workerAuth.js";
+import { markBotHealthy, markBotUnhealthy } from "../../../src/telegram/health.js";
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
@@ -48,7 +49,12 @@ const TEST_CONFIG = {
   maxSizeBytes: 1024 * 1024,
 };
 
-async function buildApp() {
+async function buildApp(botHealthy = true) {
+  if (botHealthy) {
+    markBotHealthy();
+  } else {
+    markBotUnhealthy();
+  }
   const app = Fastify({ logger: false });
   // Register octet-stream parser so raw route can receive binary bodies
   app.addContentTypeParser(
@@ -68,6 +74,13 @@ describe("GET /healthz", () => {
     const res = await app.inject({ method: "GET", url: "/healthz" });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ status: "ok" });
+  });
+
+  it("returns 503 when the Telegram bot is unhealthy", async () => {
+    const app = await buildApp(false);
+    const res = await app.inject({ method: "GET", url: "/healthz" });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toMatchObject({ status: "degraded" });
   });
 });
 

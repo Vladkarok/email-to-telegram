@@ -78,6 +78,17 @@ function fakeDb() {
   };
 }
 
+function fakeDbHarness() {
+  const execute = vi.fn().mockResolvedValue(undefined);
+  return {
+    db: {
+      transaction: async <T>(fn: (tx: { execute: typeof execute }) => Promise<T>) =>
+        fn({ execute }),
+    } as Parameters<typeof processInboundEmail>[0],
+    execute,
+  };
+}
+
 describe("processInboundEmail", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -264,8 +275,9 @@ describe("queueInboundEmail", () => {
     mockCheckAllow.mockResolvedValue(true);
     mockIsDuplicate.mockResolvedValue(false);
     mockCreateLog.mockResolvedValue({ id: "log-queued" });
+    const harness = fakeDbHarness();
 
-    const result = await queueInboundEmail(fakeDb() as Parameters<typeof processInboundEmail>[0], {
+    const result = await queueInboundEmail(harness.db, {
       rawEmail: simpleEmail(),
       rawEmailPath: "/data/rawemails/test.eml",
       localPart: "alerts",
@@ -281,6 +293,7 @@ describe("queueInboundEmail", () => {
         finalStatus: "received",
       }),
     );
+    expect(harness.execute).toHaveBeenCalledOnce();
   });
 
   it("returns duplicate when the delivery-log insert loses a DB race", async () => {
@@ -289,8 +302,9 @@ describe("queueInboundEmail", () => {
     mockIsDuplicate.mockResolvedValue(false);
     mockCountRecentDeliveries.mockResolvedValue(0);
     mockCreateLog.mockResolvedValue(null);
+    const harness = fakeDbHarness();
 
-    const result = await queueInboundEmail(fakeDb() as Parameters<typeof processInboundEmail>[0], {
+    const result = await queueInboundEmail(harness.db, {
       rawEmail: simpleEmail(),
       rawEmailPath: "/data/rawemails/test.eml",
       localPart: "alerts",

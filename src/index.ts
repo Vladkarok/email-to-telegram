@@ -5,12 +5,14 @@ import { dirname, join } from "path";
 import { schedule } from "node-cron";
 import { parseStartupOptions } from "./cli.js";
 import { loadConfig } from "./config.js";
+import { buildRetryWorkerOptions, nextPollingStartOptions } from "./startup/runtime.js";
 import { createLogger, setLogger } from "./utils/logger.js";
 import { initDb, closeDb, getDb } from "./db/client.js";
 import { runMigrations } from "./db/migrate.js";
 import { createHttpServer, startHttpServer } from "./http/server.js";
 import { createBot } from "./telegram/bot.js";
 import { setApi, getApi } from "./telegram/api.js";
+import { markBotHealthy, markBotUnhealthy } from "./telegram/health.js";
 import { upsertAllowedUser } from "./db/repos/users.js";
 import { runRetryWorker } from "./email/retry.js";
 import { runCleanup } from "./storage/cleanup.js";
@@ -64,21 +66,31 @@ async function main() {
   startSessionSweep();
   const bot = createBot(config.telegramBotToken);
   setApi(bot.api);
+  markBotUnhealthy();
+  await bot.api.getMe();
+  markBotHealthy();
   let shuttingDown = false;
   let pollingRestartTimer: ReturnType<typeof setTimeout> | null = null;
   let isInitialPollingStart = true;
-  const startPolling = () => {
+  const startPolling = async () => {
     if (shuttingDown) return; // guard against already-queued setTimeout callbacks
-    const dropPendingUpdates = isInitialPollingStart;
-    isInitialPollingStart = false;
+    const pollingStart = nextPollingStartOptions(isInitialPollingStart);
+    isInitialPollingStart = pollingStart.nextIsInitialPollingStart;
 
-    bot.start({ drop_pending_updates: dropPendingUpdates }).catch((err: unknown) => {
+    try {
+      await bot.api.getMe();
+      markBotHealthy();
+      await bot.start({ drop_pending_updates: pollingStart.dropPendingUpdates });
+    } catch (err: unknown) {
+      markBotUnhealthy();
       if (shuttingDown) return;
       logger.error({ err }, "Bot polling error — restarting in 5s");
-      pollingRestartTimer = setTimeout(startPolling, 5000);
-    });
+      pollingRestartTimer = setTimeout(() => {
+        void startPolling();
+      }, 5000);
+    }
   };
-  startPolling();
+  void startPolling();
 
   // 5. Start HTTP server
   const app = await createHttpServer(config);
@@ -95,12 +107,7 @@ async function main() {
   const cronTasks = [
     // Retry failed deliveries every 5 minutes
     schedule("*/5 * * * *", () => {
-      runRetryWorker(getDb(), getApi(), {
-        attachmentDir: config.attachmentDir,
-        attachmentTtlHours: config.attachmentTtlHours,
-        publicBaseUrl: config.publicBaseUrl,
-        rawEmailDir: config.rawEmailDir,
-      }).catch((err: unknown) => {
+      runRetryWorker(getDb(), getApi(), buildRetryWorkerOptions(config)).catch((err: unknown) => {
         logger.error({ err }, "retry worker error");
       });
     }),
@@ -154,6 +161,7 @@ async function main() {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, "Shutting down...");
     shuttingDown = true;
+    markBotUnhealthy();
     if (pollingRestartTimer) {
       clearTimeout(pollingRestartTimer);
       pollingRestartTimer = null;

@@ -79,7 +79,15 @@ export async function listPendingRawEmails(rawEmailDir: string): Promise<Pending
     if (!entry.isDirectory()) continue;
 
     const dirPath = join(rawEmailDir, entry.name);
-    const files = await readdir(dirPath, { withFileTypes: true });
+    let files;
+    try {
+      files = await readdir(dirPath, { withFileTypes: true });
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        continue;
+      }
+      throw err;
+    }
     for (const file of files) {
       if (!file.isFile() || !file.name.endsWith(".eml.pending.json")) continue;
 
