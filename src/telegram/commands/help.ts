@@ -4,21 +4,22 @@ export async function helpHandler(ctx: Context): Promise<void> {
   await ctx.reply(
     `<b>📖 Help</b>
 
-Use /start to open the management menu where you can:
-• Browse chats where the bot is active
-• Create email aliases per chat
-• Manage allow rules (who can send mail)
-• Pause, resume, or delete aliases
-• Change render mode (plaintext / HTML / Markdown)
+<b>Menu</b>
+/start — open the management menu
 
-<b>Quick commands</b>
-/start — open management menu
+<b>Aliases</b>
+/newemail &lt;alias&gt; — create a new email alias
 /listemail — list all your aliases
+/pauseemail &lt;alias&gt; — pause an alias
+/resumeemail &lt;alias&gt; — resume a paused alias
+/deleteemail &lt;alias&gt; — delete an alias
+/settings &lt;alias&gt; — change render mode (plaintext / HTML / Markdown)
 
-<b>Allow rules (also manageable from the menu)</b>
+<b>Allow rules</b>
+Only senders matching an allow rule can deliver mail to an alias.
+/allow list &lt;alias&gt;
 /allow add &lt;alias&gt; &lt;email_or_domain&gt;
 /allow remove &lt;alias&gt; &lt;email_or_domain&gt;
-/allow list &lt;alias&gt;
 /help — show this message
 
 💡 After creating an alias, add at least one allow rule — otherwise all mail is rejected.`,
