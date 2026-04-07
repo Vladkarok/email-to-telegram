@@ -4,7 +4,7 @@ import type * as schema from "../db/schema.js";
 import { queueInboundEmail, deliverQueuedEmail } from "./pipeline.js";
 import { parseEmail } from "./parser.js";
 import { cleanEmailBody } from "./cleaner.js";
-import { renderEmail } from "./renderer.js";
+import { renderEmail, renderAttachmentFallback } from "./renderer.js";
 import { isImageContentType } from "./imageTypes.js";
 import { sendTelegramMessage, sendTelegramPhotos } from "../telegram/sender.js";
 import {
@@ -206,15 +206,17 @@ async function retryDelivery(
 
   const storedAttachments = await listAttachmentsByDeliveryLogId(db, deliveryLog.id);
   const attachmentLinks = await Promise.all(
-    storedAttachments.map(async (attachment) => {
-      const { token, expiresAt } = generateDownloadToken(attachment.id, opts.attachmentTtlHours);
-      await createAttachmentLink(db, attachment.id, token, expiresAt);
-      return {
-        filename: attachment.originalFilename ?? "attachment",
-        sizeBytes: attachment.sizeBytes ?? 0,
-        url: `${opts.publicBaseUrl}/dl/${token}`,
-      };
-    }),
+    storedAttachments
+      .filter((attachment) => !isImageContentType(attachment.contentType ?? ""))
+      .map(async (attachment) => {
+        const { token, expiresAt } = generateDownloadToken(attachment.id, opts.attachmentTtlHours);
+        await createAttachmentLink(db, attachment.id, token, expiresAt);
+        return {
+          filename: attachment.originalFilename ?? "attachment",
+          sizeBytes: attachment.sizeBytes ?? 0,
+          url: `${opts.publicBaseUrl}/dl/${token}`,
+        };
+      }),
   );
   const imageAttachments = storedAttachments
     .filter((attachment) => isImageContentType(attachment.contentType ?? ""))
@@ -252,12 +254,56 @@ async function retryDelivery(
     await updateDeliveryLogStatus(db, deliveryLog.id, "delivered");
 
     if (imageAttachments.length > 0) {
-      await sendTelegramPhotos(api, {
-        chatId: alias.chatId,
-        threadId: alias.messageThreadId ?? null,
-        replyToMessageId: result.telegramMessageId,
-        photos: imageAttachments,
-      });
+      try {
+        const photoResult = await sendTelegramPhotos(api, {
+          chatId: alias.chatId,
+          threadId: alias.messageThreadId ?? null,
+          replyToMessageId: result.telegramMessageId,
+          photos: imageAttachments,
+        });
+
+        if (photoResult.failedPhotos.length > 0) {
+          const failedPaths = new Set(photoResult.failedPhotos.map((photo) => photo.storagePath));
+          const fallbackLinks = await Promise.all(
+            storedAttachments
+              .filter(
+                (attachment) =>
+                  isImageContentType(attachment.contentType ?? "") &&
+                  failedPaths.has(attachment.storagePath),
+              )
+              .map(async (attachment) => {
+                const { token, expiresAt } = generateDownloadToken(
+                  attachment.id,
+                  opts.attachmentTtlHours,
+                );
+                await createAttachmentLink(db, attachment.id, token, expiresAt);
+                return {
+                  filename: attachment.originalFilename ?? "attachment",
+                  sizeBytes: attachment.sizeBytes ?? 0,
+                  url: `${opts.publicBaseUrl}/dl/${token}`,
+                };
+              }),
+          );
+
+          const fallbackResult = await sendTelegramMessage(api, {
+            chatId: alias.chatId,
+            threadId: alias.messageThreadId ?? null,
+            text: renderAttachmentFallback(fallbackLinks),
+          });
+
+          if (!fallbackResult.ok) {
+            log.error(
+              { deliveryLogId: deliveryLog.id, error: fallbackResult.error },
+              "retry worker: image attachment fallback delivery failed",
+            );
+          }
+        }
+      } catch (err: unknown) {
+        log.error(
+          { err, deliveryLogId: deliveryLog.id },
+          "retry worker: image attachment secondary delivery failed",
+        );
+      }
     }
   } else if (newAttemptNo >= MAX_RETRIES) {
     log.warn(

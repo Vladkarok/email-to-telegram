@@ -44,6 +44,21 @@ describe("sendTelegramMessage", () => {
     );
   });
 
+  it("disables Telegram link previews for delivery messages", async () => {
+    const api = makeApi(() => Promise.resolve({ message_id: 42 }));
+    await sendTelegramMessage(api, {
+      chatId: 100n,
+      threadId: null,
+      text: "https://example.com/file",
+      parseMode: "HTML",
+    });
+    expect(api.sendMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ link_preview_options: { is_disabled: true } }),
+    );
+  });
+
   it("retries on failure and succeeds on second attempt", async () => {
     let calls = 0;
     const api = makeApi(() => {

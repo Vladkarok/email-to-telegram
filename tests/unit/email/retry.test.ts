@@ -101,7 +101,7 @@ describe("runRetryWorker", () => {
     mockUpdateLogStatus.mockResolvedValue(undefined);
     mockReadRawEmail.mockResolvedValue(RAW_EMAIL);
     mockSendTelegramMessage.mockResolvedValue({ ok: true, telegramMessageId: 42 });
-    mockSendTelegramPhotos.mockResolvedValue(undefined);
+    mockSendTelegramPhotos.mockResolvedValue({ ok: true, failedPhotos: [] });
     mockListAttachments.mockResolvedValue([]);
     mockCreateAttachmentLink.mockResolvedValue(undefined);
     mockFindDeliveryLogByRawEmailPath.mockResolvedValue(null);
@@ -257,6 +257,112 @@ describe("runRetryWorker", () => {
     );
     const [, opts] = mockSendTelegramMessage.mock.calls[0] as [unknown, { text: string }];
     expect(opts.text).toContain("/dl/");
+  });
+
+  it("does not rebuild download links for image attachments that are resent as photos", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockListAttachments.mockResolvedValue([
+      {
+        id: "att-image",
+        originalFilename: "photo.png",
+        sizeBytes: 111,
+        storagePath: "/data/attachments/log-uuid/photo.png",
+        contentType: "image/png",
+      },
+      {
+        id: "att-pdf",
+        originalFilename: "report.pdf",
+        sizeBytes: 123,
+        storagePath: "/data/attachments/log-uuid/report.pdf",
+        contentType: "application/pdf",
+      },
+    ]);
+
+    await runRetryWorker(fakeDb, fakeApi, {
+      attachmentTtlHours: 48,
+      publicBaseUrl: "https://mail.example.com",
+    });
+
+    expect(mockCreateAttachmentLink).toHaveBeenCalledTimes(1);
+    expect(mockCreateAttachmentLink).toHaveBeenCalledWith(
+      fakeDb,
+      "att-pdf",
+      expect.any(String),
+      expect.any(Date),
+    );
+    const [, opts] = mockSendTelegramMessage.mock.calls[0] as [unknown, { text: string }];
+    expect(opts.text).toContain("report.pdf");
+    expect(opts.text).toContain("/dl/");
+    expect(opts.text).not.toContain("photo.png");
+    expect(mockSendTelegramPhotos).toHaveBeenCalledOnce();
+  });
+
+  it("sends fallback download links when retry photo upload fails", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockListAttachments.mockResolvedValue([
+      {
+        id: "att-image",
+        originalFilename: "photo.png",
+        sizeBytes: 111,
+        storagePath: "/data/attachments/log-uuid/photo.png",
+        contentType: "image/png",
+      },
+    ]);
+    mockSendTelegramMessage
+      .mockResolvedValueOnce({ ok: true, telegramMessageId: 42 })
+      .mockResolvedValueOnce({ ok: true, telegramMessageId: 43 });
+    mockSendTelegramPhotos.mockImplementationOnce((_api, opts: { photos: unknown[] }) =>
+      Promise.resolve({
+        ok: false,
+        failedPhotos: opts.photos,
+      }),
+    );
+
+    await runRetryWorker(fakeDb, fakeApi, {
+      attachmentTtlHours: 48,
+      publicBaseUrl: "https://mail.example.com",
+    });
+
+    expect(mockSendTelegramMessage).toHaveBeenCalledTimes(2);
+    const [, fallbackOpts] = mockSendTelegramMessage.mock.calls[1] as [unknown, { text: string }];
+    expect(fallbackOpts.text).toContain("photo.png");
+    expect(fallbackOpts.text).toContain("/dl/");
+    expect(mockCreateAttachmentLink).toHaveBeenCalledTimes(1);
+    expect(mockCreateAttachmentLink).toHaveBeenCalledWith(
+      fakeDb,
+      "att-image",
+      expect.any(String),
+      expect.any(Date),
+    );
+  });
+
+  it("keeps retry delivery marked delivered when image fallback link creation fails", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockListAttachments.mockResolvedValue([
+      {
+        id: "att-image",
+        originalFilename: "photo.png",
+        sizeBytes: 111,
+        storagePath: "/data/attachments/log-uuid/photo.png",
+        contentType: "image/png",
+      },
+    ]);
+    mockSendTelegramMessage.mockResolvedValueOnce({ ok: true, telegramMessageId: 42 });
+    mockSendTelegramPhotos.mockImplementationOnce((_api, opts: { photos: unknown[] }) =>
+      Promise.resolve({
+        ok: false,
+        failedPhotos: opts.photos,
+      }),
+    );
+    mockCreateAttachmentLink.mockRejectedValueOnce(new Error("db exploded"));
+
+    await runRetryWorker(fakeDb, fakeApi, {
+      attachmentTtlHours: 48,
+      publicBaseUrl: "https://mail.example.com",
+    });
+
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "delivered");
+    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
   });
 
   it("recovers pending raw emails by queueing and delivering them", async () => {

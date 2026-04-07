@@ -7,7 +7,7 @@ import type * as schema from "../db/schema.js";
 import type { EmailAddress, DeliveryLog } from "../db/schema.js";
 import { parseEmail } from "./parser.js";
 import { cleanEmailBody } from "./cleaner.js";
-import { renderEmail, type AttachmentLink } from "./renderer.js";
+import { renderEmail, renderAttachmentFallback, type AttachmentLink } from "./renderer.js";
 import { isImageContentType } from "./imageTypes.js";
 import type { PhotoItem } from "../telegram/sender.js";
 import { isDuplicate } from "./dedup.js";
@@ -67,6 +67,11 @@ export interface QueuedInboundEmail {
 export type QueueInboundResult =
   | { queued: true; job: QueuedInboundEmail }
   | { queued: false; result: PipelineResult };
+
+interface StoredImageAttachment extends PhotoItem {
+  attachmentId: string;
+  sizeBytes: number;
+}
 
 function getPipelineLogger(correlationId?: string) {
   return correlationId ? getLogger().child({ correlationId }) : getLogger();
@@ -178,9 +183,9 @@ export async function deliverQueuedEmail(
       parsed.textBody = cleanEmailBody(parsed.textBody);
     }
 
-    // 7. Save attachments — images go to Telegram directly, others become download links
+    // 7. Save attachments — images go to Telegram directly, non-images become download links
     const attachmentLinks: AttachmentLink[] = [];
-    const imageAttachments: PhotoItem[] = [];
+    const imageAttachments: StoredImageAttachment[] = [];
 
     for (const att of parsed.attachments) {
       try {
@@ -197,16 +202,21 @@ export async function deliverQueuedEmail(
           storagePath,
         });
 
-        const { token, expiresAt } = generateDownloadToken(dbAtt.id, attachmentTtlHours);
-        await createAttachmentLink(db, dbAtt.id, token, expiresAt);
-        attachmentLinks.push({
-          filename: att.filename,
-          sizeBytes: att.sizeBytes,
-          url: `${publicBaseUrl}/dl/${token}`,
-        });
-
         if (isImageContentType(att.contentType)) {
-          imageAttachments.push({ storagePath, filename: att.filename });
+          imageAttachments.push({
+            attachmentId: dbAtt.id,
+            storagePath,
+            filename: att.filename,
+            sizeBytes: att.sizeBytes,
+          });
+        } else {
+          const { token, expiresAt } = generateDownloadToken(dbAtt.id, attachmentTtlHours);
+          await createAttachmentLink(db, dbAtt.id, token, expiresAt);
+          attachmentLinks.push({
+            filename: att.filename,
+            sizeBytes: att.sizeBytes,
+            url: `${publicBaseUrl}/dl/${token}`,
+          });
         }
       } catch (err: unknown) {
         log.error({ err, filename: att.filename }, "failed to store attachment");
@@ -251,12 +261,55 @@ export async function deliverQueuedEmail(
 
       // Send image attachments as Telegram photos (replied to the text message)
       if (imageAttachments.length > 0) {
-        await sendTelegramPhotos(api, {
-          chatId: alias.chatId,
-          threadId: alias.messageThreadId ?? null,
-          replyToMessageId: result.telegramMessageId,
-          photos: imageAttachments,
-        });
+        try {
+          const photoResult = await sendTelegramPhotos(api, {
+            chatId: alias.chatId,
+            threadId: alias.messageThreadId ?? null,
+            replyToMessageId: result.telegramMessageId,
+            photos: imageAttachments.map(({ storagePath, filename }) => ({
+              storagePath,
+              filename,
+            })),
+          });
+
+          if (photoResult.failedPhotos.length > 0) {
+            const failedPaths = new Set(photoResult.failedPhotos.map((photo) => photo.storagePath));
+            const fallbackLinks = await Promise.all(
+              imageAttachments
+                .filter((attachment) => failedPaths.has(attachment.storagePath))
+                .map(async (attachment) => {
+                  const { token, expiresAt } = generateDownloadToken(
+                    attachment.attachmentId,
+                    attachmentTtlHours,
+                  );
+                  await createAttachmentLink(db, attachment.attachmentId, token, expiresAt);
+                  return {
+                    filename: attachment.filename,
+                    sizeBytes: attachment.sizeBytes,
+                    url: `${publicBaseUrl}/dl/${token}`,
+                  };
+                }),
+            );
+
+            const fallbackResult = await sendTelegramMessage(api, {
+              chatId: alias.chatId,
+              threadId: alias.messageThreadId ?? null,
+              text: renderAttachmentFallback(fallbackLinks),
+            });
+
+            if (!fallbackResult.ok) {
+              log.error(
+                { deliveryLogId: deliveryLog.id, error: fallbackResult.error },
+                "image attachment fallback delivery failed",
+              );
+            }
+          }
+        } catch (err: unknown) {
+          log.error(
+            { err, deliveryLogId: deliveryLog.id },
+            "image attachment secondary delivery failed",
+          );
+        }
       }
     }
 

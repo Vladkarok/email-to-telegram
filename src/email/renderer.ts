@@ -46,6 +46,14 @@ export function renderEmail(
   return clampToMaxLen(parts);
 }
 
+export function renderAttachmentFallback(
+  links: AttachmentLink[],
+  intro = "Some image attachments could not be uploaded to Telegram. Download them here:",
+): string {
+  if (links.length === 0) return intro;
+  return [intro, "", "Attachments:", ...links.map((a) => `${a.filename}: ${a.url}`)].join("\n");
+}
+
 function buildAttachmentsSection(links: AttachmentLink[], mode: RenderMode): string {
   if (links.length === 0) return "";
   const items = links.map((a) => {

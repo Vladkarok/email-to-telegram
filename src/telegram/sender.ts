@@ -32,8 +32,19 @@ export interface SendPhotosOptions {
   photos: PhotoItem[];
 }
 
+export interface SendPhotosResult {
+  ok: boolean;
+  failedPhotos: PhotoItem[];
+}
+
 export async function sendTelegramMessage(api: Api, opts: SendOptions): Promise<SendResult> {
-  const other: { parse_mode?: ParseMode; message_thread_id?: number } = {};
+  const other: {
+    parse_mode?: ParseMode;
+    message_thread_id?: number;
+    link_preview_options: { is_disabled: true };
+  } = {
+    link_preview_options: { is_disabled: true },
+  };
   if (opts.parseMode) {
     other.parse_mode = opts.parseMode;
   }
@@ -59,9 +70,13 @@ export async function sendTelegramMessage(api: Api, opts: SendOptions): Promise<
   return { ok: false, error: lastError };
 }
 
-export async function sendTelegramPhotos(api: Api, opts: SendPhotosOptions): Promise<void> {
+export async function sendTelegramPhotos(
+  api: Api,
+  opts: SendPhotosOptions,
+): Promise<SendPhotosResult> {
   const log = getLogger();
   const chatId = Number(opts.chatId);
+  const failedPhotos: PhotoItem[] = [];
 
   for (let i = 0; i < opts.photos.length; i += MEDIA_GROUP_MAX) {
     const chunk = opts.photos.slice(i, i + MEDIA_GROUP_MAX);
@@ -91,8 +106,14 @@ export async function sendTelegramPhotos(api: Api, opts: SendPhotosOptions): Pro
       }
     } catch (err: unknown) {
       log.error({ err, chatId, chunk: chunk.map((p) => p.filename) }, "sendPhotos failed");
+      failedPhotos.push(...chunk);
     }
   }
+
+  return {
+    ok: failedPhotos.length === 0,
+    failedPhotos,
+  };
 }
 
 function sleep(ms: number): Promise<void> {
