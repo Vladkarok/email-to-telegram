@@ -12,7 +12,11 @@ import type { PhotoItem } from "../telegram/sender.js";
 import { isDuplicate } from "./dedup.js";
 import { findAliasByLocalPart } from "../db/repos/aliases.js";
 import { checkAllowRule } from "../db/repos/allowRules.js";
-import { createDeliveryLog, updateDeliveryLogStatus } from "../db/repos/deliveryLogs.js";
+import {
+  countRecentDeliveriesByAlias,
+  createDeliveryLog,
+  updateDeliveryLogStatus,
+} from "../db/repos/deliveryLogs.js";
 import { insertDeliveryAttempt } from "../db/repos/deliveryAttempts.js";
 import { createAttachment } from "../db/repos/attachments.js";
 import { createAttachmentLink } from "../db/repos/attachmentLinks.js";
@@ -98,6 +102,15 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
   });
   if (dup) {
     return { queued: false, result: { ok: false, reason: "duplicate" } };
+  }
+
+  const recentDeliveries = await countRecentDeliveriesByAlias(
+    db,
+    alias.id,
+    new Date(Date.now() - 60 * 60 * 1000),
+  );
+  if (recentDeliveries >= alias.maxEmailsHour) {
+    return { queued: false, result: { ok: false, reason: "rate_limited" } };
   }
 
   // 5. Create delivery log — null means a concurrent pipeline beat us (race dedup)

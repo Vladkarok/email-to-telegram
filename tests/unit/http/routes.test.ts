@@ -23,8 +23,12 @@ vi.mock("../../../src/db/repos/aliases.js", () => ({
 }));
 
 const mockCheckAllow = vi.fn();
+const mockCountRecentDeliveries = vi.fn();
 vi.mock("../../../src/db/repos/allowRules.js", () => ({
   checkAllowRule: (...args: unknown[]): unknown => mockCheckAllow(...args),
+}));
+vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
+  countRecentDeliveriesByAlias: (...args: unknown[]): unknown => mockCountRecentDeliveries(...args),
 }));
 
 const WORKER_SECRET = "test-worker-secret-32chars-abcde";
@@ -80,6 +84,8 @@ describe("POST /inbound/preflight", () => {
     process.env["WORKER_SECRET"] = WORKER_SECRET;
     mockFindAlias.mockReset();
     mockCheckAllow.mockReset();
+    mockCountRecentDeliveries.mockReset();
+    mockCountRecentDeliveries.mockResolvedValue(0);
   });
 
   afterEach(() => {
@@ -190,6 +196,37 @@ describe("POST /inbound/preflight", () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ accept: true });
+  });
+
+  it("returns accept:false when alias hourly cap has been reached", async () => {
+    mockFindAlias.mockResolvedValue({
+      id: "uuid-1",
+      status: "active",
+      localPart: "alerts",
+      maxEmailsHour: 2,
+    });
+    mockCheckAllow.mockResolvedValue(true);
+    mockCountRecentDeliveries.mockResolvedValue(2);
+
+    const body = Buffer.from(
+      JSON.stringify({ localPart: "alerts", envelopeFrom: "allowed@example.com" }),
+    );
+    const { signature, timestamp } = signWorkerRequest(body);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/preflight",
+      headers: {
+        "content-type": "application/json",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+      },
+      payload: body,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ accept: false });
   });
 });
 

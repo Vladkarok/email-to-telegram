@@ -3,6 +3,7 @@ import { getDb } from "../../db/client.js";
 import { findAliasByLocalPart } from "../../db/repos/aliases.js";
 import { addAllowRule, removeAllowRule, listAllowRules } from "../../db/repos/allowRules.js";
 import { canManageAlias } from "../authorization.js";
+import { parseAllowValue } from "../allowValue.js";
 
 const USAGE = `Usage:
   /allow add <alias> <email_or_domain>
@@ -13,10 +14,6 @@ Examples:
   /allow add alerts-ab12cd github.com
   /allow add alerts-ab12cd user@example.com
   /allow list alerts-ab12cd`;
-
-function detectMatchType(value: string): "exact_email" | "domain" {
-  return value.includes("@") ? "exact_email" : "domain";
-}
 
 export async function allowHandler(ctx: CommandContext<Context>): Promise<void> {
   const parts = ctx.match.trim().split(/\s+/).filter(Boolean);
@@ -68,14 +65,21 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
   }
 
   if (subcommand === "add") {
-    const matchType = detectMatchType(value);
+    const parsedValue = parseAllowValue(value);
+    if (!parsedValue) {
+      await ctx.reply(
+        "❌ Invalid format. Use a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).",
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
     await addAllowRule(db, {
       emailAddressId: alias.id,
-      matchType,
-      matchValue: value.toLowerCase(),
+      matchType: parsedValue.matchType,
+      matchValue: parsedValue.normalized,
     });
     await ctx.reply(
-      `✅ Added allow rule for <code>${aliasName}</code>: ${matchType === "domain" ? "🌐" : "📧"} ${value}`,
+      `✅ Added allow rule for <code>${aliasName}</code>: ${parsedValue.matchType === "domain" ? "🌐" : "📧"} ${parsedValue.normalized}`,
       { parse_mode: "HTML" },
     );
     return;

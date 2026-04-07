@@ -19,6 +19,7 @@ import { findChatById } from "../db/repos/chats.js";
 import { addAllowRule, findAllowRuleById, removeAllowRule } from "../db/repos/allowRules.js";
 import { getPending, clearPending, setPending } from "./session.js";
 import { canManageChat, canManageAlias } from "./authorization.js";
+import { parseAllowValue } from "./allowValue.js";
 import { getLogger } from "../utils/logger.js";
 import { InlineKeyboard } from "grammy";
 
@@ -106,22 +107,21 @@ export function createBot(token: string): Bot {
         return;
       }
       clearPending(ctx.from.id);
-      const value = text.trim().toLowerCase();
-      if (!isValidAllowValue(value)) {
+      const parsedValue = parseAllowValue(text);
+      if (!parsedValue) {
         await ctx.reply(
           "❌ Invalid format. Use a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).",
           { parse_mode: "HTML" },
         );
         return;
       }
-      const matchType = value.includes("@") ? "exact_email" : "domain";
       await addAllowRule(getDb(), {
         emailAddressId: pending.aliasId,
-        matchType,
-        matchValue: value,
+        matchType: parsedValue.matchType,
+        matchValue: parsedValue.normalized,
       });
-      const icon = matchType === "domain" ? "🌐" : "📧";
-      await ctx.reply(`✅ Added rule: ${icon} <code>${escapeHtml(value)}</code>`, {
+      const icon = parsedValue.matchType === "domain" ? "🌐" : "📧";
+      await ctx.reply(`✅ Added rule: ${icon} <code>${escapeHtml(parsedValue.normalized)}</code>`, {
         parse_mode: "HTML",
       });
       await sendAllowRulesMenu(ctx, getDb(), pending.aliasId);
@@ -339,11 +339,4 @@ export function createBot(token: string): Bot {
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function isValidAllowValue(value: string): boolean {
-  if (value.includes("@")) {
-    return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value);
-  }
-  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(value);
 }

@@ -37,6 +37,7 @@ const mockCheckAllow = vi.fn();
 const mockIsDuplicate = vi.fn();
 const mockCreateLog = vi.fn();
 const mockUpdateLogStatus = vi.fn();
+const mockCountRecentDeliveries = vi.fn();
 const mockInsertAttempt = vi.fn();
 const mockSendTelegram = vi.fn();
 
@@ -52,6 +53,7 @@ vi.mock("../../../src/email/dedup.js", () => ({
 vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
   createDeliveryLog: (...a: unknown[]): unknown => mockCreateLog(...a),
   updateDeliveryLogStatus: (...a: unknown[]): unknown => mockUpdateLogStatus(...a),
+  countRecentDeliveriesByAlias: (...a: unknown[]): unknown => mockCountRecentDeliveries(...a),
 }));
 vi.mock("../../../src/db/repos/deliveryAttempts.js", () => ({
   insertDeliveryAttempt: (...a: unknown[]): unknown => mockInsertAttempt(...a),
@@ -96,6 +98,7 @@ const baseAlias = {
   messageThreadId: null as bigint | null,
   status: "active",
   renderMode: "plaintext",
+  maxEmailsHour: 60,
 };
 
 const fakeDb = {} as Parameters<typeof processInboundEmail>[0];
@@ -114,7 +117,10 @@ function setupHappyPath(logId = "log-1") {
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe("pipeline integration matrix", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCountRecentDeliveries.mockResolvedValue(0);
+  });
 
   // ── Delivery scenarios ──────────────────────────────────────────────────
 

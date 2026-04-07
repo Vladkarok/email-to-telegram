@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { eq, and, isNotNull, inArray, lt } from "drizzle-orm";
+import { eq, and, isNotNull, inArray, lt, count, gte } from "drizzle-orm";
 import { deliveryLogs, type DeliveryLog, type NewDeliveryLog } from "../schema.js";
 import type * as schema from "../schema.js";
 
@@ -90,4 +90,18 @@ export async function claimDeliveryLogForRetry(
     .where(and(eq(deliveryLogs.id, id), inArray(deliveryLogs.finalStatus, [...expectedStatuses])))
     .returning({ id: deliveryLogs.id });
   return rows.length > 0;
+}
+
+export async function countRecentDeliveriesByAlias(
+  db: Db,
+  aliasId: string,
+  receivedSince: Date,
+): Promise<number> {
+  const [row] = await db
+    .select({ n: count() })
+    .from(deliveryLogs)
+    .where(
+      and(eq(deliveryLogs.emailAddressId, aliasId), gte(deliveryLogs.receivedAt, receivedSince)),
+    );
+  return Number(row?.n ?? 0);
 }

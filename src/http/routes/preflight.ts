@@ -3,6 +3,7 @@ import { verifyWorkerRequest } from "../../utils/workerAuth.js";
 import { getDb } from "../../db/client.js";
 import { findAliasByLocalPart } from "../../db/repos/aliases.js";
 import { checkAllowRule } from "../../db/repos/allowRules.js";
+import { countRecentDeliveriesByAlias } from "../../db/repos/deliveryLogs.js";
 
 export function preflightRoute(app: FastifyInstance): void {
   app.post(
@@ -47,6 +48,16 @@ export function preflightRoute(app: FastifyInstance): void {
           await reply.send({ accept: false });
           return;
         }
+      }
+
+      const recentDeliveries = await countRecentDeliveriesByAlias(
+        getDb(),
+        alias.id,
+        new Date(Date.now() - 60 * 60 * 1000),
+      );
+      if (recentDeliveries >= alias.maxEmailsHour) {
+        await reply.send({ accept: false });
+        return;
       }
 
       await reply.send({ accept: true });

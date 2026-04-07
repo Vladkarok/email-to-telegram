@@ -81,6 +81,15 @@ describe("/allow command", () => {
       expect(ctx.reply).toHaveBeenCalledOnce();
       expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/not found/i);
     });
+
+    it("rejects invalid allow values instead of storing them", async () => {
+      const ctx = createMockCtx({ commandMatch: "add alerts-ab12cd nope@@example" });
+
+      await allowHandler(ctx);
+
+      expect(mockAddAllowRule).not.toHaveBeenCalled();
+      expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/invalid format/i);
+    });
   });
 
   describe("remove subcommand", () => {

@@ -14,6 +14,7 @@ const mockCheckAllow = vi.fn();
 const mockIsDuplicate = vi.fn();
 const mockCreateLog = vi.fn();
 const mockUpdateLogStatus = vi.fn();
+const mockCountRecentDeliveries = vi.fn();
 
 vi.mock("../../../src/db/repos/aliases.js", () => ({
   findAliasByLocalPart: (...args: unknown[]): unknown => mockFindAlias(...args),
@@ -27,6 +28,7 @@ vi.mock("../../../src/email/dedup.js", () => ({
 vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
   createDeliveryLog: (...args: unknown[]): unknown => mockCreateLog(...args),
   updateDeliveryLogStatus: (...args: unknown[]): unknown => mockUpdateLogStatus(...args),
+  countRecentDeliveriesByAlias: (...args: unknown[]): unknown => mockCountRecentDeliveries(...args),
 }));
 vi.mock("../../../src/db/repos/deliveryAttempts.js", () => ({
   insertDeliveryAttempt: vi.fn().mockResolvedValue(undefined),
@@ -66,11 +68,13 @@ const activeAlias = {
   messageThreadId: null,
   status: "active",
   renderMode: "plaintext",
+  maxEmailsHour: 60,
 };
 
 describe("processInboundEmail", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mockCountRecentDeliveries.mockResolvedValue(0);
   });
 
   it("returns sender_not_allowed when envelopeFrom from PipelineInput is blocked", async () => {
@@ -136,6 +140,27 @@ describe("processInboundEmail", () => {
       },
     );
     expect(result).toEqual({ ok: false, reason: "duplicate" });
+  });
+
+  it("returns rate_limited when alias hourly cap is reached", async () => {
+    mockFindAlias.mockResolvedValue(activeAlias);
+    mockCheckAllow.mockResolvedValue(true);
+    mockIsDuplicate.mockResolvedValue(false);
+    mockCountRecentDeliveries.mockResolvedValue(60);
+
+    const result = await processInboundEmail(
+      {} as Parameters<typeof processInboundEmail>[0],
+      null,
+      {
+        rawEmail: simpleEmail(),
+        localPart: "alerts",
+        envelopeFrom: "sender@example.com",
+        ...PIPELINE_CONFIG,
+      },
+    );
+
+    expect(result).toEqual({ ok: false, reason: "rate_limited" });
+    expect(mockCreateLog).not.toHaveBeenCalled();
   });
 
   it("persists the authoritative envelopeFrom in the delivery log", async () => {
