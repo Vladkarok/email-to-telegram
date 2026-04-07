@@ -19,6 +19,9 @@ export interface DeliveryViewLinkWithLog {
     headerFrom: string | null;
     subject: string | null;
     receivedAt: Date;
+    rawEmailEncryptionMode: string | null;
+    rawEmailWrappedDek: string | null;
+    rawEmailKekKeyId: string | null;
   };
 }
 
@@ -50,6 +53,9 @@ export async function findDeliveryViewLinkByTokenHash(
       headerFrom: deliveryLogs.headerFrom,
       subject: deliveryLogs.subject,
       receivedAt: deliveryLogs.receivedAt,
+      rawEmailEncryptionMode: deliveryLogs.rawEmailEncryptionMode,
+      rawEmailWrappedDek: deliveryLogs.rawEmailWrappedDek,
+      rawEmailKekKeyId: deliveryLogs.rawEmailKekKeyId,
     })
     .from(deliveryViewLinks)
     .innerJoin(deliveryLogs, eq(deliveryViewLinks.deliveryLogId, deliveryLogs.id))
@@ -71,6 +77,9 @@ export async function findDeliveryViewLinkByTokenHash(
       headerFrom: row.headerFrom,
       subject: row.subject,
       receivedAt: row.receivedAt,
+      rawEmailEncryptionMode: row.rawEmailEncryptionMode,
+      rawEmailWrappedDek: row.rawEmailWrappedDek,
+      rawEmailKekKeyId: row.rawEmailKekKeyId,
     },
   };
 }

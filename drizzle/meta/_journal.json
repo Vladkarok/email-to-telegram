@@ -43,6 +43,13 @@
       "when": 1775565700482,
       "tag": "0005_brief_zemo",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1775566372255,
+      "tag": "0006_bumpy_katie_power",
+      "breakpoints": true
     }
   ]
 }

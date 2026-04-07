@@ -62,7 +62,11 @@ export function deliveryViewRoute(
 
       let rawEmail: Buffer;
       try {
-        rawEmail = await readRawEmail(link.deliveryLog.rawEmailPath);
+        rawEmail = await readRawEmail(link.deliveryLog.rawEmailPath, {
+          rawEmailEncryptionMode: link.deliveryLog.rawEmailEncryptionMode,
+          rawEmailWrappedDek: link.deliveryLog.rawEmailWrappedDek,
+          rawEmailKekKeyId: link.deliveryLog.rawEmailKekKeyId,
+        });
       } catch (err: unknown) {
         if ((err as NodeJS.ErrnoException).code === "ENOENT") {
           await sendHtml(

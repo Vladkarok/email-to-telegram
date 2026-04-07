@@ -78,11 +78,14 @@ export function rawRoute(
 
       // Persist the raw email and create its delivery log before acknowledging.
       // After 202, the VPS must already have a durable record for retry/recovery.
-      await writeRawEmail(storedPath, body);
+      const rawEmailStorage = await writeRawEmail(storedPath, body);
       try {
         await writePendingRawEmailMeta(storedPath, {
           localPart,
           envelopeFrom: envelopeFrom ?? null,
+          rawEmailEncryptionMode: rawEmailStorage.encryptionMode,
+          rawEmailWrappedDek: rawEmailStorage.wrappedDek,
+          rawEmailKekKeyId: rawEmailStorage.kekKeyId,
           correlationId: req.id,
         });
       } catch (err: unknown) {
@@ -96,6 +99,7 @@ export function rawRoute(
         localPart,
         envelopeFrom,
         correlationId: req.id,
+        rawEmailEncryption: rawEmailStorage,
         publicBaseUrl: config.publicBaseUrl,
         attachmentDir: config.attachmentDir,
         attachmentTtlHours: config.attachmentTtlHours,

@@ -91,6 +91,9 @@ const fakeLog = {
   emailAddressId: "alias-uuid",
   rawEmailPath: "/data/rawemails/2026-01-01/test.eml",
   receivedAt: new Date("2026-04-07T12:00:00.000Z"),
+  rawEmailEncryptionMode: "none",
+  rawEmailWrappedDek: null,
+  rawEmailKekKeyId: null,
 };
 
 const { runRetryWorker } = await import("../../../src/email/retry.js");
@@ -144,7 +147,10 @@ describe("runRetryWorker", () => {
     await runRetryWorker(fakeDb, fakeApi);
 
     expect(mockClaimLog).toHaveBeenCalledWith(fakeDb, fakeLog.id);
-    expect(mockReadRawEmail).toHaveBeenCalledWith(fakeLog.rawEmailPath);
+    expect(mockReadRawEmail).toHaveBeenCalledWith(
+      fakeLog.rawEmailPath,
+      expect.objectContaining({ rawEmailEncryptionMode: "none" }),
+    );
     expect(mockSendTelegramMessage).toHaveBeenCalledOnce();
     expect(mockInsertAttempt).toHaveBeenCalledWith(
       fakeDb,
@@ -432,6 +438,9 @@ describe("runRetryWorker", () => {
         rawEmailPath: fakeLog.rawEmailPath,
         localPart: "alerts",
         envelopeFrom: "sender@example.com",
+        rawEmailEncryptionMode: "none",
+        rawEmailWrappedDek: null,
+        rawEmailKekKeyId: null,
         correlationId: "req-1",
         createdAt: "2026-01-01T00:00:00.000Z",
       },
@@ -444,15 +453,21 @@ describe("runRetryWorker", () => {
       rawEmailDir: "/data/rawemails",
     });
 
-    expect(mockQueueInboundEmail).toHaveBeenCalledWith(
-      fakeDb,
-      expect.objectContaining({
-        rawEmail: RAW_EMAIL,
-        rawEmailPath: fakeLog.rawEmailPath,
-        localPart: "alerts",
-        envelopeFrom: "sender@example.com",
-      }),
-    );
+    const [, queuedInput] = mockQueueInboundEmail.mock.calls[0] as [
+      unknown,
+      {
+        rawEmail: Buffer;
+        rawEmailPath: string;
+        localPart: string;
+        envelopeFrom: string;
+        rawEmailEncryption: { encryptionMode: string };
+      },
+    ];
+    expect(queuedInput.rawEmail).toEqual(RAW_EMAIL);
+    expect(queuedInput.rawEmailPath).toBe(fakeLog.rawEmailPath);
+    expect(queuedInput.localPart).toBe("alerts");
+    expect(queuedInput.envelopeFrom).toBe("sender@example.com");
+    expect(queuedInput.rawEmailEncryption).toMatchObject({ encryptionMode: "none" });
     expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledWith(fakeLog.rawEmailPath);
     expect(mockDeliverQueuedEmail).toHaveBeenCalledOnce();
   });
@@ -464,6 +479,9 @@ describe("runRetryWorker", () => {
         rawEmailPath: fakeLog.rawEmailPath,
         localPart: "alerts",
         envelopeFrom: "sender@example.com",
+        rawEmailEncryptionMode: "none",
+        rawEmailWrappedDek: null,
+        rawEmailKekKeyId: null,
         createdAt: "2026-01-01T00:00:00.000Z",
       },
     ]);
@@ -485,6 +503,9 @@ describe("runRetryWorker", () => {
         rawEmailPath: fakeLog.rawEmailPath,
         localPart: "alerts",
         envelopeFrom: "blocked@example.com",
+        rawEmailEncryptionMode: "none",
+        rawEmailWrappedDek: null,
+        rawEmailKekKeyId: null,
         createdAt: "2026-01-01T00:00:00.000Z",
       },
     ]);
@@ -509,6 +530,9 @@ describe("runRetryWorker", () => {
         rawEmailPath: fakeLog.rawEmailPath,
         localPart: "alerts",
         envelopeFrom: "sender@example.com",
+        rawEmailEncryptionMode: "none",
+        rawEmailWrappedDek: null,
+        rawEmailKekKeyId: null,
         createdAt: "2026-01-01T00:00:00.000Z",
       },
     ]);

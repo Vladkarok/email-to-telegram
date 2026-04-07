@@ -146,6 +146,10 @@ describe("GET /dl/:token", () => {
         sizeBytes: 100,
       },
     });
+    mockOpenAttachment.mockResolvedValue({
+      stream: Readable.from(Buffer.from("doc")),
+      size: 3,
+    });
     mockMarkDownloaded.mockResolvedValue(false); // another request beat us
 
     const app = buildApp();
@@ -182,5 +186,6 @@ describe("GET /dl/:token", () => {
 
     expect(res.statusCode).toBe(500);
     expect(res.json()).toEqual({ error: "download failed" });
+    expect(mockMarkDownloaded).not.toHaveBeenCalled();
   });
 });

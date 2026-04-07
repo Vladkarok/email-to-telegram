@@ -13,6 +13,9 @@ export interface PendingRawEmailMeta {
   rawEmailPath: string;
   localPart: string;
   envelopeFrom: string | null;
+  rawEmailEncryptionMode?: string | null;
+  rawEmailWrappedDek?: string | null;
+  rawEmailKekKeyId?: string | null;
   correlationId?: string;
   createdAt: string;
 }
@@ -40,7 +43,21 @@ export async function openAttachmentStream(attachment: {
     return { stream, size };
   }
 
-  const encrypted = await readFile(attachment.storagePath);
+  const plaintext = await readAttachmentBytes(attachment);
+  return {
+    stream: Readable.from(plaintext),
+    size: attachment.sizeBytes ?? plaintext.length,
+  };
+}
+
+export async function readAttachmentBytes(attachment: {
+  id: string;
+  storagePath: string;
+  encryptionMode: string | null;
+  wrappedDek: string | null;
+  kekKeyId: string | null;
+}): Promise<Buffer> {
+  const raw = await readFile(attachment.storagePath);
   const encryptionMode =
     attachment.encryptionMode === "local-v1"
       ? "local-v1"
@@ -49,8 +66,9 @@ export async function openAttachmentStream(attachment: {
         : (() => {
             throw new Error(`Unsupported attachment encryption mode: ${attachment.encryptionMode}`);
           })();
-  const plaintext = await decryptBufferFromStorage(
-    encrypted,
+
+  return decryptBufferFromStorage(
+    raw,
     {
       encryptionMode,
       wrappedDek: attachment.wrappedDek,
@@ -58,10 +76,6 @@ export async function openAttachmentStream(attachment: {
     },
     `attachment:${attachment.id}`,
   );
-  return {
-    stream: Readable.from(plaintext),
-    size: attachment.sizeBytes ?? plaintext.length,
-  };
 }
 
 export async function writeAttachment(
@@ -75,9 +89,14 @@ export async function writeAttachment(
   return metadata;
 }
 
-export async function writeRawEmail(storagePath: string, data: Buffer): Promise<void> {
+export async function writeRawEmail(
+  storagePath: string,
+  data: Buffer,
+): Promise<StorageEncryptionMetadata> {
   await mkdir(dirname(storagePath), { recursive: true });
-  await writeFile(storagePath, data);
+  const { blob, metadata } = await encryptBufferForStorage(data, `raw-email:${storagePath}`);
+  await writeFile(storagePath, blob);
+  return metadata;
 }
 
 export async function writePendingRawEmailMeta(
@@ -93,6 +112,9 @@ export async function writePendingRawEmailMeta(
       rawEmailPath,
       localPart: data.localPart,
       envelopeFrom: data.envelopeFrom,
+      rawEmailEncryptionMode: data.rawEmailEncryptionMode,
+      rawEmailWrappedDek: data.rawEmailWrappedDek,
+      rawEmailKekKeyId: data.rawEmailKekKeyId,
       correlationId: data.correlationId,
       createdAt: new Date().toISOString(),
     }),
@@ -145,8 +167,35 @@ export async function listPendingRawEmails(rawEmailDir: string): Promise<Pending
   return pending;
 }
 
-export async function readRawEmail(storagePath: string): Promise<Buffer> {
-  return readFile(storagePath);
+export async function readRawEmail(
+  storagePath: string,
+  encryption?: {
+    rawEmailEncryptionMode: string | null;
+    rawEmailWrappedDek: string | null;
+    rawEmailKekKeyId: string | null;
+  },
+): Promise<Buffer> {
+  const raw = await readFile(storagePath);
+  const encryptionMode =
+    encryption?.rawEmailEncryptionMode === "local-v1"
+      ? "local-v1"
+      : encryption?.rawEmailEncryptionMode === "none" || encryption?.rawEmailEncryptionMode == null
+        ? "none"
+        : (() => {
+            throw new Error(
+              `Unsupported raw email encryption mode: ${encryption?.rawEmailEncryptionMode}`,
+            );
+          })();
+
+  return decryptBufferFromStorage(
+    raw,
+    {
+      encryptionMode,
+      wrappedDek: encryption?.rawEmailWrappedDek ?? null,
+      kekKeyId: encryption?.rawEmailKekKeyId ?? null,
+    },
+    `raw-email:${storagePath}`,
+  );
 }
 
 /** Delete a file, ignoring ENOENT (already gone). */

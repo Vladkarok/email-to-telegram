@@ -1,8 +1,8 @@
 import { InputFile } from "grammy";
 import type { Api } from "grammy";
 import type { ParseMode } from "@grammyjs/types";
-import { readFile } from "fs/promises";
 import { getLogger } from "../utils/logger.js";
+import { readAttachmentBytes } from "../storage/disk.js";
 
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
 const MEDIA_GROUP_MAX = 10;
@@ -21,8 +21,12 @@ export interface SendResult {
 }
 
 export interface PhotoItem {
+  id: string;
   storagePath: string;
   filename: string;
+  encryptionMode: string | null;
+  wrappedDek: string | null;
+  kekKeyId: string | null;
 }
 
 export interface SendPhotosOptions {
@@ -93,12 +97,12 @@ export async function sendTelegramPhotos(
     try {
       if (chunk.length === 1) {
         const photo = chunk[0];
-        const buf = await readFile(photo.storagePath);
+        const buf = await readAttachmentBytes(photo);
         await api.sendPhoto(chatId, new InputFile(buf, photo.filename), other);
       } else {
         const media = await Promise.all(
           chunk.map(async (p) => {
-            const buf = await readFile(p.storagePath);
+            const buf = await readAttachmentBytes(p);
             return { type: "photo" as const, media: new InputFile(buf, p.filename) };
           }),
         );

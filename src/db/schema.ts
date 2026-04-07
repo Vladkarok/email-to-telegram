@@ -93,6 +93,12 @@ export const deliveryLogs = pgTable(
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
     rawSizeBytes: integer("raw_size_bytes"),
     rawEmailPath: varchar("raw_email_path", { length: 512 }),
+    rawEmailEncryptionMode: varchar("raw_email_encryption_mode", { length: 20 })
+      .notNull()
+      .default("none"),
+    rawEmailWrappedDek: text("raw_email_wrapped_dek"),
+    rawEmailKekKeyId: varchar("raw_email_kek_key_id", { length: 255 }),
+    rawEmailEncryptedAt: timestamp("raw_email_encrypted_at", { withTimezone: true }),
     hasAttachments: boolean("has_attachments").notNull().default(false),
     finalStatus: varchar("final_status", { length: 20 }).notNull().default("received"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

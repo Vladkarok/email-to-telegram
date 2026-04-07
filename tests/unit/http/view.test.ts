@@ -63,6 +63,9 @@ function viewLinkRow(expiresAt: Date, overrides: Record<string, unknown> = {}) {
       headerFrom: "sender@example.com",
       subject: "Privacy Test",
       receivedAt: new Date("2026-04-07T12:00:00Z"),
+      rawEmailEncryptionMode: "none",
+      rawEmailWrappedDek: null,
+      rawEmailKekKeyId: null,
     },
     ...overrides,
   };

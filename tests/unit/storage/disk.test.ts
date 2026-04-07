@@ -5,7 +5,9 @@ import { join } from "path";
 import {
   listPendingRawEmails,
   openAttachmentStream,
+  readRawEmail,
   writeAttachment,
+  writeRawEmail,
   writePendingRawEmailMeta,
 } from "../../../src/storage/disk.js";
 import {
@@ -29,6 +31,9 @@ describe("pending raw email metadata", () => {
     await writePendingRawEmailMeta(rawEmailPath, {
       localPart: "alerts",
       envelopeFrom: "sender@example.com",
+      rawEmailEncryptionMode: "none",
+      rawEmailWrappedDek: null,
+      rawEmailKekKeyId: null,
       correlationId: "req-1",
     });
 
@@ -39,6 +44,9 @@ describe("pending raw email metadata", () => {
         rawEmailPath,
         localPart: "alerts",
         envelopeFrom: "sender@example.com",
+        rawEmailEncryptionMode: "none",
+        rawEmailWrappedDek: null,
+        rawEmailKekKeyId: null,
         correlationId: "req-1",
       }),
     ]);
@@ -54,6 +62,9 @@ describe("pending raw email metadata", () => {
     await writePendingRawEmailMeta(join(dayDir, "ok.eml"), {
       localPart: "alerts",
       envelopeFrom: null,
+      rawEmailEncryptionMode: "none",
+      rawEmailWrappedDek: null,
+      rawEmailKekKeyId: null,
     });
 
     const pending = await listPendingRawEmails(root);
@@ -63,6 +74,9 @@ describe("pending raw email metadata", () => {
       rawEmailPath: join(dayDir, "ok.eml"),
       localPart: "alerts",
       envelopeFrom: null,
+      rawEmailEncryptionMode: "none",
+      rawEmailWrappedDek: null,
+      rawEmailKekKeyId: null,
     });
   });
 
@@ -104,5 +118,30 @@ describe("pending raw email metadata", () => {
 
     expect(opened.size).toBe(plaintext.length);
     expect(Buffer.concat(chunks)).toEqual(plaintext);
+  });
+
+  it("encrypts raw emails at rest and reads them back for retry/view flows", async () => {
+    const root = await mkdtemp(join(tmpdir(), "email-to-telegram-disk-"));
+    tempDirs.push(root);
+    configureStorageEncryption({
+      mode: "local-v1",
+      masterKey: Buffer.alloc(32, 4).toString("base64"),
+      masterKeyId: "raw-test-key",
+    });
+
+    const storagePath = join(root, "2026-04-07", "message.eml");
+    const plaintext = Buffer.from("From: sender@example.com\r\n\r\nhello");
+    const metadata = await writeRawEmail(storagePath, plaintext);
+    const onDisk = await readFile(storagePath);
+
+    expect(metadata.encryptionMode).toBe("local-v1");
+    expect(onDisk.equals(plaintext)).toBe(false);
+    await expect(
+      readRawEmail(storagePath, {
+        rawEmailEncryptionMode: metadata.encryptionMode,
+        rawEmailWrappedDek: metadata.wrappedDek,
+        rawEmailKekKeyId: metadata.kekKeyId,
+      }),
+    ).resolves.toEqual(plaintext);
   });
 });

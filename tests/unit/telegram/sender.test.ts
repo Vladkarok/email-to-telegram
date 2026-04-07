@@ -1,14 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { sendTelegramMessage } from "../../../src/telegram/sender.js";
+import { sendTelegramMessage, sendTelegramPhotos } from "../../../src/telegram/sender.js";
 import type { Api } from "grammy";
+
+const mockReadAttachmentBytes = vi.fn();
+vi.mock("../../../src/storage/disk.js", () => ({
+  readAttachmentBytes: (...args: unknown[]): unknown => mockReadAttachmentBytes(...args),
+}));
 
 interface MockApi extends Api {
   sendMessage: ReturnType<typeof vi.fn>;
+  sendPhoto: ReturnType<typeof vi.fn>;
+  sendMediaGroup: ReturnType<typeof vi.fn>;
 }
 
 function makeApi(sendFn: () => Promise<unknown>): MockApi {
   return {
     sendMessage: vi.fn(sendFn),
+    sendPhoto: vi.fn(),
+    sendMediaGroup: vi.fn(),
   } as unknown as MockApi;
 }
 
@@ -106,5 +115,41 @@ describe("sendTelegramMessage", () => {
     });
     await vi.runAllTimersAsync();
     await expect(promise).resolves.toMatchObject({ ok: false });
+  });
+});
+
+describe("sendTelegramPhotos", () => {
+  beforeEach(() => {
+    mockReadAttachmentBytes.mockReset();
+  });
+
+  it("reads decrypted attachment bytes before sending a single photo", async () => {
+    const api = {
+      sendMessage: vi.fn(),
+      sendPhoto: vi.fn(() => Promise.resolve({ message_id: 1 })),
+      sendMediaGroup: vi.fn(),
+    } as unknown as MockApi;
+    mockReadAttachmentBytes.mockResolvedValue(Buffer.from("decrypted-image"));
+
+    const result = await sendTelegramPhotos(api, {
+      chatId: 100n,
+      threadId: null,
+      photos: [
+        {
+          id: "att-1",
+          storagePath: "/data/attachments/att-1.bin",
+          filename: "graph.png",
+          encryptionMode: "local-v1",
+          wrappedDek: "wrapped",
+          kekKeyId: "test-key",
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(mockReadAttachmentBytes).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "att-1", encryptionMode: "local-v1" }),
+    );
+    expect(api.sendPhoto).toHaveBeenCalledOnce();
   });
 });

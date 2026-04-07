@@ -103,6 +103,15 @@ describe("POST /inbound/preflight", () => {
   beforeEach(() => {
     savedSecret = process.env["WORKER_SECRET"];
     process.env["WORKER_SECRET"] = WORKER_SECRET;
+    mockWriteRawEmail.mockResolvedValue({
+      encryptionMode: "none",
+      wrappedDek: null,
+      kekKeyId: null,
+      encryptedAt: null,
+    });
+    mockWritePendingRawEmailMeta.mockResolvedValue(undefined);
+    mockDeletePendingRawEmailMeta.mockResolvedValue(undefined);
+    mockDeleteFile.mockResolvedValue(undefined);
     mockFindAlias.mockReset();
     mockCheckAllow.mockReset();
     mockCountRecentDeliveries.mockReset();
@@ -258,7 +267,12 @@ describe("POST /inbound/raw", () => {
     savedSecret = process.env["WORKER_SECRET"];
     process.env["WORKER_SECRET"] = WORKER_SECRET;
     mockWriteRawEmail.mockReset();
-    mockWriteRawEmail.mockResolvedValue(undefined);
+    mockWriteRawEmail.mockResolvedValue({
+      encryptionMode: "none",
+      wrappedDek: null,
+      kekKeyId: null,
+      encryptedAt: null,
+    });
     mockWritePendingRawEmailMeta.mockReset();
     mockWritePendingRawEmailMeta.mockResolvedValue(undefined);
     mockDeletePendingRawEmailMeta.mockReset();
@@ -296,14 +310,19 @@ describe("POST /inbound/raw", () => {
       payload: rawEmail,
     });
     expect(res.statusCode).toBe(202);
-    expect(mockQueueInboundEmail).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        rawEmail,
-        localPart: "alerts",
-        envelopeFrom: "sender@example.com",
-      }),
-    );
+    const [, queuedInput] = mockQueueInboundEmail.mock.calls[0] as [
+      unknown,
+      {
+        rawEmail: Buffer;
+        localPart: string;
+        envelopeFrom: string;
+        rawEmailEncryption: { encryptionMode: string };
+      },
+    ];
+    expect(queuedInput.rawEmail).toEqual(rawEmail);
+    expect(queuedInput.localPart).toBe("alerts");
+    expect(queuedInput.envelopeFrom).toBe("sender@example.com");
+    expect(queuedInput.rawEmailEncryption).toMatchObject({ encryptionMode: "none" });
     expect(mockWritePendingRawEmailMeta).toHaveBeenCalledOnce();
     expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledOnce();
   });

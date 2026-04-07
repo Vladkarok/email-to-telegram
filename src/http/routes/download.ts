@@ -52,14 +52,6 @@ export function downloadRoute(app: FastifyInstance): void {
         return;
       }
 
-      // Atomically claim the link — guards against concurrent requests both passing
-      // the downloadedAt check above and both receiving the file
-      const claimed = await markLinkDownloaded(getDb(), link.id);
-      if (!claimed) {
-        await reply.status(410).send({ error: "link expired or already used" });
-        return;
-      }
-
       let opened;
       try {
         opened = await openAttachmentStream(link.attachment);
@@ -68,6 +60,14 @@ export function downloadRoute(app: FastifyInstance): void {
         return;
       }
       const { stream, size } = opened;
+
+      // Atomically claim the link only after the file was opened successfully.
+      // This avoids burning one-time URLs on transient decryption/open failures.
+      const claimed = await markLinkDownloaded(getDb(), link.id);
+      if (!claimed) {
+        await reply.status(410).send({ error: "link expired or already used" });
+        return;
+      }
 
       // Strip characters that would break the quoted-string in Content-Disposition (RFC 6266)
       const safeFilename = (link.attachment.originalFilename ?? "attachment").replace(

@@ -31,6 +31,7 @@ import { writeAttachment } from "../storage/disk.js";
 import { generateDownloadToken } from "../utils/tokens.js";
 import { getLogger } from "../utils/logger.js";
 import { createPrivacyViewUrl } from "./privacy.js";
+import type { StorageEncryptionMetadata } from "../security/encryption.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -49,6 +50,8 @@ export interface PipelineInput {
   envelopeFrom?: string;
   /** Public base URL for building attachment download links, e.g. https://mail.example.com */
   publicBaseUrl: string;
+  /** Encryption metadata for the persisted raw email file, if one exists. */
+  rawEmailEncryption?: StorageEncryptionMetadata;
   /** Directory where attachment files are stored */
   attachmentDir: string;
   /** Attachment download link TTL in hours */
@@ -149,6 +152,10 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
       subject: parsed.subject,
       rawSizeBytes: parsed.rawSizeBytes,
       rawEmailPath: input.rawEmailPath ?? null,
+      rawEmailEncryptionMode: input.rawEmailEncryption?.encryptionMode ?? "none",
+      rawEmailWrappedDek: input.rawEmailEncryption?.wrappedDek ?? null,
+      rawEmailKekKeyId: input.rawEmailEncryption?.kekKeyId ?? null,
+      rawEmailEncryptedAt: input.rawEmailEncryption?.encryptedAt ?? null,
       hasAttachments: parsed.attachments.length > 0,
       finalStatus: "received",
     });
@@ -232,9 +239,13 @@ export async function deliverQueuedEmail(
 
         if (isImageContentType(att.contentType)) {
           imageAttachments.push({
-            attachmentId: dbAtt.id,
+            id: dbAtt.id,
             storagePath,
             filename: att.filename,
+            encryptionMode: dbAtt.encryptionMode,
+            wrappedDek: dbAtt.wrappedDek,
+            kekKeyId: dbAtt.kekKeyId,
+            attachmentId: dbAtt.id,
             sizeBytes: att.sizeBytes,
           });
         } else if (!privacyMode) {
@@ -297,10 +308,16 @@ export async function deliverQueuedEmail(
             chatId: alias.chatId,
             threadId: alias.messageThreadId ?? null,
             replyToMessageId: result.telegramMessageId,
-            photos: imageAttachments.map(({ storagePath, filename }) => ({
-              storagePath,
-              filename,
-            })),
+            photos: imageAttachments.map(
+              ({ id, storagePath, filename, encryptionMode, wrappedDek, kekKeyId }) => ({
+                id,
+                storagePath,
+                filename,
+                encryptionMode,
+                wrappedDek,
+                kekKeyId,
+              }),
+            ),
           });
 
           if (photoResult.failedPhotos.length > 0) {

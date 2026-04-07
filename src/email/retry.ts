@@ -124,7 +124,11 @@ async function recoverPendingRawEmails(
 
       let rawEmail: Buffer;
       try {
-        rawEmail = await readRawEmail(pendingEmail.rawEmailPath);
+        rawEmail = await readRawEmail(pendingEmail.rawEmailPath, {
+          rawEmailEncryptionMode: pendingEmail.rawEmailEncryptionMode ?? null,
+          rawEmailWrappedDek: pendingEmail.rawEmailWrappedDek ?? null,
+          rawEmailKekKeyId: pendingEmail.rawEmailKekKeyId ?? null,
+        });
       } catch (err: unknown) {
         if ((err as NodeJS.ErrnoException).code === "ENOENT") {
           await deletePendingRawEmailMeta(pendingEmail.rawEmailPath);
@@ -139,6 +143,12 @@ async function recoverPendingRawEmails(
         localPart: pendingEmail.localPart,
         envelopeFrom: pendingEmail.envelopeFrom ?? undefined,
         correlationId: pendingEmail.correlationId,
+        rawEmailEncryption: {
+          encryptionMode: pendingEmail.rawEmailEncryptionMode === "local-v1" ? "local-v1" : "none",
+          wrappedDek: pendingEmail.rawEmailWrappedDek ?? null,
+          kekKeyId: pendingEmail.rawEmailKekKeyId ?? null,
+          encryptedAt: null,
+        },
         publicBaseUrl: opts.publicBaseUrl,
         attachmentDir: opts.attachmentDir,
         attachmentTtlHours: opts.attachmentTtlHours,
@@ -178,6 +188,9 @@ async function retryDelivery(
     emailAddressId: string;
     rawEmailPath: string | null;
     receivedAt: Date;
+    rawEmailEncryptionMode: string | null;
+    rawEmailWrappedDek: string | null;
+    rawEmailKekKeyId: string | null;
   },
   opts: { attachmentTtlHours: number; rawEmailTtlHours: number; publicBaseUrl: string },
 ): Promise<void> {
@@ -209,7 +222,11 @@ async function retryDelivery(
   // Re-read and re-parse raw email
   let rawEmail: Buffer;
   try {
-    rawEmail = await readRawEmail(deliveryLog.rawEmailPath);
+    rawEmail = await readRawEmail(deliveryLog.rawEmailPath, {
+      rawEmailEncryptionMode: deliveryLog.rawEmailEncryptionMode,
+      rawEmailWrappedDek: deliveryLog.rawEmailWrappedDek,
+      rawEmailKekKeyId: deliveryLog.rawEmailKekKeyId,
+    });
   } catch (err: unknown) {
     log.error({ err, deliveryLogId: deliveryLog.id }, "retry worker: raw email file missing");
     await updateDeliveryLogStatus(db, deliveryLog.id, "permanently_failed");
@@ -244,8 +261,12 @@ async function retryDelivery(
   const imageAttachments = storedAttachments
     .filter((attachment) => isImageContentType(attachment.contentType ?? ""))
     .map((attachment) => ({
+      id: attachment.id,
       storagePath: attachment.storagePath,
       filename: attachment.originalFilename ?? "attachment",
+      encryptionMode: attachment.encryptionMode,
+      wrappedDek: attachment.wrappedDek,
+      kekKeyId: attachment.kekKeyId,
     }));
 
   const renderMode = (alias.renderMode ?? "plaintext") as "plaintext" | "html" | "markdown";
