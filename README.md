@@ -79,6 +79,9 @@ docker compose up -d
 | `RAW_EMAIL_TTL_HOURS`   | No       | Raw email retention in hours (default `336`)                              |
 | `MAX_SIZE_BYTES`        | No       | Max accepted message size in bytes (default `10485760` = 10 MiB)          |
 | `INITIAL_ALLOWED_USERS` | No       | Comma-separated Telegram user IDs to pre-authorize                        |
+| `BACKUP_DIR`            | No       | Directory for nightly PostgreSQL backups                                  |
+| `HEALTHCHECKS_URL`      | No       | URL to ping on each healthy cycle (e.g. healthchecks.io)                  |
+| `ALERT_CHAT_ID`         | No       | Telegram chat ID for critical uptime alerts                               |
 | `LOG_LEVEL`             | No       | `trace` / `debug` / `info` / `warn` / `error` / `silent` (default `info`) |
 | `NODE_ENV`              | No       | `development` / `production` / `test` (default `production`)              |
 
@@ -117,8 +120,9 @@ CI runs on pushes and pull requests to `main`. Deployment runs when you push a v
 
 1. Root lint + typecheck + tests
 2. Cloudflare worker typecheck
-3. Build and push the Docker image to GHCR
-4. SSH into the VPS, pull the image, restart the stack, and run `node dist/index.js --migrate-only`
+3. Build and push the Docker image to GHCR as both `latest` and the release tag
+4. Verify the tagged commit is already on `main`
+5. SSH into the VPS, check out the exact tagged commit, pull the matching image tag, restart the stack without rebuilding locally, and wait for the app healthcheck
 
 ## License
 

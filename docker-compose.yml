@@ -1,6 +1,6 @@
 services:
   app:
-    image: ghcr.io/vladkarok/email-to-telegram:latest
+    image: ghcr.io/vladkarok/email-to-telegram:${IMAGE_TAG:-latest}
     build: .
     restart: unless-stopped
     env_file: .env

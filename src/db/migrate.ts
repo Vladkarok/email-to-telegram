@@ -8,13 +8,3 @@ export async function runMigrations(): Promise<void> {
   await migrate(getDb(), { migrationsFolder: "./drizzle" });
   logger.info("Migrations complete.");
 }
-
-// Support --migrate-only flag: run migrations and exit
-if (process.argv.includes("--migrate-only")) {
-  const { loadConfig } = await import("../config.js");
-  const { initDb } = await import("./client.js");
-  const config = loadConfig();
-  initDb(config.databaseUrl);
-  await runMigrations();
-  process.exit(0);
-}

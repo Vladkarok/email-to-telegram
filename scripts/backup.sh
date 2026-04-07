@@ -10,6 +10,7 @@
 # Retention:    keep_days (default 7) — older files are deleted
 
 set -eu
+umask 077
 
 BACKUP_DIR="${1:?backup_dir required}"
 DATABASE_URL="${DATABASE_URL:?DATABASE_URL env var required}"
@@ -25,9 +26,17 @@ mkdir -p "$BACKUP_DIR"
 # PGPASSWORD is passed via environment (not argv) to keep the credential out of
 # /proc/<pid>/cmdline, which is world-readable on Linux.
 old_ifs=$IFS
-IFS='	'
-# shellcheck disable=SC2086
-set -- $(node --input-type=module -e '
+IFS='
+'
+TMP_CONN="${BACKUP_DIR}/.backup-conn-${DATE}-$$.txt"
+TMP_SQL="${BACKUP_DIR}/.backup-${DATE}-$$.sql"
+TMP_GZ="${BACKUP_FILE}.tmp"
+cleanup_tmp() {
+  rm -f "$TMP_SQL" "$TMP_GZ" "$TMP_CONN"
+}
+trap cleanup_tmp EXIT INT TERM
+
+node --input-type=module -e '
   const url = new URL(process.env.DATABASE_URL);
   const values = [
     url.hostname || "localhost",
@@ -36,26 +45,31 @@ set -- $(node --input-type=module -e '
     decodeURIComponent(url.username || ""),
     decodeURIComponent(url.password || ""),
   ];
-  process.stdout.write(values.join("\t"));
-')
+  process.stdout.write(`${values.join("\n")}\n`);
+' > "$TMP_CONN"
 IFS=$old_ifs
 
-PGHOST="${1:-localhost}"
-PGPORT="${2:-5432}"
-PGDATABASE="${3:-}"
-PGUSER="${4:-}"
-PGPASSWORD="${5:-}"
+{
+  IFS= read -r PGHOST
+  IFS= read -r PGPORT
+  IFS= read -r PGDATABASE
+  IFS= read -r PGUSER
+  IFS= read -r PGPASSWORD
+} < "$TMP_CONN"
 
 export PGHOST PGPORT PGDATABASE PGUSER PGPASSWORD
-
 pg_dump \
   --host="$PGHOST" \
   --port="$PGPORT" \
   --username="$PGUSER" \
   --no-password \
   --format=plain \
-  "$PGDATABASE" \
-  | gzip -9 > "$BACKUP_FILE"
+  "$PGDATABASE" > "$TMP_SQL"
+
+gzip -9 < "$TMP_SQL" > "$TMP_GZ"
+mv "$TMP_GZ" "$BACKUP_FILE"
+rm -f "$TMP_SQL" "$TMP_CONN"
+trap - EXIT INT TERM
 
 echo "Backup written: $BACKUP_FILE ($(du -sh "$BACKUP_FILE" | cut -f1))"
 

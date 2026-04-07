@@ -17,6 +17,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure tag commit is on main
+        run: |
+          git fetch origin main --depth=1
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -30,7 +37,9 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/vladkarok/email-to-telegram:latest
+          tags: |
+            ghcr.io/vladkarok/email-to-telegram:latest
+            ghcr.io/vladkarok/email-to-telegram:${{ github.ref_name }}
 
   deploy:
     name: Deploy to VPS
@@ -45,21 +54,39 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_KEY }}
-          envs: GHCR_TOKEN
+          envs: GHCR_TOKEN,GITHUB_SHA,GITHUB_REF_NAME
           script: |
             set -e
             cd ~/email-to-telegram
 
-            # Pull latest code
-            git pull origin main
+            # Check out the exact tagged commit so the runtime config matches
+            # the image built for this release.
+            git fetch origin main --tags
+            git checkout --detach "$GITHUB_SHA"
 
             # Authenticate to GHCR and pull new image
             echo "$GHCR_TOKEN" | docker login ghcr.io -u vladkarok --password-stdin
-            docker compose pull
+            IMAGE_TAG="$GITHUB_REF_NAME" docker compose pull app
 
-            # Restart with new image, run migrations
-            docker compose up -d --remove-orphans
-            docker compose exec -T app node dist/index.js --migrate-only
+            # Restart with the exact tagged image; the app entrypoint runs migrations on startup.
+            IMAGE_TAG="$GITHUB_REF_NAME" docker compose up -d --remove-orphans --no-build
+
+            container_id=$(IMAGE_TAG="$GITHUB_REF_NAME" docker compose ps -q app)
+            test -n "$container_id"
+
+            attempts=0
+            while true; do
+              attempts=$((attempts + 1))
+              health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id")
+              if [ "$health" = "healthy" ]; then
+                break
+              fi
+              if [ "$health" = "unhealthy" ] || [ "$health" = "exited" ] || [ "$health" = "dead" ] || [ "$attempts" -ge 30 ]; then
+                docker logs "$container_id" --tail 100
+                exit 1
+              fi
+              sleep 5
+            done
 
             echo "Deploy complete at $(date)"
         env:
