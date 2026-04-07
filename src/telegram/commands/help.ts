@@ -1,4 +1,5 @@
 import type { Context } from "grammy";
+import { renderModeHelpText } from "../renderModeGuidance.js";
 
 export async function helpHandler(ctx: Context): Promise<void> {
   await ctx.reply(
@@ -14,6 +15,8 @@ export async function helpHandler(ctx: Context): Promise<void> {
 /resumeemail &lt;alias&gt; — resume a paused alias
 /deleteemail &lt;alias&gt; — delete an alias
 /settings &lt;alias&gt; — change render mode (plaintext / HTML / Markdown)
+
+${renderModeHelpText()}
 
 <b>Allow rules</b>
 Only senders matching an allow rule can deliver mail to an alias.

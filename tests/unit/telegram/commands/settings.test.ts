@@ -20,7 +20,10 @@ describe("/settings command", () => {
   it("shows usage when no argument", async () => {
     const ctx = createMockCtx({ commandMatch: "" });
     await settingsHandler(ctx);
-    expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("Usage"));
+    expect(ctx.reply).toHaveBeenCalledWith(
+      expect.stringContaining("type markdown syntax literally"),
+      expect.objectContaining({ parse_mode: "HTML" }),
+    );
   });
 
   it("replies not found when alias missing", async () => {
@@ -40,7 +43,10 @@ describe("/settings command", () => {
     const ctx = createMockCtx({ commandMatch: "alerts html" });
     await settingsHandler(ctx);
     expect(mockUpdateMode).toHaveBeenCalledWith(expect.anything(), "uuid-1", "html");
-    expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("html"), expect.anything());
+    expect(ctx.reply).toHaveBeenCalledWith(
+      expect.stringContaining("Do not type raw HTML tags"),
+      expect.anything(),
+    );
   });
 
   it("shows inline keyboard when no mode argument", async () => {
@@ -52,6 +58,7 @@ describe("/settings command", () => {
     const ctx = createMockCtx({ commandMatch: "news" });
     await settingsHandler(ctx);
     const call = ctx.reply.mock.calls[0] as [string, { reply_markup: unknown }];
+    expect(call[0]).toContain("send literal text exactly as typed");
     expect(call[1]).toHaveProperty("reply_markup");
   });
 });

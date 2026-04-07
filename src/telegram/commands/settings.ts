@@ -3,15 +3,24 @@ import { InlineKeyboard } from "grammy";
 import { getDb } from "../../db/client.js";
 import { findAliasByIdAndChat, updateAliasRenderMode } from "../../db/repos/aliases.js";
 import { canManageAlias } from "../authorization.js";
-
-const RENDER_MODES = ["plaintext", "html", "markdown"] as const;
+import {
+  RENDER_MODES,
+  renderModeGuidance,
+  renderModeHelpText,
+  type TelegramRenderMode,
+} from "../renderModeGuidance.js";
 
 export async function settingsHandler(ctx: CommandContext<Context>): Promise<void> {
   const parts = ctx.match.trim().split(/\s+/);
   const [localPart, newMode] = parts;
 
   if (!localPart) {
-    await ctx.reply("Usage: /settings <alias-name> [plaintext|html|markdown]");
+    await ctx.reply(
+      `Usage: /settings <alias-name> [plaintext|html|markdown]\n\n${renderModeHelpText()}`,
+      {
+        parse_mode: "HTML",
+      },
+    );
     return;
   }
 
@@ -34,10 +43,10 @@ export async function settingsHandler(ctx: CommandContext<Context>): Promise<voi
   }
 
   // If mode is provided directly, apply it
-  if (newMode && RENDER_MODES.includes(newMode as (typeof RENDER_MODES)[number])) {
-    await updateAliasRenderMode(getDb(), alias.id, newMode as (typeof RENDER_MODES)[number]);
+  if (newMode && RENDER_MODES.includes(newMode as TelegramRenderMode)) {
+    await updateAliasRenderMode(getDb(), alias.id, newMode as TelegramRenderMode);
     await ctx.reply(
-      `✅ Render mode for <code>${alias.fullAddress}</code> set to <b>${newMode}</b>.`,
+      `✅ Render mode for <code>${alias.fullAddress}</code> set to <b>${newMode}</b>.\n${renderModeGuidance(newMode as TelegramRenderMode)}`,
       { parse_mode: "HTML" },
     );
     return;
@@ -51,7 +60,7 @@ export async function settingsHandler(ctx: CommandContext<Context>): Promise<voi
   }
 
   await ctx.reply(
-    `⚙️ Render mode for <code>${alias.fullAddress}</code>\nCurrent: <b>${alias.renderMode}</b>\n\nSelect new mode:`,
+    `⚙️ Render mode for <code>${alias.fullAddress}</code>\nCurrent: <b>${alias.renderMode}</b>\n${renderModeGuidance(alias.renderMode as TelegramRenderMode)}\n\nSelect new mode:`,
     { parse_mode: "HTML", reply_markup: keyboard },
   );
 }
