@@ -382,6 +382,9 @@ If you use the included GitHub Actions workflows:
 3. Pushing a release tag like `v1.2.3` builds `:latest` plus `:v1.2.3`
 4. The release deploy job checks out the exact tagged commit on the VPS,
    pulls the matching image tag, and restarts the stack
+5. The same release workflow also has a manual `workflow_dispatch` path, so you
+   can redeploy an existing release tag from the GitHub Actions UI without
+   creating a new tag
 
 The important operational detail is that the checked-out VPS repo and the
 running app image are related but not identical concerns. `git pull` updates the

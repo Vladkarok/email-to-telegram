@@ -3,6 +3,12 @@ name: Deploy
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to deploy, for example v1.7.1
+        required: true
+        type: string
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -12,9 +18,49 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  resolve-release:
+    name: Resolve release tag
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+      release_sha: ${{ steps.resolve.outputs.release_sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve and validate release tag
+        id: resolve
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          git fetch origin main --tags --force
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            release_tag="$INPUT_RELEASE_TAG"
+          else
+            release_tag="$GITHUB_REF_NAME"
+          fi
+
+          if [ -z "$release_tag" ]; then
+            echo "Release tag is required" >&2
+            exit 1
+          fi
+
+          git rev-parse -q --verify "refs/tags/${release_tag}^{commit}" >/dev/null
+          release_sha=$(git rev-list -n 1 "$release_tag")
+          git merge-base --is-ancestor "$release_sha" origin/main
+
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+
   build-and-push:
     name: Build and push Docker image
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    needs: resolve-release
     permissions:
       contents: read
       packages: write
@@ -22,12 +68,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.resolve-release.outputs.release_sha }}
           fetch-depth: 0
-
-      - name: Ensure tag commit is on main
-        run: |
-          git fetch origin main --depth=1
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -43,12 +85,13 @@ jobs:
           push: true
           tags: |
             ghcr.io/vladkarok/email-to-telegram:latest
-            ghcr.io/vladkarok/email-to-telegram:${{ github.ref_name }}
+            ghcr.io/vladkarok/email-to-telegram:${{ needs.resolve-release.outputs.release_tag }}
 
-  deploy:
+  deploy-from-tag-push:
     name: Deploy to VPS
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    needs: build-and-push
+    needs: [resolve-release, build-and-push]
 
     steps:
       - name: Deploy via SSH
@@ -58,7 +101,7 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_KEY }}
-          envs: GHCR_TOKEN,GITHUB_SHA,GITHUB_REF_NAME
+          envs: GHCR_TOKEN,RELEASE_SHA,RELEASE_TAG
           script: |
             set -e
             cd ~/email-to-telegram
@@ -66,16 +109,16 @@ jobs:
             # Check out the exact tagged commit so the runtime config matches
             # the image built for this release.
             git fetch origin main --tags
-            git checkout --detach "$GITHUB_SHA"
+            git checkout --detach "$RELEASE_SHA"
 
             # Authenticate to GHCR and pull new image
             echo "$GHCR_TOKEN" | docker login ghcr.io -u vladkarok --password-stdin
-            IMAGE_TAG="$GITHUB_REF_NAME" docker compose --env-file .env pull app
+            IMAGE_TAG="$RELEASE_TAG" docker compose --env-file .env pull app
 
             # Restart with the exact tagged image; the app entrypoint runs migrations on startup.
-            IMAGE_TAG="$GITHUB_REF_NAME" docker compose --env-file .env up -d --remove-orphans --no-build
+            IMAGE_TAG="$RELEASE_TAG" docker compose --env-file .env up -d --remove-orphans --no-build
 
-            container_id=$(IMAGE_TAG="$GITHUB_REF_NAME" docker compose --env-file .env ps -q app)
+            container_id=$(IMAGE_TAG="$RELEASE_TAG" docker compose --env-file .env ps -q app)
             test -n "$container_id"
 
             attempts=0
@@ -95,3 +138,54 @@ jobs:
             echo "Deploy complete at $(date)"
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.release_sha }}
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+
+  redeploy-existing-release:
+    name: Redeploy existing release to VPS
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    needs: resolve-release
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT }}
+          key: ${{ secrets.SSH_KEY }}
+          envs: GHCR_TOKEN,RELEASE_SHA,RELEASE_TAG
+          script: |
+            set -e
+            cd ~/email-to-telegram
+
+            git fetch origin main --tags
+            git checkout --detach "$RELEASE_SHA"
+
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u vladkarok --password-stdin
+            IMAGE_TAG="$RELEASE_TAG" docker compose --env-file .env pull app
+            IMAGE_TAG="$RELEASE_TAG" docker compose --env-file .env up -d --remove-orphans --no-build
+
+            container_id=$(IMAGE_TAG="$RELEASE_TAG" docker compose --env-file .env ps -q app)
+            test -n "$container_id"
+
+            attempts=0
+            while true; do
+              attempts=$((attempts + 1))
+              health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id")
+              if [ "$health" = "healthy" ]; then
+                break
+              fi
+              if [ "$health" = "unhealthy" ] || [ "$health" = "exited" ] || [ "$health" = "dead" ] || [ "$attempts" -ge 30 ]; then
+                docker logs "$container_id" --tail 100
+                exit 1
+              fi
+              sleep 5
+            done
+
+            echo "Manual redeploy complete at $(date)"
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.release_sha }}
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
