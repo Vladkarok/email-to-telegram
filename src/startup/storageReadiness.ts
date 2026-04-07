@@ -12,12 +12,17 @@ export async function assertStorageEncryptionReadiness(
     AppConfig,
     | "storageEncryptionMode"
     | "masterEncryptionKeyId"
+    | "masterEncryptionKeyring"
     | "attachmentTtlHours"
     | "rawEmailTtlHours"
     | "rawEmailDir"
   >,
 ): Promise<void> {
   const pendingRawEmails = await listPendingRawEmails(config.rawEmailDir);
+  const acceptsKeyId = (keyId?: string | null) =>
+    keyId == null ||
+    keyId in config.masterEncryptionKeyring ||
+    keyId === config.masterEncryptionKeyId;
 
   if (config.storageEncryptionMode === "none") {
     const encryptedAttachmentRows = rowsFromResult<{ present: number }>(
@@ -43,32 +48,30 @@ export async function assertStorageEncryptionReadiness(
     return;
   }
 
-  const unexpectedAttachmentKey = rowsFromResult<{ id: string }>(
+  const unexpectedAttachmentKey = rowsFromResult<{ id: string; kek_key_id: string | null }>(
     await db.execute(
-      sql`select id from attachments where encryption_mode = 'local-v1' and (kek_key_id is null or kek_key_id <> ${config.masterEncryptionKeyId}) limit 1`,
+      sql`select id, kek_key_id from attachments where encryption_mode = 'local-v1' limit 100`,
     ),
-  );
-  if (unexpectedAttachmentKey[0]) {
+  ).find((row) => !acceptsKeyId(row.kek_key_id));
+  if (unexpectedAttachmentKey) {
     throw new Error(
       `Encrypted attachments were written with a different key id. Rotation is not supported yet; expected ${config.masterEncryptionKeyId}.`,
     );
   }
 
-  const unexpectedRawKey = rowsFromResult<{ id: string }>(
+  const unexpectedRawKey = rowsFromResult<{ id: string; raw_email_kek_key_id: string | null }>(
     await db.execute(
-      sql`select id from delivery_logs where raw_email_encryption_mode = 'local-v1' and raw_email_path is not null and (raw_email_kek_key_id is null or raw_email_kek_key_id <> ${config.masterEncryptionKeyId}) limit 1`,
+      sql`select id, raw_email_kek_key_id from delivery_logs where raw_email_encryption_mode = 'local-v1' and raw_email_path is not null limit 100`,
     ),
-  );
-  if (unexpectedRawKey[0]) {
+  ).find((row) => !acceptsKeyId(row.raw_email_kek_key_id));
+  if (unexpectedRawKey) {
     throw new Error(
       `Encrypted raw emails were written with a different key id. Rotation is not supported yet; expected ${config.masterEncryptionKeyId}.`,
     );
   }
 
   const unexpectedPendingKey = pendingRawEmails.find(
-    (email) =>
-      email.rawEmailEncryptionMode === "local-v1" &&
-      (email.rawEmailKekKeyId == null || email.rawEmailKekKeyId !== config.masterEncryptionKeyId),
+    (email) => email.rawEmailEncryptionMode === "local-v1" && !acceptsKeyId(email.rawEmailKekKeyId),
   );
   if (unexpectedPendingKey) {
     throw new Error(

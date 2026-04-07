@@ -20,6 +20,7 @@ const OPTIONAL_ENV = [
   "STORAGE_ENCRYPTION_MODE",
   "MASTER_ENCRYPTION_KEY",
   "MASTER_ENCRYPTION_KEY_ID",
+  "MASTER_ENCRYPTION_KEYRING",
   "MAX_SIZE_BYTES",
   "LOG_LEVEL",
   "NODE_ENV",
@@ -62,6 +63,7 @@ describe("loadConfig", () => {
     expect(config.rawEmailTtlHours).toBe(336);
     expect(config.deliveryLogRetentionDays).toBe(30);
     expect(config.storageEncryptionMode).toBe("none");
+    expect(config.masterEncryptionKeyring).toEqual({});
     expect(config.maxSizeBytes).toBe(10485760);
     expect(config.logLevel).toBe("info");
   });
@@ -107,6 +109,22 @@ describe("loadConfig", () => {
     expect(config.masterEncryptionKey).toBe(process.env["MASTER_ENCRYPTION_KEY"]);
   });
 
+  it("parses additional read-only master keys for rotation support", () => {
+    process.env["STORAGE_ENCRYPTION_MODE"] = "local-v1";
+    process.env["MASTER_ENCRYPTION_KEY"] = Buffer.alloc(32, 7).toString("base64");
+    process.env["MASTER_ENCRYPTION_KEYRING"] = [
+      `old-v1=${Buffer.alloc(32, 3).toString("base64")}`,
+      `older-v0=${Buffer.alloc(32, 4).toString("hex")}`,
+    ].join(";");
+
+    const config = loadConfig();
+
+    expect(config.masterEncryptionKeyring).toEqual({
+      "old-v1": Buffer.alloc(32, 3).toString("base64"),
+      "older-v0": Buffer.alloc(32, 4).toString("hex"),
+    });
+  });
+
   it("rejects local storage encryption without a master key", () => {
     process.env["STORAGE_ENCRYPTION_MODE"] = "local-v1";
     delete process.env["MASTER_ENCRYPTION_KEY"];
@@ -119,6 +137,14 @@ describe("loadConfig", () => {
     process.env["MASTER_ENCRYPTION_KEY"] = "not-a-valid-key";
 
     expect(() => loadConfig()).toThrow(/MASTER_ENCRYPTION_KEY must decode to exactly 32 bytes/i);
+  });
+
+  it("rejects an invalid keyring entry", () => {
+    process.env["STORAGE_ENCRYPTION_MODE"] = "local-v1";
+    process.env["MASTER_ENCRYPTION_KEY"] = Buffer.alloc(32, 7).toString("base64");
+    process.env["MASTER_ENCRYPTION_KEYRING"] = "legacy-without-separator";
+
+    expect(() => loadConfig()).toThrow(/MASTER_ENCRYPTION_KEYRING entries must use the format/i);
   });
 
   it("rejects non-https PUBLIC_BASE_URL in production", () => {

@@ -302,6 +302,7 @@ See [`.env.example`](./.env.example) for the authoritative template.
 | `STORAGE_ENCRYPTION_MODE`     | No       | `none` or `local-v1` for at-rest attachment/raw encryption |
 | `MASTER_ENCRYPTION_KEY`       | No       | Required for `local-v1`; 32-byte base64 or hex key         |
 | `MASTER_ENCRYPTION_KEY_ID`    | No       | Optional key label stored with wrapped DEKs                |
+| `MASTER_ENCRYPTION_KEYRING`   | No       | Older read-only local keys for staged key rotation         |
 | `MAX_SIZE_BYTES`              | No       | Max accepted inbound body size                             |
 | `INITIAL_ALLOWED_USERS`       | No       | Initial Telegram operators; recommended on first deploy    |
 | `BACKUP_DIR`                  | No       | Nightly backup directory                                   |
@@ -313,8 +314,14 @@ See [`.env.example`](./.env.example) for the authoritative template.
 `STORAGE_ENCRYPTION_MODE=local-v1` encrypts new attachment and raw email files
 at rest with envelope encryption. Existing plaintext files remain readable, so
 you can enable this on a running system without breaking old rows. The current
-implementation does not support key rotation or disabling encryption while
-encrypted files still exist; the app will refuse to start in those states.
+implementation does not support disabling encryption while encrypted files still
+exist; the app will refuse to start in those states. Local key rotation is
+staged by keeping older read-only keys configured until stored DEKs are
+rewrapped.
+
+For staged local-key rotation, keep the new write key in `MASTER_ENCRYPTION_KEY`
+and list older read-only keys in `MASTER_ENCRYPTION_KEYRING` as
+`key-id=base64_or_hex_key;key-id-2=...` until you finish rewrapping stored DEKs.
 
 Nightly backups created via `BACKUP_DIR` contain only the PostgreSQL dump. Keep
 the attachment/raw-mail directories alongside those backups, and if encryption

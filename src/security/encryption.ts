@@ -19,6 +19,9 @@ interface KeyProvider {
   mode: "local-v1";
   wrapKey(plaintextDek: Buffer): Promise<{ wrappedDek: string; keyId: string }>;
   unwrapKey(wrappedDek: string, keyId?: string | null): Promise<Buffer>;
+  canUseKeyId(keyId?: string | null): boolean;
+  currentKeyId(): string;
+  configuredKeyIds(): string[];
 }
 
 let activeProvider: KeyProvider | null = null;
@@ -27,6 +30,7 @@ export function configureStorageEncryption(config: {
   mode: StorageEncryptionMode;
   masterKey?: string | null;
   masterKeyId?: string | null;
+  additionalMasterKeys?: Record<string, string>;
 }): void {
   if (config.mode === "none") {
     activeProvider = null;
@@ -40,6 +44,12 @@ export function configureStorageEncryption(config: {
   activeProvider = createLocalKeyProvider(
     parseMasterEncryptionKey(config.masterKey),
     config.masterKeyId ?? "local-env-v1",
+    Object.fromEntries(
+      Object.entries(config.additionalMasterKeys ?? {}).map(([keyId, value]) => [
+        keyId,
+        parseMasterEncryptionKey(value),
+      ]),
+    ),
   );
 }
 
@@ -58,6 +68,79 @@ export function parseMasterEncryptionKey(value: string): Buffer {
     throw new Error("MASTER_ENCRYPTION_KEY must decode to exactly 32 bytes");
   }
   return decoded;
+}
+
+export function parseMasterEncryptionKeyring(value: string | undefined): Record<string, string> {
+  if (!value?.trim()) return {};
+
+  const entries = value
+    .split(";")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const result: Record<string, string> = {};
+
+  for (const entry of entries) {
+    const separator = entry.indexOf("=");
+    if (separator <= 0 || separator === entry.length - 1) {
+      throw new Error(
+        "MASTER_ENCRYPTION_KEYRING entries must use the format key_id=base64_or_hex_key",
+      );
+    }
+    const keyId = entry.slice(0, separator).trim();
+    const key = entry.slice(separator + 1).trim();
+    if (!keyId) {
+      throw new Error("MASTER_ENCRYPTION_KEYRING entries must include a non-empty key id");
+    }
+    if (!key) {
+      throw new Error(`MASTER_ENCRYPTION_KEYRING entry ${keyId} is missing a key value`);
+    }
+    if (keyId in result) {
+      throw new Error(`MASTER_ENCRYPTION_KEYRING contains duplicate key id ${keyId}`);
+    }
+    parseMasterEncryptionKey(key);
+    result[keyId] = key;
+  }
+
+  return result;
+}
+
+export function listConfiguredStorageKeyIds(): string[] {
+  if (!activeProvider) return [];
+  return activeProvider.configuredKeyIds();
+}
+
+export function canUseStorageKeyId(
+  mode: StorageEncryptionMode | null | undefined,
+  keyId: string | null | undefined,
+): boolean {
+  if ((mode ?? "none") === "none") return true;
+  if (mode !== "local-v1") return false;
+  if (!activeProvider) return false;
+  return activeProvider.canUseKeyId(keyId);
+}
+
+export async function rewrapStorageEncryptionMetadata(
+  metadata: StorageEncryptionMetadata,
+): Promise<StorageEncryptionMetadata> {
+  if (metadata.encryptionMode !== "local-v1") return metadata;
+  if (!metadata.wrappedDek) {
+    throw new Error("Encrypted metadata is missing wrapped DEK");
+  }
+  if (!activeProvider) {
+    throw new Error("Storage encryption is not configured");
+  }
+  const targetKeyId = activeProvider.currentKeyId();
+  if ((metadata.kekKeyId ?? targetKeyId) === targetKeyId) {
+    return metadata;
+  }
+
+  const dek = await activeProvider.unwrapKey(metadata.wrappedDek, metadata.kekKeyId);
+  const { wrappedDek, keyId } = await activeProvider.wrapKey(dek);
+  return {
+    ...metadata,
+    wrappedDek,
+    kekKeyId: keyId,
+  };
 }
 
 export async function encryptBufferForStorage(
@@ -142,7 +225,16 @@ export async function decryptBufferFromStorage(
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 }
 
-function createLocalKeyProvider(masterKey: Buffer, keyId: string): KeyProvider {
+function createLocalKeyProvider(
+  masterKey: Buffer,
+  keyId: string,
+  additionalKeys: Record<string, Buffer> = {},
+): KeyProvider {
+  const keys = new Map<string, Buffer>([[keyId, masterKey]]);
+  for (const [extraKeyId, extraKey] of Object.entries(additionalKeys)) {
+    keys.set(extraKeyId, extraKey);
+  }
+
   return {
     mode: "local-v1",
     wrapKey(plaintextDek: Buffer) {
@@ -157,6 +249,11 @@ function createLocalKeyProvider(masterKey: Buffer, keyId: string): KeyProvider {
       });
     },
     unwrapKey(wrappedDek: string, wrappedKeyId?: string | null) {
+      const unwrapKeyId = wrappedKeyId ?? keyId;
+      const kek = keys.get(unwrapKeyId);
+      if (!kek) {
+        throw new Error(`No configured master key for key id ${unwrapKeyId}`);
+      }
       const payload = Buffer.from(wrappedDek, "base64");
       if (payload.length < IV_LENGTH + TAG_LENGTH) {
         throw new Error("Wrapped DEK payload is truncated");
@@ -165,10 +262,19 @@ function createLocalKeyProvider(masterKey: Buffer, keyId: string): KeyProvider {
       const iv = payload.subarray(0, IV_LENGTH);
       const ciphertext = payload.subarray(IV_LENGTH, payload.length - TAG_LENGTH);
       const tag = payload.subarray(payload.length - TAG_LENGTH);
-      const decipher = createDecipheriv("aes-256-gcm", masterKey, iv);
-      decipher.setAAD(Buffer.from(`local-wrap:${wrappedKeyId ?? keyId}`, "utf-8"));
+      const decipher = createDecipheriv("aes-256-gcm", kek, iv);
+      decipher.setAAD(Buffer.from(`local-wrap:${unwrapKeyId}`, "utf-8"));
       decipher.setAuthTag(tag);
       return Promise.resolve(Buffer.concat([decipher.update(ciphertext), decipher.final()]));
+    },
+    canUseKeyId(wrappedKeyId?: string | null) {
+      return keys.has(wrappedKeyId ?? keyId);
+    },
+    currentKeyId() {
+      return keyId;
+    },
+    configuredKeyIds() {
+      return [...keys.keys()];
     },
   };
 }

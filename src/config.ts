@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { parseMasterEncryptionKey, type StorageEncryptionMode } from "./security/encryption.js";
+import {
+  parseMasterEncryptionKey,
+  parseMasterEncryptionKeyring,
+  type StorageEncryptionMode,
+} from "./security/encryption.js";
 
 const portSchema = z.coerce
   .number()
@@ -28,6 +32,7 @@ const envSchema = z.object({
   STORAGE_ENCRYPTION_MODE: z.enum(["none", "local-v1"]).default("none"),
   MASTER_ENCRYPTION_KEY: z.string().optional(),
   MASTER_ENCRYPTION_KEY_ID: z.string().default("local-env-v1"),
+  MASTER_ENCRYPTION_KEYRING: z.string().optional(),
   MAX_SIZE_BYTES: z.coerce.number().int().positive().default(10485760),
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "silent"]).default("info"),
   NODE_ENV: z.enum(["development", "production", "test"]).default("production"),
@@ -75,6 +80,7 @@ export interface AppConfig {
   storageEncryptionMode: StorageEncryptionMode;
   masterEncryptionKey: string | undefined;
   masterEncryptionKeyId: string;
+  masterEncryptionKeyring: Record<string, string>;
   maxSizeBytes: number;
   logLevel: string;
   nodeEnv: string;
@@ -109,13 +115,13 @@ export function loadConfig(): AppConfig {
 
     try {
       parseMasterEncryptionKey(env.MASTER_ENCRYPTION_KEY);
+      parseMasterEncryptionKeyring(env.MASTER_ENCRYPTION_KEYRING);
     } catch (err: unknown) {
-      throw new Error(
-        `Invalid configuration:\n  MASTER_ENCRYPTION_KEY ${(err as Error).message.toLowerCase()}`,
-        { cause: err },
-      );
+      throw new Error(`Invalid configuration:\n  ${(err as Error).message}`, { cause: err });
     }
   }
+
+  const masterEncryptionKeyring = parseMasterEncryptionKeyring(env.MASTER_ENCRYPTION_KEYRING);
 
   return {
     databaseUrl: env.DATABASE_URL,
@@ -133,6 +139,7 @@ export function loadConfig(): AppConfig {
     storageEncryptionMode: env.STORAGE_ENCRYPTION_MODE,
     masterEncryptionKey: env.MASTER_ENCRYPTION_KEY,
     masterEncryptionKeyId: env.MASTER_ENCRYPTION_KEY_ID,
+    masterEncryptionKeyring,
     maxSizeBytes: env.MAX_SIZE_BYTES,
     logLevel: env.LOG_LEVEL,
     nodeEnv: env.NODE_ENV,

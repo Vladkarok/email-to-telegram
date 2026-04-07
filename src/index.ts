@@ -36,6 +36,7 @@ async function main() {
     mode: config.storageEncryptionMode,
     masterKey: config.masterEncryptionKey,
     masterKeyId: config.masterEncryptionKeyId,
+    additionalMasterKeys: config.masterEncryptionKeyring,
   });
 
   // 3. Connect to DB and run migrations

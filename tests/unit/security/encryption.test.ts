@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  canUseStorageKeyId,
   configureStorageEncryption,
   decryptBufferFromStorage,
   encryptBufferForStorage,
   parseMasterEncryptionKey,
+  parseMasterEncryptionKeyring,
+  rewrapStorageEncryptionMetadata,
   resetStorageEncryptionForTests,
 } from "../../../src/security/encryption.js";
 
@@ -20,6 +23,17 @@ describe("storage encryption", () => {
     const raw = Buffer.alloc(32, 5);
     expect(parseMasterEncryptionKey(raw.toString("base64"))).toEqual(raw);
     expect(parseMasterEncryptionKey(raw.toString("hex"))).toEqual(raw);
+  });
+
+  it("parses semicolon-delimited keyring entries", () => {
+    const parsed = parseMasterEncryptionKeyring(
+      `old-v1=${Buffer.alloc(32, 1).toString("base64")};older-v0=${Buffer.alloc(32, 2).toString("hex")}`,
+    );
+
+    expect(parsed).toEqual({
+      "old-v1": Buffer.alloc(32, 1).toString("base64"),
+      "older-v0": Buffer.alloc(32, 2).toString("hex"),
+    });
   });
 
   it("round-trips encrypted storage blobs with local envelope encryption", async () => {
@@ -51,5 +65,56 @@ describe("storage encryption", () => {
     blob[blob.length - 1] ^= 0xff;
 
     await expect(decryptBufferFromStorage(blob, metadata, "attachment:att-2")).rejects.toThrow();
+  });
+
+  it("decrypts legacy wrapped keys when they are configured in the local keyring", async () => {
+    configureStorageEncryption({
+      mode: "local-v1",
+      masterKey: Buffer.alloc(32, 1).toString("base64"),
+      masterKeyId: "old-v1",
+    });
+    const { blob, metadata } = await encryptBufferForStorage(
+      Buffer.from("legacy"),
+      "attachment:att-3",
+    );
+
+    configureStorageEncryption({
+      mode: "local-v1",
+      masterKey: Buffer.alloc(32, 2).toString("base64"),
+      masterKeyId: "current-v2",
+      additionalMasterKeys: { "old-v1": Buffer.alloc(32, 1).toString("base64") },
+    });
+
+    await expect(decryptBufferFromStorage(blob, metadata, "attachment:att-3")).resolves.toEqual(
+      Buffer.from("legacy"),
+    );
+    expect(canUseStorageKeyId("local-v1", "old-v1")).toBe(true);
+  });
+
+  it("rewraps encrypted metadata to the active key id without rewriting ciphertext", async () => {
+    configureStorageEncryption({
+      mode: "local-v1",
+      masterKey: Buffer.alloc(32, 3).toString("base64"),
+      masterKeyId: "old-v1",
+    });
+    const { blob, metadata } = await encryptBufferForStorage(
+      Buffer.from("rotate me"),
+      "attachment:att-4",
+    );
+
+    configureStorageEncryption({
+      mode: "local-v1",
+      masterKey: Buffer.alloc(32, 4).toString("base64"),
+      masterKeyId: "current-v2",
+      additionalMasterKeys: { "old-v1": Buffer.alloc(32, 3).toString("base64") },
+    });
+
+    const rewrapped = await rewrapStorageEncryptionMetadata(metadata);
+
+    expect(rewrapped.kekKeyId).toBe("current-v2");
+    expect(rewrapped.wrappedDek).not.toBe(metadata.wrappedDek);
+    await expect(decryptBufferFromStorage(blob, rewrapped, "attachment:att-4")).resolves.toEqual(
+      Buffer.from("rotate me"),
+    );
   });
 });
