@@ -1,9 +1,11 @@
 services:
   app:
-    image: ghcr.io/vladkarok/email-to-telegram:${IMAGE_TAG:-latest}
-    build: .
+    image: email-to-telegram:local
+    build:
+      context: ../..
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - ../../.env
     depends_on:
       postgres:
         condition: service_healthy
@@ -13,7 +15,6 @@ services:
       - backups:/data/backups
     networks:
       - internal
-      - proxy
     mem_limit: 256m
     pids_limit: 200
     read_only: true
@@ -29,11 +30,28 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "3"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_started
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - internal
+    mem_limit: 128m
+    pids_limit: 100
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   postgres:
     image: postgres:16-alpine
@@ -55,20 +73,15 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "3"
 
 volumes:
   pgdata:
   attachments:
   rawemails:
   backups:
+  caddy_data:
+  caddy_config:
 
 networks:
   internal:
     driver: bridge
-  proxy:
-    external: true # shared with shiny-caddy-1

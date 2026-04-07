@@ -11,7 +11,9 @@ Current source of truth:
 
 - [`README.md`](./README.md) for architecture, setup, and first deployment
 - [`.env.example`](./.env.example) for configuration
-- [`Caddyfile`](./Caddyfile) for the bundled HTTPS reverse proxy
+- [`docker-compose.yml`](./docker-compose.yml) for the repository's current VPS-specific compose layout
+- [`docs/examples/docker-compose.standalone.yml`](./docs/examples/docker-compose.standalone.yml) for a clean first-install compose example
+- [`docs/examples/Caddyfile`](./docs/examples/Caddyfile) for the matching standalone HTTPS proxy example
 - [`cloudflare-worker/wrangler.toml`](./cloudflare-worker/wrangler.toml) for the Worker entry point
 - [`devdocs/encryption-todo.md`](./devdocs/encryption-todo.md) for future encryption work
 
@@ -19,6 +21,6 @@ Current implemented state:
 
 - Email ingestion is via Cloudflare Email Routing plus the Cloudflare Worker
 - Direct SMTP ingestion is not implemented
-- Docker Compose runs the app, PostgreSQL, and Caddy
-- Optional tag-based releases can pull prebuilt GHCR images, but a first deploy
-  can be done locally with `docker compose up -d --build`
+- The checked-in Docker Compose file reflects an existing VPS deployment that joins an external proxy network
+- A clean first deployment can be done from source with the standalone example under `docs/examples/`
+- Optional tag-based releases can pull prebuilt GHCR images for this repository's current VPS layout

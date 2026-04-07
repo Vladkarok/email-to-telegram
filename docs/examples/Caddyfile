@@ -1,0 +1,17 @@
+# Replace mail.example.com with your public HTTPS hostname.
+mail.example.com {
+    encode zstd gzip
+
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy no-referrer
+    }
+
+    reverse_proxy app:3000
+
+    log {
+        output stdout
+        format json
+    }
+}

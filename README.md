@@ -15,7 +15,8 @@ Implemented today:
 - A Cloudflare Worker that preflights aliases and streams raw MIME to the VPS
 - A VPS app that parses mail, stores raw `.eml` files and attachments, and sends
   deliveries to Telegram
-- Docker Compose services for the app, PostgreSQL, and Caddy
+- A checked-in Docker Compose file for the existing VPS deployment shape
+- Standalone first-deploy examples under `docs/examples/`
 
 Not implemented today:
 
@@ -133,29 +134,35 @@ Optional but useful on a real deployment:
 - `HEALTHCHECKS_URL=...`
 - `ALERT_CHAT_ID=...`
 
-### 6. Configure the bundled HTTPS proxy
+### 6. Choose the deployment shape
 
-Edit [`Caddyfile`](./Caddyfile) and replace `mail.example.com` with your real
-public hostname.
+The checked-in [`docker-compose.yml`](./docker-compose.yml) reflects an existing
+deployment that joins an external reverse-proxy network.
 
-The default compose stack includes Caddy, so a first deployment does not need an
-external reverse proxy.
+For a clean first install, use the standalone examples instead:
 
-If you already run your own reverse proxy, you can remove or override the `caddy`
-service and point your proxy at `app:3000` on the compose network.
+- [`docs/examples/docker-compose.standalone.yml`](./docs/examples/docker-compose.standalone.yml)
+- [`docs/examples/Caddyfile`](./docs/examples/Caddyfile)
+
+Edit the example Caddyfile and replace `mail.example.com` with your real public
+hostname.
+
+If you already have your own reverse proxy and external Docker networks, keep the
+real repo compose file and adapt the guide to your environment instead of using
+the standalone example.
 
 ### 7. Start the stack
 
-For a first deployment from source, build locally:
+For a clean first deployment from source, build with the standalone example:
 
 ```bash
-docker compose up -d --build
+docker compose -f docs/examples/docker-compose.standalone.yml up -d --build
 ```
 
 Check the containers:
 
 ```bash
-docker compose ps
+docker compose -f docs/examples/docker-compose.standalone.yml ps
 ```
 
 ### 8. Verify the VPS services
@@ -261,13 +268,6 @@ See [`.env.example`](./.env.example) for the authoritative template.
 | `LOG_LEVEL`             | No       | Log verbosity                                           |
 | `NODE_ENV`              | No       | Environment name                                        |
 
-Compose-only overrides:
-
-- `APP_IMAGE` lets you pull a prebuilt image instead of building locally
-- `IMAGE_TAG` selects which tag to run
-
-For a first deployment from source, you can leave both unset.
-
 ## Development
 
 ```bash
@@ -292,17 +292,19 @@ Tag-based releases are optional.
 If you use the included GitHub Actions deploy workflow:
 
 1. CI runs on `main`
-2. Pushing a tag like `v1.2.3` builds `ghcr.io/<owner>/email-to-telegram`
+2. Pushing a tag like `v1.2.3` builds the repository's GHCR image
 3. The VPS deploy job checks out the exact tagged commit
-4. Compose pulls the matching image tag and restarts the stack
+4. The checked-in VPS compose file pulls the matching image tag and restarts the stack
 
-That flow is for automated releases. A first deployment does not need GHCR and can
-be done entirely with `docker compose up -d --build`.
+That workflow is for this repository's existing VPS layout. A fresh install does
+not need GHCR and can be done entirely with the standalone example compose file.
 
 ## Other Docs
 
 - [`email-to-telegram-plan.md`](./email-to-telegram-plan.md) is now just an archive note
 - [`devdocs/encryption-todo.md`](./devdocs/encryption-todo.md) tracks future encryption work
+- [`docs/examples/docker-compose.standalone.yml`](./docs/examples/docker-compose.standalone.yml) is a clean first-install compose example
+- [`docs/examples/Caddyfile`](./docs/examples/Caddyfile) is the matching Caddy example
 
 ## License
 

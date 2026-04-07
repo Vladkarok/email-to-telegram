@@ -6,7 +6,6 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  IMAGE_NAME: ghcr.io/${{ github.repository }}
 
 jobs:
   build-and-push:
@@ -39,8 +38,8 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ env.IMAGE_NAME }}:latest
-            ${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+            ghcr.io/vladkarok/email-to-telegram:latest
+            ghcr.io/vladkarok/email-to-telegram:${{ github.ref_name }}
 
   deploy:
     name: Deploy to VPS
@@ -55,7 +54,7 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_KEY }}
-          envs: GHCR_TOKEN,GITHUB_SHA,GITHUB_REF_NAME,IMAGE_NAME
+          envs: GHCR_TOKEN,GITHUB_SHA,GITHUB_REF_NAME
           script: |
             set -e
             cd ~/email-to-telegram
@@ -66,14 +65,13 @@ jobs:
             git checkout --detach "$GITHUB_SHA"
 
             # Authenticate to GHCR and pull new image
-            image_owner=$(printf '%s' "$IMAGE_NAME" | cut -d/ -f2)
-            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$image_owner" --password-stdin
-            APP_IMAGE="$IMAGE_NAME" IMAGE_TAG="$GITHUB_REF_NAME" docker compose pull app
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u vladkarok --password-stdin
+            IMAGE_TAG="$GITHUB_REF_NAME" docker compose pull app
 
             # Restart with the exact tagged image; the app entrypoint runs migrations on startup.
-            APP_IMAGE="$IMAGE_NAME" IMAGE_TAG="$GITHUB_REF_NAME" docker compose up -d --remove-orphans --no-build
+            IMAGE_TAG="$GITHUB_REF_NAME" docker compose up -d --remove-orphans --no-build
 
-            container_id=$(APP_IMAGE="$IMAGE_NAME" IMAGE_TAG="$GITHUB_REF_NAME" docker compose ps -q app)
+            container_id=$(IMAGE_TAG="$GITHUB_REF_NAME" docker compose ps -q app)
             test -n "$container_id"
 
             attempts=0
@@ -93,4 +91,3 @@ jobs:
             echo "Deploy complete at $(date)"
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-          IMAGE_NAME: ${{ env.IMAGE_NAME }}
