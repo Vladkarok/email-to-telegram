@@ -67,8 +67,6 @@ async function main() {
   const bot = createBot(config.telegramBotToken);
   setApi(bot.api);
   markBotUnhealthy();
-  await bot.api.getMe();
-  markBotHealthy();
   let shuttingDown = false;
   let pollingRestartTimer: ReturnType<typeof setTimeout> | null = null;
   let isInitialPollingStart = true;
