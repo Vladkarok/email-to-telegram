@@ -25,6 +25,7 @@ const OPTIONAL_ENV = [
   "LOG_LEVEL",
   "NODE_ENV",
   "INITIAL_ALLOWED_USERS",
+  "BACKUP_ARCHIVE_ENCRYPTION",
 ];
 
 describe("loadConfig", () => {
@@ -66,6 +67,7 @@ describe("loadConfig", () => {
     expect(config.masterEncryptionKeyring).toEqual({});
     expect(config.maxSizeBytes).toBe(10485760);
     expect(config.logLevel).toBe("info");
+    expect(config.backupArchiveEncryption).toBe("off");
   });
 
   it("parses ATTACHMENT_TTL_HOURS as number", () => {
@@ -152,5 +154,13 @@ describe("loadConfig", () => {
     process.env["PUBLIC_BASE_URL"] = "http://tgmail.example.com";
 
     expect(() => loadConfig()).toThrow(/PUBLIC_BASE_URL must use HTTPS in production/);
+  });
+
+  it("parses backup archive encryption mode", () => {
+    process.env["BACKUP_ARCHIVE_ENCRYPTION"] = "storage-key";
+
+    const config = loadConfig();
+
+    expect(config.backupArchiveEncryption).toBe("storage-key");
   });
 });

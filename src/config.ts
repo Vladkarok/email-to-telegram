@@ -62,6 +62,7 @@ const envSchema = z.object({
   ALERT_CHAT_ID: z.coerce.bigint().optional(),
   /** Directory to store nightly DB backups (optional — skips backup if unset) */
   BACKUP_DIR: z.string().optional(),
+  BACKUP_ARCHIVE_ENCRYPTION: z.enum(["off", "storage-key"]).default("off"),
 });
 
 export interface AppConfig {
@@ -88,6 +89,7 @@ export interface AppConfig {
   healthchecksUrl: string | undefined;
   alertChatId: bigint | undefined;
   backupDir: string | undefined;
+  backupArchiveEncryption: "off" | "storage-key";
 }
 
 export function loadConfig(): AppConfig {
@@ -147,5 +149,6 @@ export function loadConfig(): AppConfig {
     healthchecksUrl: env.HEALTHCHECKS_URL,
     alertChatId: env.ALERT_CHAT_ID,
     backupDir: env.BACKUP_DIR,
+    backupArchiveEncryption: env.BACKUP_ARCHIVE_ENCRYPTION,
   };
 }

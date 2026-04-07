@@ -159,6 +159,11 @@ async function main() {
 
   // Nightly DB backup at 02:00 UTC
   if (config.backupDir) {
+    if (config.storageEncryptionMode === "local-v1" && config.backupArchiveEncryption === "off") {
+      logger.warn(
+        "Nightly backups are enabled without backup archive encryption. Set BACKUP_ARCHIVE_ENCRYPTION=storage-key to protect database dumps at rest.",
+      );
+    }
     const scriptPath = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "backup.sh");
     cronTasks.push(
       schedule(
@@ -180,7 +185,13 @@ async function main() {
         { timezone: "UTC" },
       ),
     );
-    logger.info({ backupDir: config.backupDir }, "Nightly backup scheduled at 02:00 UTC");
+    logger.info(
+      {
+        backupDir: config.backupDir,
+        archiveEncryption: config.backupArchiveEncryption,
+      },
+      "Nightly backup scheduled at 02:00 UTC",
+    );
   }
 
   // 7. Graceful shutdown

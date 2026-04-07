@@ -1,4 +1,10 @@
-import { createCipheriv, createDecipheriv, randomBytes, type DecipherGCM } from "crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  randomBytes,
+  type CipherGCM,
+  type DecipherGCM,
+} from "crypto";
 import { Readable } from "stream";
 
 const FILE_MAGIC = Buffer.from("ETG1", "ascii");
@@ -175,6 +181,46 @@ export async function encryptBufferForStorage(
       wrappedDek,
       kekKeyId: keyId,
       encryptedAt: new Date(),
+    },
+  };
+}
+
+export async function encryptStreamForStorage(
+  source: AsyncIterable<Buffer | Uint8Array | string>,
+  aad: string,
+): Promise<{ stream: Readable; metadata: StorageEncryptionMetadata }> {
+  if (!activeProvider) {
+    return {
+      stream: Readable.from(source),
+      metadata: {
+        encryptionMode: "none",
+        wrappedDek: null,
+        kekKeyId: null,
+        encryptedAt: null,
+      },
+    };
+  }
+
+  const dek = randomBytes(KEY_LENGTH);
+  const iv = randomBytes(IV_LENGTH);
+  const cipher = createCipheriv("aes-256-gcm", dek, iv);
+  cipher.setAAD(Buffer.from(aad, "utf-8"));
+  const { wrappedDek, keyId } = await activeProvider.wrapKey(dek);
+  const encryptedAt = new Date();
+  const header = Buffer.concat([FILE_MAGIC, Buffer.from([FILE_VERSION]), iv]);
+
+  return {
+    stream: Readable.from(
+      (async function* () {
+        yield header;
+        yield* encryptCiphertextChunks(source, cipher);
+      })(),
+    ),
+    metadata: {
+      encryptionMode: activeProvider.mode,
+      wrappedDek,
+      kekKeyId: keyId,
+      encryptedAt,
     },
   };
 }
@@ -394,4 +440,22 @@ function toBuffer(chunk: Buffer | Uint8Array | string): Buffer {
     return Buffer.from(chunk);
   }
   return Buffer.from(chunk);
+}
+
+async function* encryptCiphertextChunks(
+  source: AsyncIterable<Buffer | Uint8Array | string>,
+  cipher: CipherGCM,
+): AsyncGenerator<Buffer> {
+  for await (const rawChunk of source) {
+    const encrypted = cipher.update(toBuffer(rawChunk));
+    if (encrypted.length > 0) {
+      yield encrypted;
+    }
+  }
+
+  const finalChunk = cipher.final();
+  if (finalChunk.length > 0) {
+    yield finalChunk;
+  }
+  yield cipher.getAuthTag();
 }
