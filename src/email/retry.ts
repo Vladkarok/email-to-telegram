@@ -4,7 +4,8 @@ import type * as schema from "../db/schema.js";
 import { parseEmail } from "./parser.js";
 import { cleanEmailBody } from "./cleaner.js";
 import { renderEmail } from "./renderer.js";
-import { sendTelegramMessage } from "../telegram/sender.js";
+import { isImageContentType } from "./imageTypes.js";
+import { sendTelegramMessage, sendTelegramPhotos } from "../telegram/sender.js";
 import {
   findLogsNeedingRetry,
   claimDeliveryLogForRetry,
@@ -12,7 +13,10 @@ import {
 } from "../db/repos/deliveryLogs.js";
 import { insertDeliveryAttempt, countAttemptsByLog } from "../db/repos/deliveryAttempts.js";
 import { findAliasById } from "../db/repos/aliases.js";
+import { listAttachmentsByDeliveryLogId } from "../db/repos/attachments.js";
+import { createAttachmentLink } from "../db/repos/attachmentLinks.js";
 import { readRawEmail } from "../storage/disk.js";
+import { generateDownloadToken } from "../utils/tokens.js";
 import { getLogger } from "../utils/logger.js";
 
 type Db = NodePgDatabase<typeof schema>;
@@ -20,7 +24,14 @@ type Db = NodePgDatabase<typeof schema>;
 const MAX_RETRIES = 3;
 const STALE_DELIVERY_MS = 2 * 60 * 1000;
 
-export async function runRetryWorker(db: Db, api: Api | null): Promise<void> {
+export async function runRetryWorker(
+  db: Db,
+  api: Api | null,
+  {
+    attachmentTtlHours = 24,
+    publicBaseUrl = "",
+  }: { attachmentTtlHours?: number; publicBaseUrl?: string } = {},
+): Promise<void> {
   if (!api) return;
 
   const log = getLogger();
@@ -35,7 +46,10 @@ export async function runRetryWorker(db: Db, api: Api | null): Promise<void> {
     if (!claimed) continue;
 
     try {
-      await retryDelivery(db, api, deliveryLog);
+      await retryDelivery(db, api, deliveryLog, {
+        attachmentTtlHours,
+        publicBaseUrl,
+      });
     } catch (err: unknown) {
       log.error({ err, deliveryLogId: deliveryLog.id }, "retry worker: unexpected error");
       await updateDeliveryLogStatus(db, deliveryLog.id, "failed").catch((statusErr: unknown) => {
@@ -52,6 +66,7 @@ async function retryDelivery(
   db: Db,
   api: Api,
   deliveryLog: { id: string; emailAddressId: string; rawEmailPath: string | null },
+  opts: { attachmentTtlHours: number; publicBaseUrl: string },
 ): Promise<void> {
   const log = getLogger();
 
@@ -93,9 +108,27 @@ async function retryDelivery(
     parsed.textBody = cleanEmailBody(parsed.textBody);
   }
 
+  const storedAttachments = await listAttachmentsByDeliveryLogId(db, deliveryLog.id);
+  const attachmentLinks = await Promise.all(
+    storedAttachments.map(async (attachment) => {
+      const { token, expiresAt } = generateDownloadToken(attachment.id, opts.attachmentTtlHours);
+      await createAttachmentLink(db, attachment.id, token, expiresAt);
+      return {
+        filename: attachment.originalFilename ?? "attachment",
+        sizeBytes: attachment.sizeBytes ?? 0,
+        url: `${opts.publicBaseUrl}/dl/${token}`,
+      };
+    }),
+  );
+  const imageAttachments = storedAttachments
+    .filter((attachment) => isImageContentType(attachment.contentType ?? ""))
+    .map((attachment) => ({
+      storagePath: attachment.storagePath,
+      filename: attachment.originalFilename ?? "attachment",
+    }));
+
   const renderMode = (alias.renderMode ?? "plaintext") as "plaintext" | "html" | "markdown";
-  // Re-render without attachment links (they may have expired on retry)
-  const text = renderEmail(parsed, renderMode, alias.fullAddress, []);
+  const text = renderEmail(parsed, renderMode, alias.fullAddress, attachmentLinks);
   const parseMode =
     renderMode === "html" ? "HTML" : renderMode === "markdown" ? "MarkdownV2" : undefined;
 
@@ -121,6 +154,15 @@ async function retryDelivery(
   if (result.ok) {
     log.info({ deliveryLogId: deliveryLog.id, attemptNo: newAttemptNo }, "retry worker: delivered");
     await updateDeliveryLogStatus(db, deliveryLog.id, "delivered");
+
+    if (imageAttachments.length > 0) {
+      await sendTelegramPhotos(api, {
+        chatId: alias.chatId,
+        threadId: alias.messageThreadId ?? null,
+        replyToMessageId: result.telegramMessageId,
+        photos: imageAttachments,
+      });
+    }
   } else if (newAttemptNo >= MAX_RETRIES) {
     log.warn(
       { deliveryLogId: deliveryLog.id, error: result.error },

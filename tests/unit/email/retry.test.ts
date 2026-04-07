@@ -10,6 +10,9 @@ const mockCountAttempts = vi.fn();
 const mockInsertAttempt = vi.fn();
 const mockReadRawEmail = vi.fn();
 const mockSendTelegramMessage = vi.fn();
+const mockSendTelegramPhotos = vi.fn();
+const mockListAttachments = vi.fn();
+const mockCreateAttachmentLink = vi.fn();
 
 vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
   findLogsNeedingRetry: (...args: unknown[]): unknown => mockFindFailedLogs(...args),
@@ -18,6 +21,12 @@ vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
 }));
 vi.mock("../../../src/db/repos/aliases.js", () => ({
   findAliasById: (...args: unknown[]): unknown => mockFindAliasById(...args),
+}));
+vi.mock("../../../src/db/repos/attachments.js", () => ({
+  listAttachmentsByDeliveryLogId: (...args: unknown[]): unknown => mockListAttachments(...args),
+}));
+vi.mock("../../../src/db/repos/attachmentLinks.js", () => ({
+  createAttachmentLink: (...args: unknown[]): unknown => mockCreateAttachmentLink(...args),
 }));
 vi.mock("../../../src/db/repos/deliveryAttempts.js", () => ({
   countAttemptsByLog: (...args: unknown[]): unknown => mockCountAttempts(...args),
@@ -28,6 +37,7 @@ vi.mock("../../../src/storage/disk.js", () => ({
 }));
 vi.mock("../../../src/telegram/sender.js", () => ({
   sendTelegramMessage: (...args: unknown[]): unknown => mockSendTelegramMessage(...args),
+  sendTelegramPhotos: (...args: unknown[]): unknown => mockSendTelegramPhotos(...args),
 }));
 vi.mock("../../../src/utils/logger.js", () => ({
   getLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
@@ -69,6 +79,10 @@ describe("runRetryWorker", () => {
     mockUpdateLogStatus.mockResolvedValue(undefined);
     mockReadRawEmail.mockResolvedValue(RAW_EMAIL);
     mockSendTelegramMessage.mockResolvedValue({ ok: true, telegramMessageId: 42 });
+    mockSendTelegramPhotos.mockResolvedValue(undefined);
+    mockListAttachments.mockResolvedValue([]);
+    mockCreateAttachmentLink.mockResolvedValue(undefined);
+    process.env["HMAC_SECRET"] = "hmac-secret-test-32chars-abcdef";
   });
 
   it("does nothing when there are no failed logs", async () => {
@@ -172,5 +186,32 @@ describe("runRetryWorker", () => {
     await runRetryWorker(fakeDb, fakeApi);
 
     expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
+  });
+
+  it("rebuilds fresh attachment links during retry", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockListAttachments.mockResolvedValue([
+      {
+        id: "att-1",
+        originalFilename: "report.pdf",
+        sizeBytes: 123,
+        storagePath: "/data/attachments/log-uuid/report.pdf",
+        contentType: "application/pdf",
+      },
+    ]);
+
+    await runRetryWorker(fakeDb, fakeApi, {
+      attachmentTtlHours: 48,
+      publicBaseUrl: "https://mail.example.com",
+    });
+
+    expect(mockCreateAttachmentLink).toHaveBeenCalledWith(
+      fakeDb,
+      "att-1",
+      expect.any(String),
+      expect.any(Date),
+    );
+    const [, opts] = mockSendTelegramMessage.mock.calls[0] as [unknown, { text: string }];
+    expect(opts.text).toContain("/dl/");
   });
 });

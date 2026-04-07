@@ -171,16 +171,16 @@ export async function deliverQueuedEmail(
           storagePath,
         });
 
+        const { token, expiresAt } = generateDownloadToken(dbAtt.id, attachmentTtlHours);
+        await createAttachmentLink(db, dbAtt.id, token, expiresAt);
+        attachmentLinks.push({
+          filename: att.filename,
+          sizeBytes: att.sizeBytes,
+          url: `${publicBaseUrl}/dl/${token}`,
+        });
+
         if (isImageContentType(att.contentType)) {
           imageAttachments.push({ storagePath, filename: att.filename });
-        } else {
-          const { token, expiresAt } = generateDownloadToken(dbAtt.id, attachmentTtlHours);
-          await createAttachmentLink(db, dbAtt.id, token, expiresAt);
-          attachmentLinks.push({
-            filename: att.filename,
-            sizeBytes: att.sizeBytes,
-            url: `${publicBaseUrl}/dl/${token}`,
-          });
         }
       } catch (err: unknown) {
         log.error({ err, filename: att.filename }, "failed to store attachment");

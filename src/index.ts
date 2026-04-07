@@ -82,7 +82,10 @@ async function main() {
   const cronTasks = [
     // Retry failed deliveries every 5 minutes
     schedule("*/5 * * * *", () => {
-      runRetryWorker(getDb(), getApi()).catch((err: unknown) => {
+      runRetryWorker(getDb(), getApi(), {
+        attachmentTtlHours: config.attachmentTtlHours,
+        publicBaseUrl: config.publicBaseUrl,
+      }).catch((err: unknown) => {
         logger.error({ err }, "retry worker error");
       });
     }),
