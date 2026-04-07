@@ -324,8 +324,6 @@ restores should reuse the same `ATTACHMENT_DIR` / `RAW_EMAIL_DIR` paths that the
 service used when those files were written. Raw-email files are also pruned on
 their own TTL, so older `delivery_logs` rows remain for audit/retry history
 without claiming that the original MIME is still restorable.
-If you restore files under a different storage root, update the stored paths in
-the database to match the new attachment/raw-mail locations.
 
 ## Development
 

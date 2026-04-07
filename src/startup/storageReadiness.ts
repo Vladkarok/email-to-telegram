@@ -104,7 +104,6 @@ export async function assertStorageEncryptionReadiness(
     }
   }
 
-  const rawEmailCutoff = new Date(Date.now() - config.rawEmailTtlHours * 60 * 60 * 1000);
   const sampleRawEmail = rowsFromResult<{
     raw_email_path: string;
     raw_email_encryption_mode: string | null;
@@ -112,7 +111,9 @@ export async function assertStorageEncryptionReadiness(
     raw_email_kek_key_id: string | null;
   }>(
     await db.execute(
-      sql`select raw_email_path, raw_email_encryption_mode, raw_email_wrapped_dek, raw_email_kek_key_id from delivery_logs where raw_email_encryption_mode = 'local-v1' and raw_email_path is not null and received_at >= ${rawEmailCutoff} order by received_at desc limit 1`,
+      // Probe any still-retryable raw email, not just "recent" rows, because
+      // startup runs before the scheduled cleanup that clears stale paths.
+      sql`select raw_email_path, raw_email_encryption_mode, raw_email_wrapped_dek, raw_email_kek_key_id from delivery_logs where raw_email_encryption_mode = 'local-v1' and raw_email_path is not null order by received_at desc limit 1`,
     ),
   )[0];
   if (sampleRawEmail) {

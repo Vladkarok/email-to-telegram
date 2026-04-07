@@ -12,6 +12,7 @@ import {
 } from "../../../src/storage/disk.js";
 import {
   configureStorageEncryption,
+  encryptBufferForStorage,
   resetStorageEncryptionForTests,
 } from "../../../src/security/encryption.js";
 
@@ -145,7 +146,7 @@ describe("pending raw email metadata", () => {
     ).resolves.toEqual(plaintext);
   });
 
-  it("keeps encrypted raw emails readable after moving them to a new storage root", async () => {
+  it("keeps newly encrypted raw emails readable after moving them to a new storage root", async () => {
     const root = await mkdtemp(join(tmpdir(), "email-to-telegram-disk-"));
     const restoredRoot = await mkdtemp(join(tmpdir(), "email-to-telegram-disk-restored-"));
     tempDirs.push(root, restoredRoot);
@@ -169,5 +170,44 @@ describe("pending raw email metadata", () => {
         rawEmailKekKeyId: metadata.kekKeyId,
       }),
     ).resolves.toEqual(plaintext);
+  });
+
+  it("requires the original path for legacy encrypted raw emails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "email-to-telegram-disk-"));
+    const restoredRoot = await mkdtemp(join(tmpdir(), "email-to-telegram-disk-restored-"));
+    tempDirs.push(root, restoredRoot);
+    configureStorageEncryption({
+      mode: "local-v1",
+      masterKey: Buffer.alloc(32, 6).toString("base64"),
+      masterKeyId: "legacy-raw-key",
+    });
+
+    const originalPath = join(root, "2026-04-07", "message.eml");
+    const restoredPath = join(restoredRoot, "restored", "message.eml");
+    const plaintext = Buffer.from("From: sender@example.com\r\n\r\nlegacy");
+    const { blob, metadata } = await encryptBufferForStorage(
+      plaintext,
+      `raw-email:${originalPath}`,
+    );
+    await mkdir(dirname(originalPath), { recursive: true });
+    await writeFile(originalPath, blob);
+    await mkdir(dirname(restoredPath), { recursive: true });
+    await writeFile(restoredPath, blob);
+
+    await expect(
+      readRawEmail(originalPath, {
+        rawEmailEncryptionMode: metadata.encryptionMode,
+        rawEmailWrappedDek: metadata.wrappedDek,
+        rawEmailKekKeyId: metadata.kekKeyId,
+      }),
+    ).resolves.toEqual(plaintext);
+
+    await expect(
+      readRawEmail(restoredPath, {
+        rawEmailEncryptionMode: metadata.encryptionMode,
+        rawEmailWrappedDek: metadata.wrappedDek,
+        rawEmailKekKeyId: metadata.kekKeyId,
+      }),
+    ).rejects.toThrow();
   });
 });
