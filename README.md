@@ -397,7 +397,6 @@ not need GHCR and can be done entirely with the standalone example compose file.
 
 ## Other Docs
 
-- [`email-to-telegram-plan.md`](./email-to-telegram-plan.md) is now just an archive note
 - [`devdocs/encryption-todo.md`](./devdocs/encryption-todo.md) tracks future encryption work
 - [`docs/examples/docker-compose.standalone.yml`](./docs/examples/docker-compose.standalone.yml) is a clean first-install compose example
 - [`docs/examples/Caddyfile`](./docs/examples/Caddyfile) is the matching Caddy example
