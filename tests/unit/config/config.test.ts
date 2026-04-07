@@ -149,6 +149,16 @@ describe("loadConfig", () => {
     expect(() => loadConfig()).toThrow(/MASTER_ENCRYPTION_KEYRING entries must use the format/i);
   });
 
+  it("rejects a keyring that redefines the active key id", () => {
+    process.env["STORAGE_ENCRYPTION_MODE"] = "local-v1";
+    process.env["MASTER_ENCRYPTION_KEY"] = Buffer.alloc(32, 7).toString("base64");
+    process.env["MASTER_ENCRYPTION_KEY_ID"] = "current-v2";
+    process.env["MASTER_ENCRYPTION_KEYRING"] =
+      "current-v2=" + Buffer.alloc(32, 8).toString("base64");
+
+    expect(() => loadConfig()).toThrow(/must not redefine the active key id/i);
+  });
+
   it("rejects non-https PUBLIC_BASE_URL in production", () => {
     process.env["NODE_ENV"] = "production";
     process.env["PUBLIC_BASE_URL"] = "http://tgmail.example.com";
@@ -157,10 +167,19 @@ describe("loadConfig", () => {
   });
 
   it("parses backup archive encryption mode", () => {
+    process.env["STORAGE_ENCRYPTION_MODE"] = "local-v1";
+    process.env["MASTER_ENCRYPTION_KEY"] = Buffer.alloc(32, 7).toString("base64");
     process.env["BACKUP_ARCHIVE_ENCRYPTION"] = "storage-key";
 
     const config = loadConfig();
 
     expect(config.backupArchiveEncryption).toBe("storage-key");
+  });
+
+  it("rejects backup archive encryption without local storage encryption", () => {
+    process.env["BACKUP_ARCHIVE_ENCRYPTION"] = "storage-key";
+    process.env["STORAGE_ENCRYPTION_MODE"] = "none";
+
+    expect(() => loadConfig()).toThrow(/BACKUP_ARCHIVE_ENCRYPTION=storage-key requires/i);
   });
 });

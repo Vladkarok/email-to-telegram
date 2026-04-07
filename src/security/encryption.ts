@@ -48,9 +48,14 @@ export function configureStorageEncryption(config: {
     throw new Error("MASTER_ENCRYPTION_KEY is required when STORAGE_ENCRYPTION_MODE=local-v1");
   }
 
+  const activeKeyId = config.masterKeyId ?? "local-env-v1";
+  if ((config.additionalMasterKeys ?? {})[activeKeyId]) {
+    throw new Error(`MASTER_ENCRYPTION_KEYRING must not redefine the active key id ${activeKeyId}`);
+  }
+
   activeProvider = createLocalKeyProvider(
     parseMasterEncryptionKey(config.masterKey),
-    config.masterKeyId ?? "local-env-v1",
+    activeKeyId,
     Object.fromEntries(
       Object.entries(config.additionalMasterKeys ?? {}).map(([keyId, value]) => [
         keyId,

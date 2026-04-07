@@ -38,6 +38,19 @@ describe("storage encryption", () => {
     });
   });
 
+  it("rejects a keyring that redefines the active key id", () => {
+    expect(() =>
+      configureStorageEncryption({
+        mode: "local-v1",
+        masterKey: Buffer.alloc(32, 7).toString("base64"),
+        masterKeyId: "current-v2",
+        additionalMasterKeys: {
+          "current-v2": Buffer.alloc(32, 8).toString("base64"),
+        },
+      }),
+    ).toThrow(/must not redefine the active key id/i);
+  });
+
   it("round-trips encrypted storage blobs with local envelope encryption", async () => {
     configureStorageEncryption({
       mode: "local-v1",

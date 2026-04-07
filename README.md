@@ -333,11 +333,15 @@ If `BACKUP_ARCHIVE_ENCRYPTION=storage-key`, the dump itself is stored as
 DEK and AAD needed for decryption. Restore those archives with:
 
 ```bash
-node dist/backupArchiveCli.js decrypt \
+MASTER_ENCRYPTION_KEY=... node dist/backupArchiveCli.js decrypt \
   /data/backups/backup-YYYY-MM-DD.sql.gz.etg \
   /tmp/restored.sql.gz \
   /data/backups/backup-YYYY-MM-DD.meta
 ```
+
+If the backup archive was wrapped under an older key id, also set
+`MASTER_ENCRYPTION_KEYRING` with the matching read-only legacy key before
+running the decrypt command.
 
 The database also stores the filesystem paths for attachment/raw-email blobs, so
 restores should reuse the same `ATTACHMENT_DIR` / `RAW_EMAIL_DIR` paths that the

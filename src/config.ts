@@ -124,6 +124,20 @@ export function loadConfig(): AppConfig {
   }
 
   const masterEncryptionKeyring = parseMasterEncryptionKeyring(env.MASTER_ENCRYPTION_KEYRING);
+  if (env.MASTER_ENCRYPTION_KEY_ID in masterEncryptionKeyring) {
+    throw new Error(
+      `Invalid configuration:\n  MASTER_ENCRYPTION_KEYRING must not redefine the active key id ${env.MASTER_ENCRYPTION_KEY_ID}`,
+    );
+  }
+
+  if (
+    env.BACKUP_ARCHIVE_ENCRYPTION === "storage-key" &&
+    env.STORAGE_ENCRYPTION_MODE !== "local-v1"
+  ) {
+    throw new Error(
+      "Invalid configuration:\n  BACKUP_ARCHIVE_ENCRYPTION=storage-key requires STORAGE_ENCRYPTION_MODE=local-v1",
+    );
+  }
 
   return {
     databaseUrl: env.DATABASE_URL,
