@@ -113,10 +113,12 @@ npm run dev
 
 ## Deployment
 
-CI/CD via GitHub Actions. On push to `main`:
+CI runs on pushes and pull requests to `main`. Deployment runs when you push a version tag like `v1.2.3`:
 
-1. Lint + typecheck + test
-2. SSH into VPS, pull latest image, `docker compose up -d`
+1. Root lint + typecheck + tests
+2. Cloudflare worker typecheck
+3. Build and push the Docker image to GHCR
+4. SSH into the VPS, pull the image, restart the stack, and run `node dist/index.js --migrate-only`
 
 ## License
 

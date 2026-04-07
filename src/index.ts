@@ -3,6 +3,7 @@ import { access, mkdir, constants } from "fs/promises";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { schedule } from "node-cron";
+import { parseStartupOptions } from "./cli.js";
 import { loadConfig } from "./config.js";
 import { createLogger, setLogger } from "./utils/logger.js";
 import { initDb, closeDb, getDb } from "./db/client.js";
@@ -18,6 +19,8 @@ import { pipelineTracker } from "./utils/inFlight.js";
 import { startSessionSweep, destroySessionStore } from "./telegram/session.js";
 
 async function main() {
+  const startup = parseStartupOptions(process.argv.slice(2));
+
   // 1. Load and validate config (fail fast)
   const config = loadConfig();
 
@@ -26,7 +29,17 @@ async function main() {
   setLogger(logger);
   logger.info({ ingestMode: config.ingestMode }, "Starting email-to-telegram");
 
-  // 2a. Ensure required directories exist and are writable (fail fast)
+  // 3. Connect to DB and run migrations
+  initDb(config.databaseUrl);
+  await runMigrations();
+
+  if (startup.migrateOnly) {
+    logger.info("Migrations complete.");
+    await closeDb();
+    return;
+  }
+
+  // 3a. Ensure required directories exist and are writable (fail fast)
   const requiredDirs = [config.attachmentDir, config.rawEmailDir];
   if (config.backupDir) requiredDirs.push(config.backupDir);
   await Promise.all(
@@ -40,11 +53,7 @@ async function main() {
     }),
   );
 
-  // 3. Connect to DB and run migrations
-  initDb(config.databaseUrl);
-  await runMigrations();
-
-  // 3a. Seed initial allowed users
+  // 3b. Seed initial allowed users
   if (config.initialAllowedUsers.length > 0) {
     const db = getDb();
     await Promise.all(config.initialAllowedUsers.map((id) => upsertAllowedUser(db, id)));

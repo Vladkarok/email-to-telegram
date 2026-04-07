@@ -59,7 +59,7 @@ jobs:
 
             # Restart with new image, run migrations
             docker compose up -d --remove-orphans
-            docker compose exec -T app node dist/index.js --migrate-only || true
+            docker compose exec -T app node dist/index.js --migrate-only
 
             echo "Deploy complete at $(date)"
         env:

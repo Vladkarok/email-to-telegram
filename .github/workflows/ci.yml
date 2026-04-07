@@ -56,8 +56,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install worker dependencies
+        run: npm --prefix cloudflare-worker ci
+
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Worker typecheck
+        run: npm --prefix cloudflare-worker run typecheck
 
       - name: Lint
         run: npm run lint

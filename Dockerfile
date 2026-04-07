@@ -14,6 +14,8 @@ RUN npm run build
 
 FROM node:20-alpine AS runner
 
+RUN apk add --no-cache postgresql16-client
+
 # Non-root user for security
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
@@ -24,10 +26,12 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=builder /app/dist ./dist
 COPY drizzle/ ./drizzle/
+COPY scripts/ ./scripts/
 
 # Persistent storage volumes — all directories must be pre-created and chowned
 # before Docker mounts the named volumes over them (volumes are mounted as root).
 RUN mkdir -p /data/attachments /data/rawemails /data/backups \
+ && chmod +x /app/scripts/backup.sh \
  && chown -R appuser:appgroup /data
 VOLUME ["/data/attachments", "/data/rawemails", "/data/backups"]
 
