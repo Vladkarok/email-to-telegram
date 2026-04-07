@@ -91,4 +91,11 @@ describe("loadConfig", () => {
     const config = loadConfig();
     expect(config.initialAllowedUsers).toEqual([]);
   });
+
+  it("rejects non-https PUBLIC_BASE_URL in production", () => {
+    process.env["NODE_ENV"] = "production";
+    process.env["PUBLIC_BASE_URL"] = "http://tgmail.example.com";
+
+    expect(() => loadConfig()).toThrow(/PUBLIC_BASE_URL must use HTTPS in production/);
+  });
 });

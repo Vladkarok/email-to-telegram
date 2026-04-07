@@ -101,7 +101,10 @@ const baseAlias = {
   maxEmailsHour: 60,
 };
 
-const fakeDb = {} as Parameters<typeof processInboundEmail>[0];
+const fakeDb = {
+  transaction: async <T>(fn: (tx: { execute: ReturnType<typeof vi.fn> }) => Promise<T>) =>
+    fn({ execute: vi.fn().mockResolvedValue(undefined) }),
+} as Parameters<typeof processInboundEmail>[0];
 const fakeApi = {} as NonNullable<Parameters<typeof processInboundEmail>[1]>;
 
 function setupHappyPath(logId = "log-1") {
@@ -148,9 +151,9 @@ describe("pipeline integration matrix", () => {
     });
     const [, opts] = mockSendTelegram.mock.calls[0] as [
       unknown,
-      { text: string; parse_mode?: string },
+      { text: string; parseMode?: string },
     ];
-    expect(opts.parse_mode).toBeUndefined();
+    expect(opts.parseMode).toBeUndefined();
     expect(typeof opts.text).toBe("string");
     expect(opts.text.length).toBeGreaterThan(0);
   });
