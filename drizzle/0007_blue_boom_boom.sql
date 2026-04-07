@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "idx_delivery_view_link_delivery_log" ON "delivery_view_links" USING btree ("delivery_log_id");

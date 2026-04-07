@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
-import { join } from "path";
+import { dirname, join } from "path";
 import {
   listPendingRawEmails,
   openAttachmentStream,
@@ -138,6 +138,32 @@ describe("pending raw email metadata", () => {
     expect(onDisk.equals(plaintext)).toBe(false);
     await expect(
       readRawEmail(storagePath, {
+        rawEmailEncryptionMode: metadata.encryptionMode,
+        rawEmailWrappedDek: metadata.wrappedDek,
+        rawEmailKekKeyId: metadata.kekKeyId,
+      }),
+    ).resolves.toEqual(plaintext);
+  });
+
+  it("keeps encrypted raw emails readable after moving them to a new storage root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "email-to-telegram-disk-"));
+    const restoredRoot = await mkdtemp(join(tmpdir(), "email-to-telegram-disk-restored-"));
+    tempDirs.push(root, restoredRoot);
+    configureStorageEncryption({
+      mode: "local-v1",
+      masterKey: Buffer.alloc(32, 5).toString("base64"),
+      masterKeyId: "raw-restore-key",
+    });
+
+    const originalPath = join(root, "2026-04-07", "message.eml");
+    const restoredPath = join(restoredRoot, "restored", "message.eml");
+    const plaintext = Buffer.from("From: sender@example.com\r\n\r\nrestored");
+    const metadata = await writeRawEmail(originalPath, plaintext);
+    await mkdir(dirname(restoredPath), { recursive: true });
+    await writeFile(restoredPath, await readFile(originalPath));
+
+    await expect(
+      readRawEmail(restoredPath, {
         rawEmailEncryptionMode: metadata.encryptionMode,
         rawEmailWrappedDek: metadata.wrappedDek,
         rawEmailKekKeyId: metadata.kekKeyId,

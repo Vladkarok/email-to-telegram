@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Fastify from "fastify";
 import { registerRoutes } from "../../../src/http/routes/index.js";
-import { generateDeliveryViewToken } from "../../../src/utils/tokens.js";
+import { generateDeliveryViewToken, verifyDownloadToken } from "../../../src/utils/tokens.js";
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
@@ -90,6 +90,7 @@ describe("/view/:token", () => {
   beforeEach(() => {
     savedSecret = process.env["HMAC_SECRET"];
     process.env["HMAC_SECRET"] = "test-secret-that-is-long-enough-abc";
+    vi.useRealTimers();
     vi.clearAllMocks();
     mockMarkDeliveryViewLinkViewed.mockResolvedValue(true);
     mockCreateAttachmentLink.mockResolvedValue(undefined);
@@ -135,6 +136,17 @@ describe("/view/:token", () => {
     expect(res.body).toContain("Hello secure world");
     expect(res.body).toContain("report.pdf");
     expect(res.body).toContain("/dl/");
+    const [, , , attachmentExpiresAt] = mockCreateAttachmentLink.mock.calls[0] as [
+      unknown,
+      string,
+      string,
+      Date,
+    ];
+    expect(attachmentExpiresAt.toISOString()).toBe("2026-04-08T12:00:00.000Z");
+    const urlMatch = res.body.match(/\/dl\/([^"]+)/);
+    expect(urlMatch).not.toBeNull();
+    if (!urlMatch) throw new Error("missing download link");
+    expect(verifyDownloadToken(urlMatch[1], "att-1", attachmentExpiresAt)).toBe(true);
     expect(mockMarkDeliveryViewLinkViewed).toHaveBeenCalledWith(
       expect.anything(),
       "view-link-1",
@@ -177,5 +189,32 @@ describe("/view/:token", () => {
 
     expect(res.statusCode).toBe(410);
     expect(mockMarkDeliveryViewLinkViewed).not.toHaveBeenCalled();
+  });
+
+  it("does not issue privacy attachment links after attachment retention has already elapsed", async () => {
+    const { token, expiresAt } = generateDeliveryViewToken("log-uuid-1", 72);
+    const baseRow = viewLinkRow(expiresAt);
+    mockFindDeliveryViewLinkByTokenHash.mockResolvedValue({
+      ...baseRow,
+      deliveryLog: {
+        ...baseRow.deliveryLog,
+        receivedAt: new Date(Date.now() - 48 * 60 * 60 * 1000),
+      },
+    });
+    mockListAttachments.mockResolvedValue([
+      {
+        id: "att-1",
+        originalFilename: "report.pdf",
+        sizeBytes: 1234,
+      },
+    ]);
+
+    const app = await buildApp();
+    const res = await app.inject({ method: "POST", url: `/view/${token}` });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).not.toContain("/dl/");
+    expect(res.body).not.toContain("report.pdf");
+    expect(mockCreateAttachmentLink).not.toHaveBeenCalled();
   });
 });

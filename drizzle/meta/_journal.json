@@ -50,6 +50,13 @@
       "when": 1775566372255,
       "tag": "0006_bumpy_katie_power",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1775567639606,
+      "tag": "0007_blue_boom_boom",
+      "breakpoints": true
     }
   ]
 }

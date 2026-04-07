@@ -1,6 +1,6 @@
 import { createReadStream } from "fs";
 import { readFile, writeFile, mkdir, unlink, rm, stat, readdir, rename } from "fs/promises";
-import { dirname, join } from "path";
+import { basename, dirname, join } from "path";
 import { Readable } from "stream";
 import { getLogger } from "../utils/logger.js";
 import {
@@ -94,7 +94,7 @@ export async function writeRawEmail(
   data: Buffer,
 ): Promise<StorageEncryptionMetadata> {
   await mkdir(dirname(storagePath), { recursive: true });
-  const { blob, metadata } = await encryptBufferForStorage(data, `raw-email:${storagePath}`);
+  const { blob, metadata } = await encryptBufferForStorage(data, rawEmailAads(storagePath)[0]);
   await writeFile(storagePath, blob);
   return metadata;
 }
@@ -176,7 +176,7 @@ export async function readRawEmail(
   },
 ): Promise<Buffer> {
   const raw = await readFile(storagePath);
-  const encryptionMode =
+  const encryptionMode: StorageEncryptionMetadata["encryptionMode"] =
     encryption?.rawEmailEncryptionMode === "local-v1"
       ? "local-v1"
       : encryption?.rawEmailEncryptionMode === "none" || encryption?.rawEmailEncryptionMode == null
@@ -187,15 +187,28 @@ export async function readRawEmail(
             );
           })();
 
-  return decryptBufferFromStorage(
-    raw,
-    {
-      encryptionMode,
-      wrappedDek: encryption?.rawEmailWrappedDek ?? null,
-      kekKeyId: encryption?.rawEmailKekKeyId ?? null,
-    },
-    `raw-email:${storagePath}`,
-  );
+  const metadata: Pick<StorageEncryptionMetadata, "encryptionMode" | "wrappedDek" | "kekKeyId"> = {
+    encryptionMode,
+    wrappedDek: encryption?.rawEmailWrappedDek ?? null,
+    kekKeyId: encryption?.rawEmailKekKeyId ?? null,
+  };
+  const aads = rawEmailAads(storagePath);
+
+  for (const aad of aads) {
+    try {
+      return await decryptBufferFromStorage(raw, metadata, aad);
+    } catch (err: unknown) {
+      if (aad === aads[aads.length - 1]) throw err;
+    }
+  }
+
+  throw new Error("Failed to decrypt raw email");
+}
+
+function rawEmailAads(storagePath: string): string[] {
+  const stableAad = `raw-email:${basename(storagePath)}`;
+  const legacyAad = `raw-email:${storagePath}`;
+  return stableAad === legacyAad ? [stableAad] : [stableAad, legacyAad];
 }
 
 /** Delete a file, ignoring ENOENT (already gone). */

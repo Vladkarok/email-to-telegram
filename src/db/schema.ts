@@ -198,6 +198,7 @@ export const deliveryViewLinks = pgTable(
   },
   (t) => [
     uniqueIndex("idx_delivery_view_link_token_hash").on(t.tokenHash),
+    uniqueIndex("idx_delivery_view_link_delivery_log").on(t.deliveryLogId),
     index("idx_delivery_view_link_expires").on(t.expiresAt),
   ],
 );

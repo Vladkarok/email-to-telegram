@@ -102,14 +102,14 @@ export function deliveryViewRoute(
       }
 
       const attachmentExpiresAt = buildPrivacyAttachmentExpiry(
-        now,
         link.deliveryLog.receivedAt,
         config.attachmentTtlHours,
         config.rawEmailTtlHours,
       );
+      const attachmentsStillAvailable = attachmentExpiresAt > now;
       const storedAttachments = await listAttachmentsByDeliveryLogId(getDb(), link.deliveryLog.id);
       const attachmentLinks = await Promise.all(
-        storedAttachments.map(async (attachment) => {
+        (attachmentsStillAvailable ? storedAttachments : []).map(async (attachment) => {
           try {
             const { token: attachmentToken, expiresAt } = generateDownloadTokenForExpiry(
               attachment.id,
@@ -216,12 +216,11 @@ function renderPrivacyGatePage(token: string): string {
 }
 
 function buildPrivacyAttachmentExpiry(
-  now: Date,
   receivedAt: Date,
   attachmentTtlHours: number,
   rawEmailTtlHours: number,
 ): Date {
-  const attachmentExpiry = new Date(now.getTime() + attachmentTtlHours * 60 * 60 * 1000);
+  const attachmentExpiry = new Date(receivedAt.getTime() + attachmentTtlHours * 60 * 60 * 1000);
   const rawEmailExpiry = new Date(receivedAt.getTime() + rawEmailTtlHours * 60 * 60 * 1000);
   return attachmentExpiry <= rawEmailExpiry ? attachmentExpiry : rawEmailExpiry;
 }

@@ -31,8 +31,18 @@ export async function createDeliveryViewLink(
   tokenHash: string,
   expiresAt: Date,
 ): Promise<void> {
-  await db.delete(deliveryViewLinks).where(eq(deliveryViewLinks.deliveryLogId, deliveryLogId));
-  await db.insert(deliveryViewLinks).values({ deliveryLogId, tokenHash, expiresAt });
+  await db
+    .insert(deliveryViewLinks)
+    .values({ deliveryLogId, tokenHash, expiresAt, viewedAt: null })
+    .onConflictDoUpdate({
+      target: deliveryViewLinks.deliveryLogId,
+      set: {
+        tokenHash,
+        expiresAt,
+        viewedAt: null,
+        createdAt: new Date(),
+      },
+    });
 }
 
 export async function findDeliveryViewLinkByTokenHash(

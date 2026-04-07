@@ -1,7 +1,7 @@
 import { readdir, stat } from "fs/promises";
 import { join } from "path";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { lt } from "drizzle-orm";
+import { and, isNotNull, lt } from "drizzle-orm";
 import { deliveryLogs, attachments } from "../db/schema.js";
 import type * as schema from "../db/schema.js";
 import { deleteFile, deleteDir } from "./disk.js";
@@ -25,7 +25,7 @@ export async function runCleanup(db: Db, config: CleanupConfig): Promise<void> {
   await cleanAttachments(db, config.attachmentDir, config.attachmentTtlHours, now, log);
 
   // 2. Delete old raw email files
-  await cleanRawEmails(config.rawEmailDir, config.rawEmailTtlHours, now, log);
+  await cleanRawEmails(db, config.rawEmailDir, config.rawEmailTtlHours, now, log);
 
   // 3. Delete old delivery_log rows (cascades to delivery_attempts)
   await cleanDeliveryLogs(db, config.deliveryLogRetentionDays, now, log);
@@ -93,12 +93,14 @@ async function cleanOrphanedDirs(
 }
 
 async function cleanRawEmails(
+  db: Db,
   rawEmailDir: string,
   ttlHours: number,
   now: number,
   log: ReturnType<typeof getLogger>,
 ): Promise<void> {
   const cutoffMs = now - ttlHours * 3600 * 1000;
+  const cutoff = new Date(cutoffMs);
   try {
     const dateDirs = await readdir(rawEmailDir, { withFileTypes: true });
     let deleted = 0;
@@ -120,6 +122,25 @@ async function cleanRawEmails(
     }
   } catch {
     // dir may not exist yet
+  }
+
+  try {
+    const result = await db
+      .update(deliveryLogs)
+      .set({
+        rawEmailPath: null,
+        rawEmailEncryptionMode: "none",
+        rawEmailWrappedDek: null,
+        rawEmailKekKeyId: null,
+        rawEmailEncryptedAt: null,
+      })
+      .where(and(isNotNull(deliveryLogs.rawEmailPath), lt(deliveryLogs.receivedAt, cutoff)));
+    const rows = (result as unknown as { rowCount?: number }).rowCount ?? 0;
+    if (rows > 0) {
+      log.info({ rows }, "cleanup: cleared expired raw email references");
+    }
+  } catch (err: unknown) {
+    log.error({ err }, "cleanup: raw email reference cleanup failed");
   }
 }
 

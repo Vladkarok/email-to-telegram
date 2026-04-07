@@ -319,6 +319,13 @@ encrypted files still exist; the app will refuse to start in those states.
 Nightly backups created via `BACKUP_DIR` contain only the PostgreSQL dump. Keep
 the attachment/raw-mail directories alongside those backups, and if encryption
 is enabled, keep the matching `MASTER_ENCRYPTION_KEY` available for restore.
+The database also stores the filesystem paths for attachment/raw-email blobs, so
+restores should reuse the same `ATTACHMENT_DIR` / `RAW_EMAIL_DIR` paths or run a
+path-rewrite migration before serving old files. Raw-email files are also pruned
+on their own TTL, so older `delivery_logs` rows remain for audit/retry history
+without claiming that the original MIME is still restorable.
+If you restore files under a different storage root, update the stored paths in
+the database to match the new attachment/raw-mail locations.
 
 ## Development
 
