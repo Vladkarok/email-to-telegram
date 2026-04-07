@@ -173,7 +173,12 @@ async function recoverPendingRawEmails(
 async function retryDelivery(
   db: Db,
   api: Api,
-  deliveryLog: { id: string; emailAddressId: string; rawEmailPath: string | null },
+  deliveryLog: {
+    id: string;
+    emailAddressId: string;
+    rawEmailPath: string | null;
+    receivedAt: Date;
+  },
   opts: { attachmentTtlHours: number; rawEmailTtlHours: number; publicBaseUrl: string },
 ): Promise<void> {
   const log = getLogger();
@@ -216,20 +221,26 @@ async function retryDelivery(
     parsed.textBody = cleanEmailBody(parsed.textBody);
   }
 
+  const privacyMode = alias.privacyModeEnabled ?? false;
   const storedAttachments = await listAttachmentsByDeliveryLogId(db, deliveryLog.id);
-  const attachmentLinks = await Promise.all(
-    storedAttachments
-      .filter((attachment) => !isImageContentType(attachment.contentType ?? ""))
-      .map(async (attachment) => {
-        const { token, expiresAt } = generateDownloadToken(attachment.id, opts.attachmentTtlHours);
-        await createAttachmentLink(db, attachment.id, token, expiresAt);
-        return {
-          filename: attachment.originalFilename ?? "attachment",
-          sizeBytes: attachment.sizeBytes ?? 0,
-          url: `${opts.publicBaseUrl}/dl/${token}`,
-        };
-      }),
-  );
+  const attachmentLinks = privacyMode
+    ? []
+    : await Promise.all(
+        storedAttachments
+          .filter((attachment) => !isImageContentType(attachment.contentType ?? ""))
+          .map(async (attachment) => {
+            const { token, expiresAt } = generateDownloadToken(
+              attachment.id,
+              opts.attachmentTtlHours,
+            );
+            await createAttachmentLink(db, attachment.id, token, expiresAt);
+            return {
+              filename: attachment.originalFilename ?? "attachment",
+              sizeBytes: attachment.sizeBytes ?? 0,
+              url: `${opts.publicBaseUrl}/dl/${token}`,
+            };
+          }),
+      );
   const imageAttachments = storedAttachments
     .filter((attachment) => isImageContentType(attachment.contentType ?? ""))
     .map((attachment) => ({
@@ -237,7 +248,6 @@ async function retryDelivery(
       filename: attachment.originalFilename ?? "attachment",
     }));
 
-  const privacyMode = alias.privacyModeEnabled ?? false;
   const renderMode = (alias.renderMode ?? "plaintext") as "plaintext" | "html" | "markdown";
   const text = privacyMode
     ? await buildPrivacyRetryMessage(db, deliveryLog, parsed, alias.fullAddress, opts)
@@ -336,7 +346,7 @@ async function retryDelivery(
 
 async function buildPrivacyRetryMessage(
   db: Db,
-  deliveryLog: { id: string; rawEmailPath: string | null },
+  deliveryLog: { id: string; rawEmailPath: string | null; receivedAt: Date },
   parsed: Awaited<ReturnType<typeof parseEmail>>,
   aliasFullAddress: string,
   opts: { publicBaseUrl: string; rawEmailTtlHours: number },
@@ -349,7 +359,7 @@ async function buildPrivacyRetryMessage(
     db,
     deliveryLog.id,
     opts.publicBaseUrl,
-    opts.rawEmailTtlHours,
+    new Date(deliveryLog.receivedAt.getTime() + opts.rawEmailTtlHours * 60 * 60 * 1000),
   );
 
   return renderPrivacyAlert(parsed, aliasFullAddress, viewUrl, parsed.attachments.length > 0);

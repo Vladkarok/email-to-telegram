@@ -96,12 +96,12 @@
           "primaryKey": false,
           "notNull": true
         },
-        "token": {
-          "name": "token",
-          "type": "varchar(96)",
-          "primaryKey": false,
-          "notNull": true
-        },
+    "token_hash": {
+      "name": "token_hash",
+      "type": "varchar(64)",
+      "primaryKey": false,
+      "notNull": true
+    },
         "expires_at": {
           "name": "expires_at",
           "type": "timestamp with time zone",
@@ -660,14 +660,14 @@
         }
       },
       "indexes": {
-        "idx_delivery_view_link_token": {
-          "name": "idx_delivery_view_link_token",
-          "columns": [
-            {
-              "expression": "token",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
+    "idx_delivery_view_link_token_hash": {
+      "name": "idx_delivery_view_link_token_hash",
+      "columns": [
+        {
+          "expression": "token_hash",
+          "isExpression": false,
+          "asc": true,
+          "nulls": "last"
             }
           ],
           "isUnique": true,

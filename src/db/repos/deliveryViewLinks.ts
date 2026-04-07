@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, gt, isNull } from "drizzle-orm";
 import { deliveryLogs, deliveryViewLinks } from "../schema.js";
 import type * as schema from "../schema.js";
 
@@ -7,7 +7,7 @@ type Db = NodePgDatabase<typeof schema>;
 
 export interface DeliveryViewLinkWithLog {
   id: string;
-  token: string;
+  tokenHash: string;
   expiresAt: Date;
   viewedAt: Date | null;
   deliveryLogId: string;
@@ -25,20 +25,21 @@ export interface DeliveryViewLinkWithLog {
 export async function createDeliveryViewLink(
   db: Db,
   deliveryLogId: string,
-  token: string,
+  tokenHash: string,
   expiresAt: Date,
 ): Promise<void> {
-  await db.insert(deliveryViewLinks).values({ deliveryLogId, token, expiresAt });
+  await db.delete(deliveryViewLinks).where(eq(deliveryViewLinks.deliveryLogId, deliveryLogId));
+  await db.insert(deliveryViewLinks).values({ deliveryLogId, tokenHash, expiresAt });
 }
 
-export async function findDeliveryViewLinkByToken(
+export async function findDeliveryViewLinkByTokenHash(
   db: Db,
-  token: string,
+  tokenHash: string,
 ): Promise<DeliveryViewLinkWithLog | null> {
   const [row] = await db
     .select({
       id: deliveryViewLinks.id,
-      token: deliveryViewLinks.token,
+      tokenHash: deliveryViewLinks.tokenHash,
       expiresAt: deliveryViewLinks.expiresAt,
       viewedAt: deliveryViewLinks.viewedAt,
       deliveryLogId: deliveryViewLinks.deliveryLogId,
@@ -52,13 +53,13 @@ export async function findDeliveryViewLinkByToken(
     })
     .from(deliveryViewLinks)
     .innerJoin(deliveryLogs, eq(deliveryViewLinks.deliveryLogId, deliveryLogs.id))
-    .where(eq(deliveryViewLinks.token, token));
+    .where(eq(deliveryViewLinks.tokenHash, tokenHash));
 
   if (!row) return null;
 
   return {
     id: row.id,
-    token: row.token,
+    tokenHash: row.tokenHash,
     expiresAt: row.expiresAt,
     viewedAt: row.viewedAt,
     deliveryLogId: row.deliveryLogId,
@@ -74,11 +75,17 @@ export async function findDeliveryViewLinkByToken(
   };
 }
 
-export async function markDeliveryViewLinkViewed(db: Db, id: string): Promise<boolean> {
+export async function markDeliveryViewLinkViewed(db: Db, id: string, now: Date): Promise<boolean> {
   const rows = await db
     .update(deliveryViewLinks)
     .set({ viewedAt: new Date() })
-    .where(and(eq(deliveryViewLinks.id, id), isNull(deliveryViewLinks.viewedAt)))
+    .where(
+      and(
+        eq(deliveryViewLinks.id, id),
+        isNull(deliveryViewLinks.viewedAt),
+        gt(deliveryViewLinks.expiresAt, now),
+      ),
+    )
     .returning({ id: deliveryViewLinks.id });
 
   return rows.length > 0;

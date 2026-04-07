@@ -247,7 +247,11 @@ describe("processInboundEmail", () => {
     mockFindAlias.mockResolvedValue({ ...activeAlias, privacyModeEnabled: true });
     mockCheckAllow.mockResolvedValue(true);
     mockIsDuplicate.mockResolvedValue(false);
-    mockCreateLog.mockResolvedValue({ id: "log-privacy", rawEmailPath: "/tmp/raw/privacy.eml" });
+    mockCreateLog.mockResolvedValue({
+      id: "log-privacy",
+      rawEmailPath: "/tmp/raw/privacy.eml",
+      receivedAt: new Date("2026-04-07T12:00:00.000Z"),
+    });
     mockUpdateLogStatus.mockResolvedValue(undefined);
     mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 321 });
 
@@ -267,6 +271,7 @@ describe("processInboundEmail", () => {
     expect(opts.text).toContain("/view/");
     expect(opts.text).not.toContain("CPU usage");
     expect(mockSendTelegramPhotos).not.toHaveBeenCalled();
+    expect(mockCreateAttachmentLink).not.toHaveBeenCalled();
     expect(mockCreateDeliveryViewLink).toHaveBeenCalledWith(
       expect.anything(),
       "log-privacy",

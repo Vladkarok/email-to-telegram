@@ -5,14 +5,15 @@ import { generateDeliveryViewToken } from "../../../src/utils/tokens.js";
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
-const mockFindDeliveryViewLink = vi.fn();
+const mockFindDeliveryViewLinkByTokenHash = vi.fn();
 const mockMarkDeliveryViewLinkViewed = vi.fn();
 const mockListAttachments = vi.fn();
 const mockCreateAttachmentLink = vi.fn();
 const mockReadRawEmail = vi.fn();
 
 vi.mock("../../../src/db/repos/deliveryViewLinks.js", () => ({
-  findDeliveryViewLinkByToken: (...args: unknown[]): unknown => mockFindDeliveryViewLink(...args),
+  findDeliveryViewLinkByTokenHash: (...args: unknown[]): unknown =>
+    mockFindDeliveryViewLinkByTokenHash(...args),
   markDeliveryViewLinkViewed: (...args: unknown[]): unknown =>
     mockMarkDeliveryViewLinkViewed(...args),
 }));
@@ -47,6 +48,26 @@ const RAW_EMAIL = Buffer.from(
   "From: sender@example.com\r\nTo: alerts@example.com\r\nSubject: Privacy Test\r\n\r\nHello secure world",
 );
 
+function viewLinkRow(expiresAt: Date, overrides: Record<string, unknown> = {}) {
+  return {
+    id: "view-link-1",
+    tokenHash: "hashed-token",
+    expiresAt,
+    viewedAt: null,
+    deliveryLogId: "log-uuid-1",
+    deliveryLog: {
+      id: "log-uuid-1",
+      emailAddressId: "alias-uuid-1",
+      rawEmailPath: "/tmp/rawemails/privacy.eml",
+      envelopeFrom: "sender@example.com",
+      headerFrom: "sender@example.com",
+      subject: "Privacy Test",
+      receivedAt: new Date("2026-04-07T12:00:00Z"),
+    },
+    ...overrides,
+  };
+}
+
 async function buildApp() {
   const app = Fastify({ logger: false });
   app.addContentTypeParser(
@@ -60,7 +81,7 @@ async function buildApp() {
   return app;
 }
 
-describe("GET /view/:token", () => {
+describe("/view/:token", () => {
   let savedSecret: string | undefined;
 
   beforeEach(() => {
@@ -77,24 +98,24 @@ describe("GET /view/:token", () => {
     process.env["HMAC_SECRET"] = savedSecret;
   });
 
-  it("renders a one-time privacy view page", async () => {
+  it("renders a confirmation page on GET without consuming the link", async () => {
     const { token, expiresAt } = generateDeliveryViewToken("log-uuid-1", 24);
-    mockFindDeliveryViewLink.mockResolvedValue({
-      id: "view-link-1",
-      token,
-      expiresAt,
-      viewedAt: null,
-      deliveryLogId: "log-uuid-1",
-      deliveryLog: {
-        id: "log-uuid-1",
-        emailAddressId: "alias-uuid-1",
-        rawEmailPath: "/tmp/rawemails/privacy.eml",
-        envelopeFrom: "sender@example.com",
-        headerFrom: "sender@example.com",
-        subject: "Privacy Test",
-        receivedAt: new Date("2026-04-07T12:00:00Z"),
-      },
-    });
+    mockFindDeliveryViewLinkByTokenHash.mockResolvedValue(viewLinkRow(expiresAt));
+
+    const app = await buildApp();
+    const res = await app.inject({ method: "GET", url: `/view/${token}` });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["cache-control"]).toBe("no-store");
+    expect(res.headers["referrer-policy"]).toBe("no-referrer");
+    expect(res.body).toContain("Open Private Email");
+    expect(mockReadRawEmail).not.toHaveBeenCalled();
+    expect(mockMarkDeliveryViewLinkViewed).not.toHaveBeenCalled();
+  });
+
+  it("renders the email body on POST after claiming the link", async () => {
+    const { token, expiresAt } = generateDeliveryViewToken("log-uuid-1", 24);
+    mockFindDeliveryViewLinkByTokenHash.mockResolvedValue(viewLinkRow(expiresAt));
     mockListAttachments.mockResolvedValue([
       {
         id: "att-1",
@@ -104,40 +125,54 @@ describe("GET /view/:token", () => {
     ]);
 
     const app = await buildApp();
-    const res = await app.inject({ method: "GET", url: `/view/${token}` });
+    const res = await app.inject({ method: "POST", url: `/view/${token}` });
 
     expect(res.statusCode).toBe(200);
-    expect(res.headers["cache-control"]).toBe("no-store");
     expect(res.body).toContain("Email View");
     expect(res.body).toContain("Hello secure world");
     expect(res.body).toContain("report.pdf");
     expect(res.body).toContain("/dl/");
-    expect(mockMarkDeliveryViewLinkViewed).toHaveBeenCalledWith(expect.anything(), "view-link-1");
+    expect(mockMarkDeliveryViewLinkViewed).toHaveBeenCalledWith(
+      expect.anything(),
+      "view-link-1",
+      expect.any(Date),
+    );
   });
 
   it("returns 410 when the view link is already used", async () => {
     const { token, expiresAt } = generateDeliveryViewToken("log-uuid-1", 24);
-    mockFindDeliveryViewLink.mockResolvedValue({
-      id: "view-link-1",
-      token,
-      expiresAt,
-      viewedAt: new Date(),
-      deliveryLogId: "log-uuid-1",
-      deliveryLog: {
-        id: "log-uuid-1",
-        emailAddressId: "alias-uuid-1",
-        rawEmailPath: "/tmp/rawemails/privacy.eml",
-        envelopeFrom: "sender@example.com",
-        headerFrom: "sender@example.com",
-        subject: "Privacy Test",
-        receivedAt: new Date("2026-04-07T12:00:00Z"),
-      },
-    });
+    mockFindDeliveryViewLinkByTokenHash.mockResolvedValue(
+      viewLinkRow(expiresAt, { viewedAt: new Date() }),
+    );
 
     const app = await buildApp();
     const res = await app.inject({ method: "GET", url: `/view/${token}` });
 
     expect(res.statusCode).toBe(410);
     expect(res.body).toContain("expired or was already used");
+  });
+
+  it("returns 410 when another request claims the link first", async () => {
+    const { token, expiresAt } = generateDeliveryViewToken("log-uuid-1", 24);
+    mockFindDeliveryViewLinkByTokenHash.mockResolvedValue(viewLinkRow(expiresAt));
+    mockMarkDeliveryViewLinkViewed.mockResolvedValue(false);
+
+    const app = await buildApp();
+    const res = await app.inject({ method: "POST", url: `/view/${token}` });
+
+    expect(res.statusCode).toBe(410);
+    expect(mockCreateAttachmentLink).not.toHaveBeenCalled();
+  });
+
+  it("returns 410 when the raw email file is unavailable", async () => {
+    const { token, expiresAt } = generateDeliveryViewToken("log-uuid-1", 24);
+    mockFindDeliveryViewLinkByTokenHash.mockResolvedValue(viewLinkRow(expiresAt));
+    mockReadRawEmail.mockRejectedValue(Object.assign(new Error("missing"), { code: "ENOENT" }));
+
+    const app = await buildApp();
+    const res = await app.inject({ method: "POST", url: `/view/${token}` });
+
+    expect(res.statusCode).toBe(410);
+    expect(mockMarkDeliveryViewLinkViewed).not.toHaveBeenCalled();
   });
 });

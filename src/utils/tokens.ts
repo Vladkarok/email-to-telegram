@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
 
 const NONCE_HEX_LEN = 32; // 16 bytes as hex
 type TokenScope = "attachment" | "delivery-view";
@@ -7,7 +7,10 @@ export function generateDownloadToken(
   attachmentId: string,
   ttlHours = 24,
 ): { token: string; expiresAt: Date } {
-  return generateScopedToken("attachment", attachmentId, ttlHours);
+  return generateDownloadTokenForExpiry(
+    attachmentId,
+    new Date(Date.now() + ttlHours * 60 * 60 * 1000),
+  );
 }
 
 export function verifyDownloadToken(token: string, attachmentId: string, expiresAt: Date): boolean {
@@ -18,7 +21,10 @@ export function generateDeliveryViewToken(
   deliveryLogId: string,
   ttlHours = 24,
 ): { token: string; expiresAt: Date } {
-  return generateScopedToken("delivery-view", deliveryLogId, ttlHours);
+  return generateDeliveryViewTokenForExpiry(
+    deliveryLogId,
+    new Date(Date.now() + ttlHours * 60 * 60 * 1000),
+  );
 }
 
 export function verifyDeliveryViewToken(
@@ -29,15 +35,32 @@ export function verifyDeliveryViewToken(
   return verifyScopedToken(token, "delivery-view", deliveryLogId, expiresAt);
 }
 
+export function generateDownloadTokenForExpiry(
+  attachmentId: string,
+  expiresAt: Date,
+): { token: string; expiresAt: Date } {
+  return generateScopedToken("attachment", attachmentId, expiresAt);
+}
+
+export function generateDeliveryViewTokenForExpiry(
+  deliveryLogId: string,
+  expiresAt: Date,
+): { token: string; expiresAt: Date } {
+  return generateScopedToken("delivery-view", deliveryLogId, expiresAt);
+}
+
+export function hashStoredToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
 function generateScopedToken(
   scope: TokenScope,
   subjectId: string,
-  ttlHours: number,
+  expiresAt: Date,
 ): { token: string; expiresAt: Date } {
   const secret = process.env["HMAC_SECRET"];
   if (!secret) throw new Error("HMAC_SECRET not set");
 
-  const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000);
   const expiresAtUnix = Math.floor(expiresAt.getTime() / 1000).toString();
   const nonce = randomBytes(16).toString("hex");
 

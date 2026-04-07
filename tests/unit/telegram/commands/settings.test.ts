@@ -86,7 +86,7 @@ describe("/settings command", () => {
     await settingsHandler(ctx);
     expect(mockUpdatePrivacyMode).toHaveBeenCalledWith(expect.anything(), "uuid-1", true);
     expect(ctx.reply).toHaveBeenCalledWith(
-      expect.stringContaining("one-time web view link"),
+      expect.stringContaining("browser view link"),
       expect.anything(),
     );
   });

@@ -191,6 +191,7 @@ export async function deliverQueuedEmail(
   const log = getPipelineLogger(job.correlationId);
   const { alias, deliveryLog, publicBaseUrl, attachmentDir, attachmentTtlHours, rawEmailTtlHours } =
     job;
+  const privacyMode = alias.privacyModeEnabled ?? false;
   const parsed = {
     ...job.parsed,
     attachments: [...job.parsed.attachments],
@@ -230,7 +231,7 @@ export async function deliverQueuedEmail(
             filename: att.filename,
             sizeBytes: att.sizeBytes,
           });
-        } else {
+        } else if (!privacyMode) {
           const { token, expiresAt } = generateDownloadToken(dbAtt.id, attachmentTtlHours);
           await createAttachmentLink(db, dbAtt.id, token, expiresAt);
           attachmentLinks.push({
@@ -245,7 +246,6 @@ export async function deliverQueuedEmail(
     }
 
     // 8. Render
-    const privacyMode = alias.privacyModeEnabled ?? false;
     const renderMode = (alias.renderMode ?? "plaintext") as "plaintext" | "html" | "markdown";
     const text = privacyMode
       ? await buildPrivacyModeMessage(db, deliveryLog, parsed, alias.fullAddress, publicBaseUrl, {
@@ -364,7 +364,7 @@ export async function processInboundEmail(
 
 async function buildPrivacyModeMessage(
   db: Db,
-  deliveryLog: Pick<DeliveryLog, "id" | "rawEmailPath">,
+  deliveryLog: Pick<DeliveryLog, "id" | "rawEmailPath" | "receivedAt">,
   parsed: Awaited<ReturnType<typeof parseEmail>>,
   aliasFullAddress: string,
   publicBaseUrl: string,
@@ -378,7 +378,7 @@ async function buildPrivacyModeMessage(
     db,
     deliveryLog.id,
     publicBaseUrl,
-    opts.rawEmailTtlHours,
+    new Date(deliveryLog.receivedAt.getTime() + opts.rawEmailTtlHours * 60 * 60 * 1000),
   );
   return renderPrivacyAlert(parsed, aliasFullAddress, viewUrl, parsed.attachments.length > 0);
 }

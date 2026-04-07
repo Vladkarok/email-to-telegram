@@ -181,13 +181,13 @@ export const deliveryViewLinks = pgTable(
     deliveryLogId: uuid("delivery_log_id")
       .notNull()
       .references(() => deliveryLogs.id, { onDelete: "cascade" }),
-    token: varchar("token", { length: 96 }).notNull(),
+    tokenHash: varchar("token_hash", { length: 64 }).notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     viewedAt: timestamp("viewed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex("idx_delivery_view_link_token").on(t.token),
+    uniqueIndex("idx_delivery_view_link_token_hash").on(t.tokenHash),
     index("idx_delivery_view_link_expires").on(t.expiresAt),
   ],
 );

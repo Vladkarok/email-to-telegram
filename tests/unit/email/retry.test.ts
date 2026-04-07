@@ -90,6 +90,7 @@ const fakeLog = {
   id: "log-uuid",
   emailAddressId: "alias-uuid",
   rawEmailPath: "/data/rawemails/2026-01-01/test.eml",
+  receivedAt: new Date("2026-04-07T12:00:00.000Z"),
 };
 
 const { runRetryWorker } = await import("../../../src/email/retry.js");
@@ -289,6 +290,7 @@ describe("runRetryWorker", () => {
     expect(opts.text).toContain("/view/");
     expect(opts.text).not.toContain("Hello world");
     expect(mockSendTelegramPhotos).not.toHaveBeenCalled();
+    expect(mockCreateAttachmentLink).not.toHaveBeenCalled();
     expect(mockCreateDeliveryViewLink).toHaveBeenCalledWith(
       fakeDb,
       fakeLog.id,

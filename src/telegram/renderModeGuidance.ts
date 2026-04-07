@@ -43,7 +43,7 @@ export function bodyDedupHelpText(): string {
 
 export function privacyModeGuidance(enabled: boolean): string {
   if (enabled) {
-    return "Privacy mode: on. Telegram gets a minimal alert and a one-time web view link instead of the email body or attachments.";
+    return "Privacy mode: on. Telegram gets a minimal alert and a browser view link. The email body stays out of Telegram, and attachment downloads are generated only after the browser view is opened.";
   }
 
   return "Privacy mode: off. Telegram receives the rendered email body and any attachment handling allowed by the alias settings.";
@@ -53,7 +53,8 @@ export function privacyModeHelpText(): string {
   return [
     "<b>Privacy Mode</b>",
     "privacy off — Telegram receives the rendered email body",
-    "privacy on — Telegram receives only a minimal alert and a one-time web view link",
+    "privacy on — Telegram receives only a minimal alert and a browser view link",
+    "opening that link in the browser asks for one more confirmation before the email body is revealed",
   ].join("\n");
 }
 

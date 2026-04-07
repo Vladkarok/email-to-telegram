@@ -2,54 +2,51 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import sanitizeHtml from "sanitize-html";
 import { getDb } from "../../db/client.js";
 import {
-  findDeliveryViewLinkByToken,
+  type DeliveryViewLinkWithLog,
+  findDeliveryViewLinkByTokenHash,
   markDeliveryViewLinkViewed,
 } from "../../db/repos/deliveryViewLinks.js";
 import { listAttachmentsByDeliveryLogId } from "../../db/repos/attachments.js";
 import { createAttachmentLink } from "../../db/repos/attachmentLinks.js";
 import { parseEmail } from "../../email/parser.js";
 import { readRawEmail } from "../../storage/disk.js";
-import { generateDownloadToken, verifyDeliveryViewToken } from "../../utils/tokens.js";
+import {
+  generateDownloadTokenForExpiry,
+  hashStoredToken,
+  verifyDeliveryViewToken,
+} from "../../utils/tokens.js";
 import { getLogger } from "../../utils/logger.js";
 
 export function deliveryViewRoute(
   app: FastifyInstance,
-  config: { publicBaseUrl: string; attachmentTtlHours: number },
+  config: { publicBaseUrl: string; attachmentTtlHours: number; rawEmailTtlHours: number },
 ): void {
   app.get(
     "/view/:token",
     { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } },
     async (req, reply) => {
       const { token } = req.params as { token: string };
-
-      const link = await findDeliveryViewLinkByToken(getDb(), token);
-      if (!link) {
-        await sendHtml(
-          reply,
-          404,
-          renderErrorPage("Link not found", "This view link does not exist."),
-        );
+      const state = await loadAndValidateLink(token);
+      if (state.status !== "ok") {
+        await sendValidationError(reply, state.status);
         return;
       }
 
-      const now = new Date();
-      if (link.expiresAt <= now || link.viewedAt) {
-        await sendHtml(
-          reply,
-          410,
-          renderErrorPage("Link expired", "This email view link has expired or was already used."),
-        );
-        return;
-      }
+      await sendHtml(reply, 200, renderPrivacyGatePage(token));
+    },
+  );
 
-      if (!verifyDeliveryViewToken(token, link.deliveryLogId, link.expiresAt)) {
-        await sendHtml(
-          reply,
-          403,
-          renderErrorPage("Invalid link", "This email view link is invalid."),
-        );
+  app.post(
+    "/view/:token",
+    { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
+    async (req, reply) => {
+      const { token } = req.params as { token: string };
+      const state = await loadAndValidateLink(token);
+      if (state.status !== "ok") {
+        await sendValidationError(reply, state.status);
         return;
       }
+      const { link } = state;
 
       if (!link.deliveryLog.rawEmailPath) {
         await sendHtml(
@@ -89,13 +86,30 @@ export function deliveryViewRoute(
       }
 
       const parsed = await parseEmail(rawEmail, rawEmail.length);
+      const now = new Date();
+      const claimed = await markDeliveryViewLinkViewed(getDb(), link.id, now);
+      if (!claimed) {
+        await sendHtml(
+          reply,
+          410,
+          renderErrorPage("Link expired", "This email view link has expired or was already used."),
+        );
+        return;
+      }
+
+      const attachmentExpiresAt = buildPrivacyAttachmentExpiry(
+        now,
+        link.deliveryLog.receivedAt,
+        config.attachmentTtlHours,
+        config.rawEmailTtlHours,
+      );
       const storedAttachments = await listAttachmentsByDeliveryLogId(getDb(), link.deliveryLog.id);
       const attachmentLinks = await Promise.all(
         storedAttachments.map(async (attachment) => {
           try {
-            const { token: attachmentToken, expiresAt } = generateDownloadToken(
+            const { token: attachmentToken, expiresAt } = generateDownloadTokenForExpiry(
               attachment.id,
-              config.attachmentTtlHours,
+              attachmentExpiresAt,
             );
             await createAttachmentLink(getDb(), attachment.id, attachmentToken, expiresAt);
             return {
@@ -113,16 +127,6 @@ export function deliveryViewRoute(
         }),
       );
 
-      const claimed = await markDeliveryViewLinkViewed(getDb(), link.id);
-      if (!claimed) {
-        await sendHtml(
-          reply,
-          410,
-          renderErrorPage("Link expired", "This email view link has expired or was already used."),
-        );
-        return;
-      }
-
       await sendHtml(
         reply,
         200,
@@ -138,6 +142,23 @@ export function deliveryViewRoute(
       );
     },
   );
+
+  async function loadAndValidateLink(
+    token: string,
+  ): Promise<
+    | { status: "ok"; link: DeliveryViewLinkWithLog }
+    | { status: "not_found" | "expired" | "invalid" }
+  > {
+    const link = await findDeliveryViewLinkByTokenHash(getDb(), hashStoredToken(token));
+    if (!link) return { status: "not_found" };
+
+    const now = new Date();
+    if (link.expiresAt <= now || link.viewedAt) return { status: "expired" };
+    if (!verifyDeliveryViewToken(token, link.deliveryLogId, link.expiresAt)) {
+      return { status: "invalid" };
+    }
+    return { status: "ok", link };
+  }
 }
 
 async function sendHtml(reply: FastifyReply, statusCode: number, html: string): Promise<void> {
@@ -145,7 +166,60 @@ async function sendHtml(reply: FastifyReply, statusCode: number, html: string): 
     .status(statusCode)
     .type("text/html; charset=utf-8")
     .header("Cache-Control", "no-store")
+    .header("Referrer-Policy", "no-referrer")
     .send(html);
+}
+
+async function sendValidationError(
+  reply: FastifyReply,
+  status: "not_found" | "expired" | "invalid",
+): Promise<void> {
+  if (status === "not_found") {
+    await sendHtml(reply, 404, renderErrorPage("Link not found", "This view link does not exist."));
+    return;
+  }
+  if (status === "invalid") {
+    await sendHtml(reply, 403, renderErrorPage("Invalid link", "This email view link is invalid."));
+    return;
+  }
+  await sendHtml(
+    reply,
+    410,
+    renderErrorPage("Link expired", "This email view link has expired or was already used."),
+  );
+}
+
+function renderPrivacyGatePage(token: string): string {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex,nofollow,noarchive" />
+    <title>Open Private Email</title>
+  </head>
+  <body style="font:16px/1.5 Georgia,serif;background:#f7f4ee;color:#1d1917;padding:32px;">
+    <main style="max-width:680px;margin:0 auto;background:#fffdf9;border:1px solid #ddd2c3;border-radius:16px;padding:24px;">
+      <h1 style="margin-top:0;">Open Private Email</h1>
+      <p>This privacy link opens the email body once in the browser instead of storing it in Telegram.</p>
+      <p>The email will only be marked as viewed after you confirm below.</p>
+      <form method="post" action="/view/${encodeURIComponent(token)}">
+        <button type="submit" style="background:#8b5e34;color:#fff;border:0;border-radius:999px;padding:12px 18px;font:inherit;cursor:pointer;">Open email</button>
+      </form>
+    </main>
+  </body>
+</html>`;
+}
+
+function buildPrivacyAttachmentExpiry(
+  now: Date,
+  receivedAt: Date,
+  attachmentTtlHours: number,
+  rawEmailTtlHours: number,
+): Date {
+  const attachmentExpiry = new Date(now.getTime() + attachmentTtlHours * 60 * 60 * 1000);
+  const rawEmailExpiry = new Date(receivedAt.getTime() + rawEmailTtlHours * 60 * 60 * 1000);
+  return attachmentExpiry <= rawEmailExpiry ? attachmentExpiry : rawEmailExpiry;
 }
 
 function renderPrivacyPage(input: {

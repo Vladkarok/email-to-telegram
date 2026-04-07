@@ -253,8 +253,9 @@ Each alias currently has three delivery-format settings:
 - Body dedup: `on` or `off`
 
 Privacy mode is off by default for new aliases. When enabled, Telegram receives
-only a minimal alert and a one-time web view link instead of the email body or
-attachments.
+only a minimal alert and a browser view link instead of the email body. The
+browser flow asks for one more confirmation before revealing the message, and
+attachment download links are minted only inside that browser view.
 
 Message-ID duplicates are still blocked when that header is present.
 
