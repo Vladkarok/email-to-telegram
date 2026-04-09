@@ -54,7 +54,7 @@ describe("download tokens", () => {
   });
 
   it("supports generating a token for an exact expiry", () => {
-    const expiresAt = new Date("2026-04-08T12:00:00.000Z");
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
     const { token } = generateDownloadTokenForExpiry(ATTACHMENT_ID, expiresAt);
     expect(verifyDownloadToken(token, ATTACHMENT_ID, expiresAt)).toBe(true);
   });
@@ -108,7 +108,7 @@ describe("delivery view tokens", () => {
   });
 
   it("supports generating a delivery-view token for an exact expiry", () => {
-    const expiresAt = new Date("2026-04-08T12:00:00.000Z");
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
     const { token } = generateDeliveryViewTokenForExpiry("log-uuid-1", expiresAt);
     expect(verifyDeliveryViewToken(token, "log-uuid-1", expiresAt)).toBe(true);
   });
