@@ -67,7 +67,7 @@ function viewLinkRow(expiresAt: Date, overrides: Record<string, unknown> = {}) {
       envelopeFrom: "sender@example.com",
       headerFrom: "sender@example.com",
       subject: "Privacy Test",
-      receivedAt: new Date("2026-04-07T12:00:00Z"),
+      receivedAt: new Date(Date.now() - 60 * 60 * 1000), // 1 hour ago — keep attachments in TTL window
       rawEmailEncryptionMode: "none",
       rawEmailWrappedDek: null,
       rawEmailKekKeyId: null,
@@ -149,7 +149,9 @@ describe("/view/:token", () => {
       string,
       Date,
     ];
-    expect(attachmentExpiresAt.toISOString()).toBe("2026-04-08T12:00:00.000Z");
+    // expiry should be approximately receivedAt + 24h (the min of attachment/rawEmail TTL)
+    const expectedExpiry = new Date(Date.now() - 60 * 60 * 1000 + 24 * 60 * 60 * 1000);
+    expect(Math.abs(attachmentExpiresAt.getTime() - expectedExpiry.getTime())).toBeLessThan(5000);
     const urlMatch = res.body.match(/\/dl\/([^"]+)/);
     expect(urlMatch).not.toBeNull();
     if (!urlMatch) throw new Error("missing download link");
