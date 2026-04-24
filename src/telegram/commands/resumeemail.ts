@@ -15,7 +15,7 @@ export async function resumeemailHandler(ctx: CommandContext<Context>): Promise<
   const alias = await findAliasByIdAndChat(getDb(), localPart, chatId);
 
   if (!alias) {
-    await ctx.reply(`❌ Alias <code>${localPart}</code> not found in this chat.`, {
+    await ctx.reply(`❌ Alias <code>${escapeHtml(localPart)}</code> not found in this chat.`, {
       parse_mode: "HTML",
     });
     return;
@@ -30,7 +30,7 @@ export async function resumeemailHandler(ctx: CommandContext<Context>): Promise<
   }
 
   if (alias.status === "active") {
-    await ctx.reply(`✅ Alias <code>${alias.fullAddress}</code> is already active.`, {
+    await ctx.reply(`✅ Alias <code>${escapeHtml(alias.fullAddress)}</code> is already active.`, {
       parse_mode: "HTML",
     });
     return;
@@ -38,7 +38,11 @@ export async function resumeemailHandler(ctx: CommandContext<Context>): Promise<
 
   await updateAliasStatus(getDb(), alias.id, "active");
   await ctx.reply(
-    `▶️ Alias <code>${alias.fullAddress}</code> resumed. Emails will be delivered again.`,
+    `▶️ Alias <code>${escapeHtml(alias.fullAddress)}</code> resumed. Emails will be delivered again.`,
     { parse_mode: "HTML" },
   );
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

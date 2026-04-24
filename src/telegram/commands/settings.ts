@@ -31,7 +31,7 @@ export async function settingsHandler(ctx: CommandContext<Context>): Promise<voi
   const alias = await findAliasByIdAndChat(getDb(), localPart, chatId);
 
   if (!alias) {
-    await ctx.reply(`❌ Alias <code>${localPart}</code> not found in this chat.`, {
+    await ctx.reply(`❌ Alias <code>${escapeHtml(localPart)}</code> not found in this chat.`, {
       parse_mode: "HTML",
     });
     return;
@@ -48,7 +48,7 @@ export async function settingsHandler(ctx: CommandContext<Context>): Promise<voi
   if (setting && RENDER_MODES.includes(setting as TelegramRenderMode) && !value) {
     await updateAliasRenderMode(getDb(), alias.id, setting as TelegramRenderMode);
     await ctx.reply(
-      `✅ Render mode for <code>${alias.fullAddress}</code> set to <b>${setting}</b>.\n${renderModeGuidance(setting as TelegramRenderMode)}`,
+      `✅ Render mode for <code>${escapeHtml(alias.fullAddress)}</code> set to <b>${setting}</b>.\n${renderModeGuidance(setting as TelegramRenderMode)}`,
       { parse_mode: "HTML" },
     );
     return;
@@ -62,7 +62,7 @@ export async function settingsHandler(ctx: CommandContext<Context>): Promise<voi
     const bodyDedupEnabled = value === "on";
     await updateAliasBodyDedup(getDb(), alias.id, bodyDedupEnabled);
     await ctx.reply(
-      `✅ Body dedup for <code>${alias.fullAddress}</code> set to <b>${bodyDedupEnabled ? "on" : "off"}</b>.\n${bodyDedupGuidance(bodyDedupEnabled)}`,
+      `✅ Body dedup for <code>${escapeHtml(alias.fullAddress)}</code> set to <b>${bodyDedupEnabled ? "on" : "off"}</b>.\n${bodyDedupGuidance(bodyDedupEnabled)}`,
       { parse_mode: "HTML" },
     );
     return;
@@ -76,7 +76,7 @@ export async function settingsHandler(ctx: CommandContext<Context>): Promise<voi
     const privacyModeEnabled = value === "on";
     await updateAliasPrivacyMode(getDb(), alias.id, privacyModeEnabled);
     await ctx.reply(
-      `✅ Privacy mode for <code>${alias.fullAddress}</code> set to <b>${privacyModeEnabled ? "on" : "off"}</b>.\n${privacyModeGuidance(privacyModeEnabled)}`,
+      `✅ Privacy mode for <code>${escapeHtml(alias.fullAddress)}</code> set to <b>${privacyModeEnabled ? "on" : "off"}</b>.\n${privacyModeGuidance(privacyModeEnabled)}`,
       { parse_mode: "HTML" },
     );
     return;

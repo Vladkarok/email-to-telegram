@@ -34,7 +34,9 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
   const alias = await findAliasByLocalPart(db, aliasName);
 
   if (!alias) {
-    await ctx.reply(`❌ Alias <code>${aliasName}</code> not found.`, { parse_mode: "HTML" });
+    await ctx.reply(`❌ Alias <code>${escapeHtml(aliasName)}</code> not found.`, {
+      parse_mode: "HTML",
+    });
     return;
   }
 
@@ -47,15 +49,20 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
     const rules = await listAllowRules(db, alias.id);
     if (rules.length === 0) {
       await ctx.reply(
-        `📋 No allow rules for <code>${aliasName}</code>.\n\nAll mail is currently rejected.`,
+        `📋 No allow rules for <code>${escapeHtml(aliasName)}</code>.\n\nAll mail is currently rejected.`,
         { parse_mode: "HTML" },
       );
       return;
     }
-    const lines = rules.map((r) => `• ${r.matchType === "domain" ? "🌐" : "📧"} ${r.matchValue}`);
-    await ctx.reply(`📋 Allow rules for <code>${aliasName}</code>:\n\n${lines.join("\n")}`, {
-      parse_mode: "HTML",
-    });
+    const lines = rules.map(
+      (r) => `• ${r.matchType === "domain" ? "🌐" : "📧"} ${escapeHtml(r.matchValue)}`,
+    );
+    await ctx.reply(
+      `📋 Allow rules for <code>${escapeHtml(aliasName)}</code>:\n\n${lines.join("\n")}`,
+      {
+        parse_mode: "HTML",
+      },
+    );
     return;
   }
 
@@ -79,7 +86,7 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
       matchValue: parsedValue.normalized,
     });
     await ctx.reply(
-      `✅ Added allow rule for <code>${aliasName}</code>: ${parsedValue.matchType === "domain" ? "🌐" : "📧"} ${parsedValue.normalized}`,
+      `✅ Added allow rule for <code>${escapeHtml(aliasName)}</code>: ${parsedValue.matchType === "domain" ? "🌐" : "📧"} ${escapeHtml(parsedValue.normalized)}`,
       { parse_mode: "HTML" },
     );
     return;
@@ -90,8 +97,15 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
       emailAddressId: alias.id,
       matchValue: value.toLowerCase(),
     });
-    await ctx.reply(`✅ Removed allow rule for <code>${aliasName}</code>: ${value}`, {
-      parse_mode: "HTML",
-    });
+    await ctx.reply(
+      `✅ Removed allow rule for <code>${escapeHtml(aliasName)}</code>: ${escapeHtml(value)}`,
+      {
+        parse_mode: "HTML",
+      },
+    );
   }
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

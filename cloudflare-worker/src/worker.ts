@@ -43,16 +43,13 @@ export default {
         body: preflightBytes,
       });
     } catch (err) {
-      // Network failure — temp-reject so sending MTA will retry.
       console.error("preflight fetch failed", err);
-      message.setReject("451 Temporary failure, please retry");
-      return;
+      throw new Error("Transient preflight failure");
     }
 
     if (!preflightResp.ok) {
       console.error("preflight non-2xx", preflightResp.status);
-      message.setReject("451 Temporary failure, please retry");
-      return;
+      throw new Error(`Transient preflight failure: ${preflightResp.status}`);
     }
 
     const { accept } = (await preflightResp.json()) as { accept: boolean };
@@ -68,8 +65,7 @@ export default {
       rawBytes = new Uint8Array(arrayBuffer);
     } catch (err) {
       console.error("failed to read raw email", err);
-      message.setReject("451 Temporary failure, please retry");
-      return;
+      throw new Error("Transient raw email read failure");
     }
 
     // ── 3. POST raw bytes to VPS ──────────────────────────────────────────────
@@ -89,14 +85,18 @@ export default {
         body: rawBytes,
       });
     } catch (err) {
-      // Network failure after preflight accept — the email is lost unless the VPS has
-      // dedup in place. Log for observability; can't bounce after accept.
       console.error("raw upload fetch failed", err);
-      return;
+      throw new Error("Transient raw upload failure");
     }
 
     if (!rawResp.ok) {
-      console.error("raw upload non-2xx", rawResp.status, await rawResp.text());
+      const responseText = await rawResp.text();
+      console.error("raw upload non-2xx", rawResp.status, responseText);
+      if (isPermanentRawUploadFailure(rawResp.status)) {
+        message.setReject("Message size exceeds fixed maximum message size");
+        return;
+      }
+      throw new Error(`Transient raw upload failure: ${rawResp.status}`);
     }
   },
 };
@@ -110,6 +110,10 @@ function extractLocalPart(address: string): string | null {
   if (atIndex <= 0) return null;
   const local = address.slice(0, atIndex);
   return local.length > 0 ? local : null;
+}
+
+function isPermanentRawUploadFailure(status: number): boolean {
+  return status === 413;
 }
 
 /**
