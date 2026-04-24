@@ -15,7 +15,7 @@ export async function pauseemailHandler(ctx: CommandContext<Context>): Promise<v
   const alias = await findAliasByIdAndChat(getDb(), localPart, chatId);
 
   if (!alias) {
-    await ctx.reply(`❌ Alias <code>${localPart}</code> not found in this chat.`, {
+    await ctx.reply(`❌ Alias <code>${escapeHtml(localPart)}</code> not found in this chat.`, {
       parse_mode: "HTML",
     });
     return;
@@ -30,7 +30,7 @@ export async function pauseemailHandler(ctx: CommandContext<Context>): Promise<v
   }
 
   if (alias.status === "paused") {
-    await ctx.reply(`⏸ Alias <code>${alias.fullAddress}</code> is already paused.`, {
+    await ctx.reply(`⏸ Alias <code>${escapeHtml(alias.fullAddress)}</code> is already paused.`, {
       parse_mode: "HTML",
     });
     return;
@@ -38,7 +38,11 @@ export async function pauseemailHandler(ctx: CommandContext<Context>): Promise<v
 
   await updateAliasStatus(getDb(), alias.id, "paused");
   await ctx.reply(
-    `⏸ Alias <code>${alias.fullAddress}</code> paused. Emails will be rejected until resumed.`,
+    `⏸ Alias <code>${escapeHtml(alias.fullAddress)}</code> paused. Emails will be rejected until resumed.`,
     { parse_mode: "HTML" },
   );
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
