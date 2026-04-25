@@ -15,6 +15,48 @@ const secretSchema = z.string().min(16, {
   message: "Secret must be at least 16 characters",
 });
 
+const hostedMailDomainSchema = z
+  .string()
+  .trim()
+  .refine((value) => isValidDomainName(value), {
+    message: "Must be a valid domain name without a scheme",
+  })
+  .optional();
+const stripeSecretKeySchema = z
+  .string()
+  .trim()
+  .regex(/^sk_(test|live)_[A-Za-z0-9_]+$/)
+  .optional();
+const stripeWebhookSecretSchema = z
+  .string()
+  .trim()
+  .regex(/^whsec_[A-Za-z0-9_]+$/)
+  .optional();
+const stripePriceIdSchema = z
+  .string()
+  .trim()
+  .regex(/^price_[A-Za-z0-9_]+$/)
+  .optional();
+const optionalTrimmedUrlSchema = z.string().trim().url().optional();
+
+const appModeSchema = z.enum(["self-hosted", "hosted"]).default("self-hosted");
+const billingProviderSchema = z.enum(["none", "stripe"]).default("none");
+
+function isValidDomainName(value: string): boolean {
+  if (value.length < 1 || value.length > 253) return false;
+
+  const labels = value.split(".");
+  if (labels.length < 2) return false;
+
+  const tld = labels[labels.length - 1];
+  if (!tld || !/^[a-zA-Z]{2,63}$/.test(tld)) return false;
+
+  return labels.every((label) => {
+    if (label.length < 1 || label.length > 63) return false;
+    return /^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?$/.test(label);
+  });
+}
+
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   TELEGRAM_BOT_TOKEN: z.string().min(1),
@@ -63,12 +105,40 @@ const envSchema = z.object({
   /** Directory to store nightly DB backups (optional — skips backup if unset) */
   BACKUP_DIR: z.string().optional(),
   BACKUP_ARCHIVE_ENCRYPTION: z.enum(["off", "storage-key"]).default("off"),
+  APP_MODE: appModeSchema,
+  BILLING_PROVIDER: billingProviderSchema,
+  HOSTED_MAIL_DOMAIN: hostedMailDomainSchema,
+  STRIPE_SECRET_KEY: stripeSecretKeySchema,
+  STRIPE_WEBHOOK_SECRET: stripeWebhookSecretSchema,
+  STRIPE_PRICE_PERSONAL_MONTHLY: stripePriceIdSchema,
+  STRIPE_PRICE_PERSONAL_YEARLY: stripePriceIdSchema,
+  STRIPE_PRICE_PRO_MONTHLY: stripePriceIdSchema,
+  STRIPE_PRICE_PRO_YEARLY: stripePriceIdSchema,
+  STRIPE_PRICE_TEAM_MONTHLY: stripePriceIdSchema,
+  STRIPE_PRICE_TEAM_YEARLY: stripePriceIdSchema,
+  BILLING_SUCCESS_URL: optionalTrimmedUrlSchema,
+  BILLING_CANCEL_URL: optionalTrimmedUrlSchema,
 });
 
+export type AppMode = z.infer<typeof appModeSchema>;
+export type BillingProvider = z.infer<typeof billingProviderSchema>;
+
+export interface StripePriceIds {
+  personalMonthly: string;
+  personalYearly: string;
+  proMonthly: string;
+  proYearly: string;
+  teamMonthly: string;
+  teamYearly: string;
+}
+
 export interface AppConfig {
+  appMode: AppMode;
+  billingProvider: BillingProvider;
   databaseUrl: string;
   telegramBotToken: string;
   mailDomain: string;
+  hostedMailDomain: string | undefined;
   publicBaseUrl: string;
   httpPort: number;
   hmacSecret: string;
@@ -90,6 +160,11 @@ export interface AppConfig {
   alertChatId: bigint | undefined;
   backupDir: string | undefined;
   backupArchiveEncryption: "off" | "storage-key";
+  stripeSecretKey: string | undefined;
+  stripeWebhookSecret: string | undefined;
+  stripePriceIds: StripePriceIds | undefined;
+  billingSuccessUrl: string | undefined;
+  billingCancelUrl: string | undefined;
 }
 
 export function loadConfig(): AppConfig {
@@ -139,10 +214,58 @@ export function loadConfig(): AppConfig {
     );
   }
 
+  if (env.APP_MODE === "hosted" && !env.HOSTED_MAIL_DOMAIN) {
+    throw new Error(
+      "Invalid configuration:\n  HOSTED_MAIL_DOMAIN is required when APP_MODE=hosted",
+    );
+  }
+
+  if (env.BILLING_PROVIDER === "stripe") {
+    if (env.APP_MODE !== "hosted") {
+      throw new Error("Invalid configuration:\n  BILLING_PROVIDER=stripe requires APP_MODE=hosted");
+    }
+
+    const missing = [
+      ["STRIPE_SECRET_KEY", env.STRIPE_SECRET_KEY],
+      ["STRIPE_WEBHOOK_SECRET", env.STRIPE_WEBHOOK_SECRET],
+      ["STRIPE_PRICE_PERSONAL_MONTHLY", env.STRIPE_PRICE_PERSONAL_MONTHLY],
+      ["STRIPE_PRICE_PERSONAL_YEARLY", env.STRIPE_PRICE_PERSONAL_YEARLY],
+      ["STRIPE_PRICE_PRO_MONTHLY", env.STRIPE_PRICE_PRO_MONTHLY],
+      ["STRIPE_PRICE_PRO_YEARLY", env.STRIPE_PRICE_PRO_YEARLY],
+      ["STRIPE_PRICE_TEAM_MONTHLY", env.STRIPE_PRICE_TEAM_MONTHLY],
+      ["STRIPE_PRICE_TEAM_YEARLY", env.STRIPE_PRICE_TEAM_YEARLY],
+      ["BILLING_SUCCESS_URL", env.BILLING_SUCCESS_URL],
+      ["BILLING_CANCEL_URL", env.BILLING_CANCEL_URL],
+    ]
+      .filter(([, value]) => !value)
+      .map(([name]) => name);
+
+    if (missing.length > 0) {
+      throw new Error(
+        `Invalid configuration:\n  BILLING_PROVIDER=stripe requires ${missing.join(", ")}`,
+      );
+    }
+  }
+
+  const stripePriceIds =
+    env.BILLING_PROVIDER === "stripe"
+      ? {
+          personalMonthly: env.STRIPE_PRICE_PERSONAL_MONTHLY!,
+          personalYearly: env.STRIPE_PRICE_PERSONAL_YEARLY!,
+          proMonthly: env.STRIPE_PRICE_PRO_MONTHLY!,
+          proYearly: env.STRIPE_PRICE_PRO_YEARLY!,
+          teamMonthly: env.STRIPE_PRICE_TEAM_MONTHLY!,
+          teamYearly: env.STRIPE_PRICE_TEAM_YEARLY!,
+        }
+      : undefined;
+
   return {
+    appMode: env.APP_MODE,
+    billingProvider: env.BILLING_PROVIDER,
     databaseUrl: env.DATABASE_URL,
     telegramBotToken: env.TELEGRAM_BOT_TOKEN,
     mailDomain: env.MAIL_DOMAIN,
+    hostedMailDomain: env.HOSTED_MAIL_DOMAIN,
     publicBaseUrl: env.PUBLIC_BASE_URL,
     httpPort: env.HTTP_PORT,
     hmacSecret: env.HMAC_SECRET,
@@ -164,5 +287,10 @@ export function loadConfig(): AppConfig {
     alertChatId: env.ALERT_CHAT_ID,
     backupDir: env.BACKUP_DIR,
     backupArchiveEncryption: env.BACKUP_ARCHIVE_ENCRYPTION,
+    stripeSecretKey: env.STRIPE_SECRET_KEY,
+    stripeWebhookSecret: env.STRIPE_WEBHOOK_SECRET,
+    stripePriceIds,
+    billingSuccessUrl: env.BILLING_SUCCESS_URL,
+    billingCancelUrl: env.BILLING_CANCEL_URL,
   };
 }
