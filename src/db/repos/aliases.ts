@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { eq, and, ne } from "drizzle-orm";
+import { eq, and, ne, isNull } from "drizzle-orm";
 import { emailAddresses, type EmailAddress, type NewEmailAddress } from "../schema.js";
 import type * as schema from "../schema.js";
 
@@ -23,6 +23,8 @@ export async function createAlias(
     NewEmailAddress,
     | "localPart"
     | "fullAddress"
+    | "organizationId"
+    | "domainId"
     | "chatId"
     | "messageThreadId"
     | "createdBy"
@@ -44,8 +46,37 @@ export async function findAliasByLocalPart(
   const [alias] = await db
     .select()
     .from(emailAddresses)
-    .where(eq(emailAddresses.localPart, localPart));
+    .where(and(eq(emailAddresses.localPart, localPart), isNull(emailAddresses.domainId)));
   return alias ?? null;
+}
+
+export async function findAliasByLocalPartAndDomainId(
+  db: Db,
+  localPart: string,
+  domainId: string,
+): Promise<EmailAddress | null> {
+  const [alias] = await db
+    .select()
+    .from(emailAddresses)
+    .where(and(eq(emailAddresses.localPart, localPart), eq(emailAddresses.domainId, domainId)));
+  return alias ?? null;
+}
+
+export async function findAliasesByLocalPartForOrganization(
+  db: Db,
+  localPart: string,
+  organizationId: string,
+): Promise<EmailAddress[]> {
+  return db
+    .select()
+    .from(emailAddresses)
+    .where(
+      and(
+        eq(emailAddresses.localPart, localPart),
+        eq(emailAddresses.organizationId, organizationId),
+        ne(emailAddresses.status, "deleted"),
+      ),
+    );
 }
 
 export async function findAliasByIdAndChat(
@@ -56,7 +87,13 @@ export async function findAliasByIdAndChat(
   const [alias] = await db
     .select()
     .from(emailAddresses)
-    .where(and(eq(emailAddresses.localPart, localPart), eq(emailAddresses.chatId, chatId)));
+    .where(
+      and(
+        eq(emailAddresses.localPart, localPart),
+        eq(emailAddresses.chatId, chatId),
+        isNull(emailAddresses.domainId),
+      ),
+    );
   return alias ?? null;
 }
 

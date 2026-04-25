@@ -153,6 +153,7 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
     const deliveryLog = await createDeliveryLog(tx as Db, {
       id: deliveryLogId,
       emailAddressId: alias.id,
+      organizationId: alias.organizationId,
       messageIdHeader: parsed.messageId,
       bodySha256: parsed.bodySha256,
       bodyDedupApplied: alias.bodyDedupEnabled ?? false,
