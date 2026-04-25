@@ -1,8 +1,11 @@
 import type { Api } from "grammy";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import { loadConfig } from "../config.js";
 import type * as schema from "../db/schema.js";
-import { findActiveChats } from "../db/repos/chats.js";
+import { getDb } from "../db/client.js";
+import { findActiveChats, findChatById } from "../db/repos/chats.js";
 import { findAliasById } from "../db/repos/aliases.js";
+import { userHasOrganizationRole } from "../db/repos/organizationMembers.js";
 import type { Chat } from "../db/schema.js";
 
 type Db = NodePgDatabase<typeof schema>;
@@ -35,6 +38,8 @@ export async function canManageChat(
   chatId: bigint,
   { fresh = false }: { fresh?: boolean } = {},
 ): Promise<boolean> {
+  if (!(await canAccessHostedChatTenant(userId, chatId))) return false;
+
   // A user always owns their own private DM with the bot
   if (chatId === BigInt(userId)) return true;
 
@@ -63,6 +68,20 @@ export async function canManageChat(
   }
   chatMemberCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
   return result;
+}
+
+async function canAccessHostedChatTenant(userId: number, chatId: bigint): Promise<boolean> {
+  if (loadConfig().appMode !== "hosted") return true;
+
+  const db = getDb();
+  const chat = await findChatById(db, chatId);
+  if (!chat?.organizationId) return false;
+
+  return userHasOrganizationRole(db, chat.organizationId, BigInt(userId), [
+    "owner",
+    "admin",
+    "member",
+  ]);
 }
 
 /**
@@ -102,6 +121,18 @@ export async function canManageAlias(
   const alias = await findAliasById(db, aliasId);
   // Reject missing or soft-deleted aliases
   if (!alias || alias.status === "deleted") return false;
+  if (!(await canAccessHostedAliasTenant(db, userId, alias.organizationId))) return false;
   if (alias.createdBy === BigInt(userId)) return true;
   return canManageChat(api, userId, alias.chatId, { fresh });
+}
+
+async function canAccessHostedAliasTenant(
+  db: Db,
+  userId: number,
+  organizationId: string | null,
+): Promise<boolean> {
+  if (loadConfig().appMode !== "hosted") return true;
+  if (!organizationId) return false;
+
+  return userHasOrganizationRole(db, organizationId, BigInt(userId), ["owner", "admin", "member"]);
 }

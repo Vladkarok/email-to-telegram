@@ -379,9 +379,8 @@ export function createBot(token: string): Bot {
   });
 
   // na:{aliasId} — cancel add allow rule
-  // No auth check: cancel only clears the caller's own pending state and
-  // re-renders the allow-rules menu (read-only). No alias mutation occurs.
   bot.callbackQuery(/^na:([0-9a-f-]{36})$/, async (ctx) => {
+    if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
     await ctx.answerCallbackQuery("Cancelled.");
     if (ctx.from) clearPending(ctx.from.id);
     await editAllowRulesMenu(ctx, getDb(), ctx.match[1]);

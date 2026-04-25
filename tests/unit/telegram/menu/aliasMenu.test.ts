@@ -14,6 +14,11 @@ vi.mock("../../../../src/db/repos/allowRules.js", () => ({
   listAllowRules: (...args: unknown[]): unknown => mockListAllowRules(...args),
 }));
 
+const mockCanManageAlias = vi.fn();
+vi.mock("../../../../src/telegram/authorization.js", () => ({
+  canManageAlias: (...args: unknown[]): unknown => mockCanManageAlias(...args),
+}));
+
 const { editAliasListMenu, editAliasDetailMenu } =
   await import("../../../../src/telegram/menu/aliasMenu.js");
 
@@ -31,7 +36,10 @@ const fakeAlias = {
 };
 
 describe("editAliasListMenu", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCanManageAlias.mockResolvedValue(true);
+  });
 
   it("shows 'no aliases' state with create button when empty", async () => {
     mockListAliasesByChat.mockResolvedValue([]);
@@ -49,6 +57,32 @@ describe("editAliasListMenu", () => {
     expect(ctx.editMessageText).toHaveBeenCalledOnce();
     const [text] = (ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
     expect(text).toContain("My Chat");
+  });
+
+  it("filters aliases the user cannot manage", async () => {
+    mockListAliasesByChat.mockResolvedValue([
+      fakeAlias,
+      {
+        ...fakeAlias,
+        id: "aaaaaaaa-0000-0000-0000-000000000002",
+        localPart: "hidden-ab12cd",
+      },
+    ]);
+    mockCanManageAlias.mockImplementation(
+      (_db: unknown, _api: unknown, _userId: number, id: string) =>
+        Promise.resolve(id === fakeAlias.id),
+    );
+    const ctx = createMockCtx({ chatType: "private" });
+
+    await editAliasListMenu(ctx, fakeDb, -100n, "My Chat");
+
+    const [, opts] = (ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      { reply_markup: { inline_keyboard: { text: string }[][] } },
+    ];
+    const buttons = opts.reply_markup.inline_keyboard.flat().map((b) => b.text);
+    expect(buttons.some((text) => text.includes("alerts-ab12cd"))).toBe(true);
+    expect(buttons.some((text) => text.includes("hidden-ab12cd"))).toBe(false);
   });
 });
 
