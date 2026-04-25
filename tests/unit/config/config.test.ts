@@ -26,6 +26,19 @@ const OPTIONAL_ENV = [
   "NODE_ENV",
   "INITIAL_ALLOWED_USERS",
   "BACKUP_ARCHIVE_ENCRYPTION",
+  "APP_MODE",
+  "BILLING_PROVIDER",
+  "HOSTED_MAIL_DOMAIN",
+  "STRIPE_SECRET_KEY",
+  "STRIPE_WEBHOOK_SECRET",
+  "STRIPE_PRICE_PERSONAL_MONTHLY",
+  "STRIPE_PRICE_PERSONAL_YEARLY",
+  "STRIPE_PRICE_PRO_MONTHLY",
+  "STRIPE_PRICE_PRO_YEARLY",
+  "STRIPE_PRICE_TEAM_MONTHLY",
+  "STRIPE_PRICE_TEAM_YEARLY",
+  "BILLING_SUCCESS_URL",
+  "BILLING_CANCEL_URL",
 ];
 
 describe("loadConfig", () => {
@@ -68,6 +81,10 @@ describe("loadConfig", () => {
     expect(config.maxSizeBytes).toBe(10485760);
     expect(config.logLevel).toBe("info");
     expect(config.backupArchiveEncryption).toBe("off");
+    expect(config.appMode).toBe("self-hosted");
+    expect(config.billingProvider).toBe("none");
+    expect(config.hostedMailDomain).toBeUndefined();
+    expect(config.stripePriceIds).toBeUndefined();
   });
 
   it("parses ATTACHMENT_TTL_HOURS as number", () => {
@@ -181,5 +198,95 @@ describe("loadConfig", () => {
     process.env["STORAGE_ENCRYPTION_MODE"] = "none";
 
     expect(() => loadConfig()).toThrow(/BACKUP_ARCHIVE_ENCRYPTION=storage-key requires/i);
+  });
+
+  it("parses hosted app mode with a hosted mail domain", () => {
+    process.env["APP_MODE"] = "hosted";
+    process.env["HOSTED_MAIL_DOMAIN"] = " inbox.example.com ";
+
+    const config = loadConfig();
+
+    expect(config.appMode).toBe("hosted");
+    expect(config.hostedMailDomain).toBe("inbox.example.com");
+    expect(config.billingProvider).toBe("none");
+  });
+
+  it("requires HOSTED_MAIL_DOMAIN in hosted mode", () => {
+    process.env["APP_MODE"] = "hosted";
+
+    expect(() => loadConfig()).toThrow(/HOSTED_MAIL_DOMAIN is required/i);
+  });
+
+  it("rejects malformed hosted mail domains", () => {
+    process.env["APP_MODE"] = "hosted";
+    process.env["HOSTED_MAIL_DOMAIN"] = "https://inbox.example.com";
+
+    expect(() => loadConfig()).toThrow(/HOSTED_MAIL_DOMAIN/i);
+  });
+
+  it("rejects hosted mail domains with invalid label edges", () => {
+    process.env["APP_MODE"] = "hosted";
+    process.env["HOSTED_MAIL_DOMAIN"] = "foo-.example.com";
+
+    expect(() => loadConfig()).toThrow(/HOSTED_MAIL_DOMAIN/i);
+
+    process.env["HOSTED_MAIL_DOMAIN"] = "foo.-bar.com";
+
+    expect(() => loadConfig()).toThrow(/HOSTED_MAIL_DOMAIN/i);
+  });
+
+  it("rejects Stripe billing outside hosted mode", () => {
+    process.env["BILLING_PROVIDER"] = "stripe";
+
+    expect(() => loadConfig()).toThrow(/BILLING_PROVIDER=stripe requires APP_MODE=hosted/i);
+  });
+
+  it("requires all Stripe billing settings when Stripe is enabled", () => {
+    process.env["APP_MODE"] = "hosted";
+    process.env["HOSTED_MAIL_DOMAIN"] = "inbox.example.com";
+    process.env["BILLING_PROVIDER"] = "stripe";
+
+    expect(() => loadConfig()).toThrow(/STRIPE_SECRET_KEY/);
+  });
+
+  it("rejects malformed Stripe billing settings", () => {
+    process.env["APP_MODE"] = "hosted";
+    process.env["HOSTED_MAIL_DOMAIN"] = "inbox.example.com";
+    process.env["BILLING_PROVIDER"] = "stripe";
+    process.env["STRIPE_SECRET_KEY"] = "not-a-secret-key";
+
+    expect(() => loadConfig()).toThrow(/STRIPE_SECRET_KEY/);
+  });
+
+  it("parses Stripe billing configuration", () => {
+    process.env["APP_MODE"] = "hosted";
+    process.env["HOSTED_MAIL_DOMAIN"] = "inbox.example.com";
+    process.env["BILLING_PROVIDER"] = "stripe";
+    process.env["STRIPE_SECRET_KEY"] = " sk_test_123 ";
+    process.env["STRIPE_WEBHOOK_SECRET"] = "whsec_123";
+    process.env["STRIPE_PRICE_PERSONAL_MONTHLY"] = "price_personal_monthly";
+    process.env["STRIPE_PRICE_PERSONAL_YEARLY"] = "price_personal_yearly";
+    process.env["STRIPE_PRICE_PRO_MONTHLY"] = "price_pro_monthly";
+    process.env["STRIPE_PRICE_PRO_YEARLY"] = "price_pro_yearly";
+    process.env["STRIPE_PRICE_TEAM_MONTHLY"] = "price_team_monthly";
+    process.env["STRIPE_PRICE_TEAM_YEARLY"] = "price_team_yearly";
+    process.env["BILLING_SUCCESS_URL"] = "https://tgmail.example.com/billing/success";
+    process.env["BILLING_CANCEL_URL"] = "https://tgmail.example.com/billing/cancel";
+
+    const config = loadConfig();
+
+    expect(config.billingProvider).toBe("stripe");
+    expect(config.stripeSecretKey).toBe("sk_test_123");
+    expect(config.stripeWebhookSecret).toBe("whsec_123");
+    expect(config.stripePriceIds).toEqual({
+      personalMonthly: "price_personal_monthly",
+      personalYearly: "price_personal_yearly",
+      proMonthly: "price_pro_monthly",
+      proYearly: "price_pro_yearly",
+      teamMonthly: "price_team_monthly",
+      teamYearly: "price_team_yearly",
+    });
+    expect(config.billingSuccessUrl).toBe("https://tgmail.example.com/billing/success");
+    expect(config.billingCancelUrl).toBe("https://tgmail.example.com/billing/cancel");
   });
 });
