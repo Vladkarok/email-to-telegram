@@ -138,7 +138,8 @@ describe("runCleanup", () => {
   it("removes old raw email directories", async () => {
     mockReaddir
       .mockResolvedValueOnce([]) // attachmentDir readdir (orphaned dirs check)
-      .mockResolvedValueOnce([{ name: "2025-01-01", isDirectory: () => true }]); // rawEmailDir readdir
+      .mockResolvedValueOnce([{ name: "2025-01-01", isDirectory: () => true }]) // rawEmailDir readdir
+      .mockResolvedValueOnce([]); // rawEmailDir/2025-01-01 entries
     const db = makeDb([]);
     await runCleanup(db, config);
     expect(mockDeleteDir).toHaveBeenCalledWith("/data/rawemails/2025-01-01");
@@ -192,11 +193,16 @@ describe("runCleanup", () => {
       },
     ]);
     mockDeleteFile.mockRejectedValueOnce(new Error("busy"));
+    mockReaddir
+      .mockResolvedValueOnce([{ name: "log-id", isDirectory: () => true }])
+      .mockResolvedValueOnce(["file.bin"])
+      .mockResolvedValueOnce([]);
 
     await runCleanup(db, config);
 
     expect(mockDecrementOrganizationStorageUsage).not.toHaveBeenCalled();
     expect(db._mocks.attachmentDeleteWhere).not.toHaveBeenCalled();
+    expect(mockDeleteDir).not.toHaveBeenCalled();
   });
 
   it("keeps raw-email storage usage unchanged when raw email deletion fails", async () => {
@@ -212,11 +218,16 @@ describe("runCleanup", () => {
       ],
     );
     mockDeleteFile.mockRejectedValueOnce(new Error("busy"));
+    mockReaddir
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ name: "2025-01-01", isDirectory: () => true }])
+      .mockResolvedValueOnce(["log-1.eml"]);
 
     await runCleanup(db, config);
 
     expect(mockDecrementOrganizationStorageUsage).not.toHaveBeenCalled();
     expect(db._mocks.updateWhere).not.toHaveBeenCalled();
+    expect(mockDeleteDir).not.toHaveBeenCalled();
   });
 
   it("uses the configured delivery log retention when purging old rows", async () => {

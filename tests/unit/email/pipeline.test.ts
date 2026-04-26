@@ -723,6 +723,44 @@ describe("deliverQueuedEmail", () => {
     );
   });
 
+  it("does not release attachment storage when rollback file deletion fails", async () => {
+    mockCreateAttachment.mockRejectedValueOnce(new Error("insert failed"));
+    mockDeleteFile.mockRejectedValueOnce(new Error("unlink failed"));
+    mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 99 });
+
+    await deliverQueuedEmail(
+      {} as Parameters<typeof processInboundEmail>[0],
+      {} as Parameters<typeof processInboundEmail>[1],
+      {
+        alias: activeAlias,
+        parsed: {
+          messageId: "<id@test>",
+          subject: "Attachment rollback failure",
+          envelopeFrom: "sender@example.com",
+          headerFrom: "Sender <sender@example.com>",
+          textBody: "hello",
+          htmlBody: null,
+          bodySha256: "hash",
+          attachments: [
+            {
+              filename: "report.pdf",
+              contentType: "application/pdf",
+              sizeBytes: 12,
+              sha256: "pdf-hash",
+              content: Buffer.from("pdf-bytes"),
+            },
+          ],
+          rawSizeBytes: 12,
+        },
+        deliveryLog: { id: "log-attachment-rollback-fail" } as never,
+        envelopeFrom: "sender@example.com",
+        ...PIPELINE_CONFIG,
+      },
+    );
+
+    expect(mockDecrementOrganizationStorageUsage).not.toHaveBeenCalled();
+  });
+
   it("does not release attachment storage after the attachment row already exists", async () => {
     mockCreateAttachment.mockResolvedValueOnce({
       id: "att-uuid-1",
