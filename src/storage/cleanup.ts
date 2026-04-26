@@ -61,13 +61,16 @@ async function cleanAttachments(
       } catch {
         continue;
       }
-      const result = await db.delete(attachments).where(eq(attachments.id, id));
-      const rows = (result as unknown as { rowCount?: number }).rowCount ?? 0;
-      if (rows > 0 && organizationId && sizeBytes != null && sizeBytes > 0) {
-        await decrementOrganizationStorageUsage(db, organizationId, {
-          attachmentBytes: BigInt(sizeBytes),
-        }).catch(() => {});
-      }
+      const rows = await db.transaction(async (tx) => {
+        const result = await tx.delete(attachments).where(eq(attachments.id, id));
+        const rowCount = (result as unknown as { rowCount?: number }).rowCount ?? 0;
+        if (rowCount > 0 && organizationId && sizeBytes != null && sizeBytes > 0) {
+          await decrementOrganizationStorageUsage(tx as Db, organizationId, {
+            attachmentBytes: BigInt(sizeBytes),
+          });
+        }
+        return rowCount;
+      });
       deletedFiles++;
       deletedRows += rows;
     }
@@ -140,22 +143,25 @@ async function cleanRawEmails(
       } catch {
         continue;
       }
-      const result = await db
-        .update(deliveryLogs)
-        .set({
-          rawEmailPath: null,
-          rawEmailEncryptionMode: "none",
-          rawEmailWrappedDek: null,
-          rawEmailKekKeyId: null,
-          rawEmailEncryptedAt: null,
-        })
-        .where(eq(deliveryLogs.id, id));
-      const rows = (result as unknown as { rowCount?: number }).rowCount ?? 0;
-      if (rows > 0 && organizationId && rawSizeBytes != null && rawSizeBytes > 0) {
-        await decrementOrganizationStorageUsage(db, organizationId, {
-          rawEmailBytes: BigInt(rawSizeBytes),
-        }).catch(() => {});
-      }
+      const rows = await db.transaction(async (tx) => {
+        const result = await tx
+          .update(deliveryLogs)
+          .set({
+            rawEmailPath: null,
+            rawEmailEncryptionMode: "none",
+            rawEmailWrappedDek: null,
+            rawEmailKekKeyId: null,
+            rawEmailEncryptedAt: null,
+          })
+          .where(eq(deliveryLogs.id, id));
+        const rowCount = (result as unknown as { rowCount?: number }).rowCount ?? 0;
+        if (rowCount > 0 && organizationId && rawSizeBytes != null && rawSizeBytes > 0) {
+          await decrementOrganizationStorageUsage(tx as Db, organizationId, {
+            rawEmailBytes: BigInt(rawSizeBytes),
+          });
+        }
+        return rowCount;
+      });
       cleared += rows;
     }
     if (cleared > 0) {
