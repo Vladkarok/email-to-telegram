@@ -91,6 +91,7 @@ export interface PlanLimits {
   chats: number;
   allowRules: number;
   deliveredEmailsMonth: number;
+  egressBytesMonth: number;
   storageBytes: number;
   maxMessageBytes: number;
   retentionDays: number;
@@ -101,20 +102,29 @@ export interface PlanLimits {
 Initial limits:
 
 - `free`: 3 aliases, 1 user, 1 chat, 10 allow rules, 100 emails/month, 100 MB
-  storage, 5 MB message size, 7 days retention, 0 custom domains
-- `personal`: 10 aliases, 1 user, 3 chats, 50 allow rules, 1,000 emails/month,
-  1 GB storage, 10 MB message size, 30 days retention, 0 custom domains
-- `pro`: 50 aliases, 3 users, 10 chats, 500 allow rules, 10,000 emails/month,
-  10 GB storage, 25 MB message size, 90 days retention, 1 custom domain
-- `team`: 200 aliases, 10 users, 50 chats, 2,000 allow rules, 100,000
-  emails/month, 50 GB storage, 25 MB message size, 180 days retention, 3 custom
+  egress, 100 MB storage, 5 MB message size, 7 days retention, 0 custom
   domains
+- `personal`: 10 aliases, 1 user, 3 chats, 50 allow rules, 1,000 emails/month,
+  10 GB egress, 1 GB storage, 10 MB message size, 30 days retention, 0 custom
+  domains
+- `pro`: 50 aliases, 3 users, 10 chats, 500 allow rules, 10,000 emails/month,
+  100 GB egress, 10 GB storage, 25 MB message size, 90 days retention, 0
+  custom domains
+- `team`: 200 aliases, 10 users, 50 chats, 2,000 allow rules, 100,000
+  emails/month, 500 GB egress, 50 GB storage, 25 MB message size, 180 days
+  retention, 3 custom domains
 - `business`: handled manually, default to high limits from env/admin override
   later
 
+Quota reset default:
+
+- v1 uses calendar UTC months for `deliveredEmailsMonth` and `egressBytesMonth`
+- if billing-period-based reset is desired later, it must be implemented
+  explicitly and reflected in product UX
+
 ## Database Changes
 
-Add migration `drizzle/0009_saas_billing.sql` and update `src/db/schema.ts`.
+Add migration `drizzle/0009_harsh_mordo.sql` and update `src/db/schema.ts`.
 
 ### `organizations`
 
@@ -234,6 +244,13 @@ Add `organization_usage_months`:
 
 Use this for monthly email quotas only.
 
+If egress is enforced in v1, either extend this table with:
+
+- `egress_bytes bigint not null default 0`
+
+or add a sibling monthly usage table for download/view traffic. Do not leave
+attachment and privacy-view bandwidth unbounded in hosted mode.
+
 Add `organization_storage_usage` for current storage quotas:
 
 - `organization_id uuid primary key references organizations(id) on delete cascade`
@@ -281,6 +298,10 @@ incrementRejectedUsage(db, orgId, reason): Promise<void>
 incrementStorageUsage(db, orgId, rawBytes, attachmentBytes): Promise<void>
 decrementStorageUsage(db, orgId, rawBytes, attachmentBytes): Promise<void>
 ```
+
+The old `incrementDeliveredUsage(db, orgId, bytes)` name is misleading because
+monthly delivered usage and storage are separate concerns. Keep usage count and
+storage accounting as separate APIs.
 
 `LimitResult`:
 
@@ -340,6 +361,15 @@ Add commands:
 - `/usage`
 - `/upgrade`
 - `/portal`
+
+Usage output must distinguish:
+
+- accepted/billable emails
+- delivered-to-Telegram emails
+- delivery failures after acceptance
+- rejected emails
+- storage usage
+- egress usage if enabled
 
 ### `/billing`
 
@@ -422,6 +452,8 @@ Auth:
 - route must verify signed token containing `telegramUserId`, `organizationId`,
   and expiry
 - user must be org owner/admin
+- route must have per-user rate limiting to avoid noisy session creation and
+  Stripe abuse
 
 Output:
 
@@ -467,17 +499,34 @@ Handle events:
 
 Map Stripe price IDs to plan codes through config.
 
+Add explicit tests for:
+
+- out-of-order webhook delivery
+- duplicate webhook delivery
+- Stripe price ID not mapped to a known plan
+- `incomplete_expired` and `past_due` handling
+- manual `business` plan orgs not being overwritten accidentally by unrelated
+  Stripe events
+
 ## Billing State Rules
 
 Subscription state mapping:
 
+- `free`: internal app-only state, never written directly from Stripe event type
+  mapping
 - `trialing` or `active`: paid limits apply
-- `past_due`: paid limits remain for 7-day grace period if
-  `current_period_end` is recent; otherwise free limits
-- `canceled`, `unpaid`, `incomplete`: free limits apply
+- `past_due`: paid limits remain only for an explicitly defined grace policy;
+  avoid relying only on `current_period_end` without tests
+- `canceled`, `unpaid`, `incomplete`, `incomplete_expired`: free limits apply
 - missing subscription: free limits apply
 - `business`: manual admin-only plan; Stripe webhook must not overwrite unless
   subscription is linked
+
+Follow-up recommendation:
+
+- if Stripe grace handling becomes hard to reason about, add explicit
+  `paid_through_at` semantics derived from successful billing events rather than
+  inferring grace only from `current_period_end`
 
 Downgrade behavior:
 
@@ -486,6 +535,13 @@ Downgrade behavior:
   delivery.
 - Management UI should say: plan is over limit, delete aliases or upgrade.
 - Inbound preflight rejects over-limit aliases before raw upload.
+
+Hosted rejection behavior must be documented clearly:
+
+- paused/over-limit hosted aliases should produce generic permanent rejection
+  behavior at the worker boundary in v1
+- internal logs and UI may show exact reason, but SMTP-side behavior should not
+  leak account state
 
 ## Inbound Email Enforcement
 
@@ -554,6 +610,9 @@ Update `queueInboundEmail` and delivery log creation:
 - for failed Telegram delivery, still count as delivered/processed email because
   infrastructure was used
 
+Because this is customer-sensitive, `/usage` must surface delivery failures
+separately from accepted/billable emails.
+
 ## Storage And Retention
 
 Current cleanup uses global retention config. Hosted mode needs plan-aware
@@ -570,6 +629,13 @@ v1 approach:
 - Paid plans: 30/90/180 days.
 
 Add tests around free vs paid retention cleanup and storage usage decrementing.
+
+Hosted v1 must also include:
+
+- delete-organization path that removes hosted aliases, memberships, raw emails,
+  attachments, and organization-linked usage data
+- basic export path for organization metadata, aliases, and delivery-log summary
+- documented erasure SLA for hosted users
 
 ## Stripe Integration Details
 
@@ -619,10 +685,27 @@ Subscription metadata should also include `organizationId`.
 - Never trust `organizationId` from the client without checking user membership.
 - Never expose Stripe secret keys in bot messages or logs.
 - Log webhook event IDs and ignore duplicate processed events.
+- Hosted onboarding and alias creation must be rate-limited and abuse-monitored.
+- Shared hosted domain must have sender/domain block controls and operational
+  suspension workflow.
 - Add `billing_webhook_events` table:
   - `event_id varchar(255) primary key`
   - `event_type varchar(255) not null`
   - `processed_at timestamp with time zone not null default now()`
+
+## Abuse And Deliverability Requirements
+
+Before public hosted launch:
+
+- define acceptable-use / abuse policy
+- add Telegram-user and edge-level throttles for hosted onboarding
+- add per-alias / per-domain deny controls for abuse response
+- define shared-domain reputation monitoring and emergency disable flow
+- decide whether free hosted signup needs extra proof-of-human friction at the
+  edge layer
+
+Shared-domain reputation is a launch-blocking operational risk, not a later
+polish item.
 
 ## Migration Strategy
 
@@ -668,6 +751,8 @@ Add tests for:
 - duplicate Stripe webhook event is ignored
 - checkout route requires owner/admin membership
 - portal route requires existing Stripe customer
+- business/manual plan webhook precedence is preserved
+- egress limit enforcement is correct if enabled in v1
 
 ### Integration Tests
 
@@ -679,6 +764,7 @@ Add tests for:
 - Pro limits apply immediately after webhook
 - canceled subscription falls back to free limits without deleting aliases
 - over-limit alias is rejected at preflight
+- out-of-order Stripe webhook delivery converges to correct org state
 
 ### Early E2E Slice
 
@@ -737,7 +823,7 @@ Manual Stripe test mode flow:
    - add tests in `tests/unit/config/config.test.ts`
 3. Schema and migrations:
    - update `src/db/schema.ts`
-   - add migration `drizzle/0009_saas_billing.sql`
+   - add migration `drizzle/0009_harsh_mordo.sql`
    - add repo modules
 4. Plans and limits:
    - add `src/billing/plans.ts`
@@ -769,10 +855,11 @@ Manual Stripe test mode flow:
 - add `/billing`, `/plan`, `/usage`, `/upgrade`, `/portal`
 - add minimal menu buttons
 
-11. Cleanup/retention:
+11. Cleanup/retention + data lifecycle:
 
 - add plan-aware retention logic
 - test free vs paid cleanup
+- add delete-org and basic export path
 
 12. Final verification:
 
@@ -812,5 +899,5 @@ Manual Stripe test mode flow:
 - Billing is organization-based, not per-alias or per-seat in v1.
 - Over-limit data is not deleted automatically.
 - Inbound rejection happens as early as possible, preferably at preflight.
-- Custom domains are planned for Pro, but implementation can ship after
-  shared-domain paid billing if needed.
+- Custom domains are planned for Team in the initial paid launch unless
+  verification automation is implemented earlier.

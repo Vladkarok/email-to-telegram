@@ -15,6 +15,7 @@ describe("billing plans", () => {
       chats: 1,
       allowRules: 10,
       deliveredEmailsMonth: 100,
+      egressBytesMonth: 1024 * 1024 * 1024,
       maxMessageBytes: 5 * 1024 * 1024,
       retentionDays: 7,
       customDomains: 0,
@@ -26,7 +27,9 @@ describe("billing plans", () => {
     expect(PLAN_DEFINITIONS.personal.yearlyPriceUsd).toBe(48);
     expect(PLAN_DEFINITIONS.pro.monthlyPriceUsd).toBe(12);
     expect(PLAN_DEFINITIONS.team.monthlyPriceUsd).toBe(29);
+    expect(PLAN_DEFINITIONS.personal.limits.egressBytesMonth).toBe(10 * 1024 * 1024 * 1024);
     expect(PLAN_DEFINITIONS.pro.limits.maxMessageBytes).toBe(25 * 1024 * 1024);
+    expect(PLAN_DEFINITIONS.pro.limits.customDomains).toBe(0);
     expect(PLAN_DEFINITIONS.team.limits.customDomains).toBe(3);
   });
 
