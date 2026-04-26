@@ -31,6 +31,18 @@ function shouldDeletePendingMeta(reason: string | undefined): boolean {
   );
 }
 
+function statusForQueueRejection(reason: string | undefined): number | null {
+  switch (reason) {
+    case "message_size_limit":
+      return 413;
+    case "subscription_inactive":
+    case "monthly_email_limit":
+      return 403;
+    default:
+      return null;
+  }
+}
+
 export function rawRoute(
   app: FastifyInstance,
   config: Pick<
@@ -117,6 +129,14 @@ export function rawRoute(
         await deletePendingRawEmailMeta(storedPath).catch((err: unknown) => {
           getLogger().warn({ err, storedPath }, "failed to delete pending raw email metadata");
         });
+      }
+
+      if (!queued.queued) {
+        const rejectionStatus = statusForQueueRejection(queued.result.reason);
+        if (rejectionStatus) {
+          await reply.status(rejectionStatus).send({ error: "rejected" });
+          return;
+        }
       }
 
       await reply.status(202).send({ status: "accepted" });

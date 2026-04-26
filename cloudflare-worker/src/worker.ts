@@ -93,7 +93,11 @@ export default {
       const responseText = await rawResp.text();
       console.error("raw upload non-2xx", rawResp.status, responseText);
       if (isPermanentRawUploadFailure(rawResp.status)) {
-        message.setReject("Message size exceeds fixed maximum message size");
+        message.setReject(
+          rawResp.status === 413
+            ? "Message size exceeds fixed maximum message size"
+            : "550 Mailbox unavailable",
+        );
         return;
       }
       throw new Error(`Transient raw upload failure: ${rawResp.status}`);
@@ -113,7 +117,7 @@ function extractLocalPart(address: string): string | null {
 }
 
 function isPermanentRawUploadFailure(status: number): boolean {
-  return status === 413;
+  return status === 402 || status === 403 || status === 413;
 }
 
 /**

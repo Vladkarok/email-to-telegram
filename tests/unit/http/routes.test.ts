@@ -426,6 +426,62 @@ describe("POST /inbound/raw", () => {
     expect(mockQueueInboundEmail).not.toHaveBeenCalled();
   });
 
+  it("returns 413 when hosted inbound mail exceeds the plan message size", async () => {
+    mockQueueInboundEmail.mockResolvedValue({
+      queued: false,
+      result: { ok: false, reason: "message_size_limit" },
+    });
+
+    const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
+    const { signature, timestamp } = signWorkerRequest(rawEmail);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/raw",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+        "x-envelope-from": "sender@example.com",
+        "x-local-part": "alerts",
+      },
+      payload: rawEmail,
+    });
+
+    expect(res.statusCode).toBe(413);
+    expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledOnce();
+    expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 when hosted inbound mail is rejected by subscription state", async () => {
+    mockQueueInboundEmail.mockResolvedValue({
+      queued: false,
+      result: { ok: false, reason: "subscription_inactive" },
+    });
+
+    const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
+    const { signature, timestamp } = signWorkerRequest(rawEmail);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/raw",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+        "x-envelope-from": "sender@example.com",
+        "x-local-part": "alerts",
+      },
+      payload: rawEmail,
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledOnce();
+    expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
+  });
+
   it("cleans up the raw email when pending metadata persistence fails", async () => {
     mockWritePendingRawEmailMeta.mockRejectedValueOnce(new Error("fs exploded"));
 
