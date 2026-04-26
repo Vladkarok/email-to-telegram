@@ -11,6 +11,7 @@ const mockReaddir = vi.fn();
 const mockStat = vi.fn();
 const mockDeleteFile = vi.fn();
 const mockDeleteDir = vi.fn();
+const mockDecrementOrganizationStorageUsage = vi.fn();
 
 vi.mock("fs/promises", () => ({
   readdir: (...args: unknown[]): unknown => mockReaddir(...args),
@@ -27,21 +28,43 @@ vi.mock("../../../src/storage/disk.js", () => ({
   deleteDir: (...args: unknown[]): unknown => mockDeleteDir(...args),
 }));
 
+vi.mock("../../../src/db/repos/storageUsage.js", () => ({
+  decrementOrganizationStorageUsage: (...args: unknown[]): unknown =>
+    mockDecrementOrganizationStorageUsage(...args),
+}));
+
 const { runCleanup } = await import("../../../src/storage/cleanup.js");
 
-function makeDb(expiredAttachments: { storagePath: string }[] = []) {
+function makeDb(
+  expiredAttachments: {
+    storagePath: string;
+    sizeBytes?: number | null;
+    organizationId?: string | null;
+  }[] = [],
+  expiredRawLogs: { rawSizeBytes?: number | null; organizationId?: string | null }[] = [],
+) {
   const attachmentDeleteWhere = vi.fn().mockResolvedValue({ rowCount: expiredAttachments.length });
   const deliveryLogDeleteWhere = vi.fn().mockResolvedValue({ rowCount: 0 });
   const updateWhere = vi.fn().mockResolvedValue({ rowCount: 0 });
   const updateSet = vi.fn(() => ({
     where: updateWhere,
   }));
-  return {
-    select: vi.fn().mockReturnValue({
+  const select = vi
+    .fn()
+    .mockReturnValueOnce({
       from: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue(expiredAttachments),
+        innerJoin: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue(expiredAttachments),
+        }),
       }),
-    }),
+    })
+    .mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue(expiredRawLogs),
+      }),
+    });
+  return {
+    select,
     delete: vi.fn().mockImplementation((table) => ({
       where: table === attachments ? attachmentDeleteWhere : deliveryLogDeleteWhere,
     })),
@@ -80,6 +103,7 @@ describe("runCleanup", () => {
     mockLogger.error.mockReset();
     mockDeleteFile.mockResolvedValue(undefined);
     mockDeleteDir.mockResolvedValue(undefined);
+    mockDecrementOrganizationStorageUsage.mockResolvedValue(undefined);
     mockReaddir.mockResolvedValue([]);
     mockStat.mockResolvedValue({ mtime: new Date(0) }); // very old
   });
@@ -90,9 +114,14 @@ describe("runCleanup", () => {
   });
 
   it("deletes files for expired attachments", async () => {
-    const db = makeDb([{ storagePath: "/data/attachments/log-id/file.bin" }]);
+    const db = makeDb([
+      { storagePath: "/data/attachments/log-id/file.bin", sizeBytes: 10, organizationId: "org-1" },
+    ]);
     await runCleanup(db, config);
     expect(mockDeleteFile).toHaveBeenCalledWith("/data/attachments/log-id/file.bin");
+    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(db, "org-1", {
+      attachmentBytes: 10n,
+    });
   });
 
   it("removes old raw email directories", async () => {
@@ -111,11 +140,14 @@ describe("runCleanup", () => {
   });
 
   it("clears expired raw email references after the raw-email TTL", async () => {
-    const db = makeDb([]);
+    const db = makeDb([], [{ rawSizeBytes: 42, organizationId: "org-1" }]);
     db._mocks.updateWhere.mockResolvedValue({ rowCount: 2 });
 
     await runCleanup(db, config);
 
+    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(db, "org-1", {
+      rawEmailBytes: 42n,
+    });
     expect(db._mocks.updateSet).toHaveBeenCalledWith({
       rawEmailPath: null,
       rawEmailEncryptionMode: "none",
