@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { eq, and, count } from "drizzle-orm";
+import { eq, and, count, ne } from "drizzle-orm";
 import { allowRules, emailAddresses, type AllowRule, type NewAllowRule } from "../schema.js";
 import type * as schema from "../schema.js";
 
@@ -45,7 +45,9 @@ export async function countAllowRulesByOrganization(
     .select({ count: count() })
     .from(allowRules)
     .innerJoin(emailAddresses, eq(emailAddresses.id, allowRules.emailAddressId))
-    .where(eq(emailAddresses.organizationId, organizationId));
+    .where(
+      and(eq(emailAddresses.organizationId, organizationId), ne(emailAddresses.status, "deleted")),
+    );
   return row?.count ?? 0;
 }
 

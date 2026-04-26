@@ -6,7 +6,7 @@ import { createAlias } from "../../db/repos/aliases.js";
 import type { EmailAddress } from "../../db/schema.js";
 import { findChatById } from "../../db/repos/chats.js";
 import { loadConfig } from "../../config.js";
-import { checkAliasCreateLimit } from "../../billing/limits.js";
+import { checkAliasCreateLimit, withOrganizationQuotaLock } from "../../billing/limits.js";
 import { getPending, clearPending } from "../session.js";
 import { canManageChat } from "../authorization.js";
 
@@ -91,36 +91,39 @@ export async function createEmailAlias(
 
   const localPart = rawName.length > 0 ? `${prefix}-${generateSuffix()}` : prefix;
   const fullAddress = `${localPart}@${config.mailDomain}`;
+  const db = getDb();
+  const createdBy = BigInt(ctx.from.id);
   const organizationId =
     chatOrganizationId === undefined
-      ? ((await findChatById(getDb(), chatId))?.organizationId ?? null)
+      ? ((await findChatById(db, chatId))?.organizationId ?? null)
       : chatOrganizationId;
-
-  const limit = await checkAliasCreateLimit(getDb(), organizationId);
-  if (!limit.ok) {
-    await ctx.reply(
-      `📦 Plan limit reached: ${limit.used ?? limit.limit}/${limit.limit} aliases used. Upgrade to create more aliases.`,
-    );
-    return;
-  }
 
   let alias: EmailAddress;
   try {
-    alias = await createAlias(getDb(), {
-      localPart,
-      fullAddress,
-      organizationId,
-      domainId: null,
-      chatId,
-      messageThreadId: threadId,
-      createdBy: BigInt(ctx.from.id),
-      renderMode: "plaintext",
-      privacyModeEnabled: false,
-      bodyDedupEnabled: false,
-      status: "active",
+    alias = await withOrganizationQuotaLock(db, organizationId, async (tx) => {
+      const limit = await checkAliasCreateLimit(tx, organizationId);
+      if (!limit.ok) {
+        await replyForAliasLimitFailure(ctx, limit);
+        throw new Error("quota-blocked");
+      }
+
+      return createAlias(tx, {
+        localPart,
+        fullAddress,
+        organizationId,
+        domainId: null,
+        chatId,
+        messageThreadId: threadId,
+        createdBy,
+        renderMode: "plaintext",
+        privacyModeEnabled: false,
+        bodyDedupEnabled: false,
+        status: "active",
+      });
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
+    if (msg === "quota-blocked") return;
     if (
       msg.includes("duplicate") ||
       msg.includes("unique") ||
@@ -145,4 +148,20 @@ export async function createEmailAlias(
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+async function replyForAliasLimitFailure(
+  ctx: Context,
+  limit: Awaited<ReturnType<typeof checkAliasCreateLimit>>,
+): Promise<void> {
+  if (limit.ok) return;
+
+  if (limit.code === "subscription_inactive") {
+    await ctx.reply("⛔ This hosted workspace is not ready for alias creation right now.");
+    return;
+  }
+
+  await ctx.reply(
+    `📦 Plan limit reached: ${limit.used ?? limit.limit}/${limit.limit} aliases used. Upgrade to create more aliases.`,
+  );
 }

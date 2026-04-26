@@ -1,4 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import { sql } from "drizzle-orm";
 import { loadConfig } from "../config.js";
 import { getPlanDefinition, type PlanCode, type PlanDefinition } from "./plans.js";
 import { countActiveAliasesByOrganization } from "../db/repos/aliases.js";
@@ -58,7 +59,8 @@ export async function checkAliasCreateLimit(
   db: Db,
   organizationId: string | null,
 ): Promise<LimitResult> {
-  if (!shouldEnforceHostedLimits() || !organizationId) return { ok: true };
+  if (!shouldEnforceHostedLimits()) return { ok: true };
+  if (!organizationId) return { ok: false, code: "subscription_inactive" };
 
   const organization = await findOrganizationById(db, organizationId);
   if (!organization) return { ok: false, code: "subscription_inactive" };
@@ -81,7 +83,8 @@ export async function checkAllowRuleCreateLimit(
   db: Db,
   organizationId: string | null,
 ): Promise<LimitResult> {
-  if (!shouldEnforceHostedLimits() || !organizationId) return { ok: true };
+  if (!shouldEnforceHostedLimits()) return { ok: true };
+  if (!organizationId) return { ok: false, code: "subscription_inactive" };
 
   const organization = await findOrganizationById(db, organizationId);
   if (!organization) return { ok: false, code: "subscription_inactive" };
@@ -102,4 +105,19 @@ export async function checkAllowRuleCreateLimit(
 
 function shouldEnforceHostedLimits(): boolean {
   return loadConfig().appMode === "hosted";
+}
+
+export async function withOrganizationQuotaLock<T>(
+  db: Db,
+  organizationId: string | null,
+  work: (tx: Db) => Promise<T>,
+): Promise<T> {
+  if (!shouldEnforceHostedLimits() || !organizationId) {
+    return work(db);
+  }
+
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${organizationId}))`);
+    return work(tx as Db);
+  });
 }

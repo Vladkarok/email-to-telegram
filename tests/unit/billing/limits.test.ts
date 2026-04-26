@@ -110,11 +110,17 @@ describe("billing limits", () => {
     await expect(checkAllowRuleCreateLimit({} as never, "org-1")).resolves.toEqual({ ok: true });
   });
 
-  it("skips hosted quota checks when no organization id is present", async () => {
+  it("treats missing hosted organization ids as inactive subscription state", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
 
-    await expect(checkAliasCreateLimit({} as never, null)).resolves.toEqual({ ok: true });
-    await expect(checkAllowRuleCreateLimit({} as never, null)).resolves.toEqual({ ok: true });
+    await expect(checkAliasCreateLimit({} as never, null)).resolves.toEqual({
+      ok: false,
+      code: "subscription_inactive",
+    });
+    await expect(checkAllowRuleCreateLimit({} as never, null)).resolves.toEqual({
+      ok: false,
+      code: "subscription_inactive",
+    });
     expect(mockFindOrganizationById).not.toHaveBeenCalled();
   });
 

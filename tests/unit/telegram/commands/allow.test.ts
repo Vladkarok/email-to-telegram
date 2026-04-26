@@ -27,6 +27,10 @@ const mockCheckAllowRuleCreateLimit = vi.fn().mockResolvedValue({ ok: true });
 vi.mock("../../../../src/billing/limits.js", () => ({
   checkAllowRuleCreateLimit: (...args: unknown[]): unknown =>
     mockCheckAllowRuleCreateLimit(...args),
+  withOrganizationQuotaLock: vi.fn(
+    async (_db: unknown, _organizationId: string | null, work: (tx: unknown) => Promise<unknown>) =>
+      work({}),
+  ),
 }));
 
 const { allowHandler } = await import("../../../../src/telegram/commands/allow.js");
@@ -113,6 +117,21 @@ describe("/allow command", () => {
       expect(mockAddAllowRule).not.toHaveBeenCalled();
       expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
         /limit reached|upgrade/i,
+      );
+    });
+
+    it("shows a hosted workspace error when the alias has no active organization", async () => {
+      mockCheckAllowRuleCreateLimit.mockResolvedValueOnce({
+        ok: false,
+        code: "subscription_inactive",
+      });
+      const ctx = createMockCtx({ commandMatch: "add alerts-ab12cd github.com" });
+
+      await allowHandler(ctx);
+
+      expect(mockAddAllowRule).not.toHaveBeenCalled();
+      expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
+        /workspace|active hosted workspace|not attached/i,
       );
     });
   });

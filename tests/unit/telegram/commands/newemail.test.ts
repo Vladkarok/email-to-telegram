@@ -41,6 +41,10 @@ vi.mock("../../../../src/telegram/authorization.js", () => ({
 const mockCheckAliasCreateLimit = vi.fn().mockResolvedValue({ ok: true });
 vi.mock("../../../../src/billing/limits.js", () => ({
   checkAliasCreateLimit: (...args: unknown[]): unknown => mockCheckAliasCreateLimit(...args),
+  withOrganizationQuotaLock: vi.fn(
+    async (_db: unknown, _organizationId: string | null, work: (tx: unknown) => Promise<unknown>) =>
+      work({}),
+  ),
 }));
 
 const { newemailHandler } = await import("../../../../src/telegram/commands/newemail.js");
@@ -185,6 +189,26 @@ describe("/newemail command", () => {
     expect(mockCreateAlias).not.toHaveBeenCalled();
     expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
       /limit reached|upgrade/i,
+    );
+  });
+
+  it("shows a hosted workspace error when alias creation has no active organization", async () => {
+    mockFindChatById.mockResolvedValueOnce({
+      title: "Hosted DM",
+      type: "private",
+      organizationId: null,
+    });
+    mockCheckAliasCreateLimit.mockResolvedValueOnce({
+      ok: false,
+      code: "subscription_inactive",
+    });
+    const ctx = createMockCtx({ commandMatch: "alerts", chatType: "private" });
+
+    await newemailHandler(ctx);
+
+    expect(mockCreateAlias).not.toHaveBeenCalled();
+    expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
+      /workspace|not ready|active/i,
     );
   });
 

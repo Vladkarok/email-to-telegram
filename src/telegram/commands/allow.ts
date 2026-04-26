@@ -3,7 +3,7 @@ import { getDb } from "../../db/client.js";
 import { findAliasByLocalPart } from "../../db/repos/aliases.js";
 import type { EmailAddress } from "../../db/schema.js";
 import { addAllowRule, removeAllowRule, listAllowRules } from "../../db/repos/allowRules.js";
-import { checkAllowRuleCreateLimit } from "../../billing/limits.js";
+import { checkAllowRuleCreateLimit, withOrganizationQuotaLock } from "../../billing/limits.js";
 import { canManageAlias } from "../authorization.js";
 import { parseAllowValue } from "../allowValue.js";
 
@@ -115,21 +115,54 @@ export async function addAllowRuleForAlias(
 
   const limit = await checkAllowRuleCreateLimit(db, alias.organizationId ?? null);
   if (!limit.ok) {
-    await ctx.reply(
-      `📦 Plan limit reached for <code>${escapeHtml(alias.localPart)}</code>: ${limit.used ?? limit.limit}/${limit.limit} allow rules used. Upgrade to add more.`,
-      { parse_mode: "HTML" },
-    );
+    await replyForAllowRuleLimitFailure(ctx, alias.localPart, limit);
     return false;
   }
 
-  await addAllowRule(db, {
-    emailAddressId: alias.id,
-    matchType: parsedValue.matchType,
-    matchValue: parsedValue.normalized,
-  });
+  try {
+    await withOrganizationQuotaLock(db, alias.organizationId ?? null, async (tx) => {
+      const lockedLimit = await checkAllowRuleCreateLimit(tx, alias.organizationId ?? null);
+      if (!lockedLimit.ok) {
+        await replyForAllowRuleLimitFailure(ctx, alias.localPart, lockedLimit);
+        throw new Error("quota-blocked");
+      }
+
+      await addAllowRule(tx, {
+        emailAddressId: alias.id,
+        matchType: parsedValue.matchType,
+        matchValue: parsedValue.normalized,
+      });
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg === "quota-blocked") return false;
+    throw err;
+  }
+
   await ctx.reply(
     `✅ Added allow rule for <code>${escapeHtml(alias.localPart)}</code>: ${parsedValue.matchType === "domain" ? "🌐" : "📧"} ${escapeHtml(parsedValue.normalized)}`,
     { parse_mode: "HTML" },
   );
   return true;
+}
+
+async function replyForAllowRuleLimitFailure(
+  ctx: Context,
+  localPart: string,
+  limit: Awaited<ReturnType<typeof checkAllowRuleCreateLimit>>,
+): Promise<void> {
+  if (limit.ok) return;
+
+  if (limit.code === "subscription_inactive") {
+    await ctx.reply(
+      `⛔ <code>${escapeHtml(localPart)}</code> is not attached to an active hosted workspace.`,
+      { parse_mode: "HTML" },
+    );
+    return;
+  }
+
+  await ctx.reply(
+    `📦 Plan limit reached for <code>${escapeHtml(localPart)}</code>: ${limit.used ?? limit.limit}/${limit.limit} allow rules used. Upgrade to add more.`,
+    { parse_mode: "HTML" },
+  );
 }
