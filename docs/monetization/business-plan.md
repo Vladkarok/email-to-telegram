@@ -74,6 +74,7 @@ Offer a hosted free tier for adoption:
 - 3 aliases
 - 10 allow rules total
 - 100 delivered emails/month
+- 1 GB attachment/privacy-view/download egress per month
 - 5 MB max processed message size
 - 7-day retention
 - Attachments allowed, but capped at 100 MB stored total
@@ -89,6 +90,7 @@ Personal: `$5/month` or `$48/year`
 - 1 user
 - 10 aliases
 - 1,000 delivered emails/month
+- 10 GB attachment/privacy-view/download egress per month
 - 1 GB attachment/raw storage
 - 30-day retention
 - 10 MB message limit
@@ -102,10 +104,10 @@ Pro: `$12/month` or `$120/year`
 - 3 users
 - 50 aliases
 - 10,000 delivered emails/month
+- 100 GB attachment/privacy-view/download egress per month
 - 10 GB storage
 - 90-day retention
 - 25 MB message limit, matching Cloudflare Email Routing ceiling
-- Custom domain support after domain-aware alias routing is implemented
 - Multiple Telegram chats/topics
 - Delivery history/search
 - Priority email support
@@ -117,8 +119,10 @@ Team: `$29/month` or `$290/year`
 - 10 users
 - 200 aliases
 - 100,000 delivered emails/month
+- 500 GB attachment/privacy-view/download egress per month
 - 50 GB storage
 - 180-day retention
+- Custom domain support
 - Audit log
 - Role-based access: owner/admin/member
 - Per-alias usage analytics
@@ -130,6 +134,7 @@ Use case: companies that depend on Telegram operational workflows.
 Business: `$99/month+`
 
 - Higher limits
+- Custom egress/storage ceilings by contract
 - Dedicated domain/onboarding help
 - Custom retention
 - SLA-style response target
@@ -153,6 +158,26 @@ Keep add-ons simple:
 
 Avoid usage billing in v1 unless necessary. Fixed tiers are easier to understand
 and easier to sell.
+
+## Launch Risks And Guardrails
+
+Hosted email infrastructure is abuse-sensitive. Free signup and shared-domain
+inbound cannot launch safely without operational guardrails.
+
+Required before public launch:
+
+- Rate-limit hosted onboarding and alias creation per Telegram user and per IP
+  where available through the edge
+- Maintain deny/block controls for abusive senders, recipient aliases, and
+  hosted shared-domain patterns
+- Publish acceptable-use / abuse policy
+- Establish shared-domain reputation monitoring and fast suspension workflow
+- Add monthly egress ceilings per plan for attachment/privacy-view/download
+  traffic
+
+The main risk is not only free-tier generosity. The main risk is shared-domain
+reputation and unbounded egress/support cost if hosted signup is easy but
+abuse handling is weak.
 
 ## Payment Recommendation
 
@@ -257,10 +282,11 @@ Minimum hosted onboarding flow:
 
 1. User starts Telegram bot.
 2. Bot creates a personal organization.
-3. User picks free trial or free tier.
+3. User starts on free tier by default. No public free trial is assumed in v1
+   unless explicitly added later.
 4. User creates first alias.
 5. System gives shared-domain address immediately.
-6. Later, Pro users can add custom domain.
+6. Later, Team users can add custom domain.
 7. Custom domain wizard shows Cloudflare DNS / Email Routing instructions.
 
 ## Feature Roadmap
@@ -277,9 +303,10 @@ Build only what is needed to charge honestly:
 - Usage counters
 - Hosted shared domain
 - Free tier
-- Pro tier with custom domains
+- Admin/ops controls for hosted abuse and shared-domain reputation
 - Admin command/page to inspect customer status
 - Terms, privacy policy, abuse policy
+- Delete-organization and basic export path for hosted users
 
 ### v1.5 Retention And Trust
 
@@ -329,6 +356,24 @@ Bad paid gates:
 - Basic export
 - Basic abuse protection
 
+## Usage Semantics
+
+The product should distinguish these counters clearly in hosted billing UX:
+
+- accepted/billable emails
+- delivered to Telegram successfully
+- delivery failures after acceptance
+- rejected before durable processing
+
+This matters because infrastructure cost starts when an inbound email is
+accepted into durable processing, even if final Telegram delivery later fails.
+Billing can remain based on accepted processing in v1, but customer-facing usage
+must show delivery failures separately.
+
+Monthly hosted quotas should reset on a documented calendar UTC month boundary
+in v1 unless billing-period-based reset is implemented explicitly. Do not leave
+this ambiguous.
+
 ## Pricing Rationale
 
 Start low enough for indie adoption, but not so low that payment fees and support
@@ -359,6 +404,7 @@ The monetization implementation is ready when:
 - A new Telegram user can start the hosted bot and create aliases without `.env`
   edits
 - A free user is limited by aliases, email volume, storage, and retention
+- A free user is also limited by egress/download volume
 - A paid user can subscribe through hosted checkout
 - Stripe webhook updates plan state without manual action
 - A canceled/failed subscription downgrades or disables paid-only capacity
@@ -375,10 +421,23 @@ The monetization implementation is ready when:
 - The first monetized audience is technical individuals and small teams using
   Telegram for operational alerts
 - The hosted service can use a shared domain initially
-- Custom domains are Pro+ because they create support and setup cost
+- Custom domains are Team+ in the initial paid launch because they create
+  support and setup cost
 - Stripe is the first payment provider unless tax/Merchant-of-Record complexity
   becomes the main blocker
 - Legal/tax setup should be checked with a professional before public launch
+
+## Policies To Define Before Public Launch
+
+The pricing page and hosted terms should define:
+
+- quota reset rule: calendar month vs billing-period reset
+- cancellation / downgrade / proration behavior
+- refund policy
+- hosted data retention and deletion SLA
+- hosted export scope
+- abuse response / suspension policy
+- whether Team/Business can hold multiple organizations per Telegram user
 
 ## Sources Checked
 

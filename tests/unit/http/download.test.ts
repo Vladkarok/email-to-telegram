@@ -12,6 +12,19 @@ vi.mock("../../../src/db/repos/aliases.js", () => ({
   findAliasByLocalPart: vi.fn(() => Promise.resolve(null)),
 }));
 
+const mockCheckInboundLimit = vi.fn().mockResolvedValue({ ok: true });
+const mockCheckEgressLimit = vi.fn().mockResolvedValue({ ok: true });
+const mockWithOrganizationQuotaLock = vi.fn(
+  async (_db: unknown, _organizationId: string | null, work: (tx: unknown) => Promise<unknown>) =>
+    work({}),
+);
+vi.mock("../../../src/billing/limits.js", () => ({
+  checkInboundLimit: (...args: unknown[]): unknown => mockCheckInboundLimit(...args),
+  checkEgressLimit: (...args: unknown[]): unknown => mockCheckEgressLimit(...args),
+  withOrganizationQuotaLock: (...args: unknown[]): unknown =>
+    mockWithOrganizationQuotaLock(...args),
+}));
+
 const mockFindLink = vi.fn();
 const mockMarkDownloaded = vi.fn();
 const mockDisposeOpened = vi.fn();
@@ -23,6 +36,16 @@ vi.mock("../../../src/db/repos/attachmentLinks.js", () => ({
 const mockOpenAttachment = vi.fn();
 vi.mock("../../../src/storage/disk.js", () => ({
   openAttachmentStream: (...args: unknown[]): unknown => mockOpenAttachment(...args),
+}));
+
+const mockIncrementOrganizationUsageMonth = vi.fn();
+const mockDecrementOrganizationUsageMonth = vi.fn();
+vi.mock("../../../src/db/repos/usage.js", () => ({
+  incrementOrganizationUsageMonth: (...args: unknown[]): unknown =>
+    mockIncrementOrganizationUsageMonth(...args),
+  decrementOrganizationUsageMonth: (...args: unknown[]): unknown =>
+    mockDecrementOrganizationUsageMonth(...args),
+  usageMonthForDate: vi.fn(() => "2026-04"),
 }));
 
 const HMAC_SECRET = "test-secret-that-is-long-enough-abc";
@@ -49,6 +72,15 @@ describe("GET /dl/:token", () => {
     mockMarkDownloaded.mockReset();
     mockOpenAttachment.mockReset();
     mockDisposeOpened.mockReset();
+    mockCheckInboundLimit.mockReset();
+    mockCheckInboundLimit.mockResolvedValue({ ok: true });
+    mockCheckEgressLimit.mockReset();
+    mockCheckEgressLimit.mockResolvedValue({ ok: true });
+    mockWithOrganizationQuotaLock.mockClear();
+    mockIncrementOrganizationUsageMonth.mockReset();
+    mockIncrementOrganizationUsageMonth.mockResolvedValue(undefined);
+    mockDecrementOrganizationUsageMonth.mockReset();
+    mockDecrementOrganizationUsageMonth.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -112,6 +144,7 @@ describe("GET /dl/:token", () => {
       downloadedAt: null,
       attachmentId,
       attachment: {
+        organizationId: "org-1",
         storagePath: "/data/attachments/report.pdf",
         originalFilename: "report.pdf",
         contentType: "application/pdf",
@@ -129,6 +162,14 @@ describe("GET /dl/:token", () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers["content-type"]).toContain("application/pdf");
     expect(mockMarkDownloaded).toHaveBeenCalledOnce();
+    expect(mockIncrementOrganizationUsageMonth).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        organizationId: "org-1",
+        month: "2026-04",
+        egressBytes: BigInt(fileContent.length),
+      }),
+    );
   });
 
   it("returns 410 when a concurrent request already claimed the token", async () => {
@@ -142,6 +183,7 @@ describe("GET /dl/:token", () => {
       downloadedAt: null,
       attachmentId,
       attachment: {
+        organizationId: "org-1",
         storagePath: "/data/attachments/doc.pdf",
         originalFilename: "doc.pdf",
         contentType: "application/pdf",
@@ -161,6 +203,42 @@ describe("GET /dl/:token", () => {
     expect(mockDisposeOpened).toHaveBeenCalledOnce();
   });
 
+  it("returns 403 and keeps the link unused when the org egress limit is exhausted", async () => {
+    const attachmentId = "attach-uuid-egress";
+    const { token, expiresAt } = generateDownloadToken(attachmentId);
+
+    mockFindLink.mockResolvedValue({
+      id: "link-egress",
+      token,
+      expiresAt,
+      downloadedAt: null,
+      attachmentId,
+      attachment: {
+        id: attachmentId,
+        organizationId: "org-1",
+        storagePath: "/data/attachments/cap.pdf",
+        originalFilename: "cap.pdf",
+        contentType: "application/pdf",
+        sizeBytes: 4,
+      },
+    });
+    mockOpenAttachment.mockResolvedValue({
+      stream: Readable.from(Buffer.from("cap!")),
+      size: 4,
+      dispose: mockDisposeOpened,
+    });
+    mockCheckEgressLimit.mockResolvedValue({ ok: false, code: "egress_limit" });
+
+    const app = buildApp();
+    const res = await app.inject({ method: "GET", url: `/dl/${token}` });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toEqual({ error: "download quota exceeded" });
+    expect(mockMarkDownloaded).not.toHaveBeenCalled();
+    expect(mockIncrementOrganizationUsageMonth).not.toHaveBeenCalled();
+    expect(mockDisposeOpened).toHaveBeenCalledOnce();
+  });
+
   it("returns 500 when attachment storage cannot be opened or decrypted", async () => {
     const attachmentId = "attach-uuid-6";
     const { token, expiresAt } = generateDownloadToken(attachmentId);
@@ -172,6 +250,7 @@ describe("GET /dl/:token", () => {
       downloadedAt: null,
       attachmentId,
       attachment: {
+        organizationId: "org-1",
         id: attachmentId,
         storagePath: "/data/attachments/broken.bin",
         originalFilename: "broken.pdf",
@@ -203,6 +282,7 @@ describe("GET /dl/:token", () => {
       downloadedAt: null,
       attachmentId: "different-attachment-id",
       attachment: {
+        organizationId: "org-1",
         storagePath: "/data/attachments/report.pdf",
         originalFilename: "report.pdf",
         contentType: "application/pdf",
@@ -230,6 +310,7 @@ describe("GET /dl/:token", () => {
       downloadedAt: null,
       attachmentId,
       attachment: {
+        organizationId: "org-1",
         storagePath: "/data/attachments/note.txt",
         originalFilename: 'report"\r\n2026.txt',
         contentType: "text/plain; charset=iso-8859-1",

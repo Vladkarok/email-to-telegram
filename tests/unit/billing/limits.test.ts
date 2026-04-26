@@ -36,8 +36,13 @@ vi.mock("../../../src/db/repos/storageUsage.js", () => ({
     mockGetOrganizationStorageUsage(...args),
 }));
 
-const { checkAliasCreateLimit, checkAllowRuleCreateLimit, checkInboundLimit, getEffectivePlan } =
-  await import("../../../src/billing/limits.js");
+const {
+  checkAliasCreateLimit,
+  checkAllowRuleCreateLimit,
+  checkInboundLimit,
+  checkEgressLimit,
+  getEffectivePlan,
+} = await import("../../../src/billing/limits.js");
 
 describe("billing limits", () => {
   beforeEach(() => {
@@ -140,6 +145,10 @@ describe("billing limits", () => {
       ok: false,
       code: "subscription_inactive",
     });
+    await expect(checkEgressLimit({} as never, null, 1n)).resolves.toEqual({
+      ok: false,
+      code: "subscription_inactive",
+    });
     expect(mockFindOrganizationById).not.toHaveBeenCalled();
   });
 
@@ -199,6 +208,45 @@ describe("billing limits", () => {
     });
 
     await expect(checkInboundLimit({} as never, "org-1")).resolves.toEqual({ ok: true });
+  });
+
+  it("rejects hosted egress when projected monthly bytes exceed the plan limit", async () => {
+    mockLoadConfig.mockReturnValue({ appMode: "hosted" });
+    mockFindOrganizationById.mockResolvedValue({
+      id: "org-1",
+      planCode: "free",
+      subscriptionStatus: "free",
+      currentPeriodEnd: null,
+    });
+    mockGetOrganizationUsageMonth.mockResolvedValue({
+      deliveredCount: 0,
+      rejectedCount: 0,
+      egressBytes: 1024n * 1024n * 1024n,
+    });
+
+    await expect(checkEgressLimit({} as never, "org-1", 1n)).resolves.toEqual({
+      ok: false,
+      code: "egress_limit",
+      limit: 1024 * 1024 * 1024,
+      used: 1024 * 1024 * 1024,
+    });
+  });
+
+  it("allows hosted egress when projected monthly bytes stay within the plan limit", async () => {
+    mockLoadConfig.mockReturnValue({ appMode: "hosted" });
+    mockFindOrganizationById.mockResolvedValue({
+      id: "org-1",
+      planCode: "free",
+      subscriptionStatus: "free",
+      currentPeriodEnd: null,
+    });
+    mockGetOrganizationUsageMonth.mockResolvedValue({
+      deliveredCount: 0,
+      rejectedCount: 0,
+      egressBytes: 1024n,
+    });
+
+    await expect(checkEgressLimit({} as never, "org-1", 2048n)).resolves.toEqual({ ok: true });
   });
 
   it("rejects hosted inbound mail when projected storage exceeds the plan limit", async () => {
