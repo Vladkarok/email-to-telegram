@@ -680,6 +680,28 @@ Add tests for:
 - canceled subscription falls back to free limits without deleting aliases
 - over-limit alias is rejected at preflight
 
+### Early E2E Slice
+
+Do not wait until the end of the monetization rollout to add end-to-end tests.
+Add a small hosted-ingestion E2E harness immediately after inbound quota and
+storage enforcement are in place.
+
+Initial E2E scope:
+
+- boot app in hosted mode against test Postgres
+- exercise Cloudflare worker preflight -> raw upload -> VPS ingest path
+- stub Telegram send at the API boundary
+- assert final HTTP responses, DB usage counters, and delivery-log state
+- cover one accepted hosted message and one permanently rejected hosted message
+
+Reasoning:
+
+- quota and storage work changes cross worker, HTTP, DB, and async pipeline code
+- unit and integration tests catch local regressions, but not contract drift
+  between worker and VPS
+- adding this harness before later Stripe/domain work reduces the chance of
+  building new features on top of a broken hosted-ingestion path
+
 ### Manual Acceptance
 
 Run:
@@ -733,20 +755,26 @@ Manual Stripe test mode flow:
    - update `raw.ts`
    - update Cloudflare Worker permanent reject handling
    - update pipeline delivery log writes
-8. Stripe:
+8. Early hosted-ingestion E2E:
+   - add one accepted hosted ingest path
+   - add one permanently rejected hosted ingest path
+   - wire into CI as a targeted test step if runtime stays reasonable
+9. Stripe:
    - install `stripe`
    - add billing routes
    - add webhook processing
    - add idempotency table/repo
-9. Telegram billing UX:
-   - add `/billing`, `/plan`, `/usage`, `/upgrade`, `/portal`
-   - add minimal menu buttons
-10. Cleanup/retention:
+10. Telegram billing UX:
+
+- add `/billing`, `/plan`, `/usage`, `/upgrade`, `/portal`
+- add minimal menu buttons
+
+11. Cleanup/retention:
 
 - add plan-aware retention logic
 - test free vs paid cleanup
 
-11. Final verification:
+12. Final verification:
 
 - full test/typecheck/lint/build
 - manual Stripe test mode walkthrough

@@ -5,6 +5,7 @@ import { getPlanDefinition, type PlanCode, type PlanDefinition } from "./plans.j
 import { countActiveAliasesByOrganization } from "../db/repos/aliases.js";
 import { countAllowRulesByOrganization } from "../db/repos/allowRules.js";
 import { findOrganizationById } from "../db/repos/organizations.js";
+import { getOrganizationStorageUsage } from "../db/repos/storageUsage.js";
 import { getOrganizationUsageMonth, usageMonthForDate } from "../db/repos/usage.js";
 import type { Organization } from "../db/schema.js";
 import type * as schema from "../db/schema.js";
@@ -108,6 +109,7 @@ export async function checkInboundLimit(
   db: Db,
   organizationId: string | null,
   rawSizeBytes?: number,
+  storageDeltaBytes?: bigint,
 ): Promise<LimitResult> {
   if (!shouldEnforceHostedLimits()) return { ok: true };
   if (!organizationId) return { ok: false, code: "subscription_inactive" };
@@ -123,6 +125,20 @@ export async function checkInboundLimit(
       limit: plan.limits.maxMessageBytes,
       used: rawSizeBytes,
     };
+  }
+
+  if (storageDeltaBytes != null && storageDeltaBytes > 0n) {
+    const storage = await getOrganizationStorageUsage(db, organization.id);
+    const currentBytes = (storage?.rawEmailBytes ?? 0n) + (storage?.attachmentBytes ?? 0n);
+    const projectedBytes = currentBytes + storageDeltaBytes;
+    if (projectedBytes > BigInt(plan.limits.storageBytes)) {
+      return {
+        ok: false,
+        code: "storage_limit",
+        limit: plan.limits.storageBytes,
+        used: Number(currentBytes),
+      };
+    }
   }
 
   const usage = await getOrganizationUsageMonth(db, organization.id, usageMonthForDate());

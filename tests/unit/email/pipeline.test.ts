@@ -20,8 +20,11 @@ const mockCreateAttachmentLink = vi.fn();
 const mockCreateDeliveryViewLink = vi.fn();
 const mockSendTelegramPhotos = vi.fn();
 const mockWriteAttachment = vi.fn();
+const mockDeleteFile = vi.fn();
 const mockCheckInboundLimit = vi.fn().mockResolvedValue({ ok: true });
 const mockIncrementOrganizationUsageMonth = vi.fn().mockResolvedValue(undefined);
+const mockIncrementOrganizationStorageUsage = vi.fn().mockResolvedValue(undefined);
+const mockDecrementOrganizationStorageUsage = vi.fn().mockResolvedValue(undefined);
 const mockUsageMonthForDate = vi.fn(() => "2026-04");
 
 vi.mock("../../../src/db/repos/aliases.js", () => ({
@@ -59,6 +62,7 @@ vi.mock("../../../src/db/repos/deliveryViewLinks.js", () => ({
 }));
 vi.mock("../../../src/storage/disk.js", () => ({
   writeAttachment: (...args: unknown[]): unknown => mockWriteAttachment(...args),
+  deleteFile: (...args: unknown[]): unknown => mockDeleteFile(...args),
 }));
 vi.mock("../../../src/billing/limits.js", () => ({
   checkInboundLimit: (...args: unknown[]): unknown => mockCheckInboundLimit(...args),
@@ -67,6 +71,12 @@ vi.mock("../../../src/db/repos/usage.js", () => ({
   incrementOrganizationUsageMonth: (...args: unknown[]): unknown =>
     mockIncrementOrganizationUsageMonth(...args),
   usageMonthForDate: (): unknown => mockUsageMonthForDate(),
+}));
+vi.mock("../../../src/db/repos/storageUsage.js", () => ({
+  incrementOrganizationStorageUsage: (...args: unknown[]): unknown =>
+    mockIncrementOrganizationStorageUsage(...args),
+  decrementOrganizationStorageUsage: (...args: unknown[]): unknown =>
+    mockDecrementOrganizationStorageUsage(...args),
 }));
 
 function simpleEmail() {
@@ -117,6 +127,9 @@ describe("processInboundEmail", () => {
     vi.resetAllMocks();
     mockCheckInboundLimit.mockResolvedValue({ ok: true });
     mockIncrementOrganizationUsageMonth.mockResolvedValue(undefined);
+    mockIncrementOrganizationStorageUsage.mockResolvedValue(undefined);
+    mockDecrementOrganizationStorageUsage.mockResolvedValue(undefined);
+    mockDeleteFile.mockResolvedValue(undefined);
     mockUsageMonthForDate.mockReturnValue("2026-04");
     mockCountRecentDeliveries.mockResolvedValue(0);
     mockCreateAttachment.mockResolvedValue({ id: "att-uuid-1" });
@@ -378,6 +391,9 @@ describe("queueInboundEmail", () => {
     vi.resetAllMocks();
     mockCheckInboundLimit.mockResolvedValue({ ok: true });
     mockIncrementOrganizationUsageMonth.mockResolvedValue(undefined);
+    mockIncrementOrganizationStorageUsage.mockResolvedValue(undefined);
+    mockDecrementOrganizationStorageUsage.mockResolvedValue(undefined);
+    mockDeleteFile.mockResolvedValue(undefined);
     mockUsageMonthForDate.mockReturnValue("2026-04");
   });
 
@@ -411,6 +427,14 @@ describe("queueInboundEmail", () => {
         month: "2026-04",
         deliveredCount: 1,
       }),
+    );
+    expect(mockIncrementOrganizationStorageUsage).toHaveBeenCalledWith(
+      expect.anything(),
+      activeAlias.organizationId,
+      {
+        rawEmailBytes: BigInt(simpleEmail().length),
+        attachmentBytes: 0n,
+      },
     );
     expect(harness.execute).toHaveBeenCalledTimes(2);
   });
@@ -466,6 +490,8 @@ describe("deliverQueuedEmail", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockDeleteFile.mockResolvedValue(undefined);
+    mockDecrementOrganizationStorageUsage.mockResolvedValue(undefined);
     mockCreateAttachment.mockResolvedValue({ id: "att-uuid-1" });
     mockCreateAttachmentLink.mockResolvedValue(undefined);
     mockWriteAttachment.mockResolvedValue({
@@ -653,6 +679,130 @@ describe("deliverQueuedEmail", () => {
       expect.any(String),
       expect.any(Date),
     );
+  });
+
+  it("releases reserved attachment storage when attachment persistence fails", async () => {
+    mockCreateAttachment.mockRejectedValueOnce(new Error("insert failed"));
+    mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 99 });
+
+    await deliverQueuedEmail(
+      {} as Parameters<typeof processInboundEmail>[0],
+      {} as Parameters<typeof processInboundEmail>[1],
+      {
+        alias: activeAlias,
+        parsed: {
+          messageId: "<id@test>",
+          subject: "Attachment failure",
+          envelopeFrom: "sender@example.com",
+          headerFrom: "Sender <sender@example.com>",
+          textBody: "hello",
+          htmlBody: null,
+          bodySha256: "hash",
+          attachments: [
+            {
+              filename: "report.pdf",
+              contentType: "application/pdf",
+              sizeBytes: 12,
+              sha256: "pdf-hash",
+              content: Buffer.from("pdf-bytes"),
+            },
+          ],
+          rawSizeBytes: 12,
+        },
+        deliveryLog: { id: "log-attachment-fail" } as never,
+        envelopeFrom: "sender@example.com",
+        ...PIPELINE_CONFIG,
+      },
+    );
+
+    expect(mockDeleteFile).toHaveBeenCalled();
+    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(
+      expect.anything(),
+      activeAlias.organizationId,
+      { attachmentBytes: 12n },
+    );
+  });
+
+  it("does not release attachment storage when rollback file deletion fails", async () => {
+    mockCreateAttachment.mockRejectedValueOnce(new Error("insert failed"));
+    mockDeleteFile.mockRejectedValueOnce(new Error("unlink failed"));
+    mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 99 });
+
+    await deliverQueuedEmail(
+      {} as Parameters<typeof processInboundEmail>[0],
+      {} as Parameters<typeof processInboundEmail>[1],
+      {
+        alias: activeAlias,
+        parsed: {
+          messageId: "<id@test>",
+          subject: "Attachment rollback failure",
+          envelopeFrom: "sender@example.com",
+          headerFrom: "Sender <sender@example.com>",
+          textBody: "hello",
+          htmlBody: null,
+          bodySha256: "hash",
+          attachments: [
+            {
+              filename: "report.pdf",
+              contentType: "application/pdf",
+              sizeBytes: 12,
+              sha256: "pdf-hash",
+              content: Buffer.from("pdf-bytes"),
+            },
+          ],
+          rawSizeBytes: 12,
+        },
+        deliveryLog: { id: "log-attachment-rollback-fail" } as never,
+        envelopeFrom: "sender@example.com",
+        ...PIPELINE_CONFIG,
+      },
+    );
+
+    expect(mockDecrementOrganizationStorageUsage).not.toHaveBeenCalled();
+  });
+
+  it("does not release attachment storage after the attachment row already exists", async () => {
+    mockCreateAttachment.mockResolvedValueOnce({
+      id: "att-uuid-1",
+      encryptionMode: "none",
+      wrappedDek: null,
+      kekKeyId: null,
+    });
+    mockCreateAttachmentLink.mockRejectedValueOnce(new Error("link insert failed"));
+    mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 99 });
+
+    await deliverQueuedEmail(
+      {} as Parameters<typeof processInboundEmail>[0],
+      {} as Parameters<typeof processInboundEmail>[1],
+      {
+        alias: activeAlias,
+        parsed: {
+          messageId: "<id@test>",
+          subject: "Attachment link failure",
+          envelopeFrom: "sender@example.com",
+          headerFrom: "Sender <sender@example.com>",
+          textBody: "hello",
+          htmlBody: null,
+          bodySha256: "hash",
+          attachments: [
+            {
+              filename: "report.pdf",
+              contentType: "application/pdf",
+              sizeBytes: 12,
+              sha256: "pdf-hash",
+              content: Buffer.from("pdf-bytes"),
+            },
+          ],
+          rawSizeBytes: 12,
+        },
+        deliveryLog: { id: "log-attachment-link-fail" } as never,
+        envelopeFrom: "sender@example.com",
+        ...PIPELINE_CONFIG,
+      },
+    );
+
+    expect(mockDeleteFile).not.toHaveBeenCalled();
+    expect(mockDecrementOrganizationStorageUsage).not.toHaveBeenCalled();
   });
 
   it("persists attachment encryption metadata returned by storage", async () => {
