@@ -451,6 +451,7 @@ describe("POST /inbound/raw", () => {
 
     expect(res.statusCode).toBe(413);
     expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledOnce();
+    expect(mockDeleteFile).toHaveBeenCalledOnce();
     expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
   });
 
@@ -479,6 +480,7 @@ describe("POST /inbound/raw", () => {
 
     expect(res.statusCode).toBe(403);
     expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledOnce();
+    expect(mockDeleteFile).toHaveBeenCalledOnce();
     expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
   });
 

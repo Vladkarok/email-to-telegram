@@ -134,6 +134,9 @@ export function rawRoute(
       if (!queued.queued) {
         const rejectionStatus = statusForQueueRejection(queued.result.reason);
         if (rejectionStatus) {
+          await deleteFile(storedPath).catch((err: unknown) => {
+            getLogger().warn({ err, storedPath }, "failed to delete rejected raw email");
+          });
           await reply.status(rejectionStatus).send({ error: "rejected" });
           return;
         }
