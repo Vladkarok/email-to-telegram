@@ -25,6 +25,7 @@ vi.mock("../../../src/billing/limits.js", () => ({
 }));
 
 const mockFindAliasById = vi.fn();
+const mockFindChatById = vi.fn();
 vi.mock("../../../src/db/repos/aliases.js", () => ({
   findAliasById: (...args: unknown[]): unknown => mockFindAliasById(...args),
   updateAliasBodyDedup: vi.fn(),
@@ -46,9 +47,10 @@ vi.mock("../../../src/telegram/menu/allowRulesMenu.js", () => ({
 }));
 
 vi.mock("../../../src/telegram/commands/start.js", () => ({ startHandler: vi.fn() }));
+const mockCreateEmailAlias = vi.fn();
 vi.mock("../../../src/telegram/commands/newemail.js", () => ({
   newemailHandler: vi.fn(),
-  createEmailAlias: vi.fn(),
+  createEmailAlias: (...args: unknown[]): unknown => mockCreateEmailAlias(...args),
 }));
 vi.mock("../../../src/telegram/commands/listemail.js", () => ({ listemailHandler: vi.fn() }));
 vi.mock("../../../src/telegram/commands/deleteemail.js", () => ({ deleteemailHandler: vi.fn() }));
@@ -69,7 +71,9 @@ vi.mock("../../../src/telegram/menu/aliasMenu.js", () => ({
   editAliasListMenu: vi.fn(),
   editAliasDetailMenu: vi.fn(),
 }));
-vi.mock("../../../src/db/repos/chats.js", () => ({ findChatById: vi.fn() }));
+vi.mock("../../../src/db/repos/chats.js", () => ({
+  findChatById: (...args: unknown[]): unknown => mockFindChatById(...args),
+}));
 vi.mock("../../../src/db/repos/allowRules.js", () => ({
   findAllowRuleById: vi.fn(),
   removeAllowRule: vi.fn(),
@@ -81,13 +85,19 @@ vi.mock("../../../src/telegram/middleware/auth.js", () => ({ authMiddleware: vi.
 
 const { handlePendingTextMessage } = await import("../../../src/telegram/bot.js");
 
-describe("pending allow-rule text flow", () => {
+describe("pending text flow", () => {
   const next = vi.fn().mockResolvedValue(undefined);
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockHasActiveHostedOrganization.mockResolvedValue(true);
+    mockCanManageChat.mockResolvedValue(true);
     mockCanManageAlias.mockResolvedValue(true);
+    mockFindChatById.mockResolvedValue({
+      id: -1001234567890n,
+      title: "Alerts",
+      organizationId: "org-1",
+    });
     mockGetPending.mockReturnValue({
       action: "allowrule",
       aliasId: "alias-1",
@@ -99,6 +109,45 @@ describe("pending allow-rule text flow", () => {
       organizationId: "org-1",
     });
     mockAddAllowRuleForAlias.mockResolvedValue(true);
+    mockCreateEmailAlias.mockResolvedValue(undefined);
+  });
+
+  it("creates a pending alias when the hosted workspace is active", async () => {
+    mockGetPending.mockReturnValue({
+      action: "newemail",
+      chatId: -1001234567890n,
+      chatTitle: "Alerts",
+    });
+    const ctx = createMockCtx({ text: "alerts" });
+
+    await handlePendingTextMessage(ctx, next);
+
+    expect(mockCanManageChat).toHaveBeenCalled();
+    expect(mockCreateEmailAlias).toHaveBeenCalledWith(
+      ctx,
+      "alerts",
+      -1001234567890n,
+      null,
+      "Alerts",
+    );
+  });
+
+  it("shows the hosted workspace message before chat auth when pending alias creation has no active org", async () => {
+    mockGetPending.mockReturnValue({
+      action: "newemail",
+      chatId: -1001234567890n,
+      chatTitle: "Alerts",
+    });
+    mockHasActiveHostedOrganization.mockResolvedValueOnce(false);
+    const ctx = createMockCtx({ text: "alerts" });
+
+    await handlePendingTextMessage(ctx, next);
+
+    expect(mockCanManageChat).not.toHaveBeenCalled();
+    expect(mockCreateEmailAlias).not.toHaveBeenCalled();
+    expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
+      /workspace|not ready|active/i,
+    );
   });
 
   it("sends the allow-rules menu on successful pending allow-rule creation", async () => {
