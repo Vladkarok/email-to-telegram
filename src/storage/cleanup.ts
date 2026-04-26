@@ -44,6 +44,7 @@ async function cleanAttachments(
     // Delete DB rows older than cutoff (storagePath used to find files)
     const expired = await db
       .select({
+        id: attachments.id,
         storagePath: attachments.storagePath,
         sizeBytes: attachments.sizeBytes,
         organizationId: deliveryLogs.organizationId,
@@ -52,22 +53,26 @@ async function cleanAttachments(
       .innerJoin(deliveryLogs, eq(deliveryLogs.id, attachments.deliveryLogId))
       .where(lt(attachments.createdAt, cutoff));
 
-    let deleted = 0;
-    for (const { storagePath, sizeBytes, organizationId } of expired) {
-      await deleteFile(storagePath).catch(() => {});
+    let deletedFiles = 0;
+    let deletedRows = 0;
+    for (const { id, storagePath, sizeBytes, organizationId } of expired) {
+      try {
+        await deleteFile(storagePath);
+      } catch {
+        continue;
+      }
       if (organizationId && sizeBytes != null && sizeBytes > 0) {
         await decrementOrganizationStorageUsage(db, organizationId, {
           attachmentBytes: BigInt(sizeBytes),
         }).catch(() => {});
       }
-      deleted++;
+      const result = await db.delete(attachments).where(eq(attachments.id, id));
+      const rows = (result as unknown as { rowCount?: number }).rowCount ?? 0;
+      deletedFiles++;
+      deletedRows += rows;
     }
-
-    // Delete DB rows
-    const result = await db.delete(attachments).where(lt(attachments.createdAt, cutoff));
-    const rows = (result as unknown as { rowCount?: number }).rowCount ?? 0;
-    if (rows > 0) {
-      log.info({ files: deleted, rows }, "cleanup: removed expired attachments");
+    if (deletedRows > 0) {
+      log.info({ files: deletedFiles, rows: deletedRows }, "cleanup: removed expired attachments");
     }
   } catch (err: unknown) {
     log.error({ err }, "cleanup: attachment cleanup failed");
@@ -113,61 +118,51 @@ async function cleanRawEmails(
   const cutoffMs = now - ttlHours * 3600 * 1000;
   const cutoff = new Date(cutoffMs);
   try {
-    const dateDirs = await readdir(rawEmailDir, { withFileTypes: true });
-    let deleted = 0;
-    for (const entry of dateDirs) {
-      if (!entry.isDirectory()) continue;
-      const dirPath = join(rawEmailDir, entry.name);
-      try {
-        const s = await stat(dirPath);
-        if (s.mtime.getTime() < cutoffMs) {
-          await deleteDir(dirPath);
-          deleted++;
-        }
-      } catch {
-        // skip individual dirs
-      }
-    }
-    if (deleted > 0) {
-      log.info({ deleted }, "cleanup: removed old raw email directories");
-    }
-  } catch {
-    // dir may not exist yet
-  }
-
-  try {
     const expiredRawLogs = await db
       .select({
+        id: deliveryLogs.id,
         organizationId: deliveryLogs.organizationId,
         rawSizeBytes: deliveryLogs.rawSizeBytes,
+        rawEmailPath: deliveryLogs.rawEmailPath,
       })
       .from(deliveryLogs)
       .where(and(isNotNull(deliveryLogs.rawEmailPath), lt(deliveryLogs.receivedAt, cutoff)));
-    for (const { organizationId, rawSizeBytes } of expiredRawLogs) {
+    let cleared = 0;
+    for (const { id, organizationId, rawSizeBytes, rawEmailPath } of expiredRawLogs) {
+      if (!rawEmailPath) {
+        continue;
+      }
+      try {
+        await deleteFile(rawEmailPath);
+      } catch {
+        continue;
+      }
       if (organizationId && rawSizeBytes != null && rawSizeBytes > 0) {
         await decrementOrganizationStorageUsage(db, organizationId, {
           rawEmailBytes: BigInt(rawSizeBytes),
         }).catch(() => {});
       }
+      const result = await db
+        .update(deliveryLogs)
+        .set({
+          rawEmailPath: null,
+          rawEmailEncryptionMode: "none",
+          rawEmailWrappedDek: null,
+          rawEmailKekKeyId: null,
+          rawEmailEncryptedAt: null,
+        })
+        .where(eq(deliveryLogs.id, id));
+      const rows = (result as unknown as { rowCount?: number }).rowCount ?? 0;
+      cleared += rows;
     }
-
-    const result = await db
-      .update(deliveryLogs)
-      .set({
-        rawEmailPath: null,
-        rawEmailEncryptionMode: "none",
-        rawEmailWrappedDek: null,
-        rawEmailKekKeyId: null,
-        rawEmailEncryptedAt: null,
-      })
-      .where(and(isNotNull(deliveryLogs.rawEmailPath), lt(deliveryLogs.receivedAt, cutoff)));
-    const rows = (result as unknown as { rowCount?: number }).rowCount ?? 0;
-    if (rows > 0) {
-      log.info({ rows }, "cleanup: cleared expired raw email references");
+    if (cleared > 0) {
+      log.info({ rows: cleared }, "cleanup: cleared expired raw email references");
     }
   } catch (err: unknown) {
     log.error({ err }, "cleanup: raw email reference cleanup failed");
   }
+
+  await cleanOrphanedDirs(rawEmailDir, ttlHours, now, log);
 }
 
 async function cleanDeliveryLogs(

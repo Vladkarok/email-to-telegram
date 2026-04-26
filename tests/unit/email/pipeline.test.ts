@@ -723,6 +723,50 @@ describe("deliverQueuedEmail", () => {
     );
   });
 
+  it("does not release attachment storage after the attachment row already exists", async () => {
+    mockCreateAttachment.mockResolvedValueOnce({
+      id: "att-uuid-1",
+      encryptionMode: "none",
+      wrappedDek: null,
+      kekKeyId: null,
+    });
+    mockCreateAttachmentLink.mockRejectedValueOnce(new Error("link insert failed"));
+    mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 99 });
+
+    await deliverQueuedEmail(
+      {} as Parameters<typeof processInboundEmail>[0],
+      {} as Parameters<typeof processInboundEmail>[1],
+      {
+        alias: activeAlias,
+        parsed: {
+          messageId: "<id@test>",
+          subject: "Attachment link failure",
+          envelopeFrom: "sender@example.com",
+          headerFrom: "Sender <sender@example.com>",
+          textBody: "hello",
+          htmlBody: null,
+          bodySha256: "hash",
+          attachments: [
+            {
+              filename: "report.pdf",
+              contentType: "application/pdf",
+              sizeBytes: 12,
+              sha256: "pdf-hash",
+              content: Buffer.from("pdf-bytes"),
+            },
+          ],
+          rawSizeBytes: 12,
+        },
+        deliveryLog: { id: "log-attachment-link-fail" } as never,
+        envelopeFrom: "sender@example.com",
+        ...PIPELINE_CONFIG,
+      },
+    );
+
+    expect(mockDeleteFile).not.toHaveBeenCalled();
+    expect(mockDecrementOrganizationStorageUsage).not.toHaveBeenCalled();
+  });
+
   it("persists attachment encryption metadata returned by storage", async () => {
     mockWriteAttachment.mockResolvedValueOnce({
       encryptionMode: "local-v1",
