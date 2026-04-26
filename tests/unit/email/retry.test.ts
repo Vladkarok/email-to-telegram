@@ -17,6 +17,7 @@ const mockCreateDeliveryViewLink = vi.fn();
 const mockFindDeliveryLogByRawEmailPath = vi.fn();
 const mockListPendingRawEmails = vi.fn();
 const mockDeletePendingRawEmailMeta = vi.fn();
+const mockDeleteFile = vi.fn();
 const mockQueueInboundEmail = vi.fn();
 const mockDeliverQueuedEmail = vi.fn();
 const mockPipelineTrackerIsActive = vi.fn();
@@ -50,6 +51,7 @@ vi.mock("../../../src/storage/disk.js", () => ({
   listPendingRawEmails: (...args: unknown[]): unknown => mockListPendingRawEmails(...args),
   deletePendingRawEmailMeta: (...args: unknown[]): unknown =>
     mockDeletePendingRawEmailMeta(...args),
+  deleteFile: (...args: unknown[]): unknown => mockDeleteFile(...args),
 }));
 vi.mock("../../../src/telegram/sender.js", () => ({
   sendTelegramMessage: (...args: unknown[]): unknown => mockSendTelegramMessage(...args),
@@ -118,6 +120,7 @@ describe("runRetryWorker", () => {
     mockFindDeliveryLogByRawEmailPath.mockResolvedValue(null);
     mockListPendingRawEmails.mockResolvedValue([]);
     mockDeletePendingRawEmailMeta.mockResolvedValue(undefined);
+    mockDeleteFile.mockResolvedValue(undefined);
     mockQueueInboundEmail.mockResolvedValue({
       queued: true,
       job: { deliveryLog: { id: "recovered-log" } },
@@ -520,6 +523,7 @@ describe("runRetryWorker", () => {
     });
 
     expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledWith(fakeLog.rawEmailPath);
+    expect(mockDeleteFile).toHaveBeenCalledWith(fakeLog.rawEmailPath);
     expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
   });
 
@@ -547,6 +551,7 @@ describe("runRetryWorker", () => {
     });
 
     expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledWith(fakeLog.rawEmailPath);
+    expect(mockDeleteFile).toHaveBeenCalledWith(fakeLog.rawEmailPath);
     expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
   });
 
