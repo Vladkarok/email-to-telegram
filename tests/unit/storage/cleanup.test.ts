@@ -76,6 +76,15 @@ function makeDb(
   });
   return {
     select,
+    transaction: async <T>(fn: (tx: unknown) => Promise<T>) =>
+      fn({
+        delete: vi.fn().mockImplementation((table) => ({
+          where: table === attachments ? attachmentDeleteWhere : deliveryLogDeleteWhere,
+        })),
+        update: vi.fn(() => ({
+          set: updateSet,
+        })),
+      }),
     delete: vi.fn().mockImplementation((table) => ({
       where: table === attachments ? attachmentDeleteWhere : deliveryLogDeleteWhere,
     })),
@@ -135,7 +144,7 @@ describe("runCleanup", () => {
     ]);
     await runCleanup(db, config);
     expect(mockDeleteFile).toHaveBeenCalledWith("/data/attachments/log-id/file.bin");
-    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(db, "org-1", {
+    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(expect.anything(), "org-1", {
       attachmentBytes: 10n,
     });
   });
@@ -172,7 +181,7 @@ describe("runCleanup", () => {
     await runCleanup(db, config);
 
     expect(mockDeleteFile).toHaveBeenCalledWith("/data/rawemails/2025-01-01/log-1.eml");
-    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(db, "org-1", {
+    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(expect.anything(), "org-1", {
       rawEmailBytes: 42n,
     });
     expect(db._mocks.updateSet).toHaveBeenCalledWith({
@@ -252,7 +261,7 @@ describe("runCleanup", () => {
     await runCleanup(db, config);
 
     expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledTimes(1);
-    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(db, "org-1", {
+    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(expect.anything(), "org-1", {
       attachmentBytes: 10n,
     });
   });
@@ -277,9 +286,52 @@ describe("runCleanup", () => {
     await runCleanup(db, config);
 
     expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledTimes(1);
-    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(db, "org-1", {
+    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(expect.anything(), "org-1", {
       rawEmailBytes: 42n,
     });
+  });
+
+  it("retries attachment storage decrement when the transactional decrement fails", async () => {
+    const db = makeDb([
+      {
+        id: "att-1",
+        storagePath: "/data/attachments/log-id/file.bin",
+        sizeBytes: 10,
+        organizationId: "org-1",
+      },
+    ]);
+    mockDecrementOrganizationStorageUsage
+      .mockRejectedValueOnce(new Error("transient"))
+      .mockResolvedValueOnce(undefined);
+
+    await runCleanup(db, config);
+    await runCleanup(db, config);
+
+    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledTimes(2);
+    expect(db._mocks.attachmentDeleteWhere).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries raw-email storage decrement when the transactional decrement fails", async () => {
+    const db = makeDb(
+      [],
+      [
+        {
+          id: "log-1",
+          rawEmailPath: "/data/rawemails/2025-01-01/log-1.eml",
+          rawSizeBytes: 42,
+          organizationId: "org-1",
+        },
+      ],
+    );
+    mockDecrementOrganizationStorageUsage
+      .mockRejectedValueOnce(new Error("transient"))
+      .mockResolvedValueOnce(undefined);
+
+    await runCleanup(db, config);
+    await runCleanup(db, config);
+
+    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledTimes(2);
+    expect(db._mocks.updateWhere).toHaveBeenCalledTimes(2);
   });
 
   it("uses the configured delivery log retention when purging old rows", async () => {
