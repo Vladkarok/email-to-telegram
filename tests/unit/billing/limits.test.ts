@@ -5,6 +5,7 @@ const mockFindOrganizationById = vi.fn();
 const mockCountActiveAliasesByOrganization = vi.fn();
 const mockCountAllowRulesByOrganization = vi.fn();
 const mockGetOrganizationUsageMonth = vi.fn();
+const mockGetOrganizationStorageUsage = vi.fn();
 
 vi.mock("../../../src/config.js", () => ({
   loadConfig: (): unknown => mockLoadConfig(),
@@ -30,6 +31,11 @@ vi.mock("../../../src/db/repos/usage.js", () => ({
   usageMonthForDate: vi.fn(() => "2026-04"),
 }));
 
+vi.mock("../../../src/db/repos/storageUsage.js", () => ({
+  getOrganizationStorageUsage: (...args: unknown[]): unknown =>
+    mockGetOrganizationStorageUsage(...args),
+}));
+
 const { checkAliasCreateLimit, checkAllowRuleCreateLimit, checkInboundLimit, getEffectivePlan } =
   await import("../../../src/billing/limits.js");
 
@@ -37,6 +43,7 @@ describe("billing limits", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLoadConfig.mockReturnValue({ appMode: "self-hosted" });
+    mockGetOrganizationStorageUsage.mockResolvedValue(null);
   });
 
   it("skips quota enforcement outside hosted mode", async () => {
@@ -192,6 +199,33 @@ describe("billing limits", () => {
     });
 
     await expect(checkInboundLimit({} as never, "org-1")).resolves.toEqual({ ok: true });
+  });
+
+  it("rejects hosted inbound mail when projected storage exceeds the plan limit", async () => {
+    mockLoadConfig.mockReturnValue({ appMode: "hosted" });
+    mockFindOrganizationById.mockResolvedValue({
+      id: "org-1",
+      planCode: "free",
+      subscriptionStatus: "free",
+      currentPeriodEnd: null,
+    });
+    mockGetOrganizationUsageMonth.mockResolvedValue({
+      deliveredCount: 0,
+      rejectedCount: 0,
+    });
+    mockGetOrganizationStorageUsage.mockResolvedValue({
+      rawEmailBytes: 99n * 1024n * 1024n,
+      attachmentBytes: 0n,
+    });
+
+    await expect(
+      checkInboundLimit({} as never, "org-1", undefined, 2n * 1024n * 1024n),
+    ).resolves.toEqual({
+      ok: false,
+      code: "storage_limit",
+      limit: 100 * 1024 * 1024,
+      used: 99 * 1024 * 1024,
+    });
   });
 
   it("falls back to free limits when a paid plan is canceled", () => {

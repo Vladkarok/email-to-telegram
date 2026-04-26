@@ -27,7 +27,7 @@ import {
 import { insertDeliveryAttempt } from "../db/repos/deliveryAttempts.js";
 import { createAttachment } from "../db/repos/attachments.js";
 import { createAttachmentLink } from "../db/repos/attachmentLinks.js";
-import { writeAttachment } from "../storage/disk.js";
+import { writeAttachment, deleteFile } from "../storage/disk.js";
 import { generateDownloadToken } from "../utils/tokens.js";
 import { getLogger } from "../utils/logger.js";
 import { createPrivacyViewUrl } from "./privacy.js";
@@ -35,6 +35,10 @@ import type { StorageEncryptionMetadata } from "../security/encryption.js";
 import { prepareDeliveryLogMetadataWrite } from "../security/deliveryLogMetadata.js";
 import { checkInboundLimit } from "../billing/limits.js";
 import { incrementOrganizationUsageMonth, usageMonthForDate } from "../db/repos/usage.js";
+import {
+  incrementOrganizationStorageUsage,
+  decrementOrganizationStorageUsage,
+} from "../db/repos/storageUsage.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -124,6 +128,10 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
   }
 
   const receivedSince = new Date(Date.now() - 60 * 60 * 1000);
+  const reservedAttachmentBytes = parsed.attachments.reduce(
+    (sum, attachment) => sum + BigInt(attachment.sizeBytes ?? 0),
+    0n,
+  );
   const queueResult = await db.transaction(async (tx) => {
     if (alias.organizationId) {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${alias.organizationId}))`);
@@ -133,7 +141,12 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
     // by concurrent requests racing between COUNT(*) and INSERT.
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${alias.id}))`);
 
-    const inboundLimit = await checkInboundLimit(tx as Db, alias.organizationId, rawEmail.length);
+    const inboundLimit = await checkInboundLimit(
+      tx as Db,
+      alias.organizationId,
+      rawEmail.length,
+      BigInt(rawEmail.length) + reservedAttachmentBytes,
+    );
     if (!inboundLimit.ok) {
       return { kind: "inbound_limit" as const, limit: inboundLimit };
     }
@@ -196,6 +209,10 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
         organizationId: alias.organizationId,
         month: usageMonthForDate(),
         deliveredCount: 1,
+      });
+      await incrementOrganizationStorageUsage(tx as Db, alias.organizationId, {
+        rawEmailBytes: BigInt(rawEmail.length),
+        attachmentBytes: reservedAttachmentBytes,
       });
     }
 
@@ -260,10 +277,12 @@ export async function deliverQueuedEmail(
     const imageAttachments: StoredImageAttachment[] = [];
 
     for (const att of parsed.attachments) {
+      let storagePath: string | null = null;
+      let attachmentStored = false;
       try {
         const attachmentId = randomUUID();
         const fileId = randomUUID();
-        const storagePath = join(attachmentDir, deliveryLog.id, `${fileId}.bin`);
+        storagePath = join(attachmentDir, deliveryLog.id, `${fileId}.bin`);
         const storageMetadata = await writeAttachment(storagePath, attachmentId, att.content);
 
         const dbAtt = await createAttachment(db, {
@@ -279,6 +298,7 @@ export async function deliverQueuedEmail(
           kekKeyId: storageMetadata.kekKeyId,
           encryptedAt: storageMetadata.encryptedAt,
         });
+        attachmentStored = true;
 
         if (isImageContentType(att.contentType)) {
           imageAttachments.push({
@@ -301,6 +321,34 @@ export async function deliverQueuedEmail(
           });
         }
       } catch (err: unknown) {
+        let deletedCompensatingFile = false;
+        if (storagePath && !attachmentStored) {
+          try {
+            await deleteFile(storagePath);
+            deletedCompensatingFile = true;
+          } catch (deleteErr: unknown) {
+            log.error(
+              { err: deleteErr, filename: att.filename, deliveryLogId: deliveryLog.id },
+              "failed to delete attachment after persistence error",
+            );
+          }
+        }
+        if (
+          !attachmentStored &&
+          deletedCompensatingFile &&
+          alias.organizationId &&
+          att.sizeBytes != null &&
+          att.sizeBytes > 0
+        ) {
+          await decrementOrganizationStorageUsage(db, alias.organizationId, {
+            attachmentBytes: BigInt(att.sizeBytes),
+          }).catch((storageErr: unknown) => {
+            log.error(
+              { err: storageErr, filename: att.filename, deliveryLogId: deliveryLog.id },
+              "failed to release reserved attachment storage",
+            );
+          });
+        }
         log.error({ err, filename: att.filename }, "failed to store attachment");
       }
     }
