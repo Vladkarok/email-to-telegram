@@ -118,12 +118,13 @@ export async function addAllowRuleForAlias(
     await replyForAllowRuleLimitFailure(ctx, alias.localPart, limit);
     return false;
   }
+  let blockedLimit: Awaited<ReturnType<typeof checkAllowRuleCreateLimit>> | null = null;
 
   try {
     await withOrganizationQuotaLock(db, alias.organizationId ?? null, async (tx) => {
       const lockedLimit = await checkAllowRuleCreateLimit(tx, alias.organizationId ?? null);
       if (!lockedLimit.ok) {
-        await replyForAllowRuleLimitFailure(ctx, alias.localPart, lockedLimit);
+        blockedLimit = lockedLimit;
         throw new Error("quota-blocked");
       }
 
@@ -135,7 +136,10 @@ export async function addAllowRuleForAlias(
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg === "quota-blocked") return false;
+    if (msg === "quota-blocked") {
+      if (blockedLimit) await replyForAllowRuleLimitFailure(ctx, alias.localPart, blockedLimit);
+      return false;
+    }
     throw err;
   }
 

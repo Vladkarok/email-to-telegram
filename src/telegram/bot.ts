@@ -1,4 +1,4 @@
-import { Bot, type Context, type CallbackQueryContext } from "grammy";
+import { Bot, type Context, type CallbackQueryContext, type NextFunction } from "grammy";
 import { getDb } from "../db/client.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { startHandler } from "./commands/start.js";
@@ -80,63 +80,7 @@ export function createBot(token: string): Bot {
   bot.use(authMiddleware);
 
   // ── Pending action handler (text replies during multi-step flows) ───────────
-  bot.on("message:text", async (ctx, next) => {
-    if (!ctx.from) return next();
-    const text = ctx.message.text;
-
-    // Let commands pass through; cancel pending action and notify
-    if (text.startsWith("/")) {
-      clearPending(ctx.from.id);
-      return next();
-    }
-
-    const pending = getPending(ctx.from.id);
-    if (!pending) return next();
-
-    if (pending.action === "newemail") {
-      // Re-verify chat access at write time with a live check — this is a
-      // text message handler, not a callback query, so no 10s deadline applies.
-      if (!(await canManageChat(ctx.api, ctx.from.id, pending.chatId, { fresh: true }))) {
-        clearPending(ctx.from.id);
-        await ctx.reply("⛔ Access denied.");
-        return;
-      }
-      clearPending(ctx.from.id);
-      await createEmailAlias(ctx, text.trim(), pending.chatId, null, pending.chatTitle);
-      return;
-    }
-
-    if (pending.action === "allowrule") {
-      // Re-verify alias access at write time with a live check — text message
-      // handler, not a callback query, so no 10s deadline applies.
-      if (
-        !(await canManageAlias(getDb(), ctx.api, ctx.from.id, pending.aliasId, { fresh: true }))
-      ) {
-        clearPending(ctx.from.id);
-        await ctx.reply("⛔ Access denied.");
-        return;
-      }
-      clearPending(ctx.from.id);
-      const parsedValue = parseAllowValue(text);
-      if (!parsedValue) {
-        await ctx.reply(
-          "❌ Invalid format. Use a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).",
-          { parse_mode: "HTML" },
-        );
-        return;
-      }
-      const alias = await findAliasById(getDb(), pending.aliasId);
-      if (!alias) {
-        await ctx.reply("❌ Alias not found.");
-        return;
-      }
-      if (!(await addAllowRuleForAlias(ctx, getDb(), alias, text))) {
-        return;
-      }
-      await sendAllowRulesMenu(ctx, getDb(), pending.aliasId);
-      return;
-    }
-  });
+  bot.on("message:text", handlePendingTextMessage);
 
   // ── Commands ────────────────────────────────────────────────────────────────
   bot.command("newemail", newemailHandler);
@@ -386,6 +330,57 @@ export function createBot(token: string): Bot {
   });
 
   return bot;
+}
+
+export async function handlePendingTextMessage(ctx: Context, next: NextFunction): Promise<void> {
+  if (!ctx.from) return next();
+  const text = ctx.message?.text ?? "";
+
+  // Let commands pass through; cancel pending action and notify
+  if (text.startsWith("/")) {
+    clearPending(ctx.from.id);
+    return next();
+  }
+
+  const pending = getPending(ctx.from.id);
+  if (!pending) return next();
+
+  if (pending.action === "newemail") {
+    if (!(await canManageChat(ctx.api, ctx.from.id, pending.chatId, { fresh: true }))) {
+      clearPending(ctx.from.id);
+      await ctx.reply("⛔ Access denied.");
+      return;
+    }
+    clearPending(ctx.from.id);
+    await createEmailAlias(ctx, text.trim(), pending.chatId, null, pending.chatTitle);
+    return;
+  }
+
+  if (pending.action !== "allowrule") return;
+
+  if (!(await canManageAlias(getDb(), ctx.api, ctx.from.id, pending.aliasId, { fresh: true }))) {
+    clearPending(ctx.from.id);
+    await ctx.reply("⛔ Access denied.");
+    return;
+  }
+  clearPending(ctx.from.id);
+  const parsedValue = parseAllowValue(text);
+  if (!parsedValue) {
+    await ctx.reply(
+      "❌ Invalid format. Use a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).",
+      { parse_mode: "HTML" },
+    );
+    return;
+  }
+  const alias = await findAliasById(getDb(), pending.aliasId);
+  if (!alias) {
+    await ctx.reply("❌ Alias not found.");
+    return;
+  }
+  if (!(await addAllowRuleForAlias(ctx, getDb(), alias, text))) {
+    return;
+  }
+  await sendAllowRulesMenu(ctx, getDb(), pending.aliasId);
 }
 
 function escapeHtml(text: string): string {

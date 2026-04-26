@@ -97,13 +97,14 @@ export async function createEmailAlias(
     chatOrganizationId === undefined
       ? ((await findChatById(db, chatId))?.organizationId ?? null)
       : chatOrganizationId;
+  let blockedLimit: Awaited<ReturnType<typeof checkAliasCreateLimit>> | null = null;
 
   let alias: EmailAddress;
   try {
     alias = await withOrganizationQuotaLock(db, organizationId, async (tx) => {
       const limit = await checkAliasCreateLimit(tx, organizationId);
       if (!limit.ok) {
-        await replyForAliasLimitFailure(ctx, limit);
+        blockedLimit = limit;
         throw new Error("quota-blocked");
       }
 
@@ -123,7 +124,10 @@ export async function createEmailAlias(
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg === "quota-blocked") return;
+    if (msg === "quota-blocked") {
+      if (blockedLimit) await replyForAliasLimitFailure(ctx, blockedLimit);
+      return;
+    }
     if (
       msg.includes("duplicate") ||
       msg.includes("unique") ||
