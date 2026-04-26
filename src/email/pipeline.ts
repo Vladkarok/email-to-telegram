@@ -189,6 +189,8 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
       return { kind: "duplicate" as const };
     }
 
+    // Hosted monthly usage is charged once the email is accepted into durable processing.
+    // This intentionally counts later Telegram send failures because infrastructure was used.
     if (alias.organizationId) {
       await incrementOrganizationUsageMonth(tx as Db, {
         organizationId: alias.organizationId,

@@ -363,6 +363,13 @@ describe("processInboundEmail", () => {
     );
     expect(result).toEqual({ ok: false, reason: "send_failed" });
     expect(mockUpdateLogStatus).toHaveBeenCalledWith(expect.anything(), "log-uuid-3", "failed");
+    expect(mockIncrementOrganizationUsageMonth).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        organizationId: activeAlias.organizationId,
+        deliveredCount: 1,
+      }),
+    );
   });
 });
 

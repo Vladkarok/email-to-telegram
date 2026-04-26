@@ -523,6 +523,33 @@ describe("runRetryWorker", () => {
     expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
   });
 
+  it("drops pending raw metadata for hosted quota rejections during recovery", async () => {
+    mockFindFailedLogs.mockResolvedValue([]);
+    mockListPendingRawEmails.mockResolvedValue([
+      {
+        rawEmailPath: fakeLog.rawEmailPath,
+        localPart: "alerts",
+        envelopeFrom: "sender@example.com",
+        rawEmailEncryptionMode: "none",
+        rawEmailWrappedDek: null,
+        rawEmailKekKeyId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+    mockQueueInboundEmail.mockResolvedValue({
+      queued: false,
+      result: { ok: false, reason: "monthly_email_limit" },
+    });
+
+    await runRetryWorker(fakeDb, fakeApi, {
+      attachmentDir: "/data/attachments",
+      rawEmailDir: "/data/rawemails",
+    });
+
+    expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledWith(fakeLog.rawEmailPath);
+    expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
+  });
+
   it("keeps deferred pending raw emails for a later recovery attempt", async () => {
     mockFindFailedLogs.mockResolvedValue([]);
     mockListPendingRawEmails.mockResolvedValue([

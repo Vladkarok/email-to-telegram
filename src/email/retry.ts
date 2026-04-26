@@ -34,7 +34,14 @@ const MAX_RETRIES = 3;
 const STALE_DELIVERY_MS = 2 * 60 * 1000;
 
 function shouldDeletePendingRawEmail(reason: string | undefined): boolean {
-  return reason === "duplicate" || reason === "alias_not_found" || reason === "sender_not_allowed";
+  return (
+    reason === "duplicate" ||
+    reason === "alias_not_found" ||
+    reason === "sender_not_allowed" ||
+    reason === "subscription_inactive" ||
+    reason === "monthly_email_limit" ||
+    reason === "message_size_limit"
+  );
 }
 
 export async function runRetryWorker(
