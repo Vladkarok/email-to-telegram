@@ -78,6 +78,13 @@
       "when": 1777204800000,
       "tag": "0010_fair_egress_state",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1777272529488,
+      "tag": "0011_left_prodigy",
+      "breakpoints": true
     }
   ]
 }

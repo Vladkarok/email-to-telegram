@@ -43,7 +43,7 @@ export const organizations = pgTable(
     ),
     check(
       "chk_org_subscription_status",
-      sql`${t.subscriptionStatus} in ('free', 'trialing', 'active', 'past_due', 'canceled', 'unpaid', 'incomplete', 'incomplete_expired')`,
+      sql`${t.subscriptionStatus} in ('free', 'trialing', 'active', 'paused', 'past_due', 'canceled', 'unpaid', 'incomplete', 'incomplete_expired')`,
     ),
   ],
 );

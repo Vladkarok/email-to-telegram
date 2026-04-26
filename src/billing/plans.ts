@@ -6,6 +6,7 @@ export type SubscriptionStatus =
   | "free"
   | "trialing"
   | "active"
+  | "paused"
   | "past_due"
   | "canceled"
   | "unpaid"

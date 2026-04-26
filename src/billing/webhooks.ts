@@ -1,0 +1,223 @@
+import type Stripe from "stripe";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type * as schema from "../db/schema.js";
+import { loadConfig } from "../config.js";
+import { recordBillingWebhookEvent } from "../db/repos/billingWebhookEvents.js";
+import {
+  findOrganizationById,
+  findOrganizationByStripeCustomerId,
+  findOrganizationByStripeSubscriptionId,
+  updateOrganizationBillingState,
+} from "../db/repos/organizations.js";
+import { resolvePlanFromStripePriceId } from "./stripe.js";
+
+type Db = NodePgDatabase<typeof schema>;
+
+export async function processStripeWebhookEvent(
+  db: Db,
+  event: Stripe.Event,
+): Promise<"processed" | "duplicate" | "ignored"> {
+  return db.transaction(async (tx) => {
+    const txDb = tx as unknown as Db;
+    const inserted = await recordBillingWebhookEvent(txDb, event.id, event.type);
+    if (!inserted) return "duplicate";
+
+    switch (event.type) {
+      case "checkout.session.completed": {
+        const session = event.data.object;
+        const organization = await findOrganizationForStripeSubject(txDb, {
+          organizationId:
+            session.metadata?.["organizationId"] ?? session.client_reference_id ?? null,
+          stripeCustomerId: typeof session.customer === "string" ? session.customer : null,
+        });
+        if (!organization) return "ignored";
+        if (
+          shouldIgnoreStripeUpdate(
+            organization,
+            null,
+            typeof session.customer === "string" ? session.customer : null,
+          )
+        ) {
+          return "ignored";
+        }
+        await updateOrganizationBillingState(txDb, organization.id, {
+          stripeCustomerId:
+            typeof session.customer === "string" ? session.customer : organization.stripeCustomerId,
+        });
+        return "processed";
+      }
+      case "customer.subscription.created":
+      case "customer.subscription.updated":
+      case "customer.subscription.deleted": {
+        return applyStripeSubscription(txDb, event.type, event.data.object);
+      }
+      case "invoice.payment_succeeded":
+      case "invoice.payment_failed": {
+        return applyStripeInvoice(txDb, event.data.object);
+      }
+      default:
+        return "ignored";
+    }
+  });
+}
+
+async function applyStripeSubscription(
+  db: Db,
+  eventType:
+    | "customer.subscription.created"
+    | "customer.subscription.updated"
+    | "customer.subscription.deleted",
+  subscription: Stripe.Subscription,
+): Promise<"processed" | "ignored"> {
+  const organization = await findOrganizationForStripeSubject(db, {
+    organizationId: subscription.metadata?.["organizationId"] ?? null,
+    stripeCustomerId: typeof subscription.customer === "string" ? subscription.customer : null,
+    stripeSubscriptionId: subscription.id,
+  });
+  if (!organization) return "ignored";
+  if (
+    shouldIgnoreStripeUpdate(
+      organization,
+      subscription.id,
+      typeof subscription.customer === "string" ? subscription.customer : null,
+    )
+  ) {
+    return "ignored";
+  }
+  if (
+    organization.stripeSubscriptionId &&
+    organization.stripeSubscriptionId !== subscription.id &&
+    (eventType !== "customer.subscription.created" ||
+      !canReplaceStripeSubscription(organization.subscriptionStatus))
+  ) {
+    return "ignored";
+  }
+
+  const config = loadConfig();
+  const primaryPriceId = subscription.items.data[0]?.price.id ?? null;
+  const resolvedPlan = resolvePlanFromStripePriceId(config, primaryPriceId);
+  if (!resolvedPlan) return "ignored";
+
+  await updateOrganizationBillingState(db, organization.id, {
+    planCode: resolvedPlan.planCode,
+    subscriptionStatus: mapStripeSubscriptionStatus(subscription.status),
+    stripeCustomerId:
+      typeof subscription.customer === "string"
+        ? subscription.customer
+        : organization.stripeCustomerId,
+    stripeSubscriptionId: subscription.id,
+    trialEndsAt: subscription.trial_end != null ? new Date(subscription.trial_end * 1000) : null,
+    currentPeriodStart:
+      subscription.items.data[0]?.current_period_start != null
+        ? new Date(subscription.items.data[0].current_period_start * 1000)
+        : null,
+    currentPeriodEnd:
+      subscription.items.data[0]?.current_period_end != null
+        ? new Date(subscription.items.data[0].current_period_end * 1000)
+        : null,
+  });
+  return "processed";
+}
+
+async function applyStripeInvoice(db: Db, invoice: Stripe.Invoice): Promise<"ignored"> {
+  const stripeSubscriptionId = getInvoiceSubscriptionId(invoice);
+  const organization = await findOrganizationForStripeSubject(db, {
+    organizationId: invoice.parent?.subscription_details?.metadata?.["organizationId"] ?? null,
+    stripeCustomerId: typeof invoice.customer === "string" ? invoice.customer : null,
+    stripeSubscriptionId,
+  });
+  if (!organization) return "ignored";
+  if (
+    shouldIgnoreStripeUpdate(
+      organization,
+      stripeSubscriptionId,
+      typeof invoice.customer === "string" ? invoice.customer : null,
+    )
+  ) {
+    return "ignored";
+  }
+  if (!stripeSubscriptionId || organization.stripeSubscriptionId !== stripeSubscriptionId) {
+    return "ignored";
+  }
+
+  // Subscription events remain the authoritative source of billing state. Invoice
+  // payment events can arrive out of order, so we avoid mutating plan/status here.
+  return "ignored";
+}
+
+async function findOrganizationForStripeSubject(
+  db: Db,
+  input: {
+    organizationId: string | null;
+    stripeCustomerId?: string | null;
+    stripeSubscriptionId?: string | null;
+  },
+) {
+  if (input.stripeSubscriptionId) {
+    const organization = await findOrganizationByStripeSubscriptionId(
+      db,
+      input.stripeSubscriptionId,
+    );
+    if (organization) return organization;
+  }
+  if (input.stripeCustomerId) {
+    const organization = await findOrganizationByStripeCustomerId(db, input.stripeCustomerId);
+    if (organization) return organization;
+  }
+  if (input.organizationId) {
+    return findOrganizationById(db, input.organizationId);
+  }
+  return null;
+}
+
+function shouldIgnoreStripeUpdate(
+  organization: {
+    planCode: string;
+    stripeSubscriptionId: string | null;
+    stripeCustomerId: string | null;
+  },
+  stripeSubscriptionId: string | null,
+  stripeCustomerId: string | null,
+): boolean {
+  if (organization.planCode !== "business") return false;
+  return !(
+    (stripeSubscriptionId && organization.stripeSubscriptionId === stripeSubscriptionId) ||
+    (stripeCustomerId && organization.stripeCustomerId === stripeCustomerId)
+  );
+}
+
+function getInvoiceSubscriptionId(invoice: Stripe.Invoice): string | null {
+  const value = invoice.parent?.subscription_details?.subscription;
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && "id" in value && typeof value.id === "string") {
+    return value.id;
+  }
+  return null;
+}
+
+function mapStripeSubscriptionStatus(status: Stripe.Subscription.Status) {
+  switch (status) {
+    case "trialing":
+      return "trialing" as const;
+    case "active":
+      return "active" as const;
+    case "paused":
+      return "paused" as const;
+    case "past_due":
+      return "past_due" as const;
+    case "canceled":
+      return "canceled" as const;
+    case "unpaid":
+      return "unpaid" as const;
+    case "incomplete":
+      return "incomplete" as const;
+    case "incomplete_expired":
+      return "incomplete_expired" as const;
+    default:
+      return "free" as const;
+  }
+}
+
+function canReplaceStripeSubscription(status: string): boolean {
+  return status === "free" || status === "canceled" || status === "incomplete_expired";
+}
