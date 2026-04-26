@@ -18,6 +18,12 @@ vi.mock("../../../src/telegram/authorization.js", () => ({
   canManageChat: (...args: unknown[]): unknown => mockCanManageChat(...args),
 }));
 
+const mockHasActiveHostedOrganization = vi.fn().mockResolvedValue(true);
+vi.mock("../../../src/billing/limits.js", () => ({
+  hasActiveHostedOrganization: (...args: unknown[]): unknown =>
+    mockHasActiveHostedOrganization(...args),
+}));
+
 const mockFindAliasById = vi.fn();
 vi.mock("../../../src/db/repos/aliases.js", () => ({
   findAliasById: (...args: unknown[]): unknown => mockFindAliasById(...args),
@@ -80,6 +86,7 @@ describe("pending allow-rule text flow", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockHasActiveHostedOrganization.mockResolvedValue(true);
     mockCanManageAlias.mockResolvedValue(true);
     mockGetPending.mockReturnValue({
       action: "allowrule",
@@ -119,6 +126,19 @@ describe("pending allow-rule text flow", () => {
     await handlePendingTextMessage(ctx, next);
 
     expect(mockSendAllowRulesMenu).not.toHaveBeenCalled();
+    expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
+      /active hosted workspace/i,
+    );
+  });
+
+  it("shows the hosted workspace message before alias auth when the alias org is inactive", async () => {
+    mockHasActiveHostedOrganization.mockResolvedValueOnce(false);
+    const ctx = createMockCtx({ text: "github.com" });
+
+    await handlePendingTextMessage(ctx, next);
+
+    expect(mockCanManageAlias).not.toHaveBeenCalled();
+    expect(mockAddAllowRuleForAlias).not.toHaveBeenCalled();
     expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
       /active hosted workspace/i,
     );

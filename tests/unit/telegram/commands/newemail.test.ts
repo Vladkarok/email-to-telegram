@@ -33,14 +33,18 @@ vi.mock("../../../../src/config.js", () => ({
   loadConfig: () => ({ mailDomain: "tgmail.example.com" }),
 }));
 
+const mockCanManageChat = vi.fn().mockResolvedValue(true);
 vi.mock("../../../../src/telegram/authorization.js", () => ({
   canManageAlias: vi.fn().mockResolvedValue(true),
-  canManageChat: vi.fn().mockResolvedValue(true),
+  canManageChat: (...args: unknown[]): unknown => mockCanManageChat(...args),
 }));
 
 const mockCheckAliasCreateLimit = vi.fn().mockResolvedValue({ ok: true });
+const mockHasActiveHostedOrganization = vi.fn().mockResolvedValue(true);
 vi.mock("../../../../src/billing/limits.js", () => ({
   checkAliasCreateLimit: (...args: unknown[]): unknown => mockCheckAliasCreateLimit(...args),
+  hasActiveHostedOrganization: (...args: unknown[]): unknown =>
+    mockHasActiveHostedOrganization(...args),
   withOrganizationQuotaLock: vi.fn(
     async (_db: unknown, _organizationId: string | null, work: (tx: unknown) => Promise<unknown>) =>
       work({}),
@@ -55,6 +59,8 @@ describe("/newemail command", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCheckAliasCreateLimit.mockResolvedValue({ ok: true });
+    mockHasActiveHostedOrganization.mockResolvedValue(true);
+    mockCanManageChat.mockResolvedValue(true);
     mockFindChatById.mockResolvedValue({
       title: "Test Chat",
       type: "supergroup",
@@ -198,15 +204,13 @@ describe("/newemail command", () => {
       type: "private",
       organizationId: null,
     });
-    mockCheckAliasCreateLimit.mockResolvedValueOnce({
-      ok: false,
-      code: "subscription_inactive",
-    });
+    mockHasActiveHostedOrganization.mockResolvedValueOnce(false);
     const ctx = createMockCtx({ commandMatch: "alerts", chatType: "private" });
 
     await newemailHandler(ctx);
 
     expect(mockCreateAlias).not.toHaveBeenCalled();
+    expect(mockCanManageChat).not.toHaveBeenCalled();
     expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
       /workspace|not ready|active/i,
     );

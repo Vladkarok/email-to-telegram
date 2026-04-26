@@ -32,6 +32,7 @@ import { canManageChat, canManageAlias } from "./authorization.js";
 import { parseAllowValue } from "./allowValue.js";
 import { getLogger } from "../utils/logger.js";
 import { InlineKeyboard } from "grammy";
+import { hasActiveHostedOrganization } from "../billing/limits.js";
 
 // ── Authorization helpers ────────────────────────────────────────────────────
 
@@ -346,6 +347,13 @@ export async function handlePendingTextMessage(ctx: Context, next: NextFunction)
   if (!pending) return next();
 
   if (pending.action === "newemail") {
+    const pendingChat = await findChatById(getDb(), pending.chatId);
+    if (!(await hasActiveHostedOrganization(getDb(), pendingChat?.organizationId ?? null))) {
+      clearPending(ctx.from.id);
+      await ctx.reply("⛔ This hosted workspace is not ready for alias creation right now.");
+      return;
+    }
+
     if (!(await canManageChat(ctx.api, ctx.from.id, pending.chatId, { fresh: true }))) {
       clearPending(ctx.from.id);
       await ctx.reply("⛔ Access denied.");
@@ -358,6 +366,20 @@ export async function handlePendingTextMessage(ctx: Context, next: NextFunction)
 
   if (pending.action !== "allowrule") return;
 
+  const alias = await findAliasById(getDb(), pending.aliasId);
+  if (!alias) {
+    clearPending(ctx.from.id);
+    await ctx.reply("❌ Alias not found.");
+    return;
+  }
+  if (!(await hasActiveHostedOrganization(getDb(), alias.organizationId ?? null))) {
+    clearPending(ctx.from.id);
+    await ctx.reply(
+      `⛔ <code>${escapeHtml(alias.localPart)}</code> is not attached to an active hosted workspace.`,
+      { parse_mode: "HTML" },
+    );
+    return;
+  }
   if (!(await canManageAlias(getDb(), ctx.api, ctx.from.id, pending.aliasId, { fresh: true }))) {
     clearPending(ctx.from.id);
     await ctx.reply("⛔ Access denied.");
@@ -370,11 +392,6 @@ export async function handlePendingTextMessage(ctx: Context, next: NextFunction)
       "❌ Invalid format. Use a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).",
       { parse_mode: "HTML" },
     );
-    return;
-  }
-  const alias = await findAliasById(getDb(), pending.aliasId);
-  if (!alias) {
-    await ctx.reply("❌ Alias not found.");
     return;
   }
   if (!(await addAllowRuleForAlias(ctx, getDb(), alias, text))) {

@@ -6,7 +6,11 @@ import { createAlias } from "../../db/repos/aliases.js";
 import type { EmailAddress } from "../../db/schema.js";
 import { findChatById } from "../../db/repos/chats.js";
 import { loadConfig } from "../../config.js";
-import { checkAliasCreateLimit, withOrganizationQuotaLock } from "../../billing/limits.js";
+import {
+  checkAliasCreateLimit,
+  hasActiveHostedOrganization,
+  withOrganizationQuotaLock,
+} from "../../billing/limits.js";
 import { getPending, clearPending } from "../session.js";
 import { canManageChat } from "../authorization.js";
 
@@ -33,6 +37,7 @@ export async function newemailHandler(ctx: CommandContext<Context>): Promise<voi
   if (pending?.action === "newemail") {
     targetChatId = pending.chatId;
     targetChatTitle = pending.chatTitle;
+    targetChatOrganizationId = (await findChatById(db, targetChatId))?.organizationId;
   } else {
     targetChatId = BigInt(ctx.chat.id);
     targetThreadId =
@@ -40,6 +45,12 @@ export async function newemailHandler(ctx: CommandContext<Context>): Promise<voi
     const chat = await findChatById(db, targetChatId);
     targetChatTitle = chat?.title;
     targetChatOrganizationId = chat?.organizationId;
+  }
+
+  if (!(await hasActiveHostedOrganization(db, targetChatOrganizationId ?? null))) {
+    clearPending(ctx.from.id);
+    await replyForAliasLimitFailure(ctx, { ok: false, code: "subscription_inactive" });
+    return;
   }
 
   if (!(await canManageChat(ctx.api, ctx.from.id, targetChatId, { fresh: true }))) {

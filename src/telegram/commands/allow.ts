@@ -2,8 +2,17 @@ import type { CommandContext, Context } from "grammy";
 import { getDb } from "../../db/client.js";
 import { findAliasByLocalPart } from "../../db/repos/aliases.js";
 import type { EmailAddress } from "../../db/schema.js";
-import { addAllowRule, removeAllowRule, listAllowRules } from "../../db/repos/allowRules.js";
-import { checkAllowRuleCreateLimit, withOrganizationQuotaLock } from "../../billing/limits.js";
+import {
+  addAllowRule,
+  findAllowRuleByMatch,
+  removeAllowRule,
+  listAllowRules,
+} from "../../db/repos/allowRules.js";
+import {
+  checkAllowRuleCreateLimit,
+  hasActiveHostedOrganization,
+  withOrganizationQuotaLock,
+} from "../../billing/limits.js";
 import { canManageAlias } from "../authorization.js";
 import { parseAllowValue } from "../allowValue.js";
 
@@ -38,6 +47,14 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
   if (!alias) {
     await ctx.reply(`❌ Alias <code>${escapeHtml(aliasName)}</code> not found.`, {
       parse_mode: "HTML",
+    });
+    return;
+  }
+
+  if (!(await hasActiveHostedOrganization(db, alias.organizationId ?? null))) {
+    await replyForAllowRuleLimitFailure(ctx, alias.localPart, {
+      ok: false,
+      code: "subscription_inactive",
     });
     return;
   }
@@ -112,16 +129,21 @@ export async function addAllowRuleForAlias(
     );
     return false;
   }
-
-  const limit = await checkAllowRuleCreateLimit(db, alias.organizationId ?? null);
-  if (!limit.ok) {
-    await replyForAllowRuleLimitFailure(ctx, alias.localPart, limit);
-    return false;
-  }
   let blockedLimit: Awaited<ReturnType<typeof checkAllowRuleCreateLimit>> | null = null;
+  let duplicateRule = false;
 
   try {
     await withOrganizationQuotaLock(db, alias.organizationId ?? null, async (tx) => {
+      const existingRule = await findAllowRuleByMatch(tx, {
+        emailAddressId: alias.id,
+        matchType: parsedValue.matchType,
+        matchValue: parsedValue.normalized,
+      });
+      if (existingRule) {
+        duplicateRule = true;
+        return;
+      }
+
       const lockedLimit = await checkAllowRuleCreateLimit(tx, alias.organizationId ?? null);
       if (!lockedLimit.ok) {
         blockedLimit = lockedLimit;
@@ -141,6 +163,14 @@ export async function addAllowRuleForAlias(
       return false;
     }
     throw err;
+  }
+
+  if (duplicateRule) {
+    await ctx.reply(
+      `ℹ️ Allow rule already exists for <code>${escapeHtml(alias.localPart)}</code>: ${parsedValue.matchType === "domain" ? "🌐" : "📧"} ${escapeHtml(parsedValue.normalized)}`,
+      { parse_mode: "HTML" },
+    );
+    return true;
   }
 
   await ctx.reply(

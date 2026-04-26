@@ -5,6 +5,7 @@ vi.mock("../../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
 const mockFindAliasByLocalPart = vi.fn();
 const mockAddAllowRule = vi.fn();
+const mockFindAllowRuleByMatch = vi.fn();
 const mockRemoveAllowRule = vi.fn();
 const mockListAllowRules = vi.fn();
 
@@ -14,19 +15,24 @@ vi.mock("../../../../src/db/repos/aliases.js", () => ({
 
 vi.mock("../../../../src/db/repos/allowRules.js", () => ({
   addAllowRule: (...args: unknown[]): unknown => mockAddAllowRule(...args),
+  findAllowRuleByMatch: (...args: unknown[]): unknown => mockFindAllowRuleByMatch(...args),
   removeAllowRule: (...args: unknown[]): unknown => mockRemoveAllowRule(...args),
   listAllowRules: (...args: unknown[]): unknown => mockListAllowRules(...args),
 }));
 
+const mockCanManageAlias = vi.fn().mockResolvedValue(true);
 vi.mock("../../../../src/telegram/authorization.js", () => ({
-  canManageAlias: vi.fn().mockResolvedValue(true),
+  canManageAlias: (...args: unknown[]): unknown => mockCanManageAlias(...args),
   canManageChat: vi.fn().mockResolvedValue(true),
 }));
 
 const mockCheckAllowRuleCreateLimit = vi.fn().mockResolvedValue({ ok: true });
+const mockHasActiveHostedOrganization = vi.fn().mockResolvedValue(true);
 vi.mock("../../../../src/billing/limits.js", () => ({
   checkAllowRuleCreateLimit: (...args: unknown[]): unknown =>
     mockCheckAllowRuleCreateLimit(...args),
+  hasActiveHostedOrganization: (...args: unknown[]): unknown =>
+    mockHasActiveHostedOrganization(...args),
   withOrganizationQuotaLock: vi.fn(
     async (_db: unknown, _organizationId: string | null, work: (tx: unknown) => Promise<unknown>) =>
       work({}),
@@ -48,6 +54,9 @@ describe("/allow command", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCheckAllowRuleCreateLimit.mockResolvedValue({ ok: true });
+    mockHasActiveHostedOrganization.mockResolvedValue(true);
+    mockCanManageAlias.mockResolvedValue(true);
+    mockFindAllowRuleByMatch.mockResolvedValue(null);
     mockFindAliasByLocalPart.mockResolvedValue(ALIAS);
   });
 
@@ -104,7 +113,7 @@ describe("/allow command", () => {
     });
 
     it("rejects new rules when the plan allow-rule limit is reached", async () => {
-      mockCheckAllowRuleCreateLimit.mockResolvedValueOnce({
+      mockCheckAllowRuleCreateLimit.mockResolvedValue({
         ok: false,
         code: "allow_rule_limit",
         limit: 10,
@@ -121,18 +130,32 @@ describe("/allow command", () => {
     });
 
     it("shows a hosted workspace error when the alias has no active organization", async () => {
-      mockCheckAllowRuleCreateLimit.mockResolvedValueOnce({
-        ok: false,
-        code: "subscription_inactive",
+      mockHasActiveHostedOrganization.mockResolvedValueOnce(false);
+      const ctx = createMockCtx({ commandMatch: "add alerts-ab12cd github.com" });
+
+      await allowHandler(ctx);
+
+      expect(mockAddAllowRule).not.toHaveBeenCalled();
+      expect(mockCanManageAlias).not.toHaveBeenCalled();
+      expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
+        /workspace|active hosted workspace|not attached/i,
+      );
+    });
+
+    it("treats duplicate allow-rule adds as idempotent", async () => {
+      mockFindAllowRuleByMatch.mockResolvedValueOnce({
+        id: "rule-1",
+        emailAddressId: "uuid-1",
+        matchType: "domain",
+        matchValue: "github.com",
       });
       const ctx = createMockCtx({ commandMatch: "add alerts-ab12cd github.com" });
 
       await allowHandler(ctx);
 
       expect(mockAddAllowRule).not.toHaveBeenCalled();
-      expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
-        /workspace|active hosted workspace|not attached/i,
-      );
+      expect(mockCheckAllowRuleCreateLimit).not.toHaveBeenCalled();
+      expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/already exists/i);
     });
   });
 

@@ -14,6 +14,24 @@ export async function addAllowRule(
   return rule;
 }
 
+export async function findAllowRuleByMatch(
+  db: Db,
+  data: Pick<NewAllowRule, "emailAddressId" | "matchType" | "matchValue">,
+): Promise<AllowRule | null> {
+  const [rule] = await db
+    .select()
+    .from(allowRules)
+    .where(
+      and(
+        eq(allowRules.emailAddressId, data.emailAddressId),
+        eq(allowRules.matchType, data.matchType),
+        eq(allowRules.matchValue, data.matchValue),
+      ),
+    )
+    .limit(1);
+  return rule ?? null;
+}
+
 export async function removeAllowRule(
   db: Db,
   data: Pick<NewAllowRule, "emailAddressId" | "matchValue">,

@@ -103,6 +103,17 @@ export async function checkAllowRuleCreateLimit(
   return { ok: true };
 }
 
+export async function hasActiveHostedOrganization(
+  db: Db,
+  organizationId: string | null,
+): Promise<boolean> {
+  if (!shouldEnforceHostedLimits()) return true;
+  if (!organizationId) return false;
+
+  const organization = await findOrganizationById(db, organizationId);
+  return Boolean(organization);
+}
+
 function shouldEnforceHostedLimits(): boolean {
   return loadConfig().appMode === "hosted";
 }
