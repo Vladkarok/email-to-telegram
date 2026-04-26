@@ -22,7 +22,8 @@ export type LimitResult =
         | "allow_rule_limit"
         | "monthly_email_limit"
         | "storage_limit"
-        | "message_size_limit";
+        | "message_size_limit"
+        | "egress_limit";
       limit?: number;
       used?: number;
     };
@@ -149,6 +150,35 @@ export async function checkInboundLimit(
       code: "monthly_email_limit",
       limit: plan.limits.deliveredEmailsMonth,
       used: deliveredCount,
+    };
+  }
+
+  return { ok: true };
+}
+
+export async function checkEgressLimit(
+  db: Db,
+  organizationId: string | null,
+  egressBytes: bigint,
+  month = usageMonthForDate(),
+): Promise<LimitResult> {
+  if (!shouldEnforceHostedLimits()) return { ok: true };
+  if (!organizationId) return { ok: false, code: "subscription_inactive" };
+  if (egressBytes <= 0n) return { ok: true };
+
+  const organization = await findOrganizationById(db, organizationId);
+  if (!organization) return { ok: false, code: "subscription_inactive" };
+
+  const plan = getEffectivePlan(organization);
+  const usage = await getOrganizationUsageMonth(db, organization.id, month);
+  const currentBytes = usage?.egressBytes ?? 0n;
+  const projectedBytes = currentBytes + egressBytes;
+  if (projectedBytes > BigInt(plan.limits.egressBytesMonth)) {
+    return {
+      ok: false,
+      code: "egress_limit",
+      limit: plan.limits.egressBytesMonth,
+      used: Number(currentBytes),
     };
   }
 
