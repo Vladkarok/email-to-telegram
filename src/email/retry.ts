@@ -22,7 +22,12 @@ import { insertDeliveryAttempt, countAttemptsByLog } from "../db/repos/deliveryA
 import { findAliasById } from "../db/repos/aliases.js";
 import { listAttachmentsByDeliveryLogId } from "../db/repos/attachments.js";
 import { createAttachmentLink } from "../db/repos/attachmentLinks.js";
-import { readRawEmail, listPendingRawEmails, deletePendingRawEmailMeta } from "../storage/disk.js";
+import {
+  readRawEmail,
+  listPendingRawEmails,
+  deletePendingRawEmailMeta,
+  deleteFile,
+} from "../storage/disk.js";
 import { generateDownloadToken } from "../utils/tokens.js";
 import { getLogger } from "../utils/logger.js";
 import { pipelineTracker } from "../utils/inFlight.js";
@@ -34,7 +39,14 @@ const MAX_RETRIES = 3;
 const STALE_DELIVERY_MS = 2 * 60 * 1000;
 
 function shouldDeletePendingRawEmail(reason: string | undefined): boolean {
-  return reason === "duplicate" || reason === "alias_not_found" || reason === "sender_not_allowed";
+  return (
+    reason === "duplicate" ||
+    reason === "alias_not_found" ||
+    reason === "sender_not_allowed" ||
+    reason === "subscription_inactive" ||
+    reason === "monthly_email_limit" ||
+    reason === "message_size_limit"
+  );
 }
 
 export async function runRetryWorker(
@@ -158,6 +170,12 @@ async function recoverPendingRawEmails(
       if (!queued.queued) {
         if (shouldDeletePendingRawEmail(queued.result.reason)) {
           await deletePendingRawEmailMeta(pendingEmail.rawEmailPath);
+          await deleteFile(pendingEmail.rawEmailPath).catch((err: unknown) => {
+            log.warn(
+              { err, rawEmailPath: pendingEmail.rawEmailPath },
+              "retry worker: failed to delete rejected raw email",
+            );
+          });
         } else {
           log.warn(
             { rawEmailPath: pendingEmail.rawEmailPath, reason: queued.result.reason },

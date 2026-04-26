@@ -124,4 +124,17 @@ describe("Cloudflare Email Worker", () => {
       "Message size exceeds fixed maximum message size",
     );
   });
+
+  it("permanently rejects raw uploads that the VPS denies with hosted quota status", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ accept: true }))
+      .mockResolvedValueOnce(new Response("rejected", { status: 403 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const message = createMessage();
+
+    await emailWorker.email(message, env, createContext());
+
+    expect(message.setReject).toHaveBeenCalledWith("550 Mailbox unavailable");
+  });
 });

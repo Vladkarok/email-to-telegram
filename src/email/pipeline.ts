@@ -33,6 +33,8 @@ import { getLogger } from "../utils/logger.js";
 import { createPrivacyViewUrl } from "./privacy.js";
 import type { StorageEncryptionMetadata } from "../security/encryption.js";
 import { prepareDeliveryLogMetadataWrite } from "../security/deliveryLogMetadata.js";
+import { checkInboundLimit } from "../billing/limits.js";
+import { incrementOrganizationUsageMonth, usageMonthForDate } from "../db/repos/usage.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -123,9 +125,18 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
 
   const receivedSince = new Date(Date.now() - 60 * 60 * 1000);
   const queueResult = await db.transaction(async (tx) => {
+    if (alias.organizationId) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${alias.organizationId}))`);
+    }
+
     // Serialize per-alias queue decisions so the hourly cap cannot be exceeded
     // by concurrent requests racing between COUNT(*) and INSERT.
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${alias.id}))`);
+
+    const inboundLimit = await checkInboundLimit(tx as Db, alias.organizationId, rawEmail.length);
+    if (!inboundLimit.ok) {
+      return { kind: "inbound_limit" as const, limit: inboundLimit };
+    }
 
     const dup = await isDuplicate(tx as Db, {
       messageId: parsed.messageId,
@@ -178,6 +189,16 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
       return { kind: "duplicate" as const };
     }
 
+    // Hosted monthly usage is charged once the email is accepted into durable processing.
+    // This intentionally counts later Telegram send failures because infrastructure was used.
+    if (alias.organizationId) {
+      await incrementOrganizationUsageMonth(tx as Db, {
+        organizationId: alias.organizationId,
+        month: usageMonthForDate(),
+        deliveredCount: 1,
+      });
+    }
+
     return { kind: "queued" as const, deliveryLog };
   });
 
@@ -187,6 +208,13 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
 
   if (queueResult.kind === "rate_limited") {
     return { queued: false, result: { ok: false, reason: "rate_limited" } };
+  }
+
+  if (queueResult.kind === "inbound_limit") {
+    return {
+      queued: false,
+      result: { ok: false, reason: queueResult.limit.code },
+    };
   }
 
   return {
