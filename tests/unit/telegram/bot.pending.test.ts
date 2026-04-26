@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { Context } from "grammy";
 import { createMockCtx } from "../../helpers/mockContext.js";
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
@@ -81,13 +82,59 @@ vi.mock("../../../src/db/repos/allowRules.js", () => ({
 vi.mock("../../../src/utils/logger.js", () => ({
   getLogger: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() }),
 }));
-vi.mock("../../../src/telegram/middleware/auth.js", () => ({ authMiddleware: vi.fn() }));
+const mockAuthMiddleware = vi.fn(async (_ctx: unknown, next: () => Promise<void>) => next());
+vi.mock("../../../src/telegram/middleware/auth.js", () => ({
+  authMiddleware: (...args: unknown[]): unknown => mockAuthMiddleware(...args),
+}));
 
 const {
+  createBot,
   handlePendingTextMessage,
   assertHostedAliasWorkspaceReady,
   assertHostedChatWorkspaceReady,
 } = await import("../../../src/telegram/bot.js");
+
+const mockAnswerCallbackQuery = vi
+  .spyOn(Context.prototype, "answerCallbackQuery")
+  .mockResolvedValue(true as never);
+
+function buildCallbackUpdate(data: string) {
+  return {
+    update_id: 1,
+    callback_query: {
+      id: "cb-1",
+      from: {
+        id: 123,
+        is_bot: false,
+        first_name: "Test",
+      },
+      chat_instance: "ci-1",
+      data,
+      message: {
+        message_id: 1,
+        date: 0,
+        chat: {
+          id: 123,
+          type: "private",
+        },
+      },
+    },
+  };
+}
+
+function createInitializedBot() {
+  const bot = createBot("test-token");
+  bot.botInfo = {
+    id: 999,
+    is_bot: true,
+    first_name: "Test Bot",
+    username: "test_bot",
+    can_join_groups: true,
+    can_read_all_group_messages: false,
+    supports_inline_queries: false,
+  };
+  return bot;
+}
 
 describe("pending text flow", () => {
   const next = vi.fn().mockResolvedValue(undefined);
@@ -114,6 +161,10 @@ describe("pending text flow", () => {
     });
     mockAddAllowRuleForAlias.mockResolvedValue(true);
     mockCreateEmailAlias.mockResolvedValue(undefined);
+  });
+
+  afterAll(() => {
+    mockAnswerCallbackQuery.mockRestore();
   });
 
   it("creates a pending alias when the hosted workspace is active", async () => {
@@ -165,6 +216,30 @@ describe("pending text flow", () => {
     );
 
     expect(ctx.answerCallbackQuery).toHaveBeenCalledWith(
+      expect.stringMatching(/hosted workspace inactive/i),
+    );
+  });
+
+  it("wires the cn callback through the hosted workspace guard before chat auth", async () => {
+    mockHasActiveHostedOrganization.mockResolvedValueOnce(false);
+    const bot = createInitializedBot();
+
+    await bot.handleUpdate(buildCallbackUpdate("cn:-1001234567890") as never);
+
+    expect(mockCanManageChat).not.toHaveBeenCalled();
+    expect(mockAnswerCallbackQuery).toHaveBeenCalledWith(
+      expect.stringMatching(/hosted workspace inactive/i),
+    );
+  });
+
+  it("wires the ns callback through the hosted workspace guard before chat auth", async () => {
+    mockHasActiveHostedOrganization.mockResolvedValueOnce(false);
+    const bot = createInitializedBot();
+
+    await bot.handleUpdate(buildCallbackUpdate("ns:-1001234567890") as never);
+
+    expect(mockCanManageChat).not.toHaveBeenCalled();
+    expect(mockAnswerCallbackQuery).toHaveBeenCalledWith(
       expect.stringMatching(/hosted workspace inactive/i),
     );
   });
@@ -221,6 +296,18 @@ describe("pending text flow", () => {
     await expect(assertHostedAliasWorkspaceReady(ctx as never, "alias-1")).resolves.toBe(false);
 
     expect(ctx.answerCallbackQuery).toHaveBeenCalledWith(
+      expect.stringMatching(/hosted workspace inactive/i),
+    );
+  });
+
+  it("wires the aa callback through the hosted workspace guard before alias auth", async () => {
+    mockHasActiveHostedOrganization.mockResolvedValueOnce(false);
+    const bot = createInitializedBot();
+
+    await bot.handleUpdate(buildCallbackUpdate("aa:550e8400-e29b-41d4-a716-446655440000") as never);
+
+    expect(mockCanManageAlias).not.toHaveBeenCalled();
+    expect(mockAnswerCallbackQuery).toHaveBeenCalledWith(
       expect.stringMatching(/hosted workspace inactive/i),
     );
   });
