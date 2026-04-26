@@ -97,7 +97,10 @@ async function cleanOrphanedDirs(
       try {
         const s = await stat(dirPath);
         if (s.mtime.getTime() < cutoffMs) {
-          await deleteDir(dirPath);
+          const children = await readdir(dirPath);
+          if (children.length === 0) {
+            await deleteDir(dirPath);
+          }
         }
       } catch {
         // skip

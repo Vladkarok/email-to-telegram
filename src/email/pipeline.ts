@@ -321,11 +321,21 @@ export async function deliverQueuedEmail(
           });
         }
       } catch (err: unknown) {
+        let deletedCompensatingFile = false;
         if (storagePath && !attachmentStored) {
-          await deleteFile(storagePath).catch(() => {});
+          try {
+            await deleteFile(storagePath);
+            deletedCompensatingFile = true;
+          } catch (deleteErr: unknown) {
+            log.error(
+              { err: deleteErr, filename: att.filename, deliveryLogId: deliveryLog.id },
+              "failed to delete attachment after persistence error",
+            );
+          }
         }
         if (
           !attachmentStored &&
+          deletedCompensatingFile &&
           alias.organizationId &&
           att.sizeBytes != null &&
           att.sizeBytes > 0
