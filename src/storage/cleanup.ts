@@ -61,13 +61,13 @@ async function cleanAttachments(
       } catch {
         continue;
       }
-      if (organizationId && sizeBytes != null && sizeBytes > 0) {
+      const result = await db.delete(attachments).where(eq(attachments.id, id));
+      const rows = (result as unknown as { rowCount?: number }).rowCount ?? 0;
+      if (rows > 0 && organizationId && sizeBytes != null && sizeBytes > 0) {
         await decrementOrganizationStorageUsage(db, organizationId, {
           attachmentBytes: BigInt(sizeBytes),
         }).catch(() => {});
       }
-      const result = await db.delete(attachments).where(eq(attachments.id, id));
-      const rows = (result as unknown as { rowCount?: number }).rowCount ?? 0;
       deletedFiles++;
       deletedRows += rows;
     }
@@ -140,11 +140,6 @@ async function cleanRawEmails(
       } catch {
         continue;
       }
-      if (organizationId && rawSizeBytes != null && rawSizeBytes > 0) {
-        await decrementOrganizationStorageUsage(db, organizationId, {
-          rawEmailBytes: BigInt(rawSizeBytes),
-        }).catch(() => {});
-      }
       const result = await db
         .update(deliveryLogs)
         .set({
@@ -156,6 +151,11 @@ async function cleanRawEmails(
         })
         .where(eq(deliveryLogs.id, id));
       const rows = (result as unknown as { rowCount?: number }).rowCount ?? 0;
+      if (rows > 0 && organizationId && rawSizeBytes != null && rawSizeBytes > 0) {
+        await decrementOrganizationStorageUsage(db, organizationId, {
+          rawEmailBytes: BigInt(rawSizeBytes),
+        }).catch(() => {});
+      }
       cleared += rows;
     }
     if (cleared > 0) {

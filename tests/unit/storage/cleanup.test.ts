@@ -55,20 +55,25 @@ function makeDb(
   const updateSet = vi.fn(() => ({
     where: updateWhere,
   }));
-  const select = vi
-    .fn()
-    .mockReturnValueOnce({
-      from: vi.fn().mockReturnValue({
-        innerJoin: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue(expiredAttachments),
+  let selectCallCount = 0;
+  const select = vi.fn().mockImplementation(() => {
+    selectCallCount += 1;
+    if (selectCallCount % 2 === 1) {
+      return {
+        from: vi.fn().mockReturnValue({
+          innerJoin: vi.fn().mockReturnValue({
+            where: vi.fn().mockResolvedValue(expiredAttachments),
+          }),
         }),
-      }),
-    })
-    .mockReturnValueOnce({
+      };
+    }
+
+    return {
       from: vi.fn().mockReturnValue({
         where: vi.fn().mockResolvedValue(expiredRawLogs),
       }),
-    });
+    };
+  });
   return {
     select,
     delete: vi.fn().mockImplementation((table) => ({
@@ -228,6 +233,53 @@ describe("runCleanup", () => {
     expect(mockDecrementOrganizationStorageUsage).not.toHaveBeenCalled();
     expect(db._mocks.updateWhere).not.toHaveBeenCalled();
     expect(mockDeleteDir).not.toHaveBeenCalled();
+  });
+
+  it("decrements attachment storage only after the attachment row delete succeeds", async () => {
+    const db = makeDb([
+      {
+        id: "att-1",
+        storagePath: "/data/attachments/log-id/file.bin",
+        sizeBytes: 10,
+        organizationId: "org-1",
+      },
+    ]);
+    db._mocks.attachmentDeleteWhere
+      .mockRejectedValueOnce(new Error("db down"))
+      .mockResolvedValueOnce({ rowCount: 1 });
+
+    await runCleanup(db, config);
+    await runCleanup(db, config);
+
+    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledTimes(1);
+    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(db, "org-1", {
+      attachmentBytes: 10n,
+    });
+  });
+
+  it("decrements raw-email storage only after the delivery-log update succeeds", async () => {
+    const db = makeDb(
+      [],
+      [
+        {
+          id: "log-1",
+          rawEmailPath: "/data/rawemails/2025-01-01/log-1.eml",
+          rawSizeBytes: 42,
+          organizationId: "org-1",
+        },
+      ],
+    );
+    db._mocks.updateWhere
+      .mockRejectedValueOnce(new Error("db down"))
+      .mockResolvedValueOnce({ rowCount: 1 });
+
+    await runCleanup(db, config);
+    await runCleanup(db, config);
+
+    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledTimes(1);
+    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(db, "org-1", {
+      rawEmailBytes: 42n,
+    });
   });
 
   it("uses the configured delivery log retention when purging old rows", async () => {
