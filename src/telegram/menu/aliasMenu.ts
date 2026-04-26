@@ -2,8 +2,10 @@ import { InlineKeyboard } from "grammy";
 import type { Context } from "grammy";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../../db/schema.js";
+import type { EmailAddress } from "../../db/schema.js";
 import { listAliasesByChat, findAliasById } from "../../db/repos/aliases.js";
 import { listAllowRules } from "../../db/repos/allowRules.js";
+import { canManageAlias } from "../authorization.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -23,7 +25,7 @@ export async function editAliasListMenu(
   chatId: bigint,
   chatTitle: string,
 ): Promise<void> {
-  const aliases = await listAliasesByChat(db, chatId);
+  const aliases = await filterVisibleAliases(ctx, db, await listAliasesByChat(db, chatId));
   const keyboard = new InlineKeyboard();
 
   if (aliases.length === 0) {
@@ -42,6 +44,17 @@ export async function editAliasListMenu(
       : `📬 <b>${escapeHtml(chatTitle)}</b> — ${aliases.length} alias(es)\n\nTap an alias to manage it.`;
 
   await ctx.editMessageText(header, { parse_mode: "HTML", reply_markup: keyboard });
+}
+
+async function filterVisibleAliases(ctx: Context, db: Db, aliases: EmailAddress[]) {
+  if (!ctx.from) return [];
+  const checked = await Promise.all(
+    aliases.map(async (alias) => ({
+      alias,
+      allowed: await canManageAlias(db, ctx.api, ctx.from!.id, alias.id),
+    })),
+  );
+  return checked.filter(({ allowed }) => allowed).map(({ alias }) => alias);
 }
 
 export async function editAliasDetailMenu(ctx: Context, db: Db, aliasId: string): Promise<void> {

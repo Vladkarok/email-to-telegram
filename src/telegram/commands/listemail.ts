@@ -3,6 +3,7 @@ import { getDb } from "../../db/client.js";
 import { listAliasesByChat, findAliasesByCreator } from "../../db/repos/aliases.js";
 import { findChatById } from "../../db/repos/chats.js";
 import type { EmailAddress } from "../../db/schema.js";
+import { canManageAlias, canManageChat } from "../authorization.js";
 
 export async function listemailHandler(ctx: Context): Promise<void> {
   if (!ctx.from || !ctx.chat) return;
@@ -15,8 +16,16 @@ export async function listemailHandler(ctx: Context): Promise<void> {
 }
 
 async function listForCurrentChat(ctx: Context): Promise<void> {
+  if (!ctx.from) return;
   const chatId = BigInt(ctx.chat!.id);
-  const aliases = await listAliasesByChat(getDb(), chatId);
+  const db = getDb();
+
+  if (!(await canManageChat(ctx.api, ctx.from.id, chatId, { fresh: true }))) {
+    await ctx.reply("⛔ Access denied.");
+    return;
+  }
+
+  const aliases = await filterVisibleAliases(ctx, db, await listAliasesByChat(db, chatId));
 
   if (aliases.length === 0) {
     await ctx.reply("📭 No aliases for this chat.\n\nCreate one with /newemail <name>");
@@ -34,15 +43,16 @@ async function listForCurrentChat(ctx: Context): Promise<void> {
 async function listAllChats(ctx: Context): Promise<void> {
   const db = getDb();
   const aliases = await findAliasesByCreator(db, BigInt(ctx.from!.id));
+  const visibleAliases = await filterVisibleAliases(ctx, db, aliases);
 
-  if (aliases.length === 0) {
+  if (visibleAliases.length === 0) {
     await ctx.reply("📭 No aliases yet.\n\nUse /start to create one.");
     return;
   }
 
   // Group by chatId
   const byChatId = new Map<string, EmailAddress[]>();
-  for (const alias of aliases) {
+  for (const alias of visibleAliases) {
     const key = alias.chatId.toString();
     const group = byChatId.get(key) ?? [];
     group.push(alias);
@@ -61,7 +71,7 @@ async function listAllChats(ctx: Context): Promise<void> {
     sections.push(`<b>${chatLabel}</b>\n${lines.join("\n")}`);
   }
 
-  await ctx.reply(`📬 All your aliases (${aliases.length}):\n\n${sections.join("\n\n")}`, {
+  await ctx.reply(`📬 All your aliases (${visibleAliases.length}):\n\n${sections.join("\n\n")}`, {
     parse_mode: "HTML",
   });
 }
@@ -70,6 +80,21 @@ function statusIcon(status: string): string {
   if (status === "active") return "✅";
   if (status === "paused") return "⏸";
   return "🗑";
+}
+
+async function filterVisibleAliases(
+  ctx: Context,
+  db: ReturnType<typeof getDb>,
+  aliases: EmailAddress[],
+) {
+  if (!ctx.from) return [];
+  const checked = await Promise.all(
+    aliases.map(async (alias) => ({
+      alias,
+      allowed: await canManageAlias(db, ctx.api, ctx.from!.id, alias.id),
+    })),
+  );
+  return checked.filter(({ allowed }) => allowed).map(({ alias }) => alias);
 }
 
 function escapeHtml(text: string): string {

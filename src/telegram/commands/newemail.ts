@@ -27,6 +27,7 @@ export async function newemailHandler(ctx: CommandContext<Context>): Promise<voi
   let targetChatId: bigint;
   let targetThreadId: bigint | null = null;
   let targetChatTitle: string | undefined;
+  let targetChatOrganizationId: string | null | undefined;
 
   if (pending?.action === "newemail") {
     targetChatId = pending.chatId;
@@ -37,6 +38,7 @@ export async function newemailHandler(ctx: CommandContext<Context>): Promise<voi
       ctx.message?.message_thread_id != null ? BigInt(ctx.message.message_thread_id) : null;
     const chat = await findChatById(db, targetChatId);
     targetChatTitle = chat?.title;
+    targetChatOrganizationId = chat?.organizationId;
   }
 
   if (!(await canManageChat(ctx.api, ctx.from.id, targetChatId, { fresh: true }))) {
@@ -47,7 +49,14 @@ export async function newemailHandler(ctx: CommandContext<Context>): Promise<voi
 
   clearPending(ctx.from.id);
 
-  await createEmailAlias(ctx, rawName, targetChatId, targetThreadId, targetChatTitle);
+  await createEmailAlias(
+    ctx,
+    rawName,
+    targetChatId,
+    targetThreadId,
+    targetChatTitle,
+    targetChatOrganizationId,
+  );
 }
 
 export async function createEmailAlias(
@@ -56,6 +65,7 @@ export async function createEmailAlias(
   chatId: bigint,
   threadId: bigint | null,
   chatTitle: string | undefined,
+  chatOrganizationId?: string | null,
 ): Promise<void> {
   if (!ctx.from) return;
   const config = loadConfig();
@@ -80,12 +90,18 @@ export async function createEmailAlias(
 
   const localPart = rawName.length > 0 ? `${prefix}-${generateSuffix()}` : prefix;
   const fullAddress = `${localPart}@${config.mailDomain}`;
+  const organizationId =
+    chatOrganizationId === undefined
+      ? ((await findChatById(getDb(), chatId))?.organizationId ?? null)
+      : chatOrganizationId;
 
   let alias: EmailAddress;
   try {
     alias = await createAlias(getDb(), {
       localPart,
       fullAddress,
+      organizationId,
+      domainId: null,
       chatId,
       messageThreadId: threadId,
       createdBy: BigInt(ctx.from.id),
