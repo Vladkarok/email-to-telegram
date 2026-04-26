@@ -1,11 +1,12 @@
 import { readdir, stat } from "fs/promises";
 import { join } from "path";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { and, isNotNull, lt } from "drizzle-orm";
+import { and, eq, isNotNull, lt } from "drizzle-orm";
 import { deliveryLogs, attachments } from "../db/schema.js";
 import type * as schema from "../db/schema.js";
 import { deleteFile, deleteDir } from "./disk.js";
 import { getLogger } from "../utils/logger.js";
+import { decrementOrganizationStorageUsage } from "../db/repos/storageUsage.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -42,13 +43,23 @@ async function cleanAttachments(
   try {
     // Delete DB rows older than cutoff (storagePath used to find files)
     const expired = await db
-      .select({ storagePath: attachments.storagePath })
+      .select({
+        storagePath: attachments.storagePath,
+        sizeBytes: attachments.sizeBytes,
+        organizationId: deliveryLogs.organizationId,
+      })
       .from(attachments)
+      .innerJoin(deliveryLogs, eq(deliveryLogs.id, attachments.deliveryLogId))
       .where(lt(attachments.createdAt, cutoff));
 
     let deleted = 0;
-    for (const { storagePath } of expired) {
+    for (const { storagePath, sizeBytes, organizationId } of expired) {
       await deleteFile(storagePath).catch(() => {});
+      if (organizationId && sizeBytes != null && sizeBytes > 0) {
+        await decrementOrganizationStorageUsage(db, organizationId, {
+          attachmentBytes: BigInt(sizeBytes),
+        }).catch(() => {});
+      }
       deleted++;
     }
 
@@ -125,6 +136,21 @@ async function cleanRawEmails(
   }
 
   try {
+    const expiredRawLogs = await db
+      .select({
+        organizationId: deliveryLogs.organizationId,
+        rawSizeBytes: deliveryLogs.rawSizeBytes,
+      })
+      .from(deliveryLogs)
+      .where(and(isNotNull(deliveryLogs.rawEmailPath), lt(deliveryLogs.receivedAt, cutoff)));
+    for (const { organizationId, rawSizeBytes } of expiredRawLogs) {
+      if (organizationId && rawSizeBytes != null && rawSizeBytes > 0) {
+        await decrementOrganizationStorageUsage(db, organizationId, {
+          rawEmailBytes: BigInt(rawSizeBytes),
+        }).catch(() => {});
+      }
+    }
+
     const result = await db
       .update(deliveryLogs)
       .set({

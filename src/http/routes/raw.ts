@@ -5,6 +5,8 @@ import { verifyWorkerRequest } from "../../utils/workerAuth.js";
 import { getDb } from "../../db/client.js";
 import { getApi } from "../../telegram/api.js";
 import { queueInboundEmail, deliverQueuedEmail } from "../../email/pipeline.js";
+import { findAliasByLocalPart } from "../../db/repos/aliases.js";
+import { checkInboundLimit } from "../../billing/limits.js";
 import {
   writeRawEmail,
   writePendingRawEmailMeta,
@@ -37,6 +39,7 @@ function statusForQueueRejection(reason: string | undefined): number | null {
       return 413;
     case "subscription_inactive":
     case "monthly_email_limit":
+    case "storage_limit":
       return 403;
     default:
       return null;
@@ -91,6 +94,23 @@ export function rawRoute(
       if (!localPart) {
         await reply.status(400).send({ error: "missing x-local-part header" });
         return;
+      }
+
+      const alias = await findAliasByLocalPart(getDb(), localPart);
+      if (alias?.status === "active") {
+        const inboundLimit = await checkInboundLimit(
+          getDb(),
+          alias.organizationId,
+          body.length,
+          BigInt(body.length),
+        );
+        if (!inboundLimit.ok) {
+          const rejectionStatus = statusForQueueRejection(inboundLimit.code);
+          if (rejectionStatus) {
+            await reply.status(rejectionStatus).send({ error: "rejected" });
+            return;
+          }
+        }
       }
 
       const storedPath = rawEmailPath(config.rawEmailDir);

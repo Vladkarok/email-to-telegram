@@ -117,6 +117,7 @@ describe("POST /inbound/preflight", () => {
     mockDeletePendingRawEmailMeta.mockResolvedValue(undefined);
     mockDeleteFile.mockResolvedValue(undefined);
     mockFindAlias.mockReset();
+    mockFindAlias.mockResolvedValue(null);
     mockCheckAllow.mockReset();
     mockCheckInboundLimit.mockReset();
     mockCheckInboundLimit.mockResolvedValue({ ok: true });
@@ -355,6 +356,10 @@ describe("POST /inbound/raw", () => {
     mockDeletePendingRawEmailMeta.mockResolvedValue(undefined);
     mockDeleteFile.mockReset();
     mockDeleteFile.mockResolvedValue(undefined);
+    mockFindAlias.mockReset();
+    mockFindAlias.mockResolvedValue(null);
+    mockCheckInboundLimit.mockReset();
+    mockCheckInboundLimit.mockResolvedValue({ ok: true });
     mockQueueInboundEmail.mockReset();
     mockQueueInboundEmail.mockResolvedValue({
       queued: true,
@@ -423,6 +428,42 @@ describe("POST /inbound/raw", () => {
     });
 
     expect(res.statusCode).toBe(500);
+    expect(mockQueueInboundEmail).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 when hosted inbound mail exceeds the storage quota before write", async () => {
+    mockFindAlias.mockResolvedValue({
+      id: "uuid-1",
+      status: "active",
+      localPart: "alerts",
+      organizationId: "org-1",
+    });
+    mockCheckInboundLimit.mockResolvedValueOnce({
+      ok: false,
+      code: "storage_limit",
+      limit: 100,
+      used: 99,
+    });
+
+    const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
+    const { signature, timestamp } = signWorkerRequest(rawEmail);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/raw",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+        "x-envelope-from": "sender@example.com",
+        "x-local-part": "alerts",
+      },
+      payload: rawEmail,
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(mockWriteRawEmail).not.toHaveBeenCalled();
     expect(mockQueueInboundEmail).not.toHaveBeenCalled();
   });
 
