@@ -5,6 +5,7 @@ import { getPlanDefinition, type PlanCode, type PlanDefinition } from "./plans.j
 import { countActiveAliasesByOrganization } from "../db/repos/aliases.js";
 import { countAllowRulesByOrganization } from "../db/repos/allowRules.js";
 import { findOrganizationById } from "../db/repos/organizations.js";
+import { getOrganizationUsageMonth, usageMonthForDate } from "../db/repos/usage.js";
 import type { Organization } from "../db/schema.js";
 import type * as schema from "../db/schema.js";
 
@@ -103,6 +104,41 @@ export async function checkAllowRuleCreateLimit(
   return { ok: true };
 }
 
+export async function checkInboundLimit(
+  db: Db,
+  organizationId: string | null,
+  rawSizeBytes?: number,
+): Promise<LimitResult> {
+  if (!shouldEnforceHostedLimits()) return { ok: true };
+  if (!organizationId) return { ok: false, code: "subscription_inactive" };
+
+  const organization = await findOrganizationById(db, organizationId);
+  if (!organization) return { ok: false, code: "subscription_inactive" };
+
+  const plan = getEffectivePlan(organization);
+  if (rawSizeBytes != null && rawSizeBytes > plan.limits.maxMessageBytes) {
+    return {
+      ok: false,
+      code: "message_size_limit",
+      limit: plan.limits.maxMessageBytes,
+      used: rawSizeBytes,
+    };
+  }
+
+  const usage = await getOrganizationUsageMonth(db, organization.id, usageMonthForDate());
+  const deliveredCount = usage?.deliveredCount ?? 0;
+  if (deliveredCount >= plan.limits.deliveredEmailsMonth) {
+    return {
+      ok: false,
+      code: "monthly_email_limit",
+      limit: plan.limits.deliveredEmailsMonth,
+      used: deliveredCount,
+    };
+  }
+
+  return { ok: true };
+}
+
 export async function hasActiveHostedOrganization(
   db: Db,
   organizationId: string | null,
@@ -115,7 +151,15 @@ export async function hasActiveHostedOrganization(
 }
 
 function shouldEnforceHostedLimits(): boolean {
-  return loadConfig().appMode === "hosted";
+  const appMode = process.env["APP_MODE"];
+  if (appMode === "hosted") return true;
+  if (appMode === "self-hosted") return false;
+
+  try {
+    return loadConfig().appMode === "hosted";
+  } catch {
+    return false;
+  }
 }
 
 export async function withOrganizationQuotaLock<T>(

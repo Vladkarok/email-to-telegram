@@ -4,6 +4,7 @@ const mockLoadConfig = vi.fn(() => ({ appMode: "self-hosted" }));
 const mockFindOrganizationById = vi.fn();
 const mockCountActiveAliasesByOrganization = vi.fn();
 const mockCountAllowRulesByOrganization = vi.fn();
+const mockGetOrganizationUsageMonth = vi.fn();
 
 vi.mock("../../../src/config.js", () => ({
   loadConfig: (): unknown => mockLoadConfig(),
@@ -23,7 +24,13 @@ vi.mock("../../../src/db/repos/allowRules.js", () => ({
     mockCountAllowRulesByOrganization(...args),
 }));
 
-const { checkAliasCreateLimit, checkAllowRuleCreateLimit, getEffectivePlan } =
+vi.mock("../../../src/db/repos/usage.js", () => ({
+  getOrganizationUsageMonth: (...args: unknown[]): unknown =>
+    mockGetOrganizationUsageMonth(...args),
+  usageMonthForDate: vi.fn(() => "2026-04"),
+}));
+
+const { checkAliasCreateLimit, checkAllowRuleCreateLimit, checkInboundLimit, getEffectivePlan } =
   await import("../../../src/billing/limits.js");
 
 describe("billing limits", () => {
@@ -35,6 +42,7 @@ describe("billing limits", () => {
   it("skips quota enforcement outside hosted mode", async () => {
     await expect(checkAliasCreateLimit({} as never, "org-1")).resolves.toEqual({ ok: true });
     await expect(checkAllowRuleCreateLimit({} as never, "org-1")).resolves.toEqual({ ok: true });
+    await expect(checkInboundLimit({} as never, "org-1")).resolves.toEqual({ ok: true });
     expect(mockFindOrganizationById).not.toHaveBeenCalled();
   });
 
@@ -121,7 +129,69 @@ describe("billing limits", () => {
       ok: false,
       code: "subscription_inactive",
     });
+    await expect(checkInboundLimit({} as never, null)).resolves.toEqual({
+      ok: false,
+      code: "subscription_inactive",
+    });
     expect(mockFindOrganizationById).not.toHaveBeenCalled();
+  });
+
+  it("enforces hosted monthly inbound quota from the effective plan", async () => {
+    mockLoadConfig.mockReturnValue({ appMode: "hosted" });
+    mockFindOrganizationById.mockResolvedValue({
+      id: "org-1",
+      planCode: "free",
+      subscriptionStatus: "free",
+      currentPeriodEnd: null,
+    });
+    mockGetOrganizationUsageMonth.mockResolvedValue({
+      deliveredCount: 100,
+      rejectedCount: 0,
+    });
+
+    await expect(checkInboundLimit({} as never, "org-1")).resolves.toEqual({
+      ok: false,
+      code: "monthly_email_limit",
+      limit: 100,
+      used: 100,
+    });
+  });
+
+  it("rejects hosted inbound mail that exceeds the plan message size", async () => {
+    mockLoadConfig.mockReturnValue({ appMode: "hosted" });
+    mockFindOrganizationById.mockResolvedValue({
+      id: "org-1",
+      planCode: "free",
+      subscriptionStatus: "free",
+      currentPeriodEnd: null,
+    });
+    mockGetOrganizationUsageMonth.mockResolvedValue({
+      deliveredCount: 0,
+      rejectedCount: 0,
+    });
+
+    await expect(checkInboundLimit({} as never, "org-1", 6 * 1024 * 1024)).resolves.toEqual({
+      ok: false,
+      code: "message_size_limit",
+      limit: 5 * 1024 * 1024,
+      used: 6 * 1024 * 1024,
+    });
+  });
+
+  it("allows hosted inbound mail when monthly usage is below the plan limit", async () => {
+    mockLoadConfig.mockReturnValue({ appMode: "hosted" });
+    mockFindOrganizationById.mockResolvedValue({
+      id: "org-1",
+      planCode: "free",
+      subscriptionStatus: "free",
+      currentPeriodEnd: null,
+    });
+    mockGetOrganizationUsageMonth.mockResolvedValue({
+      deliveredCount: 99,
+      rejectedCount: 0,
+    });
+
+    await expect(checkInboundLimit({} as never, "org-1")).resolves.toEqual({ ok: true });
   });
 
   it("falls back to free limits when a paid plan is canceled", () => {

@@ -20,6 +20,9 @@ const mockCreateAttachmentLink = vi.fn();
 const mockCreateDeliveryViewLink = vi.fn();
 const mockSendTelegramPhotos = vi.fn();
 const mockWriteAttachment = vi.fn();
+const mockCheckInboundLimit = vi.fn().mockResolvedValue({ ok: true });
+const mockIncrementOrganizationUsageMonth = vi.fn().mockResolvedValue(undefined);
+const mockUsageMonthForDate = vi.fn(() => "2026-04");
 
 vi.mock("../../../src/db/repos/aliases.js", () => ({
   findAliasByLocalPart: (...args: unknown[]): unknown => mockFindAlias(...args),
@@ -57,6 +60,14 @@ vi.mock("../../../src/db/repos/deliveryViewLinks.js", () => ({
 vi.mock("../../../src/storage/disk.js", () => ({
   writeAttachment: (...args: unknown[]): unknown => mockWriteAttachment(...args),
 }));
+vi.mock("../../../src/billing/limits.js", () => ({
+  checkInboundLimit: (...args: unknown[]): unknown => mockCheckInboundLimit(...args),
+}));
+vi.mock("../../../src/db/repos/usage.js", () => ({
+  incrementOrganizationUsageMonth: (...args: unknown[]): unknown =>
+    mockIncrementOrganizationUsageMonth(...args),
+  usageMonthForDate: (): unknown => mockUsageMonthForDate(),
+}));
 
 function simpleEmail() {
   return readFileSync(join(import.meta.dirname, "../../fixtures/simple.eml"));
@@ -73,6 +84,7 @@ const activeAlias = {
   id: "alias-uuid-1",
   localPart: "alerts",
   fullAddress: "alerts@example.com",
+  organizationId: "org-1",
   chatId: 100n,
   messageThreadId: null,
   status: "active",
@@ -103,6 +115,9 @@ function fakeDbHarness() {
 describe("processInboundEmail", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mockCheckInboundLimit.mockResolvedValue({ ok: true });
+    mockIncrementOrganizationUsageMonth.mockResolvedValue(undefined);
+    mockUsageMonthForDate.mockReturnValue("2026-04");
     mockCountRecentDeliveries.mockResolvedValue(0);
     mockCreateAttachment.mockResolvedValue({ id: "att-uuid-1" });
     mockCreateAttachmentLink.mockResolvedValue(undefined);
@@ -354,6 +369,9 @@ describe("processInboundEmail", () => {
 describe("queueInboundEmail", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mockCheckInboundLimit.mockResolvedValue({ ok: true });
+    mockIncrementOrganizationUsageMonth.mockResolvedValue(undefined);
+    mockUsageMonthForDate.mockReturnValue("2026-04");
   });
 
   it("queues a delivery log before async delivery begins", async () => {
@@ -379,7 +397,42 @@ describe("queueInboundEmail", () => {
         finalStatus: "received",
       }),
     );
-    expect(harness.execute).toHaveBeenCalledOnce();
+    expect(mockIncrementOrganizationUsageMonth).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        organizationId: activeAlias.organizationId,
+        month: "2026-04",
+        deliveredCount: 1,
+      }),
+    );
+    expect(harness.execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns the inbound limit reason before creating a delivery log", async () => {
+    mockFindAlias.mockResolvedValue(activeAlias);
+    mockCheckAllow.mockResolvedValue(true);
+    mockCheckInboundLimit.mockResolvedValueOnce({
+      ok: false,
+      code: "monthly_email_limit",
+      limit: 100,
+      used: 100,
+    });
+    const harness = fakeDbHarness();
+
+    const result = await queueInboundEmail(harness.db, {
+      rawEmail: simpleEmail(),
+      rawEmailPath: "/data/rawemails/test.eml",
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+      ...PIPELINE_CONFIG,
+    });
+
+    expect(result).toEqual({
+      queued: false,
+      result: { ok: false, reason: "monthly_email_limit" },
+    });
+    expect(mockCreateLog).not.toHaveBeenCalled();
+    expect(mockIncrementOrganizationUsageMonth).not.toHaveBeenCalled();
   });
 
   it("returns duplicate when the delivery-log insert loses a DB race", async () => {

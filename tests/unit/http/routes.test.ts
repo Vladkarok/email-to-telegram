@@ -32,11 +32,15 @@ vi.mock("../../../src/db/repos/aliases.js", () => ({
 
 const mockCheckAllow = vi.fn();
 const mockCountRecentDeliveries = vi.fn();
+const mockCheckInboundLimit = vi.fn().mockResolvedValue({ ok: true });
 vi.mock("../../../src/db/repos/allowRules.js", () => ({
   checkAllowRule: (...args: unknown[]): unknown => mockCheckAllow(...args),
 }));
 vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
   countRecentDeliveriesByAlias: (...args: unknown[]): unknown => mockCountRecentDeliveries(...args),
+}));
+vi.mock("../../../src/billing/limits.js", () => ({
+  checkInboundLimit: (...args: unknown[]): unknown => mockCheckInboundLimit(...args),
 }));
 
 const WORKER_SECRET = "test-worker-secret-32chars-abcde";
@@ -114,6 +118,8 @@ describe("POST /inbound/preflight", () => {
     mockDeleteFile.mockResolvedValue(undefined);
     mockFindAlias.mockReset();
     mockCheckAllow.mockReset();
+    mockCheckInboundLimit.mockReset();
+    mockCheckInboundLimit.mockResolvedValue({ ok: true });
     mockCountRecentDeliveries.mockReset();
     mockCountRecentDeliveries.mockResolvedValue(0);
   });
@@ -257,6 +263,76 @@ describe("POST /inbound/preflight", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ accept: false });
+  });
+
+  it("returns accept:false when the hosted subscription is inactive", async () => {
+    mockFindAlias.mockResolvedValue({
+      id: "uuid-1",
+      status: "active",
+      localPart: "alerts",
+      organizationId: "org-1",
+    });
+    mockCheckInboundLimit.mockResolvedValueOnce({
+      ok: false,
+      code: "subscription_inactive",
+    });
+
+    const body = Buffer.from(JSON.stringify({ localPart: "alerts" }));
+    const { signature, timestamp } = signWorkerRequest(body);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/preflight",
+      headers: {
+        "content-type": "application/json",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+      },
+      payload: body,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ accept: false });
+    expect(mockCheckAllow).not.toHaveBeenCalled();
+    expect(mockCountRecentDeliveries).not.toHaveBeenCalled();
+  });
+
+  it("returns accept:false when the hosted monthly quota has been reached", async () => {
+    mockFindAlias.mockResolvedValue({
+      id: "uuid-1",
+      status: "active",
+      localPart: "alerts",
+      organizationId: "org-1",
+    });
+    mockCheckInboundLimit.mockResolvedValueOnce({
+      ok: false,
+      code: "monthly_email_limit",
+      limit: 100,
+      used: 100,
+    });
+
+    const body = Buffer.from(
+      JSON.stringify({ localPart: "alerts", envelopeFrom: "allowed@example.com" }),
+    );
+    const { signature, timestamp } = signWorkerRequest(body);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/preflight",
+      headers: {
+        "content-type": "application/json",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+      },
+      payload: body,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ accept: false });
+    expect(mockCheckAllow).not.toHaveBeenCalled();
+    expect(mockCountRecentDeliveries).not.toHaveBeenCalled();
   });
 });
 

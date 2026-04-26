@@ -21,7 +21,14 @@ function rawEmailPath(rawEmailDir: string): string {
 }
 
 function shouldDeletePendingMeta(reason: string | undefined): boolean {
-  return reason === "duplicate" || reason === "alias_not_found" || reason === "sender_not_allowed";
+  return (
+    reason === "duplicate" ||
+    reason === "alias_not_found" ||
+    reason === "sender_not_allowed" ||
+    reason === "subscription_inactive" ||
+    reason === "monthly_email_limit" ||
+    reason === "message_size_limit"
+  );
 }
 
 export function rawRoute(
