@@ -62,6 +62,33 @@ async function assertAliasAccess(
   return allowed;
 }
 
+export async function assertHostedChatWorkspaceReady(
+  ctx: CallbackQueryContext<Context>,
+  chatId: bigint,
+): Promise<boolean> {
+  const chat = await findChatById(getDb(), chatId);
+  if (await hasActiveHostedOrganization(getDb(), chat?.organizationId ?? null)) {
+    return true;
+  }
+
+  await ctx.answerCallbackQuery("⛔ Hosted workspace inactive");
+  return false;
+}
+
+export async function assertHostedAliasWorkspaceReady(
+  ctx: CallbackQueryContext<Context>,
+  aliasId: string,
+): Promise<boolean> {
+  const alias = await findAliasById(getDb(), aliasId);
+  if (!alias) return true;
+  if (await hasActiveHostedOrganization(getDb(), alias.organizationId ?? null)) {
+    return true;
+  }
+
+  await ctx.answerCallbackQuery("⛔ Hosted workspace inactive");
+  return false;
+}
+
 export function createBot(token: string): Bot {
   const bot = new Bot(token);
   const logger = getLogger();
@@ -127,6 +154,7 @@ export function createBot(token: string): Bot {
   // cn:{chatId} — start new email flow
   bot.callbackQuery(/^cn:(-?\d+)$/, async (ctx) => {
     const chatId = BigInt(ctx.match[1]);
+    if (!(await assertHostedChatWorkspaceReady(ctx, chatId))) return;
     if (!(await assertChatAccess(ctx, chatId))) return;
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;
@@ -149,6 +177,7 @@ export function createBot(token: string): Bot {
   // ns:{chatId} — skip (random alias)
   bot.callbackQuery(/^ns:(-?\d+)$/, async (ctx) => {
     const chatId = BigInt(ctx.match[1]);
+    if (!(await assertHostedChatWorkspaceReady(ctx, chatId))) return;
     if (!(await assertChatAccess(ctx, chatId))) return;
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;
@@ -303,6 +332,7 @@ export function createBot(token: string): Bot {
 
   // aa:{aliasId} — start add allow rule flow
   bot.callbackQuery(/^aa:([0-9a-f-]{36})$/, async (ctx) => {
+    if (!(await assertHostedAliasWorkspaceReady(ctx, ctx.match[1]))) return;
     if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;

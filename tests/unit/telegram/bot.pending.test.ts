@@ -83,7 +83,11 @@ vi.mock("../../../src/utils/logger.js", () => ({
 }));
 vi.mock("../../../src/telegram/middleware/auth.js", () => ({ authMiddleware: vi.fn() }));
 
-const { handlePendingTextMessage } = await import("../../../src/telegram/bot.js");
+const {
+  handlePendingTextMessage,
+  assertHostedAliasWorkspaceReady,
+  assertHostedChatWorkspaceReady,
+} = await import("../../../src/telegram/bot.js");
 
 describe("pending text flow", () => {
   const next = vi.fn().mockResolvedValue(undefined);
@@ -150,6 +154,21 @@ describe("pending text flow", () => {
     );
   });
 
+  it("blocks the callback newemail entrypoint when the hosted workspace is inactive", async () => {
+    mockHasActiveHostedOrganization.mockResolvedValueOnce(false);
+    const ctx = {
+      answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await expect(assertHostedChatWorkspaceReady(ctx as never, -1001234567890n)).resolves.toBe(
+      false,
+    );
+
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith(
+      expect.stringMatching(/hosted workspace inactive/i),
+    );
+  });
+
   it("sends the allow-rules menu on successful pending allow-rule creation", async () => {
     const ctx = createMockCtx({ text: "github.com" });
 
@@ -190,6 +209,19 @@ describe("pending text flow", () => {
     expect(mockAddAllowRuleForAlias).not.toHaveBeenCalled();
     expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
       /active hosted workspace/i,
+    );
+  });
+
+  it("blocks the callback allow-rule entrypoint when the hosted workspace is inactive", async () => {
+    mockHasActiveHostedOrganization.mockResolvedValueOnce(false);
+    const ctx = {
+      answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await expect(assertHostedAliasWorkspaceReady(ctx as never, "alias-1")).resolves.toBe(false);
+
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith(
+      expect.stringMatching(/hosted workspace inactive/i),
     );
   });
 });
