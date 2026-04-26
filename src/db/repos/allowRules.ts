@@ -1,6 +1,6 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { eq, and } from "drizzle-orm";
-import { allowRules, type AllowRule, type NewAllowRule } from "../schema.js";
+import { eq, and, count, ne } from "drizzle-orm";
+import { allowRules, emailAddresses, type AllowRule, type NewAllowRule } from "../schema.js";
 import type * as schema from "../schema.js";
 
 type Db = NodePgDatabase<typeof schema>;
@@ -12,6 +12,24 @@ export async function addAllowRule(
   const [rule] = await db.insert(allowRules).values(data).returning();
   if (!rule) throw new Error("addAllowRule: no row returned");
   return rule;
+}
+
+export async function findAllowRuleByMatch(
+  db: Db,
+  data: Pick<NewAllowRule, "emailAddressId" | "matchType" | "matchValue">,
+): Promise<AllowRule | null> {
+  const [rule] = await db
+    .select()
+    .from(allowRules)
+    .where(
+      and(
+        eq(allowRules.emailAddressId, data.emailAddressId),
+        eq(allowRules.matchType, data.matchType),
+        eq(allowRules.matchValue, data.matchValue),
+      ),
+    )
+    .limit(1);
+  return rule ?? null;
 }
 
 export async function removeAllowRule(
@@ -35,6 +53,20 @@ export async function findAllowRuleById(db: Db, id: string): Promise<AllowRule |
 
 export async function listAllowRules(db: Db, emailAddressId: string): Promise<AllowRule[]> {
   return db.select().from(allowRules).where(eq(allowRules.emailAddressId, emailAddressId));
+}
+
+export async function countAllowRulesByOrganization(
+  db: Db,
+  organizationId: string,
+): Promise<number> {
+  const [row] = await db
+    .select({ count: count() })
+    .from(allowRules)
+    .innerJoin(emailAddresses, eq(emailAddresses.id, allowRules.emailAddressId))
+    .where(
+      and(eq(emailAddresses.organizationId, organizationId), ne(emailAddresses.status, "deleted")),
+    );
+  return row?.count ?? 0;
 }
 
 export async function checkAllowRule(

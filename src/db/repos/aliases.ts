@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { eq, and, ne, isNull } from "drizzle-orm";
+import { eq, and, ne, isNull, count } from "drizzle-orm";
 import { emailAddresses, type EmailAddress, type NewEmailAddress } from "../schema.js";
 import type * as schema from "../schema.js";
 
@@ -102,6 +102,19 @@ export async function listAliasesByChat(db: Db, chatId: bigint): Promise<EmailAd
     .select()
     .from(emailAddresses)
     .where(and(eq(emailAddresses.chatId, chatId), ne(emailAddresses.status, "deleted")));
+}
+
+export async function countActiveAliasesByOrganization(
+  db: Db,
+  organizationId: string,
+): Promise<number> {
+  const [row] = await db
+    .select({ count: count() })
+    .from(emailAddresses)
+    .where(
+      and(eq(emailAddresses.organizationId, organizationId), ne(emailAddresses.status, "deleted")),
+    );
+  return row?.count ?? 0;
 }
 
 export async function updateAliasStatus(

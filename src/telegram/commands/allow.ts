@@ -1,7 +1,18 @@
 import type { CommandContext, Context } from "grammy";
 import { getDb } from "../../db/client.js";
 import { findAliasByLocalPart } from "../../db/repos/aliases.js";
-import { addAllowRule, removeAllowRule, listAllowRules } from "../../db/repos/allowRules.js";
+import type { EmailAddress } from "../../db/schema.js";
+import {
+  addAllowRule,
+  findAllowRuleByMatch,
+  removeAllowRule,
+  listAllowRules,
+} from "../../db/repos/allowRules.js";
+import {
+  checkAllowRuleCreateLimit,
+  hasActiveHostedOrganization,
+  withOrganizationQuotaLock,
+} from "../../billing/limits.js";
 import { canManageAlias } from "../authorization.js";
 import { parseAllowValue } from "../allowValue.js";
 
@@ -40,6 +51,14 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
     return;
   }
 
+  if (!(await hasActiveHostedOrganization(db, alias.organizationId ?? null))) {
+    await replyForAllowRuleLimitFailure(ctx, alias.localPart, {
+      ok: false,
+      code: "subscription_inactive",
+    });
+    return;
+  }
+
   if (!ctx.from || !(await canManageAlias(db, ctx.api, ctx.from.id, alias.id, { fresh: true }))) {
     await ctx.reply("⛔ Access denied.");
     return;
@@ -72,23 +91,9 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
   }
 
   if (subcommand === "add") {
-    const parsedValue = parseAllowValue(value);
-    if (!parsedValue) {
-      await ctx.reply(
-        "❌ Invalid format. Use a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).",
-        { parse_mode: "HTML" },
-      );
+    if (!(await addAllowRuleForAlias(ctx, db, alias, value))) {
       return;
     }
-    await addAllowRule(db, {
-      emailAddressId: alias.id,
-      matchType: parsedValue.matchType,
-      matchValue: parsedValue.normalized,
-    });
-    await ctx.reply(
-      `✅ Added allow rule for <code>${escapeHtml(aliasName)}</code>: ${parsedValue.matchType === "domain" ? "🌐" : "📧"} ${escapeHtml(parsedValue.normalized)}`,
-      { parse_mode: "HTML" },
-    );
     return;
   }
 
@@ -108,4 +113,90 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+export async function addAllowRuleForAlias(
+  ctx: Context,
+  db: ReturnType<typeof getDb>,
+  alias: Pick<EmailAddress, "id" | "localPart" | "organizationId">,
+  value: string,
+): Promise<boolean> {
+  const parsedValue = parseAllowValue(value);
+  if (!parsedValue) {
+    await ctx.reply(
+      "❌ Invalid format. Use a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).",
+      { parse_mode: "HTML" },
+    );
+    return false;
+  }
+  let blockedLimit: Awaited<ReturnType<typeof checkAllowRuleCreateLimit>> | null = null;
+  let duplicateRule = false;
+
+  try {
+    await withOrganizationQuotaLock(db, alias.organizationId ?? null, async (tx) => {
+      const existingRule = await findAllowRuleByMatch(tx, {
+        emailAddressId: alias.id,
+        matchType: parsedValue.matchType,
+        matchValue: parsedValue.normalized,
+      });
+      if (existingRule) {
+        duplicateRule = true;
+        return;
+      }
+
+      const lockedLimit = await checkAllowRuleCreateLimit(tx, alias.organizationId ?? null);
+      if (!lockedLimit.ok) {
+        blockedLimit = lockedLimit;
+        throw new Error("quota-blocked");
+      }
+
+      await addAllowRule(tx, {
+        emailAddressId: alias.id,
+        matchType: parsedValue.matchType,
+        matchValue: parsedValue.normalized,
+      });
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg === "quota-blocked") {
+      if (blockedLimit) await replyForAllowRuleLimitFailure(ctx, alias.localPart, blockedLimit);
+      return false;
+    }
+    throw err;
+  }
+
+  if (duplicateRule) {
+    await ctx.reply(
+      `ℹ️ Allow rule already exists for <code>${escapeHtml(alias.localPart)}</code>: ${parsedValue.matchType === "domain" ? "🌐" : "📧"} ${escapeHtml(parsedValue.normalized)}`,
+      { parse_mode: "HTML" },
+    );
+    return true;
+  }
+
+  await ctx.reply(
+    `✅ Added allow rule for <code>${escapeHtml(alias.localPart)}</code>: ${parsedValue.matchType === "domain" ? "🌐" : "📧"} ${escapeHtml(parsedValue.normalized)}`,
+    { parse_mode: "HTML" },
+  );
+  return true;
+}
+
+async function replyForAllowRuleLimitFailure(
+  ctx: Context,
+  localPart: string,
+  limit: Awaited<ReturnType<typeof checkAllowRuleCreateLimit>>,
+): Promise<void> {
+  if (limit.ok) return;
+
+  if (limit.code === "subscription_inactive") {
+    await ctx.reply(
+      `⛔ <code>${escapeHtml(localPart)}</code> is not attached to an active hosted workspace.`,
+      { parse_mode: "HTML" },
+    );
+    return;
+  }
+
+  await ctx.reply(
+    `📦 Plan limit reached for <code>${escapeHtml(localPart)}</code>: ${limit.used ?? limit.limit}/${limit.limit} allow rules used. Upgrade to add more.`,
+    { parse_mode: "HTML" },
+  );
 }

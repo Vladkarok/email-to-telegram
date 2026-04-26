@@ -1,4 +1,4 @@
-import { Bot, type Context, type CallbackQueryContext } from "grammy";
+import { Bot, type Context, type CallbackQueryContext, type NextFunction } from "grammy";
 import { getDb } from "../db/client.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { startHandler } from "./commands/start.js";
@@ -12,7 +12,7 @@ import {
   buildAliasSettingsKeyboard,
   buildAliasSettingsText,
 } from "./commands/settings.js";
-import { allowHandler } from "./commands/allow.js";
+import { addAllowRuleForAlias, allowHandler } from "./commands/allow.js";
 import { helpHandler } from "./commands/help.js";
 import { chatMemberHandler } from "./handlers/chatMember.js";
 import { editChatSelectionMenu, editChatManagementMenu } from "./menu/chatMenu.js";
@@ -26,12 +26,13 @@ import {
   updateAliasRenderMode,
 } from "../db/repos/aliases.js";
 import { findChatById } from "../db/repos/chats.js";
-import { addAllowRule, findAllowRuleById, removeAllowRule } from "../db/repos/allowRules.js";
+import { findAllowRuleById, removeAllowRule } from "../db/repos/allowRules.js";
 import { getPending, clearPending, setPending } from "./session.js";
 import { canManageChat, canManageAlias } from "./authorization.js";
 import { parseAllowValue } from "./allowValue.js";
 import { getLogger } from "../utils/logger.js";
 import { InlineKeyboard } from "grammy";
+import { hasActiveHostedOrganization } from "../billing/limits.js";
 
 // ── Authorization helpers ────────────────────────────────────────────────────
 
@@ -61,6 +62,33 @@ async function assertAliasAccess(
   return allowed;
 }
 
+export async function assertHostedChatWorkspaceReady(
+  ctx: CallbackQueryContext<Context>,
+  chatId: bigint,
+): Promise<boolean> {
+  const chat = await findChatById(getDb(), chatId);
+  if (await hasActiveHostedOrganization(getDb(), chat?.organizationId ?? null)) {
+    return true;
+  }
+
+  await ctx.answerCallbackQuery("⛔ Hosted workspace inactive");
+  return false;
+}
+
+export async function assertHostedAliasWorkspaceReady(
+  ctx: CallbackQueryContext<Context>,
+  aliasId: string,
+): Promise<boolean> {
+  const alias = await findAliasById(getDb(), aliasId);
+  if (!alias) return true;
+  if (await hasActiveHostedOrganization(getDb(), alias.organizationId ?? null)) {
+    return true;
+  }
+
+  await ctx.answerCallbackQuery("⛔ Hosted workspace inactive");
+  return false;
+}
+
 export function createBot(token: string): Bot {
   const bot = new Bot(token);
   const logger = getLogger();
@@ -80,64 +108,7 @@ export function createBot(token: string): Bot {
   bot.use(authMiddleware);
 
   // ── Pending action handler (text replies during multi-step flows) ───────────
-  bot.on("message:text", async (ctx, next) => {
-    if (!ctx.from) return next();
-    const text = ctx.message.text;
-
-    // Let commands pass through; cancel pending action and notify
-    if (text.startsWith("/")) {
-      clearPending(ctx.from.id);
-      return next();
-    }
-
-    const pending = getPending(ctx.from.id);
-    if (!pending) return next();
-
-    if (pending.action === "newemail") {
-      // Re-verify chat access at write time with a live check — this is a
-      // text message handler, not a callback query, so no 10s deadline applies.
-      if (!(await canManageChat(ctx.api, ctx.from.id, pending.chatId, { fresh: true }))) {
-        clearPending(ctx.from.id);
-        await ctx.reply("⛔ Access denied.");
-        return;
-      }
-      clearPending(ctx.from.id);
-      await createEmailAlias(ctx, text.trim(), pending.chatId, null, pending.chatTitle);
-      return;
-    }
-
-    if (pending.action === "allowrule") {
-      // Re-verify alias access at write time with a live check — text message
-      // handler, not a callback query, so no 10s deadline applies.
-      if (
-        !(await canManageAlias(getDb(), ctx.api, ctx.from.id, pending.aliasId, { fresh: true }))
-      ) {
-        clearPending(ctx.from.id);
-        await ctx.reply("⛔ Access denied.");
-        return;
-      }
-      clearPending(ctx.from.id);
-      const parsedValue = parseAllowValue(text);
-      if (!parsedValue) {
-        await ctx.reply(
-          "❌ Invalid format. Use a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).",
-          { parse_mode: "HTML" },
-        );
-        return;
-      }
-      await addAllowRule(getDb(), {
-        emailAddressId: pending.aliasId,
-        matchType: parsedValue.matchType,
-        matchValue: parsedValue.normalized,
-      });
-      const icon = parsedValue.matchType === "domain" ? "🌐" : "📧";
-      await ctx.reply(`✅ Added rule: ${icon} <code>${escapeHtml(parsedValue.normalized)}</code>`, {
-        parse_mode: "HTML",
-      });
-      await sendAllowRulesMenu(ctx, getDb(), pending.aliasId);
-      return;
-    }
-  });
+  bot.on("message:text", handlePendingTextMessage);
 
   // ── Commands ────────────────────────────────────────────────────────────────
   bot.command("newemail", newemailHandler);
@@ -183,6 +154,7 @@ export function createBot(token: string): Bot {
   // cn:{chatId} — start new email flow
   bot.callbackQuery(/^cn:(-?\d+)$/, async (ctx) => {
     const chatId = BigInt(ctx.match[1]);
+    if (!(await assertHostedChatWorkspaceReady(ctx, chatId))) return;
     if (!(await assertChatAccess(ctx, chatId))) return;
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;
@@ -205,6 +177,7 @@ export function createBot(token: string): Bot {
   // ns:{chatId} — skip (random alias)
   bot.callbackQuery(/^ns:(-?\d+)$/, async (ctx) => {
     const chatId = BigInt(ctx.match[1]);
+    if (!(await assertHostedChatWorkspaceReady(ctx, chatId))) return;
     if (!(await assertChatAccess(ctx, chatId))) return;
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;
@@ -359,6 +332,7 @@ export function createBot(token: string): Bot {
 
   // aa:{aliasId} — start add allow rule flow
   bot.callbackQuery(/^aa:([0-9a-f-]{36})$/, async (ctx) => {
+    if (!(await assertHostedAliasWorkspaceReady(ctx, ctx.match[1]))) return;
     if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;
@@ -387,6 +361,73 @@ export function createBot(token: string): Bot {
   });
 
   return bot;
+}
+
+export async function handlePendingTextMessage(ctx: Context, next: NextFunction): Promise<void> {
+  if (!ctx.from) return next();
+  const text = ctx.message?.text ?? "";
+
+  // Let commands pass through; cancel pending action and notify
+  if (text.startsWith("/")) {
+    clearPending(ctx.from.id);
+    return next();
+  }
+
+  const pending = getPending(ctx.from.id);
+  if (!pending) return next();
+
+  if (pending.action === "newemail") {
+    const pendingChat = await findChatById(getDb(), pending.chatId);
+    if (!(await hasActiveHostedOrganization(getDb(), pendingChat?.organizationId ?? null))) {
+      clearPending(ctx.from.id);
+      await ctx.reply("⛔ This hosted workspace is not ready for alias creation right now.");
+      return;
+    }
+
+    if (!(await canManageChat(ctx.api, ctx.from.id, pending.chatId, { fresh: true }))) {
+      clearPending(ctx.from.id);
+      await ctx.reply("⛔ Access denied.");
+      return;
+    }
+    clearPending(ctx.from.id);
+    await createEmailAlias(ctx, text.trim(), pending.chatId, null, pending.chatTitle);
+    return;
+  }
+
+  if (pending.action !== "allowrule") return;
+
+  const alias = await findAliasById(getDb(), pending.aliasId);
+  if (!alias) {
+    clearPending(ctx.from.id);
+    await ctx.reply("❌ Alias not found.");
+    return;
+  }
+  if (!(await hasActiveHostedOrganization(getDb(), alias.organizationId ?? null))) {
+    clearPending(ctx.from.id);
+    await ctx.reply(
+      `⛔ <code>${escapeHtml(alias.localPart)}</code> is not attached to an active hosted workspace.`,
+      { parse_mode: "HTML" },
+    );
+    return;
+  }
+  if (!(await canManageAlias(getDb(), ctx.api, ctx.from.id, pending.aliasId, { fresh: true }))) {
+    clearPending(ctx.from.id);
+    await ctx.reply("⛔ Access denied.");
+    return;
+  }
+  clearPending(ctx.from.id);
+  const parsedValue = parseAllowValue(text);
+  if (!parsedValue) {
+    await ctx.reply(
+      "❌ Invalid format. Use a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).",
+      { parse_mode: "HTML" },
+    );
+    return;
+  }
+  if (!(await addAllowRuleForAlias(ctx, getDb(), alias, text))) {
+    return;
+  }
+  await sendAllowRulesMenu(ctx, getDb(), pending.aliasId);
 }
 
 function escapeHtml(text: string): string {
