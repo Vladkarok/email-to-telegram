@@ -1,7 +1,15 @@
-import type { FastifyInstance } from "fastify";
+import { Transform } from "node:stream";
+import type { FastifyInstance, FastifyReply } from "fastify";
+import { checkEgressLimit, withOrganizationQuotaLock } from "../../billing/limits.js";
 import { getDb } from "../../db/client.js";
 import { findAttachmentLinkByToken, markLinkDownloaded } from "../../db/repos/attachmentLinks.js";
+import {
+  decrementOrganizationUsageMonth,
+  incrementOrganizationUsageMonth,
+  usageMonthForDate,
+} from "../../db/repos/usage.js";
 import { openAttachmentStream } from "../../storage/disk.js";
+import { getLogger } from "../../utils/logger.js";
 import { verifyDownloadToken } from "../../utils/tokens.js";
 
 // SVG excluded: can execute JS when opened directly as a document despite attachment disposition.
@@ -60,11 +68,46 @@ export function downloadRoute(app: FastifyInstance): void {
         return;
       }
       const { stream, size } = opened;
+      const quotaMonth = usageMonthForDate();
 
-      // Atomically claim the link only after the file was opened successfully.
-      // This avoids burning one-time URLs on transient decryption/open failures.
-      const claimed = await markLinkDownloaded(getDb(), link.id);
-      if (!claimed) {
+      const claimResult = await withOrganizationQuotaLock(
+        getDb(),
+        link.attachment.organizationId,
+        async (tx) => {
+          const egressLimit = await checkEgressLimit(
+            tx,
+            link.attachment.organizationId,
+            BigInt(size),
+            quotaMonth,
+          );
+          if (!egressLimit.ok) {
+            return { status: "quota_exceeded" as const };
+          }
+
+          // Atomically claim the link only after the file was opened successfully.
+          // This avoids burning one-time URLs on transient decryption/open failures.
+          const claimed = await markLinkDownloaded(tx, link.id);
+          if (!claimed) {
+            return { status: "already_claimed" as const };
+          }
+
+          if (link.attachment.organizationId && size > 0) {
+            await incrementOrganizationUsageMonth(tx, {
+              organizationId: link.attachment.organizationId,
+              month: quotaMonth,
+              egressBytes: BigInt(size),
+            });
+          }
+
+          return { status: "ok" as const };
+        },
+      );
+      if (claimResult.status === "quota_exceeded") {
+        await opened.dispose?.();
+        await reply.status(403).send({ error: "download quota exceeded" });
+        return;
+      }
+      if (claimResult.status === "already_claimed") {
         await opened.dispose?.();
         await reply.status(410).send({ error: "link expired or already used" });
         return;
@@ -81,13 +124,63 @@ export function downloadRoute(app: FastifyInstance): void {
       // charset — the raw bytes may not be UTF-8.
       const rawMime = (link.attachment.contentType ?? "").toLowerCase().trim();
       const contentType = isSafeMime(rawMime) ? rawMime : "application/octet-stream";
+      const trackedStream = trackReservedEgressUsage(
+        stream,
+        reply,
+        link.attachment.organizationId,
+        quotaMonth,
+        BigInt(size),
+      );
 
       await reply
         .header("Content-Type", contentType)
         .header("Content-Disposition", `attachment; filename="${safeFilename}"`)
         .header("Content-Length", size)
         .header("Cache-Control", "no-store")
-        .send(stream);
+        .send(trackedStream);
     },
   );
+}
+
+function trackReservedEgressUsage(
+  stream: NodeJS.ReadableStream,
+  reply: FastifyReply,
+  organizationId: string | null,
+  month: string,
+  egressBytes: bigint,
+): NodeJS.ReadableStream {
+  if (!organizationId || egressBytes <= 0n) return stream;
+
+  let completed = false;
+  let observedBytes = 0n;
+  const meter = new Transform({
+    transform(chunk, _encoding, callback) {
+      observedBytes += BigInt(
+        Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(String(chunk)),
+      );
+      callback(null, chunk);
+    },
+  });
+  stream.on("error", (err: unknown) =>
+    meter.destroy(err instanceof Error ? err : new Error("attachment stream failed")),
+  );
+  reply.raw.once("finish", () => {
+    completed = true;
+  });
+  reply.raw.once("close", () => {
+    if (completed) return;
+    const rollbackBytes = egressBytes > observedBytes ? egressBytes - observedBytes : 0n;
+    if (rollbackBytes <= 0n) return;
+    void decrementOrganizationUsageMonth(getDb(), {
+      organizationId,
+      month,
+      egressBytes: rollbackBytes,
+    }).catch((err: unknown) => {
+      getLogger().error(
+        { err, organizationId, month, egressBytes, observedBytes, rollbackBytes },
+        "failed to release reserved egress usage",
+      );
+    });
+  });
+  return stream.pipe(meter);
 }

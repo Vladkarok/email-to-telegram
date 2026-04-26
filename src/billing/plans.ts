@@ -9,7 +9,8 @@ export type SubscriptionStatus =
   | "past_due"
   | "canceled"
   | "unpaid"
-  | "incomplete";
+  | "incomplete"
+  | "incomplete_expired";
 
 export interface PlanLimits {
   aliases: number;
@@ -17,6 +18,7 @@ export interface PlanLimits {
   chats: number;
   allowRules: number;
   deliveredEmailsMonth: number;
+  egressBytesMonth: number;
   storageBytes: number;
   maxMessageBytes: number;
   retentionDays: number;
@@ -46,6 +48,7 @@ export const PLAN_DEFINITIONS = {
       chats: 1,
       allowRules: 10,
       deliveredEmailsMonth: 100,
+      egressBytesMonth: gib,
       storageBytes: 100 * mib,
       maxMessageBytes: 5 * mib,
       retentionDays: 7,
@@ -63,6 +66,7 @@ export const PLAN_DEFINITIONS = {
       chats: 3,
       allowRules: 50,
       deliveredEmailsMonth: 1_000,
+      egressBytesMonth: 10 * gib,
       storageBytes: gib,
       maxMessageBytes: 10 * mib,
       retentionDays: 30,
@@ -80,10 +84,11 @@ export const PLAN_DEFINITIONS = {
       chats: 10,
       allowRules: 500,
       deliveredEmailsMonth: 10_000,
+      egressBytesMonth: 100 * gib,
       storageBytes: 10 * gib,
       maxMessageBytes: 25 * mib,
       retentionDays: 90,
-      customDomains: 1,
+      customDomains: 0,
     },
   },
   team: {
@@ -97,6 +102,7 @@ export const PLAN_DEFINITIONS = {
       chats: 50,
       allowRules: 2_000,
       deliveredEmailsMonth: 100_000,
+      egressBytesMonth: 500 * gib,
       storageBytes: 50 * gib,
       maxMessageBytes: 25 * mib,
       retentionDays: 180,
@@ -114,6 +120,7 @@ export const PLAN_DEFINITIONS = {
       chats: 250,
       allowRules: 10_000,
       deliveredEmailsMonth: 1_000_000,
+      egressBytesMonth: 5_000 * gib,
       storageBytes: 500 * gib,
       maxMessageBytes: 25 * mib,
       retentionDays: 365,

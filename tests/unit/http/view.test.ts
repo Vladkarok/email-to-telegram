@@ -10,6 +10,19 @@ import { prepareDeliveryLogMetadataWrite } from "../../../src/security/deliveryL
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
+const mockCheckInboundLimit = vi.fn().mockResolvedValue({ ok: true });
+const mockCheckEgressLimit = vi.fn().mockResolvedValue({ ok: true });
+const mockWithOrganizationQuotaLock = vi.fn(
+  async (_db: unknown, _organizationId: string | null, work: (tx: unknown) => Promise<unknown>) =>
+    work({}),
+);
+vi.mock("../../../src/billing/limits.js", () => ({
+  checkInboundLimit: (...args: unknown[]): unknown => mockCheckInboundLimit(...args),
+  checkEgressLimit: (...args: unknown[]): unknown => mockCheckEgressLimit(...args),
+  withOrganizationQuotaLock: (...args: unknown[]): unknown =>
+    mockWithOrganizationQuotaLock(...args),
+}));
+
 const mockFindDeliveryViewLinkByTokenHash = vi.fn();
 const mockMarkDeliveryViewLinkViewed = vi.fn();
 const mockListAttachments = vi.fn();
@@ -27,6 +40,16 @@ vi.mock("../../../src/db/repos/attachments.js", () => ({
 }));
 vi.mock("../../../src/db/repos/attachmentLinks.js", () => ({
   createAttachmentLink: (...args: unknown[]): unknown => mockCreateAttachmentLink(...args),
+}));
+
+const mockIncrementOrganizationUsageMonth = vi.fn();
+const mockDecrementOrganizationUsageMonth = vi.fn();
+vi.mock("../../../src/db/repos/usage.js", () => ({
+  incrementOrganizationUsageMonth: (...args: unknown[]): unknown =>
+    mockIncrementOrganizationUsageMonth(...args),
+  decrementOrganizationUsageMonth: (...args: unknown[]): unknown =>
+    mockDecrementOrganizationUsageMonth(...args),
+  usageMonthForDate: vi.fn(() => "2026-04"),
 }));
 vi.mock("../../../src/storage/disk.js", async () => {
   const actual = await vi.importActual("../../../src/storage/disk.js");
@@ -63,6 +86,7 @@ function viewLinkRow(expiresAt: Date, overrides: Record<string, unknown> = {}) {
     deliveryLog: {
       id: "log-uuid-1",
       emailAddressId: "alias-uuid-1",
+      organizationId: "org-1",
       rawEmailPath: "/tmp/rawemails/privacy.eml",
       envelopeFrom: "sender@example.com",
       headerFrom: "sender@example.com",
@@ -102,6 +126,10 @@ describe("/view/:token", () => {
     mockCreateAttachmentLink.mockResolvedValue(undefined);
     mockReadRawEmail.mockResolvedValue(RAW_EMAIL);
     mockListAttachments.mockResolvedValue([]);
+    mockCheckInboundLimit.mockResolvedValue({ ok: true });
+    mockCheckEgressLimit.mockResolvedValue({ ok: true });
+    mockIncrementOrganizationUsageMonth.mockResolvedValue(undefined);
+    mockDecrementOrganizationUsageMonth.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -161,6 +189,27 @@ describe("/view/:token", () => {
       "view-link-1",
       expect.any(Date),
     );
+    const [, usageUpdate] = mockIncrementOrganizationUsageMonth.mock.calls[0] as [
+      unknown,
+      { organizationId: string; month: string; egressBytes: bigint },
+    ];
+    expect(usageUpdate.organizationId).toBe("org-1");
+    expect(usageUpdate.month).toBe("2026-04");
+    expect(usageUpdate.egressBytes).toBeGreaterThan(0n);
+  });
+
+  it("returns 403 and keeps the view link unused when the org egress limit is exhausted", async () => {
+    const { token, expiresAt } = generateDeliveryViewToken("log-uuid-1", 24);
+    mockFindDeliveryViewLinkByTokenHash.mockResolvedValue(viewLinkRow(expiresAt));
+    mockCheckEgressLimit.mockResolvedValue({ ok: false, code: "egress_limit" });
+
+    const app = await buildApp();
+    const res = await app.inject({ method: "POST", url: `/view/${token}` });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toContain("monthly email view quota");
+    expect(mockMarkDeliveryViewLinkViewed).not.toHaveBeenCalled();
+    expect(mockIncrementOrganizationUsageMonth).not.toHaveBeenCalled();
   });
 
   it("returns 410 when the view link is already used", async () => {

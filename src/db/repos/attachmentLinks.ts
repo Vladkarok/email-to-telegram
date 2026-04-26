@@ -1,6 +1,6 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { eq, isNull, and } from "drizzle-orm";
-import { attachmentLinks, attachments } from "../schema.js";
+import { attachmentLinks, attachments, deliveryLogs } from "../schema.js";
 import type * as schema from "../schema.js";
 
 type Db = NodePgDatabase<typeof schema>;
@@ -13,6 +13,7 @@ export interface AttachmentLinkWithAttachment {
   attachmentId: string;
   attachment: {
     id: string;
+    organizationId: string | null;
     storagePath: string;
     originalFilename: string | null;
     contentType: string | null;
@@ -35,6 +36,7 @@ export async function findAttachmentLinkByToken(
       downloadedAt: attachmentLinks.downloadedAt,
       attachmentId: attachmentLinks.attachmentId,
       attachedId: attachments.id,
+      organizationId: deliveryLogs.organizationId,
       storagePath: attachments.storagePath,
       originalFilename: attachments.originalFilename,
       contentType: attachments.contentType,
@@ -45,6 +47,7 @@ export async function findAttachmentLinkByToken(
     })
     .from(attachmentLinks)
     .innerJoin(attachments, eq(attachmentLinks.attachmentId, attachments.id))
+    .innerJoin(deliveryLogs, eq(attachments.deliveryLogId, deliveryLogs.id))
     .where(eq(attachmentLinks.token, token));
 
   if (!row) return null;
@@ -57,6 +60,7 @@ export async function findAttachmentLinkByToken(
     attachmentId: row.attachmentId,
     attachment: {
       id: row.attachedId,
+      organizationId: row.organizationId,
       storagePath: row.storagePath,
       originalFilename: row.originalFilename,
       contentType: row.contentType,
