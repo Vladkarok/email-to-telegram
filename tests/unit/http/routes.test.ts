@@ -496,6 +496,34 @@ describe("POST /inbound/raw", () => {
     expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
   });
 
+  it("returns 403 and deletes pending metadata when queue-time storage enforcement rejects", async () => {
+    mockQueueInboundEmail.mockResolvedValue({
+      queued: false,
+      result: { ok: false, reason: "storage_limit" },
+    });
+
+    const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
+    const { signature, timestamp } = signWorkerRequest(rawEmail);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/raw",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+        "x-envelope-from": "sender@example.com",
+        "x-local-part": "alerts",
+      },
+      payload: rawEmail,
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledOnce();
+    expect(mockDeleteFile).toHaveBeenCalledOnce();
+  });
+
   it("returns 403 when hosted inbound mail is rejected by subscription state", async () => {
     mockQueueInboundEmail.mockResolvedValue({
       queued: false,

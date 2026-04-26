@@ -37,15 +37,21 @@ const { runCleanup } = await import("../../../src/storage/cleanup.js");
 
 function makeDb(
   expiredAttachments: {
+    id: string;
     storagePath: string;
     sizeBytes?: number | null;
     organizationId?: string | null;
   }[] = [],
-  expiredRawLogs: { rawSizeBytes?: number | null; organizationId?: string | null }[] = [],
+  expiredRawLogs: {
+    id: string;
+    rawEmailPath: string | null;
+    rawSizeBytes?: number | null;
+    organizationId?: string | null;
+  }[] = [],
 ) {
-  const attachmentDeleteWhere = vi.fn().mockResolvedValue({ rowCount: expiredAttachments.length });
+  const attachmentDeleteWhere = vi.fn().mockResolvedValue({ rowCount: 1 });
   const deliveryLogDeleteWhere = vi.fn().mockResolvedValue({ rowCount: 0 });
-  const updateWhere = vi.fn().mockResolvedValue({ rowCount: 0 });
+  const updateWhere = vi.fn().mockResolvedValue({ rowCount: 1 });
   const updateSet = vi.fn(() => ({
     where: updateWhere,
   }));
@@ -115,7 +121,12 @@ describe("runCleanup", () => {
 
   it("deletes files for expired attachments", async () => {
     const db = makeDb([
-      { storagePath: "/data/attachments/log-id/file.bin", sizeBytes: 10, organizationId: "org-1" },
+      {
+        id: "att-1",
+        storagePath: "/data/attachments/log-id/file.bin",
+        sizeBytes: 10,
+        organizationId: "org-1",
+      },
     ]);
     await runCleanup(db, config);
     expect(mockDeleteFile).toHaveBeenCalledWith("/data/attachments/log-id/file.bin");
@@ -140,11 +151,21 @@ describe("runCleanup", () => {
   });
 
   it("clears expired raw email references after the raw-email TTL", async () => {
-    const db = makeDb([], [{ rawSizeBytes: 42, organizationId: "org-1" }]);
-    db._mocks.updateWhere.mockResolvedValue({ rowCount: 2 });
+    const db = makeDb(
+      [],
+      [
+        {
+          id: "log-1",
+          rawEmailPath: "/data/rawemails/2025-01-01/log-1.eml",
+          rawSizeBytes: 42,
+          organizationId: "org-1",
+        },
+      ],
+    );
 
     await runCleanup(db, config);
 
+    expect(mockDeleteFile).toHaveBeenCalledWith("/data/rawemails/2025-01-01/log-1.eml");
     expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(db, "org-1", {
       rawEmailBytes: 42n,
     });
@@ -156,9 +177,46 @@ describe("runCleanup", () => {
       rawEmailEncryptedAt: null,
     });
     expect(mockLogger.info).toHaveBeenCalledWith(
-      { rows: 2 },
+      { rows: 1 },
       "cleanup: cleared expired raw email references",
     );
+  });
+
+  it("keeps attachment row and storage usage unchanged when attachment file deletion fails", async () => {
+    const db = makeDb([
+      {
+        id: "att-1",
+        storagePath: "/data/attachments/log-id/file.bin",
+        sizeBytes: 10,
+        organizationId: "org-1",
+      },
+    ]);
+    mockDeleteFile.mockRejectedValueOnce(new Error("busy"));
+
+    await runCleanup(db, config);
+
+    expect(mockDecrementOrganizationStorageUsage).not.toHaveBeenCalled();
+    expect(db._mocks.attachmentDeleteWhere).not.toHaveBeenCalled();
+  });
+
+  it("keeps raw-email storage usage unchanged when raw email deletion fails", async () => {
+    const db = makeDb(
+      [],
+      [
+        {
+          id: "log-1",
+          rawEmailPath: "/data/rawemails/2025-01-01/log-1.eml",
+          rawSizeBytes: 42,
+          organizationId: "org-1",
+        },
+      ],
+    );
+    mockDeleteFile.mockRejectedValueOnce(new Error("busy"));
+
+    await runCleanup(db, config);
+
+    expect(mockDecrementOrganizationStorageUsage).not.toHaveBeenCalled();
+    expect(db._mocks.updateWhere).not.toHaveBeenCalled();
   });
 
   it("uses the configured delivery log retention when purging old rows", async () => {

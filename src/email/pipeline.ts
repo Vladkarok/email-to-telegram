@@ -278,6 +278,7 @@ export async function deliverQueuedEmail(
 
     for (const att of parsed.attachments) {
       let storagePath: string | null = null;
+      let attachmentStored = false;
       try {
         const attachmentId = randomUUID();
         const fileId = randomUUID();
@@ -297,6 +298,7 @@ export async function deliverQueuedEmail(
           kekKeyId: storageMetadata.kekKeyId,
           encryptedAt: storageMetadata.encryptedAt,
         });
+        attachmentStored = true;
 
         if (isImageContentType(att.contentType)) {
           imageAttachments.push({
@@ -319,10 +321,15 @@ export async function deliverQueuedEmail(
           });
         }
       } catch (err: unknown) {
-        if (storagePath) {
+        if (storagePath && !attachmentStored) {
           await deleteFile(storagePath).catch(() => {});
         }
-        if (alias.organizationId && att.sizeBytes != null && att.sizeBytes > 0) {
+        if (
+          !attachmentStored &&
+          alias.organizationId &&
+          att.sizeBytes != null &&
+          att.sizeBytes > 0
+        ) {
           await decrementOrganizationStorageUsage(db, alias.organizationId, {
             attachmentBytes: BigInt(att.sizeBytes),
           }).catch((storageErr: unknown) => {

@@ -29,7 +29,8 @@ function shouldDeletePendingMeta(reason: string | undefined): boolean {
     reason === "sender_not_allowed" ||
     reason === "subscription_inactive" ||
     reason === "monthly_email_limit" ||
-    reason === "message_size_limit"
+    reason === "message_size_limit" ||
+    reason === "storage_limit"
   );
 }
 
