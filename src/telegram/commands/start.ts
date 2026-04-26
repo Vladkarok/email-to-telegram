@@ -1,7 +1,10 @@
 import { InlineKeyboard } from "grammy";
 import type { Context } from "grammy";
+import { loadConfig } from "../../config.js";
 import { getDb } from "../../db/client.js";
 import { upsertChat } from "../../db/repos/chats.js";
+import { upsertUser } from "../../db/repos/users.js";
+import { ensurePersonalOrganizationForUser } from "../../tenant/currentOrganization.js";
 import { sendChatSelectionMenu } from "../menu/chatMenu.js";
 
 export async function startHandler(ctx: Context): Promise<void> {
@@ -18,8 +21,24 @@ export async function startHandler(ctx: Context): Promise<void> {
   }
 
   // Register DM chat so it appears in selection menus
-  const name = [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(" ");
-  await upsertChat(getDb(), { id: BigInt(ctx.chat.id), title: `🏠 ${name} (DM)`, type: "private" });
+  const db = getDb();
+  let organizationId: string | null = null;
+  if (loadConfig().appMode === "hosted") {
+    const user = await upsertUser(db, {
+      id: BigInt(ctx.from.id),
+      username: ctx.from.username ?? null,
+    });
+    const organization = await ensurePersonalOrganizationForUser(db, user);
+    organizationId = organization.id;
+  }
 
-  await sendChatSelectionMenu(ctx, getDb(), { welcome: true });
+  const name = [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(" ");
+  await upsertChat(db, {
+    id: BigInt(ctx.chat.id),
+    organizationId,
+    title: `🏠 ${name} (DM)`,
+    type: "private",
+  });
+
+  await sendChatSelectionMenu(ctx, db, { welcome: true });
 }

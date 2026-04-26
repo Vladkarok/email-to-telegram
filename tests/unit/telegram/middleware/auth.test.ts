@@ -3,9 +3,25 @@ import { createMockCtx } from "../../../helpers/mockContext.js";
 
 vi.mock("../../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
+const mockLoadConfig = vi.fn(() => ({ appMode: "self-hosted" }));
+vi.mock("../../../../src/config.js", () => ({
+  loadConfig: (): unknown => mockLoadConfig(),
+}));
+
+const mockUpsertChat = vi.fn();
+vi.mock("../../../../src/db/repos/chats.js", () => ({
+  upsertChat: (...args: unknown[]): unknown => mockUpsertChat(...args),
+}));
+
 const mockUpsertUser = vi.fn();
 vi.mock("../../../../src/db/repos/users.js", () => ({
   upsertUser: (...args: unknown[]): unknown => mockUpsertUser(...args),
+}));
+
+const mockEnsurePersonalOrganizationForUser = vi.fn();
+vi.mock("../../../../src/tenant/currentOrganization.js", () => ({
+  ensurePersonalOrganizationForUser: (...args: unknown[]): unknown =>
+    mockEnsurePersonalOrganizationForUser(...args),
 }));
 
 // Import after mocking
@@ -26,6 +42,16 @@ describe("authMiddleware", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockLoadConfig.mockReturnValue({ appMode: "self-hosted" });
+    mockUpsertChat.mockResolvedValue(undefined);
+    mockEnsurePersonalOrganizationForUser.mockResolvedValue({
+      id: "org-1",
+      name: "Org",
+      planCode: "free",
+      subscriptionStatus: "free",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
   });
 
   it("calls next() when user is allowed", async () => {
@@ -49,6 +75,50 @@ describe("authMiddleware", () => {
     expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
       /access denied|not authorized|not allowed/i,
     );
+  });
+
+  it("auto-onboards hosted users and does not require isAllowed", async () => {
+    mockLoadConfig.mockReturnValue({ appMode: "hosted" });
+    mockUpsertUser.mockResolvedValue(BLOCKED_USER);
+    const ctx = createMockCtx({ fromId: 999 });
+
+    await authMiddleware(ctx, next);
+
+    expect(mockEnsurePersonalOrganizationForUser).toHaveBeenCalledWith(
+      expect.anything(),
+      BLOCKED_USER,
+    );
+    expect(next).toHaveBeenCalledOnce();
+    expect(ctx.reply).not.toHaveBeenCalled();
+  });
+
+  it("in hosted mode: registers private DM under the user's organization", async () => {
+    mockLoadConfig.mockReturnValue({ appMode: "hosted" });
+    mockUpsertUser.mockResolvedValue(BLOCKED_USER);
+    const ctx = createMockCtx({ chatType: "private", fromId: 999 });
+
+    await authMiddleware(ctx, next);
+
+    expect(mockUpsertChat).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        id: 999n,
+        organizationId: "org-1",
+        type: "private",
+      }),
+    );
+    expect(next).toHaveBeenCalledOnce();
+  });
+
+  it("in hosted mode: does not register group chats from auth middleware", async () => {
+    mockLoadConfig.mockReturnValue({ appMode: "hosted" });
+    mockUpsertUser.mockResolvedValue(BLOCKED_USER);
+    const ctx = createMockCtx({ chatType: "supergroup", fromId: 999 });
+
+    await authMiddleware(ctx, next);
+
+    expect(mockUpsertChat).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledOnce();
   });
 
   it("upserts user with correct id and username", async () => {

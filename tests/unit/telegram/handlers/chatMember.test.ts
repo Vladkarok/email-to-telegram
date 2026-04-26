@@ -2,12 +2,28 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
+const mockLoadConfig = vi.fn(() => ({ appMode: "self-hosted" }));
+vi.mock("../../../../src/config.js", () => ({
+  loadConfig: (): unknown => mockLoadConfig(),
+}));
+
 const mockUpsertChat = vi.fn().mockResolvedValue(undefined);
 const mockDeactivateChat = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("../../../../src/db/repos/chats.js", () => ({
   upsertChat: (...args: unknown[]): unknown => mockUpsertChat(...args),
   deactivateChat: (...args: unknown[]): unknown => mockDeactivateChat(...args),
+}));
+
+const mockUpsertUser = vi.fn();
+vi.mock("../../../../src/db/repos/users.js", () => ({
+  upsertUser: (...args: unknown[]): unknown => mockUpsertUser(...args),
+}));
+
+const mockEnsurePersonalOrganizationForUser = vi.fn();
+vi.mock("../../../../src/tenant/currentOrganization.js", () => ({
+  ensurePersonalOrganizationForUser: (...args: unknown[]): unknown =>
+    mockEnsurePersonalOrganizationForUser(...args),
 }));
 
 vi.mock("../../../../src/utils/logger.js", () => ({
@@ -26,6 +42,7 @@ function makeCtx(
     myChatMember: {
       new_chat_member: { status: newStatus },
     },
+    from: { id: 123456789, username: "adder" },
     chat: { id: chatId, type: chatType, title },
   } as unknown as Parameters<typeof chatMemberHandler>[0];
 }
@@ -33,6 +50,22 @@ function makeCtx(
 describe("chatMemberHandler", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockLoadConfig.mockReturnValue({ appMode: "self-hosted" });
+    mockUpsertUser.mockResolvedValue({
+      id: 123456789n,
+      username: "adder",
+      isAllowed: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    mockEnsurePersonalOrganizationForUser.mockResolvedValue({
+      id: "org-1",
+      name: "Org",
+      planCode: "free",
+      subscriptionStatus: "free",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
   });
 
   it("upserts chat when bot is added as member", async () => {
@@ -44,6 +77,21 @@ describe("chatMemberHandler", () => {
     ];
     expect(data.title).toBe("Test Group");
     expect(data.type).toBe("supergroup");
+    expect(data.organizationId).toBeNull();
+  });
+
+  it("in hosted mode: registers group chat under the acting user's organization", async () => {
+    mockLoadConfig.mockReturnValue({ appMode: "hosted" });
+
+    await chatMemberHandler(makeCtx("supergroup", "member"));
+
+    expect(mockUpsertUser).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: 123456789n, username: "adder" }),
+    );
+    expect(mockEnsurePersonalOrganizationForUser).toHaveBeenCalled();
+    const [, data] = mockUpsertChat.mock.calls[0] as [unknown, { organizationId: string | null }];
+    expect(data.organizationId).toBe("org-1");
   });
 
   it("upserts chat when bot is added as administrator", async () => {

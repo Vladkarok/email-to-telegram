@@ -11,8 +11,13 @@ vi.mock("../../../../src/db/repos/aliases.js", () => ({
   findAliasesByCreator: vi.fn().mockResolvedValue([]),
 }));
 
+const mockFindChatById = vi.fn().mockResolvedValue({
+  title: "Test Chat",
+  type: "supergroup",
+  organizationId: null,
+});
 vi.mock("../../../../src/db/repos/chats.js", () => ({
-  findChatById: vi.fn().mockResolvedValue({ title: "Test Chat", type: "supergroup" }),
+  findChatById: (...args: unknown[]): unknown => mockFindChatById(...args),
   upsertChat: vi.fn().mockResolvedValue(undefined),
   findActiveChats: vi.fn().mockResolvedValue([]),
   deactivateChat: vi.fn().mockResolvedValue(undefined),
@@ -40,6 +45,11 @@ describe("/newemail command", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFindChatById.mockResolvedValue({
+      title: "Test Chat",
+      type: "supergroup",
+      organizationId: null,
+    });
     mockCreateAlias.mockResolvedValue({
       id: MOCK_ALIAS_ID,
       localPart: "alerts-ab12cd",
@@ -130,6 +140,24 @@ describe("/newemail command", () => {
 
     const [, aliasData] = mockCreateAlias.mock.calls[0] as [unknown, { chatId: bigint }];
     expect(aliasData.chatId).toBe(-1009999999n);
+  });
+
+  it("stores organizationId from the target chat when present", async () => {
+    mockFindChatById.mockResolvedValueOnce({
+      title: "Hosted DM",
+      type: "private",
+      organizationId: "org-1",
+    });
+    const ctx = createMockCtx({ commandMatch: "alerts", chatType: "private" });
+
+    await newemailHandler(ctx);
+
+    const [, aliasData] = mockCreateAlias.mock.calls[0] as [
+      unknown,
+      { organizationId: string | null; domainId: string | null },
+    ];
+    expect(aliasData.organizationId).toBe("org-1");
+    expect(aliasData.domainId).toBeNull();
   });
 
   it("stores message_thread_id when present (forum topic)", async () => {

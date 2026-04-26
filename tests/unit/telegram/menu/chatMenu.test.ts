@@ -3,6 +3,10 @@ import { createMockCtx } from "../../../helpers/mockContext.js";
 
 const mockFindActiveChats = vi.fn();
 
+vi.mock("../../../../src/config.js", () => ({
+  loadConfig: () => ({ appMode: "self-hosted" }),
+}));
+
 vi.mock("../../../../src/db/repos/chats.js", () => ({
   findActiveChats: (...args: unknown[]): unknown => mockFindActiveChats(...args),
 }));
