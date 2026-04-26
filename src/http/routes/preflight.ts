@@ -4,6 +4,8 @@ import { getDb } from "../../db/client.js";
 import { findAliasByLocalPart } from "../../db/repos/aliases.js";
 import { checkAllowRule } from "../../db/repos/allowRules.js";
 import { countRecentDeliveriesByAlias } from "../../db/repos/deliveryLogs.js";
+import { checkInboundLimit } from "../../billing/limits.js";
+import { getLogger } from "../../utils/logger.js";
 
 export function preflightRoute(app: FastifyInstance): void {
   app.post(
@@ -36,6 +38,21 @@ export function preflightRoute(app: FastifyInstance): void {
 
       const alias = await findAliasByLocalPart(getDb(), localPart);
       if (!alias || alias.status !== "active") {
+        await reply.send({ accept: false });
+        return;
+      }
+
+      const inboundLimit = await checkInboundLimit(getDb(), alias.organizationId);
+      if (!inboundLimit.ok) {
+        getLogger().info(
+          {
+            localPart,
+            aliasId: alias.id,
+            organizationId: alias.organizationId,
+            reason: inboundLimit.code,
+          },
+          "inbound preflight rejected by hosted quota",
+        );
         await reply.send({ accept: false });
         return;
       }

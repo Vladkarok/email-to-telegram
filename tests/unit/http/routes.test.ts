@@ -32,11 +32,15 @@ vi.mock("../../../src/db/repos/aliases.js", () => ({
 
 const mockCheckAllow = vi.fn();
 const mockCountRecentDeliveries = vi.fn();
+const mockCheckInboundLimit = vi.fn().mockResolvedValue({ ok: true });
 vi.mock("../../../src/db/repos/allowRules.js", () => ({
   checkAllowRule: (...args: unknown[]): unknown => mockCheckAllow(...args),
 }));
 vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
   countRecentDeliveriesByAlias: (...args: unknown[]): unknown => mockCountRecentDeliveries(...args),
+}));
+vi.mock("../../../src/billing/limits.js", () => ({
+  checkInboundLimit: (...args: unknown[]): unknown => mockCheckInboundLimit(...args),
 }));
 
 const WORKER_SECRET = "test-worker-secret-32chars-abcde";
@@ -114,6 +118,8 @@ describe("POST /inbound/preflight", () => {
     mockDeleteFile.mockResolvedValue(undefined);
     mockFindAlias.mockReset();
     mockCheckAllow.mockReset();
+    mockCheckInboundLimit.mockReset();
+    mockCheckInboundLimit.mockResolvedValue({ ok: true });
     mockCountRecentDeliveries.mockReset();
     mockCountRecentDeliveries.mockResolvedValue(0);
   });
@@ -258,6 +264,76 @@ describe("POST /inbound/preflight", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ accept: false });
   });
+
+  it("returns accept:false when the hosted subscription is inactive", async () => {
+    mockFindAlias.mockResolvedValue({
+      id: "uuid-1",
+      status: "active",
+      localPart: "alerts",
+      organizationId: "org-1",
+    });
+    mockCheckInboundLimit.mockResolvedValueOnce({
+      ok: false,
+      code: "subscription_inactive",
+    });
+
+    const body = Buffer.from(JSON.stringify({ localPart: "alerts" }));
+    const { signature, timestamp } = signWorkerRequest(body);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/preflight",
+      headers: {
+        "content-type": "application/json",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+      },
+      payload: body,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ accept: false });
+    expect(mockCheckAllow).not.toHaveBeenCalled();
+    expect(mockCountRecentDeliveries).not.toHaveBeenCalled();
+  });
+
+  it("returns accept:false when the hosted monthly quota has been reached", async () => {
+    mockFindAlias.mockResolvedValue({
+      id: "uuid-1",
+      status: "active",
+      localPart: "alerts",
+      organizationId: "org-1",
+    });
+    mockCheckInboundLimit.mockResolvedValueOnce({
+      ok: false,
+      code: "monthly_email_limit",
+      limit: 100,
+      used: 100,
+    });
+
+    const body = Buffer.from(
+      JSON.stringify({ localPart: "alerts", envelopeFrom: "allowed@example.com" }),
+    );
+    const { signature, timestamp } = signWorkerRequest(body);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/preflight",
+      headers: {
+        "content-type": "application/json",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+      },
+      payload: body,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ accept: false });
+    expect(mockCheckAllow).not.toHaveBeenCalled();
+    expect(mockCountRecentDeliveries).not.toHaveBeenCalled();
+  });
 });
 
 describe("POST /inbound/raw", () => {
@@ -348,6 +424,64 @@ describe("POST /inbound/raw", () => {
 
     expect(res.statusCode).toBe(500);
     expect(mockQueueInboundEmail).not.toHaveBeenCalled();
+  });
+
+  it("returns 413 when hosted inbound mail exceeds the plan message size", async () => {
+    mockQueueInboundEmail.mockResolvedValue({
+      queued: false,
+      result: { ok: false, reason: "message_size_limit" },
+    });
+
+    const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
+    const { signature, timestamp } = signWorkerRequest(rawEmail);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/raw",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+        "x-envelope-from": "sender@example.com",
+        "x-local-part": "alerts",
+      },
+      payload: rawEmail,
+    });
+
+    expect(res.statusCode).toBe(413);
+    expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledOnce();
+    expect(mockDeleteFile).toHaveBeenCalledOnce();
+    expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 when hosted inbound mail is rejected by subscription state", async () => {
+    mockQueueInboundEmail.mockResolvedValue({
+      queued: false,
+      result: { ok: false, reason: "subscription_inactive" },
+    });
+
+    const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
+    const { signature, timestamp } = signWorkerRequest(rawEmail);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/raw",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+        "x-envelope-from": "sender@example.com",
+        "x-local-part": "alerts",
+      },
+      payload: rawEmail,
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledOnce();
+    expect(mockDeleteFile).toHaveBeenCalledOnce();
+    expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
   });
 
   it("cleans up the raw email when pending metadata persistence fails", async () => {

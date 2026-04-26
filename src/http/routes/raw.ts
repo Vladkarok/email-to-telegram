@@ -21,7 +21,26 @@ function rawEmailPath(rawEmailDir: string): string {
 }
 
 function shouldDeletePendingMeta(reason: string | undefined): boolean {
-  return reason === "duplicate" || reason === "alias_not_found" || reason === "sender_not_allowed";
+  return (
+    reason === "duplicate" ||
+    reason === "alias_not_found" ||
+    reason === "sender_not_allowed" ||
+    reason === "subscription_inactive" ||
+    reason === "monthly_email_limit" ||
+    reason === "message_size_limit"
+  );
+}
+
+function statusForQueueRejection(reason: string | undefined): number | null {
+  switch (reason) {
+    case "message_size_limit":
+      return 413;
+    case "subscription_inactive":
+    case "monthly_email_limit":
+      return 403;
+    default:
+      return null;
+  }
 }
 
 export function rawRoute(
@@ -110,6 +129,17 @@ export function rawRoute(
         await deletePendingRawEmailMeta(storedPath).catch((err: unknown) => {
           getLogger().warn({ err, storedPath }, "failed to delete pending raw email metadata");
         });
+      }
+
+      if (!queued.queued) {
+        const rejectionStatus = statusForQueueRejection(queued.result.reason);
+        if (rejectionStatus) {
+          await deleteFile(storedPath).catch((err: unknown) => {
+            getLogger().warn({ err, storedPath }, "failed to delete rejected raw email");
+          });
+          await reply.status(rejectionStatus).send({ error: "rejected" });
+          return;
+        }
       }
 
       await reply.status(202).send({ status: "accepted" });
