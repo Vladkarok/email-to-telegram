@@ -43,7 +43,7 @@ export const organizations = pgTable(
     ),
     check(
       "chk_org_subscription_status",
-      sql`${t.subscriptionStatus} in ('free', 'trialing', 'active', 'past_due', 'canceled', 'unpaid', 'incomplete')`,
+      sql`${t.subscriptionStatus} in ('free', 'trialing', 'active', 'past_due', 'canceled', 'unpaid', 'incomplete', 'incomplete_expired')`,
     ),
   ],
 );
@@ -331,6 +331,9 @@ export const organizationUsageMonths = pgTable(
     month: varchar("month", { length: 7 }).notNull(),
     deliveredCount: integer("delivered_count").notNull().default(0),
     rejectedCount: integer("rejected_count").notNull().default(0),
+    egressBytes: bigint("egress_bytes", { mode: "bigint" })
+      .notNull()
+      .default(sql`0`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -339,6 +342,7 @@ export const organizationUsageMonths = pgTable(
     check("chk_org_usage_month", sql`${t.month} ~ '^[0-9]{4}-[0-9]{2}$'`),
     check("chk_org_usage_delivered_nonnegative", sql`${t.deliveredCount} >= 0`),
     check("chk_org_usage_rejected_nonnegative", sql`${t.rejectedCount} >= 0`),
+    check("chk_org_usage_egress_nonnegative", sql`${t.egressBytes} >= 0`),
   ],
 );
 

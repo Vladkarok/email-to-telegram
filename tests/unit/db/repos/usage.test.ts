@@ -24,4 +24,14 @@ describe("incrementOrganizationUsageMonth", () => {
       }),
     ).rejects.toThrow(/non-negative/i);
   });
+
+  it("rejects negative egress increments before touching the database", async () => {
+    await expect(
+      incrementOrganizationUsageMonth({} as never, {
+        organizationId: "org-1",
+        month: "2026-04",
+        egressBytes: -1n,
+      }),
+    ).rejects.toThrow(/non-negative/i);
+  });
 });

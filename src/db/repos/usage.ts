@@ -35,11 +35,13 @@ export async function incrementOrganizationUsageMonth(
   data: Pick<NewOrganizationUsageMonth, "organizationId" | "month"> & {
     deliveredCount?: number;
     rejectedCount?: number;
+    egressBytes?: bigint;
   },
 ): Promise<OrganizationUsageMonth> {
   const deliveredCount = data.deliveredCount ?? 0;
   const rejectedCount = data.rejectedCount ?? 0;
-  if (deliveredCount < 0 || rejectedCount < 0) {
+  const egressBytes = data.egressBytes ?? 0n;
+  if (deliveredCount < 0 || rejectedCount < 0 || egressBytes < 0n) {
     throw new Error("Usage increments must be non-negative");
   }
 
@@ -50,12 +52,14 @@ export async function incrementOrganizationUsageMonth(
       month: data.month,
       deliveredCount,
       rejectedCount,
+      egressBytes,
     })
     .onConflictDoUpdate({
       target: [organizationUsageMonths.organizationId, organizationUsageMonths.month],
       set: {
         deliveredCount: sql`${organizationUsageMonths.deliveredCount} + ${deliveredCount}`,
         rejectedCount: sql`${organizationUsageMonths.rejectedCount} + ${rejectedCount}`,
+        egressBytes: sql`${organizationUsageMonths.egressBytes} + ${egressBytes}`,
         updatedAt: new Date(),
       },
     })

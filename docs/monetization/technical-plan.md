@@ -101,7 +101,7 @@ export interface PlanLimits {
 
 Initial limits:
 
-- `free`: 3 aliases, 1 user, 1 chat, 10 allow rules, 100 emails/month, 100 MB
+- `free`: 3 aliases, 1 user, 1 chat, 10 allow rules, 100 emails/month, 1 GB
   egress, 100 MB storage, 5 MB message size, 7 days retention, 0 custom
   domains
 - `personal`: 10 aliases, 1 user, 3 chats, 50 allow rules, 1,000 emails/month,
@@ -244,12 +244,11 @@ Add `organization_usage_months`:
 
 Use this for monthly email quotas only.
 
-If egress is enforced in v1, either extend this table with:
+Extend this table with:
 
 - `egress_bytes bigint not null default 0`
 
-or add a sibling monthly usage table for download/view traffic. Do not leave
-attachment and privacy-view bandwidth unbounded in hosted mode.
+Do not leave attachment and privacy-view bandwidth unbounded in hosted mode.
 
 Add `organization_storage_usage` for current storage quotas:
 
