@@ -23,12 +23,19 @@ vi.mock("../../../../src/telegram/authorization.js", () => ({
   canManageChat: vi.fn().mockResolvedValue(true),
 }));
 
+const mockCheckAllowRuleCreateLimit = vi.fn().mockResolvedValue({ ok: true });
+vi.mock("../../../../src/billing/limits.js", () => ({
+  checkAllowRuleCreateLimit: (...args: unknown[]): unknown =>
+    mockCheckAllowRuleCreateLimit(...args),
+}));
+
 const { allowHandler } = await import("../../../../src/telegram/commands/allow.js");
 
 const ALIAS = {
   id: "uuid-1",
   localPart: "alerts-ab12cd",
   fullAddress: "alerts-ab12cd@tgmail.example.com",
+  organizationId: "org-1",
   chatId: -1001234567890n,
   status: "active",
 };
@@ -36,6 +43,7 @@ const ALIAS = {
 describe("/allow command", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockCheckAllowRuleCreateLimit.mockResolvedValue({ ok: true });
     mockFindAliasByLocalPart.mockResolvedValue(ALIAS);
   });
 
@@ -89,6 +97,23 @@ describe("/allow command", () => {
 
       expect(mockAddAllowRule).not.toHaveBeenCalled();
       expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/invalid format/i);
+    });
+
+    it("rejects new rules when the plan allow-rule limit is reached", async () => {
+      mockCheckAllowRuleCreateLimit.mockResolvedValueOnce({
+        ok: false,
+        code: "allow_rule_limit",
+        limit: 10,
+        used: 10,
+      });
+      const ctx = createMockCtx({ commandMatch: "add alerts-ab12cd github.com" });
+
+      await allowHandler(ctx);
+
+      expect(mockAddAllowRule).not.toHaveBeenCalled();
+      expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
+        /limit reached|upgrade/i,
+      );
     });
   });
 

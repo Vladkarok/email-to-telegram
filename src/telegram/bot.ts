@@ -12,7 +12,7 @@ import {
   buildAliasSettingsKeyboard,
   buildAliasSettingsText,
 } from "./commands/settings.js";
-import { allowHandler } from "./commands/allow.js";
+import { addAllowRuleForAlias, allowHandler } from "./commands/allow.js";
 import { helpHandler } from "./commands/help.js";
 import { chatMemberHandler } from "./handlers/chatMember.js";
 import { editChatSelectionMenu, editChatManagementMenu } from "./menu/chatMenu.js";
@@ -26,7 +26,7 @@ import {
   updateAliasRenderMode,
 } from "../db/repos/aliases.js";
 import { findChatById } from "../db/repos/chats.js";
-import { addAllowRule, findAllowRuleById, removeAllowRule } from "../db/repos/allowRules.js";
+import { findAllowRuleById, removeAllowRule } from "../db/repos/allowRules.js";
 import { getPending, clearPending, setPending } from "./session.js";
 import { canManageChat, canManageAlias } from "./authorization.js";
 import { parseAllowValue } from "./allowValue.js";
@@ -125,15 +125,14 @@ export function createBot(token: string): Bot {
         );
         return;
       }
-      await addAllowRule(getDb(), {
-        emailAddressId: pending.aliasId,
-        matchType: parsedValue.matchType,
-        matchValue: parsedValue.normalized,
-      });
-      const icon = parsedValue.matchType === "domain" ? "🌐" : "📧";
-      await ctx.reply(`✅ Added rule: ${icon} <code>${escapeHtml(parsedValue.normalized)}</code>`, {
-        parse_mode: "HTML",
-      });
+      const alias = await findAliasById(getDb(), pending.aliasId);
+      if (!alias) {
+        await ctx.reply("❌ Alias not found.");
+        return;
+      }
+      if (!(await addAllowRuleForAlias(ctx, getDb(), alias, text))) {
+        return;
+      }
       await sendAllowRulesMenu(ctx, getDb(), pending.aliasId);
       return;
     }

@@ -6,6 +6,7 @@ import { createAlias } from "../../db/repos/aliases.js";
 import type { EmailAddress } from "../../db/schema.js";
 import { findChatById } from "../../db/repos/chats.js";
 import { loadConfig } from "../../config.js";
+import { checkAliasCreateLimit } from "../../billing/limits.js";
 import { getPending, clearPending } from "../session.js";
 import { canManageChat } from "../authorization.js";
 
@@ -94,6 +95,14 @@ export async function createEmailAlias(
     chatOrganizationId === undefined
       ? ((await findChatById(getDb(), chatId))?.organizationId ?? null)
       : chatOrganizationId;
+
+  const limit = await checkAliasCreateLimit(getDb(), organizationId);
+  if (!limit.ok) {
+    await ctx.reply(
+      `📦 Plan limit reached: ${limit.used ?? limit.limit}/${limit.limit} aliases used. Upgrade to create more aliases.`,
+    );
+    return;
+  }
 
   let alias: EmailAddress;
   try {

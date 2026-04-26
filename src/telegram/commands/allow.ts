@@ -1,7 +1,9 @@
 import type { CommandContext, Context } from "grammy";
 import { getDb } from "../../db/client.js";
 import { findAliasByLocalPart } from "../../db/repos/aliases.js";
+import type { EmailAddress } from "../../db/schema.js";
 import { addAllowRule, removeAllowRule, listAllowRules } from "../../db/repos/allowRules.js";
+import { checkAllowRuleCreateLimit } from "../../billing/limits.js";
 import { canManageAlias } from "../authorization.js";
 import { parseAllowValue } from "../allowValue.js";
 
@@ -72,23 +74,9 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
   }
 
   if (subcommand === "add") {
-    const parsedValue = parseAllowValue(value);
-    if (!parsedValue) {
-      await ctx.reply(
-        "❌ Invalid format. Use a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).",
-        { parse_mode: "HTML" },
-      );
+    if (!(await addAllowRuleForAlias(ctx, db, alias, value))) {
       return;
     }
-    await addAllowRule(db, {
-      emailAddressId: alias.id,
-      matchType: parsedValue.matchType,
-      matchValue: parsedValue.normalized,
-    });
-    await ctx.reply(
-      `✅ Added allow rule for <code>${escapeHtml(aliasName)}</code>: ${parsedValue.matchType === "domain" ? "🌐" : "📧"} ${escapeHtml(parsedValue.normalized)}`,
-      { parse_mode: "HTML" },
-    );
     return;
   }
 
@@ -108,4 +96,40 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+export async function addAllowRuleForAlias(
+  ctx: Context,
+  db: ReturnType<typeof getDb>,
+  alias: Pick<EmailAddress, "id" | "localPart" | "organizationId">,
+  value: string,
+): Promise<boolean> {
+  const parsedValue = parseAllowValue(value);
+  if (!parsedValue) {
+    await ctx.reply(
+      "❌ Invalid format. Use a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).",
+      { parse_mode: "HTML" },
+    );
+    return false;
+  }
+
+  const limit = await checkAllowRuleCreateLimit(db, alias.organizationId ?? null);
+  if (!limit.ok) {
+    await ctx.reply(
+      `📦 Plan limit reached for <code>${escapeHtml(alias.localPart)}</code>: ${limit.used ?? limit.limit}/${limit.limit} allow rules used. Upgrade to add more.`,
+      { parse_mode: "HTML" },
+    );
+    return false;
+  }
+
+  await addAllowRule(db, {
+    emailAddressId: alias.id,
+    matchType: parsedValue.matchType,
+    matchValue: parsedValue.normalized,
+  });
+  await ctx.reply(
+    `✅ Added allow rule for <code>${escapeHtml(alias.localPart)}</code>: ${parsedValue.matchType === "domain" ? "🌐" : "📧"} ${escapeHtml(parsedValue.normalized)}`,
+    { parse_mode: "HTML" },
+  );
+  return true;
 }

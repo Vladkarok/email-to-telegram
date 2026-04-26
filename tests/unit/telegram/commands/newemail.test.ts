@@ -38,6 +38,11 @@ vi.mock("../../../../src/telegram/authorization.js", () => ({
   canManageChat: vi.fn().mockResolvedValue(true),
 }));
 
+const mockCheckAliasCreateLimit = vi.fn().mockResolvedValue({ ok: true });
+vi.mock("../../../../src/billing/limits.js", () => ({
+  checkAliasCreateLimit: (...args: unknown[]): unknown => mockCheckAliasCreateLimit(...args),
+}));
+
 const { newemailHandler } = await import("../../../../src/telegram/commands/newemail.js");
 
 describe("/newemail command", () => {
@@ -45,6 +50,7 @@ describe("/newemail command", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockCheckAliasCreateLimit.mockResolvedValue({ ok: true });
     mockFindChatById.mockResolvedValue({
       title: "Test Chat",
       type: "supergroup",
@@ -158,6 +164,28 @@ describe("/newemail command", () => {
     ];
     expect(aliasData.organizationId).toBe("org-1");
     expect(aliasData.domainId).toBeNull();
+  });
+
+  it("rejects alias creation when the plan alias limit is reached", async () => {
+    mockFindChatById.mockResolvedValueOnce({
+      title: "Hosted DM",
+      type: "private",
+      organizationId: "org-1",
+    });
+    mockCheckAliasCreateLimit.mockResolvedValueOnce({
+      ok: false,
+      code: "alias_limit",
+      limit: 3,
+      used: 3,
+    });
+    const ctx = createMockCtx({ commandMatch: "alerts", chatType: "private" });
+
+    await newemailHandler(ctx);
+
+    expect(mockCreateAlias).not.toHaveBeenCalled();
+    expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
+      /limit reached|upgrade/i,
+    );
   });
 
   it("stores message_thread_id when present (forum topic)", async () => {
