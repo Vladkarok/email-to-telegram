@@ -9,9 +9,13 @@ type Db = NodePgDatabase<typeof schema>;
  * Returns the first day of `month` (UTC) as a Date.
  * `month` must be in YYYY-MM format.
  */
-function monthStart(month: string): Date {
+export function monthStart(month: string): Date {
   if (!/^\d{4}-\d{2}$/.test(month)) {
     throw new Error(`monthStart: invalid month '${month}', expected YYYY-MM`);
+  }
+  const m = parseInt(month.slice(5, 7), 10);
+  if (m < 1 || m > 12) {
+    throw new Error(`monthStart: month value out of range in '${month}' (expected 01–12)`);
   }
   return new Date(`${month}-01T00:00:00.000Z`);
 }
@@ -20,7 +24,7 @@ function monthStart(month: string): Date {
  * Returns the first day of the month AFTER `month` (UTC) as a Date,
  * giving an exclusive upper bound for `received_at < end`.
  */
-function nextMonthStart(month: string): Date {
+export function nextMonthStart(month: string): Date {
   const start = monthStart(month);
   return new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1));
 }

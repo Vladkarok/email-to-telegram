@@ -46,6 +46,13 @@ describe("formatBytesQuota", () => {
   it("renders 0% when used is zero", () => {
     expect(formatBytesQuota(0n, 100n)).toContain("0%");
   });
+
+  it("renders consistent 0 B / limit (0%) for negative used bytes", () => {
+    const text = formatBytesQuota(-1n, 100n);
+    expect(text).toContain("0 B");
+    expect(text).toContain("0%");
+    expect(text).not.toContain("-");
+  });
 });
 
 describe("formatCountQuota", () => {
@@ -115,7 +122,15 @@ describe("buildPlanSummaryText", () => {
 describe("buildUsageSummaryText", () => {
   const freePlan = getPlanDefinition("free");
 
-  it("shows accepted, rejected, telegram delivered, telegram failed counts separately", () => {
+  const baseCounters = {
+    acceptedBillable: 0,
+    rejected: 0,
+    telegramDelivered: 0,
+    telegramFailed: 0,
+    telegramPending: 0,
+  };
+
+  it("shows accepted, rejected, telegram delivered, telegram failed, pending counts separately", () => {
     const text = buildUsageSummaryText({
       plan: freePlan,
       month: "2026-04",
@@ -124,6 +139,7 @@ describe("buildUsageSummaryText", () => {
         rejected: 3,
         telegramDelivered: 11,
         telegramFailed: 1,
+        telegramPending: 2,
       },
       egressBytes: 0n,
       storageBytes: 0n,
@@ -134,17 +150,19 @@ describe("buildUsageSummaryText", () => {
     expect(text).toMatch(/Rejected[^\n]*3/);
     expect(text).toMatch(/Delivered to Telegram[^\n]*11/);
     expect(text).toMatch(/Telegram delivery failures[^\n]*1/);
+    expect(text).toMatch(/Pending[^\n]*2/i);
   });
 
-  it("includes a note that failed Telegram deliveries are still billed", () => {
+  it("includes a note that failed/pending Telegram deliveries are still billed", () => {
     const text = buildUsageSummaryText({
       plan: freePlan,
       month: "2026-04",
       counters: {
         acceptedBillable: 5,
         rejected: 0,
-        telegramDelivered: 4,
+        telegramDelivered: 3,
         telegramFailed: 1,
+        telegramPending: 1,
       },
       egressBytes: 0n,
       storageBytes: 0n,
@@ -158,12 +176,7 @@ describe("buildUsageSummaryText", () => {
     const text = buildUsageSummaryText({
       plan: freePlan,
       month: "2026-04",
-      counters: {
-        acceptedBillable: 0,
-        rejected: 0,
-        telegramDelivered: 0,
-        telegramFailed: 0,
-      },
+      counters: { ...baseCounters },
       egressBytes: 100n * 1024n * 1024n,
       storageBytes: 50n * 1024n * 1024n,
       aliasesUsed: 0,
@@ -178,12 +191,7 @@ describe("buildUsageSummaryText", () => {
     const text = buildUsageSummaryText({
       plan: freePlan,
       month: "2026-04",
-      counters: {
-        acceptedBillable: 0,
-        rejected: 0,
-        telegramDelivered: 0,
-        telegramFailed: 0,
-      },
+      counters: { ...baseCounters },
       egressBytes: 0n,
       storageBytes: 0n,
       aliasesUsed: 2,
@@ -197,17 +205,20 @@ describe("buildUsageSummaryText", () => {
     const text = buildUsageSummaryText({
       plan: freePlan,
       month: "2026-04",
-      counters: {
-        acceptedBillable: 0,
-        rejected: 0,
-        telegramDelivered: 0,
-        telegramFailed: 0,
-      },
+      counters: { ...baseCounters },
       egressBytes: 0n,
       storageBytes: 0n,
       aliasesUsed: 0,
       allowRulesUsed: 0,
     });
     expect(text).toContain("2026-04");
+  });
+
+  it("labels the plan limit as 'Accepted emails / month' matching billable counter terminology", () => {
+    const text = buildPlanSummaryText({
+      plan: freePlan,
+      organization: { planCode: "free", subscriptionStatus: "free", currentPeriodEnd: null },
+    });
+    expect(text).toMatch(/Accepted emails \/ month/);
   });
 });

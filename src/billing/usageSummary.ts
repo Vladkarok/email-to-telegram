@@ -6,6 +6,7 @@ export interface UsageCounters {
   rejected: number;
   telegramDelivered: number;
   telegramFailed: number;
+  telegramPending: number;
 }
 
 export interface PlanSummaryInput {
@@ -21,6 +22,16 @@ export interface UsageSummaryInput {
   storageBytes: bigint;
   aliasesUsed: number;
   allowRulesUsed: number;
+}
+
+export interface BillingStatusInput {
+  plan: PlanDefinition;
+  organization: Pick<Organization, "name" | "planCode" | "subscriptionStatus" | "currentPeriodEnd">;
+  month: string;
+  acceptedBillable: number;
+  egressBytes: bigint;
+  storageBytes: bigint;
+  aliasesUsed: number;
 }
 
 const KIB = 1024n;
@@ -64,7 +75,7 @@ export function buildPlanSummaryText(input: PlanSummaryInput): string {
   lines.push(`• Aliases: <code>${plan.limits.aliases}</code>`);
   lines.push(`• Chats: <code>${plan.limits.chats}</code>`);
   lines.push(`• Allow rules: <code>${plan.limits.allowRules}</code>`);
-  lines.push(`• Emails / month: <code>${plan.limits.deliveredEmailsMonth}</code>`);
+  lines.push(`• Accepted emails / month: <code>${plan.limits.deliveredEmailsMonth}</code>`);
   lines.push(`• Egress / month: <code>${formatBytes(BigInt(plan.limits.egressBytesMonth))}</code>`);
   lines.push(`• Storage: <code>${formatBytes(BigInt(plan.limits.storageBytes))}</code>`);
   lines.push(
@@ -88,10 +99,11 @@ export function buildUsageSummaryText(input: UsageSummaryInput): string {
   lines.push(`• Rejected: <code>${counters.rejected}</code>`);
   lines.push(`• Delivered to Telegram: <code>${counters.telegramDelivered}</code>`);
   lines.push(`• Telegram delivery failures: <code>${counters.telegramFailed}</code>`);
+  lines.push(`• Pending / retrying: <code>${counters.telegramPending}</code>`);
   lines.push("");
   lines.push(
-    "<i>Note: Telegram delivery failures are still counted toward your monthly billable total " +
-      "because the email was accepted into processing.</i>",
+    "<i>Note: Telegram delivery failures and pending messages are still counted toward your " +
+      "monthly billable total because the email was accepted into processing.</i>",
   );
   lines.push("");
   lines.push("<b>Bandwidth and storage</b>");
@@ -101,6 +113,31 @@ export function buildUsageSummaryText(input: UsageSummaryInput): string {
   lines.push("<b>Workspace</b>");
   lines.push(`• Aliases: ${formatCountQuota(aliasesUsed, plan.limits.aliases)}`);
   lines.push(`• Allow rules: ${formatCountQuota(allowRulesUsed, plan.limits.allowRules)}`);
+
+  return lines.join("\n");
+}
+
+export function buildBillingStatusText(input: BillingStatusInput): string {
+  const { plan, organization, month, acceptedBillable, egressBytes, storageBytes, aliasesUsed } =
+    input;
+  const lines: string[] = [];
+
+  lines.push(`<b>💳 Billing</b>`);
+  lines.push(`Workspace: <b>${escapeHtml(organization.name)}</b>`);
+  lines.push(`Plan: <b>${escapeHtml(plan.name)}</b>`);
+  lines.push(`Status: <code>${escapeHtml(organization.subscriptionStatus)}</code>`);
+  if (organization.currentPeriodEnd) {
+    lines.push(`Renews/ends: <code>${organization.currentPeriodEnd.toISOString()}</code>`);
+  }
+
+  lines.push("");
+  lines.push(`<b>This month — ${escapeHtml(month)}</b>`);
+  lines.push(`• Accepted (billable): <code>${acceptedBillable}</code>`);
+  lines.push(`• Egress: ${formatBytesQuota(egressBytes, BigInt(plan.limits.egressBytesMonth))}`);
+  lines.push("");
+  lines.push("<b>Workspace</b>");
+  lines.push(`• Aliases: ${formatCountQuota(aliasesUsed, plan.limits.aliases)}`);
+  lines.push(`• Storage: ${formatBytesQuota(storageBytes, BigInt(plan.limits.storageBytes))}`);
 
   return lines.join("\n");
 }
@@ -115,9 +152,10 @@ function formatScaled(bytes: bigint, unit: bigint): string {
 
 function formatBytesPercent(used: bigint, limit: bigint): string {
   if (limit <= 0n) return "—";
-  if (used > limit) return "100%+";
+  const clamped = used < 0n ? 0n : used;
+  if (clamped > limit) return "100%+";
   // (used * 100) / limit — bigint arithmetic stays safe for any plan size.
-  const percent = (used * 100n) / limit;
+  const percent = (clamped * 100n) / limit;
   return `${percent.toString()}%`;
 }
 

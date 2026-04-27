@@ -9,6 +9,7 @@ import { countAllowRulesByOrganization } from "../../db/repos/allowRules.js";
 import { countDeliveryLogsByOrgInMonth } from "../../db/repos/deliveryLogs.js";
 import { getOrganizationStorageUsage } from "../../db/repos/storageUsage.js";
 import { getOrganizationUsageMonth, usageMonthForDate } from "../../db/repos/usage.js";
+import { getLogger } from "../../utils/logger.js";
 
 const SELF_HOSTED_MESSAGE =
   "ℹ️ Billing is not enabled in self-hosted mode. /usage is only available on the hosted service.";
@@ -25,41 +26,60 @@ export async function usageHandler(ctx: Context): Promise<void> {
   }
 
   const db = getDb();
-  const organization = await getPrimaryOrganizationForUser(db, BigInt(ctx.from.id));
-  if (!organization) {
-    await ctx.reply(NO_ORGANIZATION_MESSAGE);
-    return;
-  }
 
-  const plan = getEffectivePlan(organization);
-  const month = usageMonthForDate();
+  try {
+    const organization = await getPrimaryOrganizationForUser(db, BigInt(ctx.from.id));
+    if (!organization) {
+      await ctx.reply(NO_ORGANIZATION_MESSAGE);
+      return;
+    }
 
-  const [usage, storage, aliasesUsed, allowRulesUsed, telegramDelivered, telegramFailed] =
-    await Promise.all([
+    const plan = getEffectivePlan(organization);
+    const month = usageMonthForDate();
+
+    const [
+      usage,
+      storage,
+      aliasesUsed,
+      allowRulesUsed,
+      telegramDelivered,
+      telegramFailed,
+      telegramPending,
+    ] = await Promise.all([
       getOrganizationUsageMonth(db, organization.id, month),
       getOrganizationStorageUsage(db, organization.id),
       countActiveAliasesByOrganization(db, organization.id),
       countAllowRulesByOrganization(db, organization.id),
       countDeliveryLogsByOrgInMonth(db, organization.id, month, ["delivered"]),
       countDeliveryLogsByOrgInMonth(db, organization.id, month, ["failed"]),
+      countDeliveryLogsByOrgInMonth(db, organization.id, month, [
+        "received",
+        "processing",
+        "retrying",
+      ]),
     ]);
 
-  const storageBytes = (storage?.rawEmailBytes ?? 0n) + (storage?.attachmentBytes ?? 0n);
+    const storageBytes = (storage?.rawEmailBytes ?? 0n) + (storage?.attachmentBytes ?? 0n);
 
-  const text = buildUsageSummaryText({
-    plan,
-    month,
-    counters: {
-      acceptedBillable: usage?.deliveredCount ?? 0,
-      rejected: usage?.rejectedCount ?? 0,
-      telegramDelivered,
-      telegramFailed,
-    },
-    egressBytes: usage?.egressBytes ?? 0n,
-    storageBytes,
-    aliasesUsed,
-    allowRulesUsed,
-  });
+    const text = buildUsageSummaryText({
+      plan,
+      month,
+      counters: {
+        acceptedBillable: usage?.deliveredCount ?? 0,
+        rejected: usage?.rejectedCount ?? 0,
+        telegramDelivered,
+        telegramFailed,
+        telegramPending,
+      },
+      egressBytes: usage?.egressBytes ?? 0n,
+      storageBytes,
+      aliasesUsed,
+      allowRulesUsed,
+    });
 
-  await ctx.reply(text, { parse_mode: "HTML" });
+    await ctx.reply(text, { parse_mode: "HTML" });
+  } catch (err: unknown) {
+    getLogger().error({ err }, "usageHandler: failed to fetch usage data");
+    await ctx.reply("❌ Usage data is temporarily unavailable. Please try again shortly.");
+  }
 }

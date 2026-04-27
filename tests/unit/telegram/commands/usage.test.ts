@@ -46,6 +46,11 @@ vi.mock("../../../../src/db/repos/deliveryLogs.js", () => ({
     mockCountDeliveryLogsByOrgInMonth(...args),
 }));
 
+const mockGetLogger = vi.fn(() => ({ error: vi.fn() }));
+vi.mock("../../../../src/utils/logger.js", () => ({
+  getLogger: (): unknown => mockGetLogger(),
+}));
+
 const { usageHandler } = await import("../../../../src/telegram/commands/usage.js");
 
 describe("/usage command", () => {
@@ -91,7 +96,7 @@ describe("/usage command", () => {
     expect(text).toMatch(/no.*workspace|organization.*not found/i);
   });
 
-  it("renders accepted, rejected, telegram delivered, telegram failed counts", async () => {
+  it("renders accepted, rejected, telegram delivered, telegram failed, pending counts", async () => {
     mockGetPrimaryOrganizationForUser.mockResolvedValue({
       id: "org-1",
       name: "Test",
@@ -108,8 +113,9 @@ describe("/usage command", () => {
     });
     mockCountDeliveryLogsByOrgInMonth.mockImplementation(
       (_db: unknown, _orgId: string, _month: string, statuses: readonly string[]) => {
-        if (statuses.includes("delivered")) return Promise.resolve(11);
+        if (statuses.includes("delivered")) return Promise.resolve(9);
         if (statuses.includes("failed")) return Promise.resolve(1);
+        if (statuses.includes("retrying")) return Promise.resolve(2);
         return Promise.resolve(0);
       },
     );
@@ -121,8 +127,22 @@ describe("/usage command", () => {
     const s = String(text);
     expect(s).toMatch(/Accepted[^\n]*12/);
     expect(s).toMatch(/Rejected[^\n]*3/);
-    expect(s).toMatch(/Delivered to Telegram[^\n]*11/);
+    expect(s).toMatch(/Delivered to Telegram[^\n]*9/);
     expect(s).toMatch(/Telegram delivery failures[^\n]*1/);
+    expect(s).toMatch(/Pending[^\n]*2/i);
+  });
+
+  it("replies with a friendly error when a DB query throws", async () => {
+    mockGetPrimaryOrganizationForUser.mockRejectedValue(new Error("connection refused"));
+    const mockError = vi.fn();
+    mockGetLogger.mockReturnValue({ error: mockError });
+
+    const ctx = createMockCtx({ chatType: "private" });
+    await usageHandler(ctx);
+
+    const [text] = ctx.reply.mock.calls[0] as [string, unknown];
+    expect(text).toMatch(/temporarily unavailable/i);
+    expect(mockError).toHaveBeenCalled();
   });
 
   it("renders egress, storage, aliases and allow-rule quotas", async () => {
