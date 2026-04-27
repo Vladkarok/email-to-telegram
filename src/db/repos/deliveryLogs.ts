@@ -6,6 +6,26 @@ import type * as schema from "../schema.js";
 type Db = NodePgDatabase<typeof schema>;
 
 /**
+ * Returns the first day of `month` (UTC) as a Date.
+ * `month` must be in YYYY-MM format.
+ */
+function monthStart(month: string): Date {
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    throw new Error(`monthStart: invalid month '${month}', expected YYYY-MM`);
+  }
+  return new Date(`${month}-01T00:00:00.000Z`);
+}
+
+/**
+ * Returns the first day of the month AFTER `month` (UTC) as a Date,
+ * giving an exclusive upper bound for `received_at < end`.
+ */
+function nextMonthStart(month: string): Date {
+  const start = monthStart(month);
+  return new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1));
+}
+
+/**
  * Returns null when the INSERT violates the dedup unique indexes
  * (PG error 23505), so the pipeline can treat the race as a duplicate.
  */
@@ -119,6 +139,35 @@ export async function countRecentDeliveriesByAlias(
     .from(deliveryLogs)
     .where(
       and(eq(deliveryLogs.emailAddressId, aliasId), gte(deliveryLogs.receivedAt, receivedSince)),
+    );
+  return Number(row?.n ?? 0);
+}
+
+/**
+ * Counts delivery_logs rows for an organization in a given calendar month (UTC),
+ * filtered by finalStatus values. Used to expose Telegram delivery success/failure
+ * counts in /usage independently from the billable accepted/rejected counters in
+ * `organization_usage_months`.
+ */
+export async function countDeliveryLogsByOrgInMonth(
+  db: Db,
+  organizationId: string,
+  month: string,
+  statuses: readonly string[],
+): Promise<number> {
+  if (statuses.length === 0) return 0;
+  const start = monthStart(month);
+  const end = nextMonthStart(month);
+  const [row] = await db
+    .select({ n: count() })
+    .from(deliveryLogs)
+    .where(
+      and(
+        eq(deliveryLogs.organizationId, organizationId),
+        gte(deliveryLogs.receivedAt, start),
+        lt(deliveryLogs.receivedAt, end),
+        inArray(deliveryLogs.finalStatus, [...statuses]),
+      ),
     );
   return Number(row?.n ?? 0);
 }

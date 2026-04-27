@@ -14,6 +14,8 @@ import {
 } from "./commands/settings.js";
 import { addAllowRuleForAlias, allowHandler } from "./commands/allow.js";
 import { helpHandler } from "./commands/help.js";
+import { planHandler } from "./commands/plan.js";
+import { usageHandler } from "./commands/usage.js";
 import { chatMemberHandler } from "./handlers/chatMember.js";
 import { editChatSelectionMenu, editChatManagementMenu } from "./menu/chatMenu.js";
 import { editAliasListMenu, editAliasDetailMenu } from "./menu/aliasMenu.js";
@@ -119,6 +121,8 @@ export function createBot(token: string): Bot {
   bot.command("settings", settingsHandler);
   bot.command("allow", allowHandler);
   bot.command("help", helpHandler);
+  bot.command("plan", planHandler);
+  bot.command("usage", usageHandler);
 
   // ── Inline keyboard callbacks ───────────────────────────────────────────────
 
