@@ -49,6 +49,7 @@ export function getEffectivePlan(
         return getPlanDefinition(organization.planCode as PlanCode);
       }
       return getPlanDefinition("free");
+    case "paused":
     case "free":
     case "canceled":
     case "unpaid":

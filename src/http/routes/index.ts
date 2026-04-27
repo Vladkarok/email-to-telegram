@@ -6,6 +6,7 @@ import { preflightRoute } from "./preflight.js";
 import { rawRoute } from "./raw.js";
 import { downloadRoute } from "./download.js";
 import { deliveryViewRoute } from "./view.js";
+import { billingRoutes } from "./billing.js";
 
 export function registerRoutes(
   app: FastifyInstance,
@@ -25,4 +26,5 @@ export function registerRoutes(
   rawRoute(app, config);
   downloadRoute(app);
   deliveryViewRoute(app, config);
+  billingRoutes(app);
 }

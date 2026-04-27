@@ -286,6 +286,16 @@ describe("billing limits", () => {
     expect(plan.code).toBe("free");
   });
 
+  it("falls back to free limits when a paid plan is paused", () => {
+    const plan = getEffectivePlan({
+      planCode: "pro",
+      subscriptionStatus: "paused",
+      currentPeriodEnd: new Date(),
+    });
+
+    expect(plan.code).toBe("free");
+  });
+
   it("keeps paid limits during recent past_due grace", () => {
     const plan = getEffectivePlan({
       planCode: "pro",
