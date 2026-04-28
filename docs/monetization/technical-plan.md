@@ -807,6 +807,9 @@ npm run build
 
 Manual Stripe test mode flow:
 
+Use [`stripe-test-mode-runbook.md`](./stripe-test-mode-runbook.md) as the
+operator checklist.
+
 1. Start app in hosted mode.
 2. Start Telegram bot as new user.
 3. Verify org is created.
@@ -871,7 +874,8 @@ Manual Stripe test mode flow:
 12. Final verification:
 
 - full test/typecheck/lint/build
-- manual Stripe test mode walkthrough
+- manual Stripe test mode walkthrough using
+  [`stripe-test-mode-runbook.md`](./stripe-test-mode-runbook.md)
 
 ## Rollout Plan
 

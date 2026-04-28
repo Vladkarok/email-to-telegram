@@ -215,6 +215,10 @@ Recommendation:
 3. If global VAT/sales tax becomes painful, migrate new customers to Paddle or
    Lemon Squeezy before scale makes migration painful.
 
+The test-mode billing launch checklist lives in
+[`stripe-test-mode-runbook.md`](./stripe-test-mode-runbook.md). Run it before
+turning on live Stripe keys.
+
 ## Required Product Changes
 
 ### Data Model
