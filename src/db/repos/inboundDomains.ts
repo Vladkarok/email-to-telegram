@@ -23,6 +23,31 @@ export async function createInboundDomain(
   return domain;
 }
 
+export async function ensureSharedInboundDomain(db: Db, domain: string): Promise<InboundDomain> {
+  const normalizedDomain = domain.toLowerCase();
+  const existing = await findInboundDomainByDomain(db, normalizedDomain);
+  if (existing) {
+    if (existing.kind !== "shared" || existing.status !== "active") {
+      throw new Error("ensureSharedInboundDomain: hosted shared domain is not active");
+    }
+    return existing;
+  }
+
+  const [created] = await db
+    .insert(inboundDomains)
+    .values({ domain: normalizedDomain, kind: "shared", status: "active" })
+    .onConflictDoNothing({ target: inboundDomains.domain })
+    .returning();
+  if (created) return created;
+
+  const raced = await findInboundDomainByDomain(db, normalizedDomain);
+  if (!raced) throw new Error("ensureSharedInboundDomain: no row returned");
+  if (raced.kind !== "shared" || raced.status !== "active") {
+    throw new Error("ensureSharedInboundDomain: hosted shared domain is not active");
+  }
+  return raced;
+}
+
 export async function findInboundDomainByDomain(
   db: Db,
   domain: string,

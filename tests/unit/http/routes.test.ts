@@ -26,8 +26,14 @@ vi.mock("../../../src/storage/disk.js", () => ({
 }));
 
 const mockFindAlias = vi.fn();
+const mockFindAliasByDomain = vi.fn();
 vi.mock("../../../src/db/repos/aliases.js", () => ({
   findAliasByLocalPart: (...args: unknown[]): unknown => mockFindAlias(...args),
+  findAliasByLocalPartAndDomainId: (...args: unknown[]): unknown => mockFindAliasByDomain(...args),
+}));
+const mockFindInboundDomain = vi.fn();
+vi.mock("../../../src/db/repos/inboundDomains.js", () => ({
+  findInboundDomainByDomain: (...args: unknown[]): unknown => mockFindInboundDomain(...args),
 }));
 
 const mockCheckAllow = vi.fn();
@@ -125,6 +131,18 @@ describe("POST /inbound/preflight", () => {
     mockDeleteFile.mockResolvedValue(undefined);
     mockFindAlias.mockReset();
     mockFindAlias.mockResolvedValue(null);
+    mockFindAliasByDomain.mockReset();
+    mockFindAliasByDomain.mockImplementation((...args: unknown[]) => {
+      void args[2];
+      return Promise.resolve(mockFindAlias(args[0], args[1]));
+    });
+    mockFindInboundDomain.mockReset();
+    mockFindInboundDomain.mockResolvedValue({
+      id: "domain-1",
+      domain: "mail.example.com",
+      kind: "shared",
+      status: "active",
+    });
     mockCheckAllow.mockReset();
     mockCheckInboundLimit.mockReset();
     mockCheckInboundLimit.mockResolvedValue({ ok: true });
@@ -358,6 +376,78 @@ describe("POST /inbound/preflight", () => {
     expect(mockCheckAllow).not.toHaveBeenCalled();
   });
 
+  it("routes hosted preflight by active recipient domain", async () => {
+    process.env["APP_MODE"] = "hosted";
+    mockFindAlias.mockResolvedValue(null);
+    mockFindAliasByDomain.mockResolvedValue({
+      id: "uuid-1",
+      status: "active",
+      localPart: "alerts",
+      organizationId: "org-1",
+    });
+
+    const body = Buffer.from(
+      JSON.stringify({
+        localPart: "alerts",
+        recipientDomain: "mail.example.com",
+      }),
+    );
+    const { signature, timestamp } = signWorkerRequest(body);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/preflight",
+      headers: {
+        "content-type": "application/json",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+      },
+      payload: body,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ accept: true });
+    expect(mockFindInboundDomain).toHaveBeenCalledWith(expect.anything(), "mail.example.com");
+    expect(mockFindAliasByDomain).toHaveBeenCalledWith(expect.anything(), "alerts", "domain-1");
+    expect(mockFindAlias).not.toHaveBeenCalled();
+  });
+
+  it("rejects hosted preflight when recipient domain is disabled", async () => {
+    process.env["APP_MODE"] = "hosted";
+    mockFindInboundDomain.mockResolvedValueOnce({
+      id: "domain-1",
+      domain: "mail.example.com",
+      kind: "shared",
+      status: "disabled",
+    });
+
+    const body = Buffer.from(
+      JSON.stringify({
+        localPart: "alerts",
+        recipientDomain: "mail.example.com",
+      }),
+    );
+    const { signature, timestamp } = signWorkerRequest(body);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/preflight",
+      headers: {
+        "content-type": "application/json",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+      },
+      payload: body,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ accept: false });
+    expect(mockFindAliasByDomain).not.toHaveBeenCalled();
+    expect(mockCheckInboundLimit).not.toHaveBeenCalled();
+  });
+
   it("skips hosted blocklist in self-hosted mode", async () => {
     process.env["APP_MODE"] = "self-hosted";
     mockFindAlias.mockResolvedValue({
@@ -462,6 +552,18 @@ describe("POST /inbound/raw", () => {
     mockDeleteFile.mockResolvedValue(undefined);
     mockFindAlias.mockReset();
     mockFindAlias.mockResolvedValue(null);
+    mockFindAliasByDomain.mockReset();
+    mockFindAliasByDomain.mockImplementation((...args: unknown[]) => {
+      void args[2];
+      return Promise.resolve(mockFindAlias(args[0], args[1]));
+    });
+    mockFindInboundDomain.mockReset();
+    mockFindInboundDomain.mockResolvedValue({
+      id: "domain-1",
+      domain: "mail.example.com",
+      kind: "shared",
+      status: "active",
+    });
     mockCheckInboundLimit.mockReset();
     mockCheckInboundLimit.mockResolvedValue({ ok: true });
     mockFindHostedInboundBlock.mockReset();
@@ -494,6 +596,7 @@ describe("POST /inbound/raw", () => {
         "x-worker-ts": timestamp,
         "x-envelope-from": "sender@example.com",
         "x-local-part": "alerts",
+        "x-recipient-domain": "mail.example.com",
       },
       payload: rawEmail,
     });
@@ -503,15 +606,24 @@ describe("POST /inbound/raw", () => {
       {
         rawEmail: Buffer;
         localPart: string;
+        recipientDomain: string;
         envelopeFrom: string;
         rawEmailEncryption: { encryptionMode: string };
       },
     ];
     expect(queuedInput.rawEmail).toEqual(rawEmail);
     expect(queuedInput.localPart).toBe("alerts");
+    expect(queuedInput.recipientDomain).toBe("mail.example.com");
     expect(queuedInput.envelopeFrom).toBe("sender@example.com");
     expect(queuedInput.rawEmailEncryption).toMatchObject({ encryptionMode: "none" });
-    expect(mockWritePendingRawEmailMeta).toHaveBeenCalledOnce();
+    expect(mockWritePendingRawEmailMeta).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        localPart: "alerts",
+        recipientDomain: "mail.example.com",
+        envelopeFrom: "sender@example.com",
+      }),
+    );
     expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledOnce();
   });
 
@@ -614,6 +726,40 @@ describe("POST /inbound/raw", () => {
       recipientDomain: "mail.example.com",
       envelopeFrom: "sender@example.com",
     });
+    expect(mockCheckInboundLimit).not.toHaveBeenCalled();
+    expect(mockWriteRawEmail).not.toHaveBeenCalled();
+    expect(mockQueueInboundEmail).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 before raw persistence when hosted recipient domain is disabled", async () => {
+    process.env["APP_MODE"] = "hosted";
+    mockFindInboundDomain.mockResolvedValueOnce({
+      id: "domain-1",
+      domain: "mail.example.com",
+      kind: "shared",
+      status: "disabled",
+    });
+
+    const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
+    const { signature, timestamp } = signWorkerRequest(rawEmail);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/raw",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+        "x-envelope-from": "sender@example.com",
+        "x-local-part": "alerts",
+        "x-recipient-domain": "mail.example.com",
+      },
+      payload: rawEmail,
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(mockFindAliasByDomain).not.toHaveBeenCalled();
     expect(mockCheckInboundLimit).not.toHaveBeenCalled();
     expect(mockWriteRawEmail).not.toHaveBeenCalled();
     expect(mockQueueInboundEmail).not.toHaveBeenCalled();

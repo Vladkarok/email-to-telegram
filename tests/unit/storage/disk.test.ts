@@ -31,6 +31,7 @@ describe("pending raw email metadata", () => {
     const rawEmailPath = join(root, "2026-04-07", "message.eml");
     await writePendingRawEmailMeta(rawEmailPath, {
       localPart: "alerts",
+      recipientDomain: "mail.example.com",
       envelopeFrom: "sender@example.com",
       rawEmailEncryptionMode: "none",
       rawEmailWrappedDek: null,
@@ -44,6 +45,7 @@ describe("pending raw email metadata", () => {
       expect.objectContaining({
         rawEmailPath,
         localPart: "alerts",
+        recipientDomain: "mail.example.com",
         envelopeFrom: "sender@example.com",
         rawEmailEncryptionMode: "none",
         rawEmailWrappedDek: null,

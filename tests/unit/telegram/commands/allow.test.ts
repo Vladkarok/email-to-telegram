@@ -3,14 +3,17 @@ import { createMockCtx } from "../../../helpers/mockContext.js";
 
 vi.mock("../../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
-const mockFindAliasByLocalPart = vi.fn();
+const mockFindAliasByLocalPartAnyDomain = vi.fn();
+const mockFindAliasByFullAddress = vi.fn();
 const mockAddAllowRule = vi.fn();
 const mockFindAllowRuleByMatch = vi.fn();
 const mockRemoveAllowRule = vi.fn();
 const mockListAllowRules = vi.fn();
 
 vi.mock("../../../../src/db/repos/aliases.js", () => ({
-  findAliasByLocalPart: (...args: unknown[]): unknown => mockFindAliasByLocalPart(...args),
+  findAliasByLocalPartAnyDomain: (...args: unknown[]): unknown =>
+    mockFindAliasByLocalPartAnyDomain(...args),
+  findAliasByFullAddress: (...args: unknown[]): unknown => mockFindAliasByFullAddress(...args),
 }));
 
 vi.mock("../../../../src/db/repos/allowRules.js", () => ({
@@ -57,7 +60,8 @@ describe("/allow command", () => {
     mockHasActiveHostedOrganization.mockResolvedValue(true);
     mockCanManageAlias.mockResolvedValue(true);
     mockFindAllowRuleByMatch.mockResolvedValue(null);
-    mockFindAliasByLocalPart.mockResolvedValue(ALIAS);
+    mockFindAliasByLocalPartAnyDomain.mockResolvedValue(ALIAS);
+    mockFindAliasByFullAddress.mockResolvedValue(ALIAS);
   });
 
   describe("add subcommand", () => {
@@ -78,6 +82,28 @@ describe("/allow command", () => {
       expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/added|allow/i);
     });
 
+    it("resolves hosted aliases by full address", async () => {
+      const ctx = createMockCtx({
+        commandMatch: "add alerts-ab12cd@inbox.example.com github.com",
+      });
+
+      await allowHandler(ctx);
+
+      expect(mockFindAliasByFullAddress).toHaveBeenCalledWith(
+        expect.anything(),
+        "alerts-ab12cd@inbox.example.com",
+      );
+      expect(mockFindAliasByLocalPartAnyDomain).not.toHaveBeenCalled();
+      expect(mockAddAllowRule).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          emailAddressId: "uuid-1",
+          matchType: "domain",
+          matchValue: "github.com",
+        }),
+      );
+    });
+
     it("adds a domain allow rule", async () => {
       const ctx = createMockCtx({ commandMatch: "add alerts-ab12cd github.com" });
 
@@ -93,7 +119,7 @@ describe("/allow command", () => {
     });
 
     it("replies with error when alias not found", async () => {
-      mockFindAliasByLocalPart.mockResolvedValue(null);
+      mockFindAliasByLocalPartAnyDomain.mockResolvedValue(null);
       const ctx = createMockCtx({ commandMatch: "add nonexistent github.com" });
 
       await allowHandler(ctx);

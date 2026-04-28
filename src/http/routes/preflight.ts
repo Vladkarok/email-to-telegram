@@ -1,11 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { verifyWorkerRequest } from "../../utils/workerAuth.js";
 import { getDb } from "../../db/client.js";
-import { findAliasByLocalPart } from "../../db/repos/aliases.js";
 import { checkAllowRule } from "../../db/repos/allowRules.js";
 import { countRecentDeliveriesByAlias } from "../../db/repos/deliveryLogs.js";
 import { checkInboundLimit } from "../../billing/limits.js";
 import { findHostedInboundRejection } from "../../abuse/hostedInboundBlocklist.js";
+import { findAliasForInbound } from "../../email/inboundRouting.js";
 import { getLogger } from "../../utils/logger.js";
 
 export function preflightRoute(app: FastifyInstance): void {
@@ -38,7 +38,7 @@ export function preflightRoute(app: FastifyInstance): void {
         return;
       }
 
-      const alias = await findAliasByLocalPart(getDb(), localPart);
+      const alias = await findAliasForInbound(getDb(), { localPart, recipientDomain });
       if (!alias || alias.status !== "active") {
         await reply.send({ accept: false });
         return;

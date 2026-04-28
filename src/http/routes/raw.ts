@@ -5,9 +5,9 @@ import { verifyWorkerRequest } from "../../utils/workerAuth.js";
 import { getDb } from "../../db/client.js";
 import { getApi } from "../../telegram/api.js";
 import { queueInboundEmail, deliverQueuedEmail } from "../../email/pipeline.js";
-import { findAliasByLocalPart } from "../../db/repos/aliases.js";
 import { checkInboundLimit } from "../../billing/limits.js";
 import { findHostedInboundRejection } from "../../abuse/hostedInboundBlocklist.js";
+import { findAliasForInbound, shouldUseHostedDomainRouting } from "../../email/inboundRouting.js";
 import {
   writeRawEmail,
   writePendingRawEmailMeta,
@@ -99,7 +99,11 @@ export function rawRoute(
         return;
       }
 
-      const alias = await findAliasByLocalPart(getDb(), localPart);
+      const alias = await findAliasForInbound(getDb(), { localPart, recipientDomain });
+      if (shouldUseHostedDomainRouting() && alias?.status !== "active") {
+        await reply.status(403).send({ error: "rejected" });
+        return;
+      }
       if (alias?.status === "active") {
         const hostedBlock = await findHostedInboundRejection(getDb(), {
           organizationId: alias.organizationId,
@@ -145,6 +149,7 @@ export function rawRoute(
       try {
         await writePendingRawEmailMeta(storedPath, {
           localPart,
+          recipientDomain: recipientDomain ?? null,
           envelopeFrom: envelopeFrom ?? null,
           rawEmailEncryptionMode: rawEmailStorage.encryptionMode,
           rawEmailWrappedDek: rawEmailStorage.wrappedDek,
@@ -160,6 +165,7 @@ export function rawRoute(
         rawEmail: body,
         rawEmailPath: storedPath,
         localPart,
+        recipientDomain,
         envelopeFrom,
         correlationId: req.id,
         rawEmailEncryption: rawEmailStorage,

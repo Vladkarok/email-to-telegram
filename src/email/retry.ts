@@ -153,6 +153,7 @@ async function recoverPendingRawEmails(
         rawEmail,
         rawEmailPath: pendingEmail.rawEmailPath,
         localPart: pendingEmail.localPart,
+        recipientDomain: pendingEmail.recipientDomain ?? undefined,
         envelopeFrom: pendingEmail.envelopeFrom ?? undefined,
         correlationId: pendingEmail.correlationId,
         rawEmailEncryption: {

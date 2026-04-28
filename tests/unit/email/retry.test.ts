@@ -440,6 +440,7 @@ describe("runRetryWorker", () => {
       {
         rawEmailPath: fakeLog.rawEmailPath,
         localPart: "alerts",
+        recipientDomain: "mail.example.com",
         envelopeFrom: "sender@example.com",
         rawEmailEncryptionMode: "none",
         rawEmailWrappedDek: null,
@@ -462,6 +463,7 @@ describe("runRetryWorker", () => {
         rawEmail: Buffer;
         rawEmailPath: string;
         localPart: string;
+        recipientDomain: string;
         envelopeFrom: string;
         rawEmailEncryption: { encryptionMode: string };
       },
@@ -469,6 +471,7 @@ describe("runRetryWorker", () => {
     expect(queuedInput.rawEmail).toEqual(RAW_EMAIL);
     expect(queuedInput.rawEmailPath).toBe(fakeLog.rawEmailPath);
     expect(queuedInput.localPart).toBe("alerts");
+    expect(queuedInput.recipientDomain).toBe("mail.example.com");
     expect(queuedInput.envelopeFrom).toBe("sender@example.com");
     expect(queuedInput.rawEmailEncryption).toMatchObject({ encryptionMode: "none" });
     expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledWith(fakeLog.rawEmailPath);

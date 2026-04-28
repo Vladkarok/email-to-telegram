@@ -27,6 +27,7 @@ const STORAGE_FILE_MAGIC = Buffer.from("ETG1", "ascii");
 export interface PendingRawEmailMeta {
   rawEmailPath: string;
   localPart: string;
+  recipientDomain?: string | null;
   envelopeFrom: string | null;
   rawEmailEncryptionMode?: string | null;
   rawEmailWrappedDek?: string | null;
@@ -203,6 +204,7 @@ export async function writePendingRawEmailMeta(
   await overwritePendingRawEmailMeta({
     rawEmailPath,
     localPart: data.localPart,
+    recipientDomain: data.recipientDomain ?? null,
     envelopeFrom: data.envelopeFrom,
     rawEmailEncryptionMode: data.rawEmailEncryptionMode,
     rawEmailWrappedDek: data.rawEmailWrappedDek,
@@ -219,6 +221,7 @@ export async function overwritePendingRawEmailMeta(data: PendingRawEmailMeta): P
     JSON.stringify({
       rawEmailPath: data.rawEmailPath,
       localPart: data.localPart,
+      recipientDomain: data.recipientDomain ?? null,
       envelopeFrom: data.envelopeFrom,
       rawEmailEncryptionMode: data.rawEmailEncryptionMode,
       rawEmailWrappedDek: data.rawEmailWrappedDek,
