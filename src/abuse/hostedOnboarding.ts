@@ -5,15 +5,12 @@ import {
   ensurePersonalOrganizationForUser,
   getPrimaryOrganizationForUser,
 } from "../tenant/currentOrganization.js";
-import { RateLimiter } from "../utils/rateLimit.js";
+import { reserveHostedOnboardingAttempt } from "../db/repos/hostedOnboardingAttempts.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
 export const HOSTED_ONBOARDING_RATE_LIMIT_MESSAGE =
   "⚠️ Too many workspace setup attempts. Please try again later.";
-
-const hostedOnboardingLimiter = new RateLimiter(3, 24 * 60 * 60 * 1000);
-hostedOnboardingLimiter.startSweep(10 * 60_000);
 
 export class HostedOnboardingRateLimitError extends Error {
   constructor() {
@@ -29,13 +26,9 @@ export async function ensurePersonalOrganizationForUserWithOnboardingLimit(
   const existing = await getPrimaryOrganizationForUser(db, user.id);
   if (existing) return existing;
 
-  if (!hostedOnboardingLimiter.check(user.id.toString())) {
+  if (!(await reserveHostedOnboardingAttempt(db, user.id))) {
     throw new HostedOnboardingRateLimitError();
   }
 
   return ensurePersonalOrganizationForUser(db, user);
-}
-
-export function resetHostedOnboardingLimiterForTests(): void {
-  hostedOnboardingLimiter.destroy();
 }
