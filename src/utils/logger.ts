@@ -2,14 +2,22 @@ import pino from "pino";
 
 let _logger: pino.Logger | null = null;
 
-export function createLogger(level: string = "info"): pino.Logger {
-  return pino({
+export function createLogger(
+  level: string = "info",
+  destination?: pino.DestinationStream,
+): pino.Logger {
+  const options: pino.LoggerOptions = {
     level,
     transport:
-      process.env["NODE_ENV"] !== "production"
+      !destination && process.env["NODE_ENV"] !== "production"
         ? { target: "pino-pretty", options: { colorize: true } }
         : undefined,
-  });
+  };
+  return destination ? pino(options, destination) : pino(options);
+}
+
+export function stderrLoggerDestination(): pino.DestinationStream {
+  return pino.destination(2);
 }
 
 export function getLogger(): pino.Logger {

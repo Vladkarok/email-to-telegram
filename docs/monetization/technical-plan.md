@@ -634,7 +634,10 @@ Hosted v1 must also include:
 - delete-organization path that removes hosted aliases, memberships, raw emails,
   attachments, and organization-linked usage data
 - basic export path for organization metadata, aliases, and delivery-log summary
-- documented erasure SLA for hosted users
+- hosted-only operator CLI commands for export and deletion:
+  `--hosted-export-organization <organizationId> --hosted-export-output <path>`
+  and `--hosted-delete-organization <organizationId>`
+- documented erasure SLA and operator runbook for hosted users
 
 ## Stripe Integration Details
 
@@ -863,6 +866,7 @@ Manual Stripe test mode flow:
 - add plan-aware retention logic
 - test free vs paid cleanup
 - add delete-org and basic export path
+- add hosted-only operator commands and runbook for export/erasure requests
 
 12. Final verification:
 

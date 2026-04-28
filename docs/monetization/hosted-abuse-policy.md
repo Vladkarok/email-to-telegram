@@ -88,19 +88,42 @@ Current implementation notes:
 - `exportHostedOrganizationData` provides the basic export primitive.
 - `deleteHostedOrganization` removes hosted organization records and stored raw
   email files known to delivery logs.
+- `--hosted-export-organization` and `--hosted-delete-organization` expose the
+  primitives as hosted-only startup operations.
 - Normal retention cleanup continues to remove raw email and attachment data
   according to effective plan limits.
 
-Operator instructions still need to be written before public launch. They must
-cover:
+Operator instructions:
 
-- how to identify the requester and verify owner/admin access to the
-  organization
-- how to find the target `organizationId`
-- how to invoke export/delete primitives from the production environment
-- where to store the export while preparing delivery to the requester
-- how to record request receipt, completion time, and any retained-data
-  exception
+1. Verify the requester controls the Telegram account that owns or administers
+   the target workspace. If ownership is ambiguous, stop and request stronger
+   proof before accessing or deleting data.
+2. Find the target `organizationId` from the hosted support/admin context.
+3. For export, run the built service artifact from the production environment:
+
+   ```bash
+   APP_MODE=hosted npm start -- --hosted-export-organization <organizationId> --hosted-export-output /secure/support/exports/<organizationId>.json
+   ```
+
+   The output file is created with mode `0600` and the command fails if the
+   file already exists.
+
+4. Deliver exports only through the approved private support channel. Do not
+   attach exports to public issue trackers, chat rooms, or shared logs.
+5. For erasure, export first when the user requested a copy, then run:
+
+   ```bash
+   APP_MODE=hosted npm start -- --hosted-delete-organization <organizationId>
+   ```
+
+   The command writes operational logs to stderr and prints the JSON result to
+   stdout. It exits non-zero when the organization is missing or
+   `failedFileDeletes` is not empty. If file deletion is incomplete, remove
+   those paths manually and record the remediation.
+
+6. Record request receipt, requester identity check, command timestamp,
+   completion timestamp, and any retained-data exception in the private support
+   log.
 
 Do not delete another tenant's data while resolving a single organization
 request. If ownership is ambiguous, do not proceed until the requestor proves
@@ -130,6 +153,6 @@ Do not launch public hosted signup until all of these are true:
 - shared-domain block controls are available to the operator
 - shared-domain emergency disable has been tested
 - egress ceilings are enforced for attachment and privacy-view downloads
-- export and delete primitives have operator instructions
+- export and delete operator commands have been exercised in staging
 - a public acceptable-use/abuse contact is published
 - privacy/terms/refund/cancellation language has been reviewed
