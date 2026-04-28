@@ -18,10 +18,14 @@ vi.mock("../../../../src/db/repos/users.js", () => ({
   upsertUser: (...args: unknown[]): unknown => mockUpsertUser(...args),
 }));
 
-const mockEnsurePersonalOrganizationForUser = vi.fn();
-vi.mock("../../../../src/tenant/currentOrganization.js", () => ({
-  ensurePersonalOrganizationForUser: (...args: unknown[]): unknown =>
-    mockEnsurePersonalOrganizationForUser(...args),
+const mockEnsurePersonalOrganizationForUserWithOnboardingLimit = vi.fn();
+class MockHostedOnboardingRateLimitError extends Error {}
+vi.mock("../../../../src/abuse/hostedOnboarding.js", () => ({
+  HOSTED_ONBOARDING_RATE_LIMIT_MESSAGE:
+    "⚠️ Too many workspace setup attempts. Please try again later.",
+  HostedOnboardingRateLimitError: MockHostedOnboardingRateLimitError,
+  ensurePersonalOrganizationForUserWithOnboardingLimit: (...args: unknown[]): unknown =>
+    mockEnsurePersonalOrganizationForUserWithOnboardingLimit(...args),
 }));
 
 // Import after mocking
@@ -44,7 +48,7 @@ describe("authMiddleware", () => {
     vi.clearAllMocks();
     mockLoadConfig.mockReturnValue({ appMode: "self-hosted" });
     mockUpsertChat.mockResolvedValue(undefined);
-    mockEnsurePersonalOrganizationForUser.mockResolvedValue({
+    mockEnsurePersonalOrganizationForUserWithOnboardingLimit.mockResolvedValue({
       id: "org-1",
       name: "Org",
       planCode: "free",
@@ -84,7 +88,7 @@ describe("authMiddleware", () => {
 
     await authMiddleware(ctx, next);
 
-    expect(mockEnsurePersonalOrganizationForUser).toHaveBeenCalledWith(
+    expect(mockEnsurePersonalOrganizationForUserWithOnboardingLimit).toHaveBeenCalledWith(
       expect.anything(),
       BLOCKED_USER,
     );
@@ -119,6 +123,21 @@ describe("authMiddleware", () => {
 
     expect(mockUpsertChat).not.toHaveBeenCalled();
     expect(next).toHaveBeenCalledOnce();
+  });
+
+  it("in hosted mode: stops when onboarding is rate limited", async () => {
+    mockLoadConfig.mockReturnValue({ appMode: "hosted" });
+    mockUpsertUser.mockResolvedValue(BLOCKED_USER);
+    mockEnsurePersonalOrganizationForUserWithOnboardingLimit.mockRejectedValue(
+      new MockHostedOnboardingRateLimitError(),
+    );
+    const ctx = createMockCtx({ chatType: "private", fromId: 999 });
+
+    await authMiddleware(ctx, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(mockUpsertChat).not.toHaveBeenCalled();
+    expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("Too many workspace"));
   });
 
   it("upserts user with correct id and username", async () => {

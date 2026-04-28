@@ -20,10 +20,12 @@ vi.mock("../../../../src/db/repos/users.js", () => ({
   upsertUser: (...args: unknown[]): unknown => mockUpsertUser(...args),
 }));
 
-const mockEnsurePersonalOrganizationForUser = vi.fn();
-vi.mock("../../../../src/tenant/currentOrganization.js", () => ({
-  ensurePersonalOrganizationForUser: (...args: unknown[]): unknown =>
-    mockEnsurePersonalOrganizationForUser(...args),
+const mockEnsurePersonalOrganizationForUserWithOnboardingLimit = vi.fn();
+class MockHostedOnboardingRateLimitError extends Error {}
+vi.mock("../../../../src/abuse/hostedOnboarding.js", () => ({
+  HostedOnboardingRateLimitError: MockHostedOnboardingRateLimitError,
+  ensurePersonalOrganizationForUserWithOnboardingLimit: (...args: unknown[]): unknown =>
+    mockEnsurePersonalOrganizationForUserWithOnboardingLimit(...args),
 }));
 
 vi.mock("../../../../src/utils/logger.js", () => ({
@@ -58,7 +60,7 @@ describe("chatMemberHandler", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
-    mockEnsurePersonalOrganizationForUser.mockResolvedValue({
+    mockEnsurePersonalOrganizationForUserWithOnboardingLimit.mockResolvedValue({
       id: "org-1",
       name: "Org",
       planCode: "free",
@@ -89,9 +91,20 @@ describe("chatMemberHandler", () => {
       expect.anything(),
       expect.objectContaining({ id: 123456789n, username: "adder" }),
     );
-    expect(mockEnsurePersonalOrganizationForUser).toHaveBeenCalled();
+    expect(mockEnsurePersonalOrganizationForUserWithOnboardingLimit).toHaveBeenCalled();
     const [, data] = mockUpsertChat.mock.calls[0] as [unknown, { organizationId: string | null }];
     expect(data.organizationId).toBe("org-1");
+  });
+
+  it("in hosted mode: skips group registration when onboarding is rate limited", async () => {
+    mockLoadConfig.mockReturnValue({ appMode: "hosted" });
+    mockEnsurePersonalOrganizationForUserWithOnboardingLimit.mockRejectedValue(
+      new MockHostedOnboardingRateLimitError(),
+    );
+
+    await chatMemberHandler(makeCtx("supergroup", "member"));
+
+    expect(mockUpsertChat).not.toHaveBeenCalled();
   });
 
   it("upserts chat when bot is added as administrator", async () => {
