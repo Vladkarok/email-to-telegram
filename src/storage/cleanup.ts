@@ -1,7 +1,7 @@
 import { readdir, stat } from "fs/promises";
 import { join } from "path";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { and, eq, isNotNull, lt } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, lt, notExists, sql } from "drizzle-orm";
 import { deliveryLogs, attachments, organizations } from "../db/schema.js";
 import type * as schema from "../db/schema.js";
 import { deleteFile, deleteDir } from "./disk.js";
@@ -204,10 +204,43 @@ async function cleanDeliveryLogs(
   now: number,
   log: ReturnType<typeof getLogger>,
 ): Promise<void> {
-  const cutoff = new Date(now - retentionDays * 24 * 3600 * 1000);
+  const candidateCutoff = broadRetentionCandidateCutoff(now, retentionDays * 24);
   try {
-    const result = await db.delete(deliveryLogs).where(lt(deliveryLogs.createdAt, cutoff));
-    const rows = (result as unknown as { rowCount?: number }).rowCount ?? 0;
+    const candidates = await db
+      .select({
+        id: deliveryLogs.id,
+        createdAt: deliveryLogs.createdAt,
+        rawEmailPath: deliveryLogs.rawEmailPath,
+        organizationPlanCode: organizations.planCode,
+        organizationSubscriptionStatus: organizations.subscriptionStatus,
+        organizationCurrentPeriodEnd: organizations.currentPeriodEnd,
+      })
+      .from(deliveryLogs)
+      .leftJoin(organizations, eq(organizations.id, deliveryLogs.organizationId))
+      .where(lt(deliveryLogs.createdAt, candidateCutoff));
+
+    let rows = 0;
+    for (const row of candidates) {
+      if (
+        row.rawEmailPath ||
+        !isExpiredByDeliveryLogRetention(row.createdAt, now, retentionDays, rowOrganization(row))
+      ) {
+        continue;
+      }
+
+      const result = await db
+        .delete(deliveryLogs)
+        .where(
+          and(
+            eq(deliveryLogs.id, row.id),
+            isNull(deliveryLogs.rawEmailPath),
+            notExists(
+              sql`select 1 from ${attachments} where ${attachments.deliveryLogId} = ${deliveryLogs.id}`,
+            ),
+          ),
+        );
+      rows += (result as unknown as { rowCount?: number }).rowCount ?? 0;
+    }
     if (rows > 0) {
       log.info({ rows, retentionDays }, "cleanup: purged old delivery logs");
     }
@@ -236,6 +269,18 @@ function isExpiredByRetention(
     ? now - getEffectivePlan(organization).limits.retentionDays * 24 * 3600 * 1000
     : Number.NEGATIVE_INFINITY;
   return timestamp.getTime() < Math.max(globalCutoff, planCutoff);
+}
+
+function isExpiredByDeliveryLogRetention(
+  timestamp: Date,
+  now: number,
+  globalRetentionDays: number,
+  organization: RetentionOrganization,
+): boolean {
+  const retentionDays = organization
+    ? getEffectivePlan(organization).limits.retentionDays
+    : globalRetentionDays;
+  return timestamp.getTime() < now - retentionDays * 24 * 3600 * 1000;
 }
 
 function rowOrganization(row: {
