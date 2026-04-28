@@ -15,7 +15,19 @@ export async function getPrimaryOrganizationForUser(
   userId: bigint,
 ): Promise<Organization | null> {
   const memberships = await listOrganizationMembershipsForUser(db, userId);
-  const membership = memberships[0];
+  const membership = sortMembershipsForCurrentOrganization(memberships)[0];
+  if (!membership) return null;
+  return findOrganizationById(db, membership.organizationId);
+}
+
+export async function getBillingOrganizationForUser(
+  db: Db,
+  userId: bigint,
+): Promise<Organization | null> {
+  const memberships = await listOrganizationMembershipsForUser(db, userId);
+  const membership = sortMembershipsForCurrentOrganization(memberships).find(
+    (item) => item.role === "owner" || item.role === "admin",
+  );
   if (!membership) return null;
   return findOrganizationById(db, membership.organizationId);
 }
@@ -44,4 +56,27 @@ export async function ensurePersonalOrganizationForUser(db: Db, user: User): Pro
 
 function personalOrganizationName(user: Pick<User, "username" | "id">): string {
   return user.username ? `@${user.username}` : `Telegram ${user.id.toString()}`;
+}
+
+function sortMembershipsForCurrentOrganization<T extends { role: string; createdAt: Date }>(
+  memberships: T[],
+): T[] {
+  return [...memberships].sort((a, b) => {
+    const roleDelta = rolePriority(a.role) - rolePriority(b.role);
+    if (roleDelta !== 0) return roleDelta;
+    return a.createdAt.getTime() - b.createdAt.getTime();
+  });
+}
+
+function rolePriority(role: string): number {
+  switch (role) {
+    case "owner":
+      return 0;
+    case "admin":
+      return 1;
+    case "member":
+      return 2;
+    default:
+      return 3;
+  }
 }
