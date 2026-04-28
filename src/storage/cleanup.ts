@@ -2,13 +2,16 @@ import { readdir, stat } from "fs/promises";
 import { join } from "path";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { and, eq, isNotNull, lt } from "drizzle-orm";
-import { deliveryLogs, attachments } from "../db/schema.js";
+import { deliveryLogs, attachments, organizations } from "../db/schema.js";
 import type * as schema from "../db/schema.js";
 import { deleteFile, deleteDir } from "./disk.js";
 import { getLogger } from "../utils/logger.js";
 import { decrementOrganizationStorageUsage } from "../db/repos/storageUsage.js";
+import { getEffectivePlan } from "../billing/limits.js";
+import { PLAN_DEFINITIONS } from "../billing/plans.js";
 
 type Db = NodePgDatabase<typeof schema>;
+type RetentionOrganization = Parameters<typeof getEffectivePlan>[0] | null;
 
 export interface CleanupConfig {
   attachmentDir: string;
@@ -39,34 +42,42 @@ async function cleanAttachments(
   now: number,
   log: ReturnType<typeof getLogger>,
 ): Promise<void> {
-  const cutoff = new Date(now - ttlHours * 3600 * 1000);
+  const candidateCutoff = broadRetentionCandidateCutoff(now, ttlHours);
   try {
     // Delete DB rows older than cutoff (storagePath used to find files)
-    const expired = await db
+    const candidates = await db
       .select({
         id: attachments.id,
         storagePath: attachments.storagePath,
         sizeBytes: attachments.sizeBytes,
+        createdAt: attachments.createdAt,
         organizationId: deliveryLogs.organizationId,
+        organizationPlanCode: organizations.planCode,
+        organizationSubscriptionStatus: organizations.subscriptionStatus,
+        organizationCurrentPeriodEnd: organizations.currentPeriodEnd,
       })
       .from(attachments)
       .innerJoin(deliveryLogs, eq(deliveryLogs.id, attachments.deliveryLogId))
-      .where(lt(attachments.createdAt, cutoff));
+      .leftJoin(organizations, eq(organizations.id, deliveryLogs.organizationId))
+      .where(lt(attachments.createdAt, candidateCutoff));
 
     let deletedFiles = 0;
     let deletedRows = 0;
-    for (const { id, storagePath, sizeBytes, organizationId } of expired) {
+    for (const row of candidates) {
+      if (!isExpiredByRetention(row.createdAt, now, ttlHours, rowOrganization(row))) {
+        continue;
+      }
       try {
-        await deleteFile(storagePath);
+        await deleteFile(row.storagePath);
       } catch {
         continue;
       }
       const rows = await db.transaction(async (tx) => {
-        const result = await tx.delete(attachments).where(eq(attachments.id, id));
+        const result = await tx.delete(attachments).where(eq(attachments.id, row.id));
         const rowCount = (result as unknown as { rowCount?: number }).rowCount ?? 0;
-        if (rowCount > 0 && organizationId && sizeBytes != null && sizeBytes > 0) {
-          await decrementOrganizationStorageUsage(tx as Db, organizationId, {
-            attachmentBytes: BigInt(sizeBytes),
+        if (rowCount > 0 && row.organizationId && row.sizeBytes != null && row.sizeBytes > 0) {
+          await decrementOrganizationStorageUsage(tx as Db, row.organizationId, {
+            attachmentBytes: BigInt(row.sizeBytes),
           });
         }
         return rowCount;
@@ -121,25 +132,33 @@ async function cleanRawEmails(
   now: number,
   log: ReturnType<typeof getLogger>,
 ): Promise<void> {
-  const cutoffMs = now - ttlHours * 3600 * 1000;
+  const cutoffMs = broadRetentionCandidateCutoff(now, ttlHours).getTime();
   const cutoff = new Date(cutoffMs);
   try {
-    const expiredRawLogs = await db
+    const rawLogCandidates = await db
       .select({
         id: deliveryLogs.id,
         organizationId: deliveryLogs.organizationId,
+        organizationPlanCode: organizations.planCode,
+        organizationSubscriptionStatus: organizations.subscriptionStatus,
+        organizationCurrentPeriodEnd: organizations.currentPeriodEnd,
+        receivedAt: deliveryLogs.receivedAt,
         rawSizeBytes: deliveryLogs.rawSizeBytes,
         rawEmailPath: deliveryLogs.rawEmailPath,
       })
       .from(deliveryLogs)
+      .leftJoin(organizations, eq(organizations.id, deliveryLogs.organizationId))
       .where(and(isNotNull(deliveryLogs.rawEmailPath), lt(deliveryLogs.receivedAt, cutoff)));
     let cleared = 0;
-    for (const { id, organizationId, rawSizeBytes, rawEmailPath } of expiredRawLogs) {
-      if (!rawEmailPath) {
+    for (const row of rawLogCandidates) {
+      if (!row.rawEmailPath) {
+        continue;
+      }
+      if (!isExpiredByRetention(row.receivedAt, now, ttlHours, rowOrganization(row))) {
         continue;
       }
       try {
-        await deleteFile(rawEmailPath);
+        await deleteFile(row.rawEmailPath);
       } catch {
         continue;
       }
@@ -153,11 +172,16 @@ async function cleanRawEmails(
             rawEmailKekKeyId: null,
             rawEmailEncryptedAt: null,
           })
-          .where(eq(deliveryLogs.id, id));
+          .where(eq(deliveryLogs.id, row.id));
         const rowCount = (result as unknown as { rowCount?: number }).rowCount ?? 0;
-        if (rowCount > 0 && organizationId && rawSizeBytes != null && rawSizeBytes > 0) {
-          await decrementOrganizationStorageUsage(tx as Db, organizationId, {
-            rawEmailBytes: BigInt(rawSizeBytes),
+        if (
+          rowCount > 0 &&
+          row.organizationId &&
+          row.rawSizeBytes != null &&
+          row.rawSizeBytes > 0
+        ) {
+          await decrementOrganizationStorageUsage(tx as Db, row.organizationId, {
+            rawEmailBytes: BigInt(row.rawSizeBytes),
           });
         }
         return rowCount;
@@ -190,4 +214,42 @@ async function cleanDeliveryLogs(
   } catch (err: unknown) {
     log.error({ err }, "cleanup: delivery log purge failed");
   }
+}
+
+function broadRetentionCandidateCutoff(now: number, globalTtlHours: number): Date {
+  return new Date(Math.max(now - globalTtlHours * 3600 * 1000, now - minimumPlanRetentionMs()));
+}
+
+function minimumPlanRetentionMs(): number {
+  const retentionDays = Object.values(PLAN_DEFINITIONS).map((plan) => plan.limits.retentionDays);
+  return Math.min(...retentionDays) * 24 * 3600 * 1000;
+}
+
+function isExpiredByRetention(
+  timestamp: Date,
+  now: number,
+  globalTtlHours: number,
+  organization: RetentionOrganization,
+): boolean {
+  const globalCutoff = now - globalTtlHours * 3600 * 1000;
+  const planCutoff = organization
+    ? now - getEffectivePlan(organization).limits.retentionDays * 24 * 3600 * 1000
+    : Number.NEGATIVE_INFINITY;
+  return timestamp.getTime() < Math.max(globalCutoff, planCutoff);
+}
+
+function rowOrganization(row: {
+  organizationPlanCode: string | null;
+  organizationSubscriptionStatus: string | null;
+  organizationCurrentPeriodEnd: Date | null;
+}): RetentionOrganization {
+  if (!row.organizationPlanCode || !row.organizationSubscriptionStatus) {
+    return null;
+  }
+
+  return {
+    planCode: row.organizationPlanCode,
+    subscriptionStatus: row.organizationSubscriptionStatus,
+    currentPeriodEnd: row.organizationCurrentPeriodEnd,
+  };
 }
