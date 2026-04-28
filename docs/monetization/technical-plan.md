@@ -876,6 +876,8 @@ operator checklist.
 - full test/typecheck/lint/build
 - manual Stripe test mode walkthrough using
   [`stripe-test-mode-runbook.md`](./stripe-test-mode-runbook.md)
+- hosted pricing/terms draft reviewed and kept aligned with
+  `src/billing/plans.ts`
 
 ## Rollout Plan
 
