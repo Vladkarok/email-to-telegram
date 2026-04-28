@@ -7,6 +7,7 @@ import { getApi } from "../../telegram/api.js";
 import { queueInboundEmail, deliverQueuedEmail } from "../../email/pipeline.js";
 import { findAliasByLocalPart } from "../../db/repos/aliases.js";
 import { checkInboundLimit } from "../../billing/limits.js";
+import { findHostedInboundRejection } from "../../abuse/hostedInboundBlocklist.js";
 import {
   writeRawEmail,
   writePendingRawEmailMeta,
@@ -73,6 +74,7 @@ export function rawRoute(
       // SMTP envelope sender supplied by the Cloudflare Worker (message.from = MAIL FROM).
       // Used as the authoritative sender for allow-rule enforcement.
       const envelopeFrom = req.headers["x-envelope-from"] as string | undefined;
+      const recipientDomain = req.headers["x-recipient-domain"] as string | undefined;
 
       if (!sig || !ts) {
         await reply.status(401).send({ error: "missing signature" });
@@ -99,6 +101,27 @@ export function rawRoute(
 
       const alias = await findAliasByLocalPart(getDb(), localPart);
       if (alias?.status === "active") {
+        const hostedBlock = await findHostedInboundRejection(getDb(), {
+          organizationId: alias.organizationId,
+          localPart,
+          recipientDomain,
+          envelopeFrom,
+        });
+        if (hostedBlock) {
+          getLogger().info(
+            {
+              localPart,
+              aliasId: alias.id,
+              organizationId: alias.organizationId,
+              blockType: hostedBlock.blockType,
+              blockValue: hostedBlock.value,
+            },
+            "raw inbound rejected by hosted blocklist",
+          );
+          await reply.status(403).send({ error: "rejected" });
+          return;
+        }
+
         const inboundLimit = await checkInboundLimit(
           getDb(),
           alias.organizationId,

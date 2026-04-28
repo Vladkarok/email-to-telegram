@@ -5,6 +5,7 @@ import { findAliasByLocalPart } from "../../db/repos/aliases.js";
 import { checkAllowRule } from "../../db/repos/allowRules.js";
 import { countRecentDeliveriesByAlias } from "../../db/repos/deliveryLogs.js";
 import { checkInboundLimit } from "../../billing/limits.js";
+import { findHostedInboundRejection } from "../../abuse/hostedInboundBlocklist.js";
 import { getLogger } from "../../utils/logger.js";
 
 export function preflightRoute(app: FastifyInstance): void {
@@ -27,9 +28,10 @@ export function preflightRoute(app: FastifyInstance): void {
         return;
       }
 
-      const { localPart, envelopeFrom } = req.body as {
+      const { localPart, envelopeFrom, recipientDomain } = req.body as {
         localPart: string;
         envelopeFrom?: string;
+        recipientDomain?: string;
       };
       if (!localPart) {
         await reply.status(400).send({ error: "missing localPart" });
@@ -38,6 +40,27 @@ export function preflightRoute(app: FastifyInstance): void {
 
       const alias = await findAliasByLocalPart(getDb(), localPart);
       if (!alias || alias.status !== "active") {
+        await reply.send({ accept: false });
+        return;
+      }
+
+      const hostedBlock = await findHostedInboundRejection(getDb(), {
+        organizationId: alias.organizationId,
+        localPart,
+        recipientDomain,
+        envelopeFrom,
+      });
+      if (hostedBlock) {
+        getLogger().info(
+          {
+            localPart,
+            aliasId: alias.id,
+            organizationId: alias.organizationId,
+            blockType: hostedBlock.blockType,
+            blockValue: hostedBlock.value,
+          },
+          "inbound preflight rejected by hosted blocklist",
+        );
         await reply.send({ accept: false });
         return;
       }

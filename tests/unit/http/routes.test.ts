@@ -33,6 +33,7 @@ vi.mock("../../../src/db/repos/aliases.js", () => ({
 const mockCheckAllow = vi.fn();
 const mockCountRecentDeliveries = vi.fn();
 const mockCheckInboundLimit = vi.fn().mockResolvedValue({ ok: true });
+const mockFindHostedInboundBlock = vi.fn().mockResolvedValue(null);
 vi.mock("../../../src/db/repos/allowRules.js", () => ({
   checkAllowRule: (...args: unknown[]): unknown => mockCheckAllow(...args),
 }));
@@ -41,6 +42,9 @@ vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
 }));
 vi.mock("../../../src/billing/limits.js", () => ({
   checkInboundLimit: (...args: unknown[]): unknown => mockCheckInboundLimit(...args),
+}));
+vi.mock("../../../src/db/repos/hostedInboundBlocks.js", () => ({
+  findHostedInboundBlock: (...args: unknown[]): unknown => mockFindHostedInboundBlock(...args),
 }));
 
 const WORKER_SECRET = "test-worker-secret-32chars-abcde";
@@ -103,10 +107,13 @@ describe("GET /readyz", () => {
 
 describe("POST /inbound/preflight", () => {
   let savedSecret: string | undefined;
+  let savedAppMode: string | undefined;
 
   beforeEach(() => {
     savedSecret = process.env["WORKER_SECRET"];
+    savedAppMode = process.env["APP_MODE"];
     process.env["WORKER_SECRET"] = WORKER_SECRET;
+    delete process.env["APP_MODE"];
     mockWriteRawEmail.mockResolvedValue({
       encryptionMode: "none",
       wrappedDek: null,
@@ -121,12 +128,15 @@ describe("POST /inbound/preflight", () => {
     mockCheckAllow.mockReset();
     mockCheckInboundLimit.mockReset();
     mockCheckInboundLimit.mockResolvedValue({ ok: true });
+    mockFindHostedInboundBlock.mockReset();
+    mockFindHostedInboundBlock.mockResolvedValue(null);
     mockCountRecentDeliveries.mockReset();
     mockCountRecentDeliveries.mockResolvedValue(0);
   });
 
   afterEach(() => {
-    process.env["WORKER_SECRET"] = savedSecret;
+    restoreEnv("WORKER_SECRET", savedSecret);
+    restoreEnv("APP_MODE", savedAppMode);
   });
 
   it("returns 200 with accept:true for an active alias", async () => {
@@ -299,6 +309,97 @@ describe("POST /inbound/preflight", () => {
     expect(mockCountRecentDeliveries).not.toHaveBeenCalled();
   });
 
+  it("returns accept:false when hosted blocklist matches before quota and allow checks", async () => {
+    process.env["APP_MODE"] = "hosted";
+    mockFindAlias.mockResolvedValue({
+      id: "uuid-1",
+      status: "active",
+      localPart: "alerts",
+      organizationId: "org-1",
+    });
+    mockFindHostedInboundBlock.mockResolvedValueOnce({
+      id: "block-1",
+      blockType: "sender_domain",
+      value: "attacker.com",
+      reason: "abuse",
+      createdAt: new Date(),
+    });
+
+    const body = Buffer.from(
+      JSON.stringify({
+        localPart: "alerts",
+        recipientDomain: "mail.example.com",
+        envelopeFrom: "spam@attacker.com",
+      }),
+    );
+    const { signature, timestamp } = signWorkerRequest(body);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/preflight",
+      headers: {
+        "content-type": "application/json",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+      },
+      payload: body,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ accept: false });
+    expect(mockFindHostedInboundBlock).toHaveBeenCalledWith(expect.anything(), {
+      organizationId: "org-1",
+      localPart: "alerts",
+      recipientDomain: "mail.example.com",
+      envelopeFrom: "spam@attacker.com",
+    });
+    expect(mockCheckInboundLimit).not.toHaveBeenCalled();
+    expect(mockCheckAllow).not.toHaveBeenCalled();
+  });
+
+  it("skips hosted blocklist in self-hosted mode", async () => {
+    process.env["APP_MODE"] = "self-hosted";
+    mockFindAlias.mockResolvedValue({
+      id: "uuid-1",
+      status: "active",
+      localPart: "alerts",
+      organizationId: "org-1",
+    });
+    mockFindHostedInboundBlock.mockResolvedValueOnce({
+      id: "block-1",
+      blockType: "sender_domain",
+      value: "attacker.com",
+      createdAt: new Date(),
+    });
+    mockCheckAllow.mockResolvedValue(true);
+
+    const body = Buffer.from(
+      JSON.stringify({
+        localPart: "alerts",
+        recipientDomain: "mail.example.com",
+        envelopeFrom: "spam@attacker.com",
+      }),
+    );
+    const { signature, timestamp } = signWorkerRequest(body);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/preflight",
+      headers: {
+        "content-type": "application/json",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+      },
+      payload: body,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ accept: true });
+    expect(mockFindHostedInboundBlock).not.toHaveBeenCalled();
+  });
+
   it("returns accept:false when the hosted monthly quota has been reached", async () => {
     mockFindAlias.mockResolvedValue({
       id: "uuid-1",
@@ -339,10 +440,13 @@ describe("POST /inbound/preflight", () => {
 
 describe("POST /inbound/raw", () => {
   let savedSecret: string | undefined;
+  let savedAppMode: string | undefined;
 
   beforeEach(() => {
     savedSecret = process.env["WORKER_SECRET"];
+    savedAppMode = process.env["APP_MODE"];
     process.env["WORKER_SECRET"] = WORKER_SECRET;
+    delete process.env["APP_MODE"];
     mockWriteRawEmail.mockReset();
     mockWriteRawEmail.mockResolvedValue({
       encryptionMode: "none",
@@ -360,6 +464,8 @@ describe("POST /inbound/raw", () => {
     mockFindAlias.mockResolvedValue(null);
     mockCheckInboundLimit.mockReset();
     mockCheckInboundLimit.mockResolvedValue({ ok: true });
+    mockFindHostedInboundBlock.mockReset();
+    mockFindHostedInboundBlock.mockResolvedValue(null);
     mockQueueInboundEmail.mockReset();
     mockQueueInboundEmail.mockResolvedValue({
       queued: true,
@@ -370,7 +476,8 @@ describe("POST /inbound/raw", () => {
   });
 
   afterEach(() => {
-    process.env["WORKER_SECRET"] = savedSecret;
+    restoreEnv("WORKER_SECRET", savedSecret);
+    restoreEnv("APP_MODE", savedAppMode);
   });
 
   it("returns 202 for a valid signed raw email", async () => {
@@ -463,6 +570,51 @@ describe("POST /inbound/raw", () => {
     });
 
     expect(res.statusCode).toBe(403);
+    expect(mockWriteRawEmail).not.toHaveBeenCalled();
+    expect(mockQueueInboundEmail).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 when hosted blocklist matches before raw persistence", async () => {
+    process.env["APP_MODE"] = "hosted";
+    mockFindAlias.mockResolvedValue({
+      id: "uuid-1",
+      status: "active",
+      localPart: "alerts",
+      organizationId: "org-1",
+    });
+    mockFindHostedInboundBlock.mockResolvedValueOnce({
+      id: "block-1",
+      blockType: "recipient_domain",
+      value: "mail.example.com",
+      createdAt: new Date(),
+    });
+
+    const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
+    const { signature, timestamp } = signWorkerRequest(rawEmail);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/raw",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+        "x-envelope-from": "sender@example.com",
+        "x-local-part": "alerts",
+        "x-recipient-domain": "mail.example.com",
+      },
+      payload: rawEmail,
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(mockFindHostedInboundBlock).toHaveBeenCalledWith(expect.anything(), {
+      organizationId: "org-1",
+      localPart: "alerts",
+      recipientDomain: "mail.example.com",
+      envelopeFrom: "sender@example.com",
+    });
+    expect(mockCheckInboundLimit).not.toHaveBeenCalled();
     expect(mockWriteRawEmail).not.toHaveBeenCalled();
     expect(mockQueueInboundEmail).not.toHaveBeenCalled();
   });
@@ -646,3 +798,11 @@ describe("POST /inbound/raw", () => {
     expect(res.statusCode).toBe(401);
   });
 });
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[key];
+  } else {
+    process.env[key] = value;
+  }
+}

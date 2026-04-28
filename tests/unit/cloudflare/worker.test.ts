@@ -72,6 +72,32 @@ describe("Cloudflare Email Worker", () => {
     vi.unstubAllGlobals();
   });
 
+  it("sends recipient domain to preflight and raw upload", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ accept: true }))
+      .mockResolvedValueOnce(new Response("accepted", { status: 202 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const message = createMessage();
+
+    await emailWorker.email(message, env, createContext());
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const preflightInit = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(JSON.parse(new TextDecoder().decode(preflightInit.body as Uint8Array))).toEqual({
+      localPart: "alerts",
+      recipientDomain: "example.com",
+      envelopeFrom: "sender@example.com",
+    });
+
+    const rawInit = fetchMock.mock.calls[1][1] as RequestInit;
+    expect((rawInit.headers as Record<string, string>)["X-Local-Part"]).toBe("alerts");
+    expect((rawInit.headers as Record<string, string>)["X-Recipient-Domain"]).toBe("example.com");
+    expect((rawInit.headers as Record<string, string>)["X-Envelope-From"]).toBe(
+      "sender@example.com",
+    );
+  });
+
   it("permanently rejects aliases denied by preflight", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ accept: false }));
     vi.stubGlobal("fetch", fetchMock);

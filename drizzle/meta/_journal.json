@@ -92,6 +92,13 @@
       "when": 1777359600000,
       "tag": "0012_hosted_onboarding_attempts",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1777446000000,
+      "tag": "0013_hosted_inbound_blocks",
+      "breakpoints": true
     }
   ]
 }

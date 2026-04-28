@@ -386,6 +386,28 @@ export const hostedOnboardingAttempts = pgTable(
   ],
 );
 
+// ─── hosted_inbound_blocks ───────────────────────────────────────────────────
+
+export const hostedInboundBlocks = pgTable(
+  "hosted_inbound_blocks",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    blockType: varchar("block_type", { length: 32 }).notNull(),
+    value: varchar("value", { length: 320 }).notNull(),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("idx_hosted_inbound_block_type_value").on(t.blockType, t.value),
+    check(
+      "chk_hosted_inbound_block_type",
+      sql`${t.blockType} in ('sender_email', 'sender_domain', 'recipient_domain', 'local_part')`,
+    ),
+  ],
+);
+
 // ─── billing_webhook_events ──────────────────────────────────────────────────
 
 export const billingWebhookEvents = pgTable("billing_webhook_events", {
@@ -426,5 +448,7 @@ export type OrganizationStorageUsage = typeof organizationStorageUsage.$inferSel
 export type NewOrganizationStorageUsage = typeof organizationStorageUsage.$inferInsert;
 export type HostedOnboardingAttempt = typeof hostedOnboardingAttempts.$inferSelect;
 export type NewHostedOnboardingAttempt = typeof hostedOnboardingAttempts.$inferInsert;
+export type HostedInboundBlock = typeof hostedInboundBlocks.$inferSelect;
+export type NewHostedInboundBlock = typeof hostedInboundBlocks.$inferInsert;
 export type BillingWebhookEvent = typeof billingWebhookEvents.$inferSelect;
 export type NewBillingWebhookEvent = typeof billingWebhookEvents.$inferInsert;

@@ -19,14 +19,19 @@ interface Env {
 
 export default {
   async email(message: ForwardableEmailMessage, env: Env, _ctx: ExecutionContext): Promise<void> {
-    const localPart = extractLocalPart(message.to);
-    if (!localPart) {
+    const recipient = extractRecipientParts(message.to);
+    if (!recipient) {
       message.setReject("550 Invalid recipient address");
       return;
     }
+    const { localPart, domain: recipientDomain } = recipient;
 
     // ── 1. Preflight — verify alias + sender before streaming raw bytes ──────
-    const preflightBody = JSON.stringify({ localPart, envelopeFrom: message.from });
+    const preflightBody = JSON.stringify({
+      localPart,
+      recipientDomain,
+      envelopeFrom: message.from,
+    });
     const preflightBytes = new TextEncoder().encode(preflightBody);
 
     const { signature: pfSig, timestamp: pfTs } = await sign(preflightBytes, env.WORKER_SECRET);
@@ -80,6 +85,7 @@ export default {
           "X-Worker-Sig": rawSig,
           "X-Worker-Ts": rawTs,
           "X-Local-Part": localPart,
+          "X-Recipient-Domain": recipientDomain,
           "X-Envelope-From": message.from,
         },
         body: rawBytes,
@@ -106,14 +112,15 @@ export default {
 };
 
 /**
- * Extract the local-part (the portion before @) from a full email address.
+ * Extract the local-part and domain from a full email address.
  * Returns null if the address is malformed.
  */
-function extractLocalPart(address: string): string | null {
+function extractRecipientParts(address: string): { localPart: string; domain: string } | null {
   const atIndex = address.lastIndexOf("@");
   if (atIndex <= 0) return null;
   const local = address.slice(0, atIndex);
-  return local.length > 0 ? local : null;
+  const domain = address.slice(atIndex + 1).toLowerCase();
+  return local.length > 0 && domain.length > 0 ? { localPart: local, domain } : null;
 }
 
 function isPermanentRawUploadFailure(status: number): boolean {
