@@ -287,7 +287,7 @@ describe("runCleanup", () => {
       },
     ]);
 
-    await runCleanup(db, longRetentionConfig);
+    await runCleanup(db, config);
 
     expect(mockDeleteFile).toHaveBeenCalledTimes(1);
     expect(mockDeleteFile).toHaveBeenCalledWith("/data/attachments/free/file.bin");
@@ -337,6 +337,39 @@ describe("runCleanup", () => {
         rawEmailBytes: 42n,
       },
     );
+  });
+
+  it("keeps active paid storage through plan retention even when the global file TTL is shorter", async () => {
+    const twentyDaysAgo = new Date(Date.now() - 20 * 24 * 3600 * 1000);
+    const db = makeDb(
+      [
+        {
+          id: "att-pro",
+          storagePath: "/data/attachments/pro/file.bin",
+          sizeBytes: 10,
+          organizationId: "org-pro",
+          createdAt: twentyDaysAgo,
+          organizationPlanCode: "pro",
+          organizationSubscriptionStatus: "active",
+        },
+      ],
+      [
+        {
+          id: "raw-pro",
+          rawEmailPath: "/data/rawemails/pro/message.eml",
+          rawSizeBytes: 42,
+          organizationId: "org-pro",
+          receivedAt: twentyDaysAgo,
+          organizationPlanCode: "pro",
+          organizationSubscriptionStatus: "active",
+        },
+      ],
+    );
+
+    await runCleanup(db, config);
+
+    expect(mockDeleteFile).not.toHaveBeenCalled();
+    expect(mockDecrementOrganizationStorageUsage).not.toHaveBeenCalled();
   });
 
   it("keeps attachment row and storage usage unchanged when attachment file deletion fails", async () => {

@@ -264,11 +264,10 @@ function isExpiredByRetention(
   globalTtlHours: number,
   organization: RetentionOrganization,
 ): boolean {
-  const globalCutoff = now - globalTtlHours * 3600 * 1000;
-  const planCutoff = organization
-    ? now - getEffectivePlan(organization).limits.retentionDays * 24 * 3600 * 1000
-    : Number.NEGATIVE_INFINITY;
-  return timestamp.getTime() < Math.max(globalCutoff, planCutoff);
+  const retentionMs = organization
+    ? getEffectivePlan(organization).limits.retentionDays * 24 * 3600 * 1000
+    : globalTtlHours * 3600 * 1000;
+  return timestamp.getTime() < now - retentionMs;
 }
 
 function isExpiredByDeliveryLogRetention(
