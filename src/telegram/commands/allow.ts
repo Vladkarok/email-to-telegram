@@ -1,4 +1,6 @@
+import { InlineKeyboard } from "grammy";
 import type { CommandContext, Context } from "grammy";
+import { BILLING_UPGRADE_CALLBACK } from "./billing.js";
 import { getDb } from "../../db/client.js";
 import { findAliasByLocalPart } from "../../db/repos/aliases.js";
 import type { EmailAddress } from "../../db/schema.js";
@@ -195,8 +197,9 @@ async function replyForAllowRuleLimitFailure(
     return;
   }
 
+  const keyboard = new InlineKeyboard().text("⬆️ Upgrade Plan", BILLING_UPGRADE_CALLBACK);
   await ctx.reply(
     `📦 Plan limit reached for <code>${escapeHtml(localPart)}</code>: ${limit.used ?? limit.limit}/${limit.limit} allow rules used. Upgrade to add more.`,
-    { parse_mode: "HTML" },
+    { parse_mode: "HTML", reply_markup: keyboard },
   );
 }

@@ -2,12 +2,36 @@ import { InlineKeyboard } from "grammy";
 import type { Context } from "grammy";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../../db/schema.js";
+import { loadConfig } from "../../config.js";
 import { getAccessibleChats } from "../authorization.js";
+import { getPrimaryOrganizationForUser } from "../../tenant/currentOrganization.js";
+import { getEffectivePlan } from "../../billing/limits.js";
+import { countActiveAliasesByOrganization } from "../../db/repos/aliases.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
 function chatIcon(type: string): string {
   return type === "private" ? "🏠" : "👥";
+}
+
+/**
+ * Returns a one-line plan/alias footer for hosted mode,
+ * e.g. "Plan: Free | 2/3 aliases used".
+ * Returns null in self-hosted mode or when org info is unavailable.
+ */
+async function buildPlanFooter(db: Db, userId: number): Promise<string | null> {
+  if (loadConfig().appMode !== "hosted") return null;
+
+  try {
+    const org = await getPrimaryOrganizationForUser(db, BigInt(userId));
+    if (!org) return null;
+
+    const plan = getEffectivePlan(org);
+    const used = await countActiveAliasesByOrganization(db, org.id);
+    return `Plan: ${plan.name} | ${used}/${plan.limits.aliases} aliases used`;
+  } catch {
+    return null;
+  }
 }
 
 export async function sendChatSelectionMenu(
@@ -31,7 +55,12 @@ export async function sendChatSelectionMenu(
     keyboard.text(`${chatIcon(chat.type)} ${chat.title}`, `cm:${chat.id}`).row();
   }
 
-  await ctx.reply(`${prefix}Select a chat to manage:`, { reply_markup: keyboard });
+  const footer = await buildPlanFooter(db, ctx.from.id);
+  const body = footer
+    ? `${prefix}Select a chat to manage:\n\n<i>${footer}</i>`
+    : `${prefix}Select a chat to manage:`;
+
+  await ctx.reply(body, { parse_mode: "HTML", reply_markup: keyboard });
 }
 
 export async function editChatSelectionMenu(ctx: Context, db: Db): Promise<void> {
@@ -50,7 +79,10 @@ export async function editChatSelectionMenu(ctx: Context, db: Db): Promise<void>
     keyboard.text(`${chatIcon(chat.type)} ${chat.title}`, `cm:${chat.id}`).row();
   }
 
-  await ctx.editMessageText("Select a chat to manage:", { reply_markup: keyboard });
+  const footer = await buildPlanFooter(db, ctx.from.id);
+  const body = footer ? `Select a chat to manage:\n\n<i>${footer}</i>` : "Select a chat to manage:";
+
+  await ctx.editMessageText(body, { parse_mode: "HTML", reply_markup: keyboard });
 }
 
 export async function editChatManagementMenu(

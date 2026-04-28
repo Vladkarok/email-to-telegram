@@ -1,4 +1,5 @@
 import { InlineKeyboard } from "grammy";
+import { BILLING_UPGRADE_CALLBACK } from "./billing.js";
 import type { CommandContext, Context } from "grammy";
 import { customAlphabet } from "nanoid";
 import { getDb } from "../../db/client.js";
@@ -176,7 +177,9 @@ async function replyForAliasLimitFailure(
     return;
   }
 
+  const keyboard = new InlineKeyboard().text("⬆️ Upgrade Plan", BILLING_UPGRADE_CALLBACK);
   await ctx.reply(
     `📦 Plan limit reached: ${limit.used ?? limit.limit}/${limit.limit} aliases used. Upgrade to create more aliases.`,
+    { reply_markup: keyboard },
   );
 }

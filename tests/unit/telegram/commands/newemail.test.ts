@@ -193,9 +193,14 @@ describe("/newemail command", () => {
     await newemailHandler(ctx);
 
     expect(mockCreateAlias).not.toHaveBeenCalled();
-    expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
-      /limit reached|upgrade/i,
-    );
+    const [text, opts] = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      { reply_markup?: { inline_keyboard: Array<Array<{ callback_data?: string }>> } },
+    ];
+    expect(text).toMatch(/limit reached|upgrade/i);
+    // Should include an upgrade button
+    const buttons = opts?.reply_markup?.inline_keyboard?.flat() ?? [];
+    expect(buttons.some((b) => b.callback_data === "bill:upgrade")).toBe(true);
   });
 
   it("shows a hosted workspace error when alias creation has no active organization", async () => {
