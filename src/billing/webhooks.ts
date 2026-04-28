@@ -8,6 +8,7 @@ import {
   findOrganizationByStripeCustomerId,
   findOrganizationByStripeSubscriptionId,
   updateOrganizationBillingState,
+  updateOrganizationPaidThroughAtIfLater,
 } from "../db/repos/organizations.js";
 import { resolvePlanFromStripePriceId } from "./stripe.js";
 
@@ -51,9 +52,11 @@ export async function processStripeWebhookEvent(
       case "customer.subscription.deleted": {
         return applyStripeSubscription(txDb, event.type, event.data.object);
       }
-      case "invoice.payment_succeeded":
+      case "invoice.payment_succeeded": {
+        return applyStripeInvoicePaymentSucceeded(txDb, event.data.object);
+      }
       case "invoice.payment_failed": {
-        return applyStripeInvoice(txDb, event.data.object);
+        return validateStripeInvoiceSubject(txDb, event.data.object);
       }
       default:
         return "ignored";
@@ -119,7 +122,7 @@ async function applyStripeSubscription(
   return "processed";
 }
 
-async function applyStripeInvoice(db: Db, invoice: Stripe.Invoice): Promise<"ignored"> {
+async function validateStripeInvoiceSubject(db: Db, invoice: Stripe.Invoice): Promise<"ignored"> {
   const stripeSubscriptionId = getInvoiceSubscriptionId(invoice);
   const organization = await findOrganizationForStripeSubject(db, {
     organizationId: invoice.parent?.subscription_details?.metadata?.["organizationId"] ?? null,
@@ -143,6 +146,36 @@ async function applyStripeInvoice(db: Db, invoice: Stripe.Invoice): Promise<"ign
   // Subscription events remain the authoritative source of billing state. Invoice
   // payment events can arrive out of order, so we avoid mutating plan/status here.
   return "ignored";
+}
+
+async function applyStripeInvoicePaymentSucceeded(
+  db: Db,
+  invoice: Stripe.Invoice,
+): Promise<"processed" | "ignored"> {
+  const stripeSubscriptionId = getInvoiceSubscriptionId(invoice);
+  const organization = await findOrganizationForStripeSubject(db, {
+    organizationId: invoice.parent?.subscription_details?.metadata?.["organizationId"] ?? null,
+    stripeCustomerId: typeof invoice.customer === "string" ? invoice.customer : null,
+    stripeSubscriptionId,
+  });
+  if (!organization) return "ignored";
+  if (
+    shouldIgnoreStripeUpdate(
+      organization,
+      stripeSubscriptionId,
+      typeof invoice.customer === "string" ? invoice.customer : null,
+    )
+  ) {
+    return "ignored";
+  }
+  if (!stripeSubscriptionId || organization.stripeSubscriptionId !== stripeSubscriptionId) {
+    return "ignored";
+  }
+
+  const paidThroughAt = getInvoicePaidThroughAt(invoice, stripeSubscriptionId);
+  if (!paidThroughAt) return "ignored";
+  await updateOrganizationPaidThroughAtIfLater(db, organization.id, paidThroughAt);
+  return "processed";
 }
 
 async function findOrganizationForStripeSubject(
@@ -193,6 +226,35 @@ function getInvoiceSubscriptionId(invoice: Stripe.Invoice): string | null {
     return value.id;
   }
   return null;
+}
+
+function getInvoicePaidThroughAt(
+  invoice: Stripe.Invoice,
+  stripeSubscriptionId: string | null,
+): Date | null {
+  if (!stripeSubscriptionId) return null;
+
+  const periodEnds = (invoice.lines?.data ?? [])
+    .filter((line) => isSubscriptionInvoiceLine(line, stripeSubscriptionId))
+    .map((line) => line.period?.end)
+    .filter((periodEnd): periodEnd is number => typeof periodEnd === "number");
+
+  if (periodEnds.length === 0) return null;
+  return new Date(Math.max(...periodEnds) * 1000);
+}
+
+function isSubscriptionInvoiceLine(
+  line: Stripe.InvoiceLineItem,
+  stripeSubscriptionId: string,
+): boolean {
+  const parent = line.parent as
+    | {
+        subscription_item_details?: { subscription?: string | null } | null;
+      }
+    | null
+    | undefined;
+
+  return parent?.subscription_item_details?.subscription === stripeSubscriptionId;
 }
 
 function mapStripeSubscriptionStatus(status: Stripe.Subscription.Status) {

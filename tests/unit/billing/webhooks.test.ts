@@ -10,6 +10,7 @@ const mockFindOrganizationById = vi.fn();
 const mockFindOrganizationByStripeCustomerId = vi.fn();
 const mockFindOrganizationByStripeSubscriptionId = vi.fn();
 const mockUpdateOrganizationBillingState = vi.fn();
+const mockUpdateOrganizationPaidThroughAtIfLater = vi.fn();
 vi.mock("../../../src/db/repos/organizations.js", () => ({
   findOrganizationById: (...args: unknown[]): unknown => mockFindOrganizationById(...args),
   findOrganizationByStripeCustomerId: (...args: unknown[]): unknown =>
@@ -18,6 +19,8 @@ vi.mock("../../../src/db/repos/organizations.js", () => ({
     mockFindOrganizationByStripeSubscriptionId(...args),
   updateOrganizationBillingState: (...args: unknown[]): unknown =>
     mockUpdateOrganizationBillingState(...args),
+  updateOrganizationPaidThroughAtIfLater: (...args: unknown[]): unknown =>
+    mockUpdateOrganizationPaidThroughAtIfLater(...args),
 }));
 
 const mockLoadConfig = vi.fn();
@@ -246,18 +249,170 @@ describe("processStripeWebhookEvent", () => {
     expect(mockRecordBillingWebhookEvent).toHaveBeenCalledTimes(2);
   });
 
-  it("ignores invoice payment events so they cannot clobber subscription state", async () => {
+  it("records paid-through time from successful invoice payments without clobbering plan state", async () => {
     mockFindOrganizationByStripeSubscriptionId.mockResolvedValue({
       id: "org-1",
       planCode: "pro",
       stripeCustomerId: "cus_123",
       stripeSubscriptionId: "sub_123",
+      paidThroughAt: null,
     });
 
     await expect(
       processStripeWebhookEvent(buildDb(), {
         id: "evt_invoice_paid",
         type: "invoice.payment_succeeded",
+        data: {
+          object: {
+            customer: "cus_123",
+            parent: {
+              subscription_details: {
+                metadata: { organizationId: "org-1" },
+                subscription: "sub_123",
+              },
+            },
+            lines: {
+              data: [
+                {
+                  parent: {
+                    subscription_item_details: {
+                      subscription: "sub_123",
+                    },
+                  },
+                  period: { end: 1_700_086_400 },
+                },
+              ],
+            },
+          },
+        },
+      } as never),
+    ).resolves.toBe("processed");
+
+    expect(mockUpdateOrganizationPaidThroughAtIfLater).toHaveBeenCalledWith(
+      expect.anything(),
+      "org-1",
+      new Date(1_700_086_400 * 1000),
+    );
+  });
+
+  it("uses the latest subscription service-period line for paid-through time", async () => {
+    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue({
+      id: "org-1",
+      planCode: "pro",
+      stripeCustomerId: "cus_123",
+      stripeSubscriptionId: "sub_123",
+      paidThroughAt: null,
+    });
+
+    await expect(
+      processStripeWebhookEvent(buildDb(), {
+        id: "evt_invoice_paid_lines",
+        type: "invoice.payment_succeeded",
+        data: {
+          object: {
+            customer: "cus_123",
+            parent: {
+              subscription_details: {
+                metadata: { organizationId: "org-1" },
+                subscription: "sub_123",
+              },
+            },
+            lines: {
+              data: [
+                {
+                  type: "invoiceitem",
+                  subscription: "sub_123",
+                  period: { end: 1_700_259_200 },
+                },
+                {
+                  parent: {
+                    subscription_item_details: {
+                      subscription: "sub_123",
+                    },
+                  },
+                  period: { end: 1_700_086_400 },
+                },
+                {
+                  parent: {
+                    subscription_item_details: {
+                      subscription: "sub_123",
+                    },
+                  },
+                  period: { end: 1_700_172_800 },
+                },
+              ],
+            },
+          },
+        },
+      } as never),
+    ).resolves.toBe("processed");
+
+    expect(mockUpdateOrganizationPaidThroughAtIfLater).toHaveBeenCalledWith(
+      expect.anything(),
+      "org-1",
+      new Date(1_700_172_800 * 1000),
+    );
+  });
+
+  it("delegates paid-through monotonicity to the organization repo", async () => {
+    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue({
+      id: "org-1",
+      planCode: "pro",
+      stripeCustomerId: "cus_123",
+      stripeSubscriptionId: "sub_123",
+      paidThroughAt: new Date(1_700_172_800 * 1000),
+    });
+
+    await expect(
+      processStripeWebhookEvent(buildDb(), {
+        id: "evt_invoice_paid_monotonic",
+        type: "invoice.payment_succeeded",
+        data: {
+          object: {
+            customer: "cus_123",
+            parent: {
+              subscription_details: {
+                metadata: { organizationId: "org-1" },
+                subscription: "sub_123",
+              },
+            },
+            lines: {
+              data: [
+                {
+                  parent: {
+                    subscription_item_details: {
+                      subscription: "sub_123",
+                    },
+                  },
+                  period: { end: 1_700_086_400 },
+                },
+              ],
+            },
+          },
+        },
+      } as never),
+    ).resolves.toBe("processed");
+
+    expect(mockUpdateOrganizationPaidThroughAtIfLater).toHaveBeenCalledWith(
+      expect.anything(),
+      "org-1",
+      new Date(1_700_086_400 * 1000),
+    );
+  });
+
+  it("ignores failed invoice payments so they cannot clobber subscription state", async () => {
+    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue({
+      id: "org-1",
+      planCode: "pro",
+      stripeCustomerId: "cus_123",
+      stripeSubscriptionId: "sub_123",
+      paidThroughAt: null,
+    });
+
+    await expect(
+      processStripeWebhookEvent(buildDb(), {
+        id: "evt_invoice_failed",
+        type: "invoice.payment_failed",
         data: {
           object: {
             customer: "cus_123",
