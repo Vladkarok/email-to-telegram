@@ -3,7 +3,11 @@ import { loadConfig } from "../../config.js";
 import { getDb } from "../../db/client.js";
 import { upsertChat } from "../../db/repos/chats.js";
 import { upsertUser } from "../../db/repos/users.js";
-import { ensurePersonalOrganizationForUser } from "../../tenant/currentOrganization.js";
+import {
+  HOSTED_ONBOARDING_RATE_LIMIT_MESSAGE,
+  HostedOnboardingRateLimitError,
+  ensurePersonalOrganizationForUserWithOnboardingLimit,
+} from "../../abuse/hostedOnboarding.js";
 import { RateLimiter } from "../../utils/rateLimit.js";
 
 // 30 commands per minute per user; sweep idle keys every 60 s to prevent memory growth
@@ -25,7 +29,16 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
   });
 
   if (loadConfig().appMode === "hosted") {
-    const organization = await ensurePersonalOrganizationForUser(db, user);
+    let organization;
+    try {
+      organization = await ensurePersonalOrganizationForUserWithOnboardingLimit(db, user);
+    } catch (err: unknown) {
+      if (err instanceof HostedOnboardingRateLimitError) {
+        await ctx.reply(HOSTED_ONBOARDING_RATE_LIMIT_MESSAGE);
+        return;
+      }
+      throw err;
+    }
     if (ctx.chat?.type === "private") {
       await upsertChat(db, {
         id: BigInt(ctx.chat.id),

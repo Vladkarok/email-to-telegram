@@ -368,6 +368,24 @@ export const organizationStorageUsage = pgTable(
   ],
 );
 
+// ─── hosted_onboarding_attempts ──────────────────────────────────────────────
+
+export const hostedOnboardingAttempts = pgTable(
+  "hosted_onboarding_attempts",
+  {
+    bucketType: varchar("bucket_type", { length: 32 }).notNull(),
+    bucketKey: varchar("bucket_key", { length: 255 }).notNull(),
+    windowStart: varchar("window_start", { length: 10 }).notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.bucketType, t.bucketKey, t.windowStart] }),
+    check("chk_hosted_onboarding_attempts_nonnegative", sql`${t.attempts} >= 0`),
+  ],
+);
+
 // ─── billing_webhook_events ──────────────────────────────────────────────────
 
 export const billingWebhookEvents = pgTable("billing_webhook_events", {
@@ -406,5 +424,7 @@ export type OrganizationUsageMonth = typeof organizationUsageMonths.$inferSelect
 export type NewOrganizationUsageMonth = typeof organizationUsageMonths.$inferInsert;
 export type OrganizationStorageUsage = typeof organizationStorageUsage.$inferSelect;
 export type NewOrganizationStorageUsage = typeof organizationStorageUsage.$inferInsert;
+export type HostedOnboardingAttempt = typeof hostedOnboardingAttempts.$inferSelect;
+export type NewHostedOnboardingAttempt = typeof hostedOnboardingAttempts.$inferInsert;
 export type BillingWebhookEvent = typeof billingWebhookEvents.$inferSelect;
 export type NewBillingWebhookEvent = typeof billingWebhookEvents.$inferInsert;
