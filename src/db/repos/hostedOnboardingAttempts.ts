@@ -21,31 +21,40 @@ export async function reserveHostedOnboardingAttempt(
   now = new Date(),
   limits: HostedOnboardingLimits = DEFAULT_LIMITS,
 ): Promise<boolean> {
+  return db.transaction(async (tx) =>
+    reserveHostedOnboardingAttemptInTransaction(tx as Db, telegramUserId, now, limits),
+  );
+}
+
+export async function reserveHostedOnboardingAttemptInTransaction(
+  db: Db,
+  telegramUserId: bigint,
+  now = new Date(),
+  limits: HostedOnboardingLimits = DEFAULT_LIMITS,
+): Promise<boolean> {
   const windowStart = hostedOnboardingWindowStart(now);
   const userKey = telegramUserId.toString();
 
-  return db.transaction(async (tx) => {
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtext(${`hosted-onboarding:${windowStart}`}))`,
-    );
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtext(${`hosted-onboarding:user:${userKey}`}))`,
-    );
+  await db.execute(
+    sql`select pg_advisory_xact_lock(hashtext(${`hosted-onboarding:${windowStart}`}))`,
+  );
+  await db.execute(
+    sql`select pg_advisory_xact_lock(hashtext(${`hosted-onboarding:user:${userKey}`}))`,
+  );
 
-    const [globalBucket, userBucket] = await Promise.all([
-      findBucket(tx as Db, "global", "all", windowStart),
-      findBucket(tx as Db, "telegram_user", userKey, windowStart),
-    ]);
+  const [globalBucket, userBucket] = await Promise.all([
+    findBucket(db, "global", "all", windowStart),
+    findBucket(db, "telegram_user", userKey, windowStart),
+  ]);
 
-    if ((globalBucket?.attempts ?? 0) >= limits.globalDaily) return false;
-    if ((userBucket?.attempts ?? 0) >= limits.perTelegramUserDaily) return false;
+  if ((globalBucket?.attempts ?? 0) >= limits.globalDaily) return false;
+  if ((userBucket?.attempts ?? 0) >= limits.perTelegramUserDaily) return false;
 
-    await Promise.all([
-      incrementBucket(tx as Db, "global", "all", windowStart),
-      incrementBucket(tx as Db, "telegram_user", userKey, windowStart),
-    ]);
-    return true;
-  });
+  await Promise.all([
+    incrementBucket(db, "global", "all", windowStart),
+    incrementBucket(db, "telegram_user", userKey, windowStart),
+  ]);
+  return true;
 }
 
 export function hostedOnboardingWindowStart(date = new Date()): string {

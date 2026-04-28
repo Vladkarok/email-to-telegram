@@ -1,11 +1,11 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import { sql } from "drizzle-orm";
 import type * as schema from "../db/schema.js";
 import type { Organization, User } from "../db/schema.js";
-import {
-  ensurePersonalOrganizationForUser,
-  getPrimaryOrganizationForUser,
-} from "../tenant/currentOrganization.js";
-import { reserveHostedOnboardingAttempt } from "../db/repos/hostedOnboardingAttempts.js";
+import { createOrganization } from "../db/repos/organizations.js";
+import { addOrganizationMember } from "../db/repos/organizationMembers.js";
+import { getPrimaryOrganizationForUser } from "../tenant/currentOrganization.js";
+import { reserveHostedOnboardingAttemptInTransaction } from "../db/repos/hostedOnboardingAttempts.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -23,12 +23,31 @@ export async function ensurePersonalOrganizationForUserWithOnboardingLimit(
   db: Db,
   user: User,
 ): Promise<Organization> {
-  const existing = await getPrimaryOrganizationForUser(db, user.id);
-  if (existing) return existing;
+  return db.transaction(async (tx) => {
+    const transactionalDb = tx as Db;
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${user.id.toString()}))`);
 
-  if (!(await reserveHostedOnboardingAttempt(db, user.id))) {
-    throw new HostedOnboardingRateLimitError();
-  }
+    const existing = await getPrimaryOrganizationForUser(transactionalDb, user.id);
+    if (existing) return existing;
 
-  return ensurePersonalOrganizationForUser(db, user);
+    if (!(await reserveHostedOnboardingAttemptInTransaction(transactionalDb, user.id))) {
+      throw new HostedOnboardingRateLimitError();
+    }
+
+    const organization = await createOrganization(transactionalDb, {
+      name: personalOrganizationName(user),
+      planCode: "free",
+      subscriptionStatus: "free",
+    });
+    await addOrganizationMember(transactionalDb, {
+      organizationId: organization.id,
+      userId: user.id,
+      role: "owner",
+    });
+    return organization;
+  });
+}
+
+function personalOrganizationName(user: Pick<User, "username" | "id">): string {
+  return user.username ? `@${user.username}` : `Telegram ${user.id.toString()}`;
 }
