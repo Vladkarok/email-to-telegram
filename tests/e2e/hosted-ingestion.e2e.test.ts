@@ -18,6 +18,7 @@ const state = {
     maxEmailsHour: 60,
   },
   allow: true,
+  hostedInboundBlock: null as Record<string, unknown> | null,
   inboundLimitResults: [] as Array<{ ok: boolean; code?: string }>,
   deliveryLogs: [] as Array<Record<string, unknown>>,
   deliveryAttempts: [] as Array<Record<string, unknown>>,
@@ -30,6 +31,7 @@ const state = {
 
 function resetState(): void {
   state.allow = true;
+  state.hostedInboundBlock = null;
   state.inboundLimitResults = [];
   state.deliveryLogs = [];
   state.deliveryAttempts = [];
@@ -61,6 +63,10 @@ vi.mock("../../src/db/repos/aliases.js", () => ({
 
 vi.mock("../../src/db/repos/allowRules.js", () => ({
   checkAllowRule: vi.fn(() => Promise.resolve(state.allow)),
+}));
+
+vi.mock("../../src/db/repos/hostedInboundBlocks.js", () => ({
+  findHostedInboundBlock: vi.fn(() => Promise.resolve(state.hostedInboundBlock)),
 }));
 
 vi.mock("../../src/email/dedup.js", () => ({
@@ -272,6 +278,7 @@ describe("hosted ingestion e2e", () => {
 
   beforeEach(async () => {
     resetState();
+    process.env["APP_MODE"] = "hosted";
     process.env["WORKER_SECRET"] = env.WORKER_SECRET;
     process.env["HMAC_SECRET"] = "hmac-secret-test-32chars-abcdef";
     rawEmailDir = await mkdtemp(join(tmpdir(), "email-to-telegram-e2e-raw-"));
@@ -322,6 +329,7 @@ describe("hosted ingestion e2e", () => {
 
   afterEach(async () => {
     vi.unstubAllGlobals();
+    delete process.env["APP_MODE"];
     await app.close();
     await rm(rawEmailDir, { recursive: true, force: true });
     await rm(attachmentDir, { recursive: true, force: true });
@@ -362,5 +370,29 @@ describe("hosted ingestion e2e", () => {
       const storedFiles = await readdir(join(rawEmailDir, rawDateDirs[0] ?? ""));
       expect(storedFiles).toHaveLength(0);
     }
+  });
+
+  it("permanently rejects a hosted message when preflight blocklist matches", async () => {
+    state.hostedInboundBlock = {
+      id: "block-1",
+      blockType: "sender_domain",
+      value: "sender.example.com",
+      reason: "abuse",
+      createdAt: new Date(),
+    };
+    const message = createMessage(
+      "From: sender@sender.example.com\r\nTo: alerts@example.com\r\nSubject: Blocked\r\nMessage-ID: <e2e-blocked@test>\r\n\r\nThis should not be uploaded",
+    );
+    message.from = "sender@sender.example.com";
+
+    await emailWorker.email(message, env, createContext());
+
+    expect(message.setReject).toHaveBeenCalledWith("550 Mailbox unavailable");
+    expect(state.telegramMessages).toHaveLength(0);
+    expect(state.deliveryLogs).toHaveLength(0);
+    expect(state.usage.deliveredCount).toBe(0);
+
+    const rawDateDirs = await readdir(rawEmailDir);
+    expect(rawDateDirs).toHaveLength(0);
   });
 });
