@@ -197,9 +197,14 @@ async function replyForAllowRuleLimitFailure(
     return;
   }
 
-  const keyboard = new InlineKeyboard().text("⬆️ Upgrade Plan", BILLING_UPGRADE_CALLBACK);
-  await ctx.reply(
-    `📦 Plan limit reached for <code>${escapeHtml(localPart)}</code>: ${limit.used ?? limit.limit}/${limit.limit} allow rules used. Upgrade to add more.`,
-    { parse_mode: "HTML", reply_markup: keyboard },
-  );
+  if (limit.code === "allow_rule_limit") {
+    const keyboard = new InlineKeyboard().text("⬆️ Upgrade Plan", BILLING_UPGRADE_CALLBACK);
+    await ctx.reply(
+      `📦 Plan limit reached for <code>${escapeHtml(localPart)}</code>: ${limit.used ?? limit.limit}/${limit.limit} allow rules used. Upgrade to add more.`,
+      { parse_mode: "HTML", reply_markup: keyboard },
+    );
+    return;
+  }
+
+  await ctx.reply("❌ Allow rule creation is not available right now. Please try again later.");
 }

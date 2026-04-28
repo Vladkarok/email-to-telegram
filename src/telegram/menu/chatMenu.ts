@@ -14,6 +14,10 @@ function chatIcon(type: string): string {
   return type === "private" ? "🏠" : "👥";
 }
 
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 /**
  * Returns a one-line plan/alias footer for hosted mode,
  * e.g. "Plan: Free | 2/3 aliases used".
@@ -28,7 +32,7 @@ async function buildPlanFooter(db: Db, userId: number): Promise<string | null> {
 
     const plan = getEffectivePlan(org);
     const used = await countActiveAliasesByOrganization(db, org.id);
-    return `Plan: ${plan.name} | ${used}/${plan.limits.aliases} aliases used`;
+    return `Plan: ${escapeHtml(plan.name)} | ${used}/${plan.limits.aliases} aliases used`;
   } catch {
     return null;
   }
@@ -100,8 +104,4 @@ export async function editChatManagementMenu(
     parse_mode: "HTML",
     reply_markup: keyboard,
   });
-}
-
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

@@ -134,6 +134,30 @@ describe("/allow command", () => {
       expect(buttons.some((b) => b.callback_data === "bill:upgrade")).toBe(true);
     });
 
+    it("shows generic fallback for unrecognised limit codes without upgrade button", async () => {
+      mockCheckAllowRuleCreateLimit.mockResolvedValue({
+        ok: false,
+        code: "monthly_email_limit",
+        limit: 100,
+        used: 100,
+      });
+      const ctx = createMockCtx({ commandMatch: "add alerts-ab12cd github.com" });
+
+      await allowHandler(ctx);
+
+      expect(mockAddAllowRule).not.toHaveBeenCalled();
+      const [text, opts] = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0] as [
+        string,
+        {
+          reply_markup?: { inline_keyboard: Array<Array<{ callback_data?: string }>> } | undefined;
+        },
+      ];
+      expect(text).toMatch(/not available|try again/i);
+      // No upgrade button for unrecognised codes
+      const buttons = opts?.reply_markup?.inline_keyboard?.flat() ?? [];
+      expect(buttons.some((b) => b.callback_data === "bill:upgrade")).toBe(false);
+    });
+
     it("shows a hosted workspace error when the alias has no active organization", async () => {
       mockHasActiveHostedOrganization.mockResolvedValueOnce(false);
       const ctx = createMockCtx({ commandMatch: "add alerts-ab12cd github.com" });

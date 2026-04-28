@@ -203,6 +203,33 @@ describe("/newemail command", () => {
     expect(buttons.some((b) => b.callback_data === "bill:upgrade")).toBe(true);
   });
 
+  it("shows generic fallback for unrecognised limit codes without upgrade button", async () => {
+    mockFindChatById.mockResolvedValueOnce({
+      title: "Hosted DM",
+      type: "private",
+      organizationId: "org-1",
+    });
+    mockCheckAliasCreateLimit.mockResolvedValueOnce({
+      ok: false,
+      code: "monthly_email_limit",
+      limit: 100,
+      used: 100,
+    });
+    const ctx = createMockCtx({ commandMatch: "alerts", chatType: "private" });
+
+    await newemailHandler(ctx);
+
+    expect(mockCreateAlias).not.toHaveBeenCalled();
+    const [text, opts] = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      { reply_markup?: { inline_keyboard: Array<Array<{ callback_data?: string }>> } | undefined },
+    ];
+    expect(text).toMatch(/not available|try again/i);
+    // No upgrade button for unrecognised codes
+    const buttons = opts?.reply_markup?.inline_keyboard?.flat() ?? [];
+    expect(buttons.some((b) => b.callback_data === "bill:upgrade")).toBe(false);
+  });
+
   it("shows a hosted workspace error when alias creation has no active organization", async () => {
     mockFindChatById.mockResolvedValueOnce({
       title: "Hosted DM",

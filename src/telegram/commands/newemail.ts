@@ -177,9 +177,14 @@ async function replyForAliasLimitFailure(
     return;
   }
 
-  const keyboard = new InlineKeyboard().text("⬆️ Upgrade Plan", BILLING_UPGRADE_CALLBACK);
-  await ctx.reply(
-    `📦 Plan limit reached: ${limit.used ?? limit.limit}/${limit.limit} aliases used. Upgrade to create more aliases.`,
-    { reply_markup: keyboard },
-  );
+  if (limit.code === "alias_limit") {
+    const keyboard = new InlineKeyboard().text("⬆️ Upgrade Plan", BILLING_UPGRADE_CALLBACK);
+    await ctx.reply(
+      `📦 Plan limit reached: ${limit.used ?? limit.limit}/${limit.limit} aliases used. Upgrade to create more aliases.`,
+      { reply_markup: keyboard },
+    );
+    return;
+  }
+
+  await ctx.reply("❌ Alias creation is not available right now. Please try again later.");
 }
