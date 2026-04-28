@@ -152,6 +152,16 @@ describe("upgradePlanCallbackHandler (upg:{priceKey})", () => {
     expect(buttons.some((b) => b.url === "https://checkout.stripe.com/pay/cs_test_abc")).toBe(true);
   });
 
+  it("answers with show_alert in self-hosted mode without calling checkout", async () => {
+    mockLoadConfig.mockReturnValue({ appMode: "self-hosted" });
+    const ctx = createMockCtx({ chatType: "private" });
+    (ctx as unknown as { match: string[] }).match = ["upg:personal_monthly", "personal_monthly"];
+    await upgradePlanCallbackHandler(ctx);
+    expect(mockCreateCheckoutSession).not.toHaveBeenCalled();
+    const call = ctx.answerCallbackQuery.mock.calls[0][0] as { show_alert: boolean };
+    expect(call.show_alert).toBe(true);
+  });
+
   it("answers with show_alert for invalid price key", async () => {
     const ctx = createMockCtx({ chatType: "private" });
     (ctx as unknown as { match: string[] }).match = ["upg:invalid_plan", "invalid_plan"];

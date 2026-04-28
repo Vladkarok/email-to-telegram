@@ -107,6 +107,11 @@ export async function upgradePlanCallbackHandler(
 ): Promise<void> {
   if (!ctx.from) return;
 
+  if (loadConfig().appMode !== "hosted") {
+    await ctx.answerCallbackQuery({ text: SELF_HOSTED_MESSAGE, show_alert: true });
+    return;
+  }
+
   const priceKey = (ctx.match as RegExpMatchArray | null)?.[1];
   if (!priceKey || !isStripePriceKey(priceKey)) {
     await ctx.answerCallbackQuery({ text: "❌ Invalid plan selection.", show_alert: true });
