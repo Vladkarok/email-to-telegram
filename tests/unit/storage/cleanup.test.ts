@@ -41,14 +41,53 @@ function makeDb(
     storagePath: string;
     sizeBytes?: number | null;
     organizationId?: string | null;
+    createdAt?: Date;
+    organizationPlanCode?: string | null;
+    organizationSubscriptionStatus?: string | null;
+    organizationCurrentPeriodEnd?: Date | null;
   }[] = [],
   expiredRawLogs: {
     id: string;
     rawEmailPath: string | null;
     rawSizeBytes?: number | null;
     organizationId?: string | null;
+    receivedAt?: Date;
+    organizationPlanCode?: string | null;
+    organizationSubscriptionStatus?: string | null;
+    organizationCurrentPeriodEnd?: Date | null;
+  }[] = [],
+  deliveryLogCandidates: {
+    id: string;
+    createdAt?: Date;
+    rawEmailPath?: string | null;
+    organizationPlanCode?: string | null;
+    organizationSubscriptionStatus?: string | null;
+    organizationCurrentPeriodEnd?: Date | null;
   }[] = [],
 ) {
+  const defaultOldDate = new Date("2025-01-01T00:00:00.000Z");
+  const attachmentRows = expiredAttachments.map((row) => ({
+    createdAt: defaultOldDate,
+    organizationPlanCode: null,
+    organizationSubscriptionStatus: null,
+    organizationCurrentPeriodEnd: null,
+    ...row,
+  }));
+  const rawLogRows = expiredRawLogs.map((row) => ({
+    receivedAt: defaultOldDate,
+    organizationPlanCode: null,
+    organizationSubscriptionStatus: null,
+    organizationCurrentPeriodEnd: null,
+    ...row,
+  }));
+  const deliveryLogRows = deliveryLogCandidates.map((row) => ({
+    createdAt: defaultOldDate,
+    rawEmailPath: null,
+    organizationPlanCode: null,
+    organizationSubscriptionStatus: null,
+    organizationCurrentPeriodEnd: null,
+    ...row,
+  }));
   const attachmentDeleteWhere = vi.fn().mockResolvedValue({ rowCount: 1 });
   const deliveryLogDeleteWhere = vi.fn().mockResolvedValue({ rowCount: 0 });
   const updateWhere = vi.fn().mockResolvedValue({ rowCount: 1 });
@@ -58,11 +97,24 @@ function makeDb(
   let selectCallCount = 0;
   const select = vi.fn().mockImplementation(() => {
     selectCallCount += 1;
-    if (selectCallCount % 2 === 1) {
+    const runSelectIndex = ((selectCallCount - 1) % 3) + 1;
+    if (runSelectIndex === 1) {
       return {
         from: vi.fn().mockReturnValue({
           innerJoin: vi.fn().mockReturnValue({
-            where: vi.fn().mockResolvedValue(expiredAttachments),
+            leftJoin: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue(attachmentRows),
+            }),
+          }),
+        }),
+      };
+    }
+
+    if (runSelectIndex === 2) {
+      return {
+        from: vi.fn().mockReturnValue({
+          leftJoin: vi.fn().mockReturnValue({
+            where: vi.fn().mockResolvedValue(rawLogRows),
           }),
         }),
       };
@@ -70,7 +122,9 @@ function makeDb(
 
     return {
       from: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue(expiredRawLogs),
+        leftJoin: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue(deliveryLogRows),
+        }),
       }),
     };
   });
@@ -113,6 +167,12 @@ const config = {
   attachmentTtlHours: 336,
   rawEmailTtlHours: 336,
   deliveryLogRetentionDays: 30,
+};
+
+const longRetentionConfig = {
+  ...config,
+  attachmentTtlHours: 24 * 365,
+  rawEmailTtlHours: 24 * 365,
 };
 
 describe("runCleanup", () => {
@@ -195,6 +255,121 @@ describe("runCleanup", () => {
       { rows: 1 },
       "cleanup: cleared expired raw email references",
     );
+  });
+
+  it("applies free-plan retention before the global attachment TTL", async () => {
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 3600 * 1000);
+    const db = makeDb([
+      {
+        id: "att-free",
+        storagePath: "/data/attachments/free/file.bin",
+        sizeBytes: 10,
+        organizationId: "org-free",
+        createdAt: eightDaysAgo,
+        organizationPlanCode: "free",
+        organizationSubscriptionStatus: "free",
+      },
+      {
+        id: "att-personal",
+        storagePath: "/data/attachments/personal/file.bin",
+        sizeBytes: 10,
+        organizationId: "org-personal",
+        createdAt: eightDaysAgo,
+        organizationPlanCode: "personal",
+        organizationSubscriptionStatus: "active",
+      },
+      {
+        id: "att-self-hosted",
+        storagePath: "/data/attachments/self-hosted/file.bin",
+        sizeBytes: 10,
+        organizationId: null,
+        createdAt: eightDaysAgo,
+      },
+    ]);
+
+    await runCleanup(db, config);
+
+    expect(mockDeleteFile).toHaveBeenCalledTimes(1);
+    expect(mockDeleteFile).toHaveBeenCalledWith("/data/attachments/free/file.bin");
+    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(
+      expect.anything(),
+      "org-free",
+      {
+        attachmentBytes: 10n,
+      },
+    );
+  });
+
+  it("applies effective free retention to inactive paid raw emails", async () => {
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 3600 * 1000);
+    const db = makeDb(
+      [],
+      [
+        {
+          id: "raw-canceled",
+          rawEmailPath: "/data/rawemails/canceled/message.eml",
+          rawSizeBytes: 42,
+          organizationId: "org-canceled",
+          receivedAt: eightDaysAgo,
+          organizationPlanCode: "pro",
+          organizationSubscriptionStatus: "canceled",
+        },
+        {
+          id: "raw-active",
+          rawEmailPath: "/data/rawemails/active/message.eml",
+          rawSizeBytes: 42,
+          organizationId: "org-active",
+          receivedAt: eightDaysAgo,
+          organizationPlanCode: "pro",
+          organizationSubscriptionStatus: "active",
+        },
+      ],
+    );
+
+    await runCleanup(db, longRetentionConfig);
+
+    expect(mockDeleteFile).toHaveBeenCalledTimes(1);
+    expect(mockDeleteFile).toHaveBeenCalledWith("/data/rawemails/canceled/message.eml");
+    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(
+      expect.anything(),
+      "org-canceled",
+      {
+        rawEmailBytes: 42n,
+      },
+    );
+  });
+
+  it("keeps active paid storage through plan retention even when the global file TTL is shorter", async () => {
+    const twentyDaysAgo = new Date(Date.now() - 20 * 24 * 3600 * 1000);
+    const db = makeDb(
+      [
+        {
+          id: "att-pro",
+          storagePath: "/data/attachments/pro/file.bin",
+          sizeBytes: 10,
+          organizationId: "org-pro",
+          createdAt: twentyDaysAgo,
+          organizationPlanCode: "pro",
+          organizationSubscriptionStatus: "active",
+        },
+      ],
+      [
+        {
+          id: "raw-pro",
+          rawEmailPath: "/data/rawemails/pro/message.eml",
+          rawSizeBytes: 42,
+          organizationId: "org-pro",
+          receivedAt: twentyDaysAgo,
+          organizationPlanCode: "pro",
+          organizationSubscriptionStatus: "active",
+        },
+      ],
+    );
+
+    await runCleanup(db, config);
+
+    expect(mockDeleteFile).not.toHaveBeenCalled();
+    expect(mockDecrementOrganizationStorageUsage).not.toHaveBeenCalled();
   });
 
   it("keeps attachment row and storage usage unchanged when attachment file deletion fails", async () => {
@@ -335,8 +510,8 @@ describe("runCleanup", () => {
   });
 
   it("uses the configured delivery log retention when purging old rows", async () => {
-    const db = makeDb([]);
-    db._mocks.deliveryLogDeleteWhere.mockResolvedValue({ rowCount: 3 });
+    const db = makeDb([], [], [{ id: "log-old" }, { id: "log-older" }, { id: "log-oldest" }]);
+    db._mocks.deliveryLogDeleteWhere.mockResolvedValue({ rowCount: 1 });
 
     await runCleanup(db, config);
 
@@ -344,5 +519,48 @@ describe("runCleanup", () => {
       { rows: 3, retentionDays: config.deliveryLogRetentionDays },
       "cleanup: purged old delivery logs",
     );
+  });
+
+  it("keeps paid delivery logs inside their effective retention even after global log retention", async () => {
+    const fortyDaysAgo = new Date(Date.now() - 40 * 24 * 3600 * 1000);
+    const db = makeDb(
+      [],
+      [],
+      [
+        {
+          id: "log-pro",
+          createdAt: fortyDaysAgo,
+          organizationPlanCode: "pro",
+          organizationSubscriptionStatus: "active",
+        },
+        {
+          id: "log-free",
+          createdAt: fortyDaysAgo,
+          organizationPlanCode: "free",
+          organizationSubscriptionStatus: "free",
+        },
+      ],
+    );
+
+    await runCleanup(db, config);
+
+    expect(db._mocks.deliveryLogDeleteWhere).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not purge delivery logs that still reference stored raw email", async () => {
+    const db = makeDb(
+      [],
+      [],
+      [
+        {
+          id: "log-with-raw",
+          rawEmailPath: "/data/rawemails/log-with-raw.eml",
+        },
+      ],
+    );
+
+    await runCleanup(db, config);
+
+    expect(db._mocks.deliveryLogDeleteWhere).not.toHaveBeenCalled();
   });
 });
