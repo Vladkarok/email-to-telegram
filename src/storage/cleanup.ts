@@ -55,6 +55,7 @@ async function cleanAttachments(
         organizationPlanCode: organizations.planCode,
         organizationSubscriptionStatus: organizations.subscriptionStatus,
         organizationCurrentPeriodEnd: organizations.currentPeriodEnd,
+        organizationPaidThroughAt: organizations.paidThroughAt,
       })
       .from(attachments)
       .innerJoin(deliveryLogs, eq(deliveryLogs.id, attachments.deliveryLogId))
@@ -142,6 +143,7 @@ async function cleanRawEmails(
         organizationPlanCode: organizations.planCode,
         organizationSubscriptionStatus: organizations.subscriptionStatus,
         organizationCurrentPeriodEnd: organizations.currentPeriodEnd,
+        organizationPaidThroughAt: organizations.paidThroughAt,
         receivedAt: deliveryLogs.receivedAt,
         rawSizeBytes: deliveryLogs.rawSizeBytes,
         rawEmailPath: deliveryLogs.rawEmailPath,
@@ -214,6 +216,7 @@ async function cleanDeliveryLogs(
         organizationPlanCode: organizations.planCode,
         organizationSubscriptionStatus: organizations.subscriptionStatus,
         organizationCurrentPeriodEnd: organizations.currentPeriodEnd,
+        organizationPaidThroughAt: organizations.paidThroughAt,
       })
       .from(deliveryLogs)
       .leftJoin(organizations, eq(organizations.id, deliveryLogs.organizationId))
@@ -286,6 +289,7 @@ function rowOrganization(row: {
   organizationPlanCode: string | null;
   organizationSubscriptionStatus: string | null;
   organizationCurrentPeriodEnd: Date | null;
+  organizationPaidThroughAt: Date | null;
 }): RetentionOrganization {
   if (!row.organizationPlanCode || !row.organizationSubscriptionStatus) {
     return null;
@@ -295,5 +299,6 @@ function rowOrganization(row: {
     planCode: row.organizationPlanCode,
     subscriptionStatus: row.organizationSubscriptionStatus,
     currentPeriodEnd: row.organizationCurrentPeriodEnd,
+    paidThroughAt: row.organizationPaidThroughAt,
   };
 }
