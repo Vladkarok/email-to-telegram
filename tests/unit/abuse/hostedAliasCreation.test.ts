@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockReserveHostedRateLimitBucketsInTransaction = vi.fn();
+const mockLoadConfig = vi.fn(() => ({ appMode: "hosted" }));
+
+vi.mock("../../../src/config.js", () => ({
+  loadConfig: (): unknown => mockLoadConfig(),
+}));
 
 vi.mock("../../../src/db/repos/hostedOnboardingAttempts.js", () => ({
   hostedOnboardingWindowStart: (date = new Date()): string => date.toISOString().slice(0, 10),
@@ -14,11 +19,21 @@ const { HostedAliasCreateRateLimitError, reserveHostedAliasCreateAttempt } =
 describe("reserveHostedAliasCreateAttempt", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    delete process.env["APP_MODE"];
+    mockLoadConfig.mockReturnValue({ appMode: "hosted" });
     mockReserveHostedRateLimitBucketsInTransaction.mockResolvedValue(true);
   });
 
   it("does nothing for self-hosted aliases without an organization", async () => {
     await reserveHostedAliasCreateAttempt({} as never, null, 123n);
+
+    expect(mockReserveHostedRateLimitBucketsInTransaction).not.toHaveBeenCalled();
+  });
+
+  it("does nothing in self-hosted mode even when a migrated organization id exists", async () => {
+    mockLoadConfig.mockReturnValue({ appMode: "self-hosted" });
+
+    await reserveHostedAliasCreateAttempt({} as never, "org-1", 123n);
 
     expect(mockReserveHostedRateLimitBucketsInTransaction).not.toHaveBeenCalled();
   });

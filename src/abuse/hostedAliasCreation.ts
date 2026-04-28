@@ -1,4 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import { loadConfig } from "../config.js";
 import {
   hostedOnboardingWindowStart,
   reserveHostedRateLimitBucketsInTransaction,
@@ -26,6 +27,7 @@ export async function reserveHostedAliasCreateAttempt(
   telegramUserId: bigint,
   now = new Date(),
 ): Promise<void> {
+  if (!shouldThrottleHostedAliases()) return;
   if (!organizationId) return;
 
   const ok = await reserveHostedRateLimitBucketsInTransaction(
@@ -46,4 +48,16 @@ export async function reserveHostedAliasCreateAttempt(
   );
 
   if (!ok) throw new HostedAliasCreateRateLimitError();
+}
+
+function shouldThrottleHostedAliases(): boolean {
+  const appMode = process.env["APP_MODE"];
+  if (appMode === "hosted") return true;
+  if (appMode === "self-hosted") return false;
+
+  try {
+    return loadConfig().appMode === "hosted";
+  } catch {
+    return false;
+  }
 }
