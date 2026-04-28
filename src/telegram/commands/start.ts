@@ -4,7 +4,11 @@ import { loadConfig } from "../../config.js";
 import { getDb } from "../../db/client.js";
 import { upsertChat } from "../../db/repos/chats.js";
 import { upsertUser } from "../../db/repos/users.js";
-import { ensurePersonalOrganizationForUser } from "../../tenant/currentOrganization.js";
+import {
+  HOSTED_ONBOARDING_RATE_LIMIT_MESSAGE,
+  HostedOnboardingRateLimitError,
+  ensurePersonalOrganizationForUserWithOnboardingLimit,
+} from "../../abuse/hostedOnboarding.js";
 import { sendChatSelectionMenu } from "../menu/chatMenu.js";
 
 export async function startHandler(ctx: Context): Promise<void> {
@@ -28,7 +32,16 @@ export async function startHandler(ctx: Context): Promise<void> {
       id: BigInt(ctx.from.id),
       username: ctx.from.username ?? null,
     });
-    const organization = await ensurePersonalOrganizationForUser(db, user);
+    let organization;
+    try {
+      organization = await ensurePersonalOrganizationForUserWithOnboardingLimit(db, user);
+    } catch (err: unknown) {
+      if (err instanceof HostedOnboardingRateLimitError) {
+        await ctx.reply(HOSTED_ONBOARDING_RATE_LIMIT_MESSAGE);
+        return;
+      }
+      throw err;
+    }
     organizationId = organization.id;
   }
 

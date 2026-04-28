@@ -20,10 +20,14 @@ vi.mock("../../../../src/db/repos/users.js", () => ({
   upsertUser: (...args: unknown[]): unknown => mockUpsertUser(...args),
 }));
 
-const mockEnsurePersonalOrganizationForUser = vi.fn();
-vi.mock("../../../../src/tenant/currentOrganization.js", () => ({
-  ensurePersonalOrganizationForUser: (...args: unknown[]): unknown =>
-    mockEnsurePersonalOrganizationForUser(...args),
+const mockEnsurePersonalOrganizationForUserWithOnboardingLimit = vi.fn();
+class MockHostedOnboardingRateLimitError extends Error {}
+vi.mock("../../../../src/abuse/hostedOnboarding.js", () => ({
+  HOSTED_ONBOARDING_RATE_LIMIT_MESSAGE:
+    "⚠️ Too many workspace setup attempts. Please try again later.",
+  HostedOnboardingRateLimitError: MockHostedOnboardingRateLimitError,
+  ensurePersonalOrganizationForUserWithOnboardingLimit: (...args: unknown[]): unknown =>
+    mockEnsurePersonalOrganizationForUserWithOnboardingLimit(...args),
 }));
 
 const { startHandler } = await import("../../../../src/telegram/commands/start.js");
@@ -39,7 +43,7 @@ describe("/start command", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
-    mockEnsurePersonalOrganizationForUser.mockResolvedValue({
+    mockEnsurePersonalOrganizationForUserWithOnboardingLimit.mockResolvedValue({
       id: "org-1",
       name: "Org",
       planCode: "free",
@@ -71,11 +75,24 @@ describe("/start command", () => {
       expect.anything(),
       expect.objectContaining({ id: 123456789n }),
     );
-    expect(mockEnsurePersonalOrganizationForUser).toHaveBeenCalled();
+    expect(mockEnsurePersonalOrganizationForUserWithOnboardingLimit).toHaveBeenCalled();
     expect(mockUpsertChat).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ organizationId: "org-1" }),
     );
+  });
+
+  it("in hosted mode: stops when onboarding is rate limited", async () => {
+    mockLoadConfig.mockReturnValue({ appMode: "hosted" });
+    mockEnsurePersonalOrganizationForUserWithOnboardingLimit.mockRejectedValue(
+      new MockHostedOnboardingRateLimitError(),
+    );
+    const ctx = createMockCtx({ chatType: "private", fromId: 123456789 });
+
+    await startHandler(ctx);
+
+    expect(mockUpsertChat).not.toHaveBeenCalled();
+    expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("Too many workspace"));
   });
 
   it("in group chat: redirects to DM with button", async () => {
