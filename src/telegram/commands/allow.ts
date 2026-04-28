@@ -2,7 +2,7 @@ import { InlineKeyboard } from "grammy";
 import type { CommandContext, Context } from "grammy";
 import { BILLING_UPGRADE_CALLBACK } from "./billing.js";
 import { getDb } from "../../db/client.js";
-import { findAliasByLocalPart } from "../../db/repos/aliases.js";
+import { findAliasByFullAddress, findAliasByLocalPartAnyDomain } from "../../db/repos/aliases.js";
 import type { EmailAddress } from "../../db/schema.js";
 import {
   addAllowRule,
@@ -19,12 +19,12 @@ import { canManageAlias } from "../authorization.js";
 import { parseAllowValue } from "../allowValue.js";
 
 const USAGE = `Usage:
-  /allow add <alias> <email_or_domain>
-  /allow remove <alias> <email_or_domain>
-  /allow list <alias>
+  /allow add <alias_or_address> <email_or_domain>
+  /allow remove <alias_or_address> <email_or_domain>
+  /allow list <alias_or_address>
 
 Examples:
-  /allow add alerts-ab12cd github.com
+  /allow add alerts-ab12cd@example.com github.com
   /allow add alerts-ab12cd user@example.com
   /allow list alerts-ab12cd`;
 
@@ -44,7 +44,7 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
   }
 
   const db = getDb();
-  const alias = await findAliasByLocalPart(db, aliasName);
+  const alias = await findAliasForAllowCommand(db, aliasName);
 
   if (!alias) {
     await ctx.reply(`❌ Alias <code>${escapeHtml(aliasName)}</code> not found.`, {
@@ -111,6 +111,16 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
       },
     );
   }
+}
+
+async function findAliasForAllowCommand(
+  db: ReturnType<typeof getDb>,
+  aliasName: string,
+): Promise<EmailAddress | null> {
+  if (aliasName.includes("@")) {
+    return findAliasByFullAddress(db, aliasName.toLowerCase());
+  }
+  return findAliasByLocalPartAnyDomain(db, aliasName);
 }
 
 function escapeHtml(text: string): string {

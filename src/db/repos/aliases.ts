@@ -50,6 +50,33 @@ export async function findAliasByLocalPart(
   return alias ?? null;
 }
 
+export async function findAliasByFullAddress(
+  db: Db,
+  fullAddress: string,
+): Promise<EmailAddress | null> {
+  const [alias] = await db
+    .select()
+    .from(emailAddresses)
+    .where(
+      and(
+        eq(emailAddresses.fullAddress, fullAddress.toLowerCase()),
+        ne(emailAddresses.status, "deleted"),
+      ),
+    );
+  return alias ?? null;
+}
+
+export async function findAliasByLocalPartAnyDomain(
+  db: Db,
+  localPart: string,
+): Promise<EmailAddress | null> {
+  const [alias] = await db
+    .select()
+    .from(emailAddresses)
+    .where(and(eq(emailAddresses.localPart, localPart), ne(emailAddresses.status, "deleted")));
+  return alias ?? null;
+}
+
 export async function findAliasByLocalPartAndDomainId(
   db: Db,
   localPart: string,
@@ -87,13 +114,7 @@ export async function findAliasByIdAndChat(
   const [alias] = await db
     .select()
     .from(emailAddresses)
-    .where(
-      and(
-        eq(emailAddresses.localPart, localPart),
-        eq(emailAddresses.chatId, chatId),
-        isNull(emailAddresses.domainId),
-      ),
-    );
+    .where(and(eq(emailAddresses.localPart, localPart), eq(emailAddresses.chatId, chatId)));
   return alias ?? null;
 }
 

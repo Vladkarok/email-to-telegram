@@ -45,6 +45,7 @@ const mockWriteAttachment = vi.fn();
 
 vi.mock("../../../src/db/repos/aliases.js", () => ({
   findAliasByLocalPart: (...a: unknown[]): unknown => mockFindAlias(...a),
+  findAliasByLocalPartAndDomainId: (...a: unknown[]): unknown => mockFindAlias(...a),
 }));
 vi.mock("../../../src/db/repos/allowRules.js", () => ({
   checkAllowRule: (...a: unknown[]): unknown => mockCheckAllow(...a),

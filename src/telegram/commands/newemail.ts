@@ -6,6 +6,7 @@ import { getDb } from "../../db/client.js";
 import { createAlias } from "../../db/repos/aliases.js";
 import type { EmailAddress } from "../../db/schema.js";
 import { findChatById } from "../../db/repos/chats.js";
+import { ensureSharedInboundDomain } from "../../db/repos/inboundDomains.js";
 import { loadConfig } from "../../config.js";
 import {
   checkAliasCreateLimit,
@@ -107,7 +108,6 @@ export async function createEmailAlias(
   }
 
   const localPart = rawName.length > 0 ? `${prefix}-${generateSuffix()}` : prefix;
-  const fullAddress = `${localPart}@${config.mailDomain}`;
   const db = getDb();
   const createdBy = BigInt(ctx.from.id);
   const organizationId =
@@ -119,6 +119,11 @@ export async function createEmailAlias(
   let alias: EmailAddress;
   try {
     alias = await withOrganizationQuotaLock(db, organizationId, async (tx) => {
+      const inboundDomain =
+        config.appMode === "hosted"
+          ? await ensureSharedInboundDomain(tx, config.hostedMailDomain!)
+          : null;
+      const fullAddress = `${localPart}@${inboundDomain?.domain ?? config.mailDomain}`;
       const limit = await checkAliasCreateLimit(tx, organizationId);
       if (!limit.ok) {
         blockedLimit = limit;
@@ -131,7 +136,7 @@ export async function createEmailAlias(
         localPart,
         fullAddress,
         organizationId,
-        domainId: null,
+        domainId: inboundDomain?.id ?? null,
         chatId,
         messageThreadId: threadId,
         createdBy,
@@ -151,6 +156,10 @@ export async function createEmailAlias(
       await ctx.reply(HOSTED_ALIAS_CREATE_RATE_LIMIT_MESSAGE);
       return;
     }
+    if (msg.includes("ensureSharedInboundDomain")) {
+      await ctx.reply("⛔ This hosted workspace is not ready for alias creation right now.");
+      return;
+    }
     if (
       msg.includes("duplicate") ||
       msg.includes("unique") ||
@@ -163,12 +172,13 @@ export async function createEmailAlias(
   }
 
   const chatNote = chatTitle ? `\nDelivering to: <b>${escapeHtml(chatTitle)}</b>` : "";
+  const fullAddress = alias.fullAddress;
 
   // Use alias.id (UUID) — the am: callback regex expects a UUID, not a localPart string
   const keyboard = new InlineKeyboard().text("🔐 Add Allow Rule", `am:${alias.id}`);
 
   await ctx.reply(
-    `✅ Email alias created!\n\n📧 <code>${fullAddress}</code>${chatNote}\n\n⚠️ Add at least one allow rule — until then all mail is rejected.\n\n<code>/allow add ${localPart} domain.com</code>`,
+    `✅ Email alias created!\n\n📧 <code>${fullAddress}</code>${chatNote}\n\n⚠️ Add at least one allow rule — until then all mail is rejected.\n\n<code>/allow add ${fullAddress} domain.com</code>`,
     { parse_mode: "HTML", reply_markup: keyboard },
   );
 }
