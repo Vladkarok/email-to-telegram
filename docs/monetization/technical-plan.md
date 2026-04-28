@@ -706,6 +706,10 @@ Before public hosted launch:
 Shared-domain reputation is a launch-blocking operational risk, not a later
 polish item.
 
+The operational baseline is captured in
+[`hosted-abuse-policy.md`](./hosted-abuse-policy.md). Keep it updated when abuse
+controls, retention behavior, or billing cancellation policy changes.
+
 ## Migration Strategy
 
 1. Add nullable `organization_id` to existing tables.
