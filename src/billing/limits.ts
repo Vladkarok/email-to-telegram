@@ -31,7 +31,10 @@ export type LimitResult =
 const PAST_DUE_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export function getEffectivePlan(
-  organization: Pick<Organization, "planCode" | "subscriptionStatus" | "currentPeriodEnd">,
+  organization: Pick<
+    Organization,
+    "planCode" | "subscriptionStatus" | "currentPeriodEnd" | "paidThroughAt"
+  >,
 ): PlanDefinition {
   if (organization.planCode === "free") return getPlanDefinition("free");
 
@@ -43,8 +46,8 @@ export function getEffectivePlan(
       return getPlanDefinition(organization.planCode as PlanCode);
     case "past_due":
       if (
-        organization.currentPeriodEnd &&
-        Date.now() - organization.currentPeriodEnd.getTime() <= PAST_DUE_GRACE_MS
+        organization.paidThroughAt &&
+        Date.now() - organization.paidThroughAt.getTime() <= PAST_DUE_GRACE_MS
       ) {
         return getPlanDefinition(organization.planCode as PlanCode);
       }

@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { organizations, type NewOrganization, type Organization } from "../schema.js";
 import type * as schema from "../schema.js";
 
@@ -18,6 +18,7 @@ export async function createOrganization(
         | "trialEndsAt"
         | "currentPeriodStart"
         | "currentPeriodEnd"
+        | "paidThroughAt"
       >
     >,
 ): Promise<Organization> {
@@ -66,12 +67,29 @@ export async function updateOrganizationBillingState(
       | "trialEndsAt"
       | "currentPeriodStart"
       | "currentPeriodEnd"
+      | "paidThroughAt"
     >
   >,
 ): Promise<Organization | null> {
   const [organization] = await db
     .update(organizations)
     .set({ ...data, updatedAt: new Date() })
+    .where(eq(organizations.id, id))
+    .returning();
+  return organization ?? null;
+}
+
+export async function updateOrganizationPaidThroughAtIfLater(
+  db: Db,
+  id: string,
+  paidThroughAt: Date,
+): Promise<Organization | null> {
+  const [organization] = await db
+    .update(organizations)
+    .set({
+      paidThroughAt: sql`case when ${organizations.paidThroughAt} is null or ${organizations.paidThroughAt} < ${paidThroughAt} then ${paidThroughAt} else ${organizations.paidThroughAt} end`,
+      updatedAt: new Date(),
+    })
     .where(eq(organizations.id, id))
     .returning();
   return organization ?? null;

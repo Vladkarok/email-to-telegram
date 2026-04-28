@@ -281,6 +281,7 @@ describe("billing limits", () => {
       planCode: "pro",
       subscriptionStatus: "canceled",
       currentPeriodEnd: new Date(),
+      paidThroughAt: new Date(),
     });
 
     expect(plan.code).toBe("free");
@@ -291,26 +292,40 @@ describe("billing limits", () => {
       planCode: "pro",
       subscriptionStatus: "paused",
       currentPeriodEnd: new Date(),
+      paidThroughAt: new Date(),
     });
 
     expect(plan.code).toBe("free");
   });
 
-  it("keeps paid limits during recent past_due grace", () => {
+  it("keeps paid limits during recent past_due paid-through grace", () => {
     const plan = getEffectivePlan({
       planCode: "pro",
       subscriptionStatus: "past_due",
-      currentPeriodEnd: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+      currentPeriodEnd: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+      paidThroughAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
     });
 
     expect(plan.code).toBe("pro");
   });
 
-  it("falls back to free limits when past_due is outside grace", () => {
+  it("falls back to free limits when past_due paid-through is outside grace", () => {
     const plan = getEffectivePlan({
       planCode: "pro",
       subscriptionStatus: "past_due",
-      currentPeriodEnd: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
+      currentPeriodEnd: new Date(),
+      paidThroughAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
+    });
+
+    expect(plan.code).toBe("free");
+  });
+
+  it("does not use current period end as past_due grace after paid-through migration", () => {
+    const plan = getEffectivePlan({
+      planCode: "pro",
+      subscriptionStatus: "past_due",
+      currentPeriodEnd: new Date(),
+      paidThroughAt: null,
     });
 
     expect(plan.code).toBe("free");
@@ -321,6 +336,7 @@ describe("billing limits", () => {
       planCode: "business",
       subscriptionStatus: "canceled",
       currentPeriodEnd: null,
+      paidThroughAt: null,
     });
 
     expect(plan.code).toBe("business");

@@ -45,6 +45,7 @@ function makeDb(
     organizationPlanCode?: string | null;
     organizationSubscriptionStatus?: string | null;
     organizationCurrentPeriodEnd?: Date | null;
+    organizationPaidThroughAt?: Date | null;
   }[] = [],
   expiredRawLogs: {
     id: string;
@@ -55,6 +56,7 @@ function makeDb(
     organizationPlanCode?: string | null;
     organizationSubscriptionStatus?: string | null;
     organizationCurrentPeriodEnd?: Date | null;
+    organizationPaidThroughAt?: Date | null;
   }[] = [],
   deliveryLogCandidates: {
     id: string;
@@ -63,6 +65,7 @@ function makeDb(
     organizationPlanCode?: string | null;
     organizationSubscriptionStatus?: string | null;
     organizationCurrentPeriodEnd?: Date | null;
+    organizationPaidThroughAt?: Date | null;
   }[] = [],
 ) {
   const defaultOldDate = new Date("2025-01-01T00:00:00.000Z");
@@ -71,6 +74,7 @@ function makeDb(
     organizationPlanCode: null,
     organizationSubscriptionStatus: null,
     organizationCurrentPeriodEnd: null,
+    organizationPaidThroughAt: null,
     ...row,
   }));
   const rawLogRows = expiredRawLogs.map((row) => ({
@@ -78,6 +82,7 @@ function makeDb(
     organizationPlanCode: null,
     organizationSubscriptionStatus: null,
     organizationCurrentPeriodEnd: null,
+    organizationPaidThroughAt: null,
     ...row,
   }));
   const deliveryLogRows = deliveryLogCandidates.map((row) => ({
@@ -86,6 +91,7 @@ function makeDb(
     organizationPlanCode: null,
     organizationSubscriptionStatus: null,
     organizationCurrentPeriodEnd: null,
+    organizationPaidThroughAt: null,
     ...row,
   }));
   const attachmentDeleteWhere = vi.fn().mockResolvedValue({ rowCount: 1 });
