@@ -1,0 +1,49 @@
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import {
+  hostedOnboardingWindowStart,
+  reserveHostedRateLimitBucketsInTransaction,
+} from "../db/repos/hostedOnboardingAttempts.js";
+import type * as schema from "../db/schema.js";
+
+type Db = NodePgDatabase<typeof schema>;
+
+export const HOSTED_ALIAS_CREATE_RATE_LIMIT_MESSAGE =
+  "⚠️ Too many alias creation attempts. Please try again later.";
+
+const DAILY_ALIAS_ATTEMPTS_PER_ORG = 20;
+const DAILY_ALIAS_ATTEMPTS_PER_TELEGRAM_USER = 10;
+
+export class HostedAliasCreateRateLimitError extends Error {
+  constructor() {
+    super("hosted alias creation rate limit exceeded");
+    this.name = "HostedAliasCreateRateLimitError";
+  }
+}
+
+export async function reserveHostedAliasCreateAttempt(
+  db: Db,
+  organizationId: string | null,
+  telegramUserId: bigint,
+  now = new Date(),
+): Promise<void> {
+  if (!organizationId) return;
+
+  const ok = await reserveHostedRateLimitBucketsInTransaction(
+    db,
+    hostedOnboardingWindowStart(now),
+    [
+      {
+        bucketType: "alias_create_org",
+        bucketKey: organizationId,
+        limit: DAILY_ALIAS_ATTEMPTS_PER_ORG,
+      },
+      {
+        bucketType: "alias_create_telegram_user",
+        bucketKey: telegramUserId.toString(),
+        limit: DAILY_ALIAS_ATTEMPTS_PER_TELEGRAM_USER,
+      },
+    ],
+  );
+
+  if (!ok) throw new HostedAliasCreateRateLimitError();
+}

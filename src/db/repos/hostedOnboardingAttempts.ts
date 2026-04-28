@@ -10,6 +10,12 @@ export interface HostedOnboardingLimits {
   globalDaily: number;
 }
 
+export interface HostedRateLimitBucket {
+  bucketType: string;
+  bucketKey: string;
+  limit: number;
+}
+
 const DEFAULT_LIMITS: HostedOnboardingLimits = {
   perTelegramUserDaily: 3,
   globalDaily: 100,
@@ -35,30 +41,53 @@ export async function reserveHostedOnboardingAttemptInTransaction(
   const windowStart = hostedOnboardingWindowStart(now);
   const userKey = telegramUserId.toString();
 
-  await db.execute(
-    sql`select pg_advisory_xact_lock(hashtext(${`hosted-onboarding:${windowStart}`}))`,
-  );
-  await db.execute(
-    sql`select pg_advisory_xact_lock(hashtext(${`hosted-onboarding:user:${userKey}`}))`,
-  );
-
-  const [globalBucket, userBucket] = await Promise.all([
-    findBucket(db, "global", "all", windowStart),
-    findBucket(db, "telegram_user", userKey, windowStart),
+  return reserveHostedRateLimitBucketsInTransaction(db, windowStart, [
+    { bucketType: "global", bucketKey: "all", limit: limits.globalDaily },
+    {
+      bucketType: "telegram_user",
+      bucketKey: userKey,
+      limit: limits.perTelegramUserDaily,
+    },
   ]);
-
-  if ((globalBucket?.attempts ?? 0) >= limits.globalDaily) return false;
-  if ((userBucket?.attempts ?? 0) >= limits.perTelegramUserDaily) return false;
-
-  await Promise.all([
-    incrementBucket(db, "global", "all", windowStart),
-    incrementBucket(db, "telegram_user", userKey, windowStart),
-  ]);
-  return true;
 }
 
 export function hostedOnboardingWindowStart(date = new Date()): string {
   return date.toISOString().slice(0, 10);
+}
+
+export async function reserveHostedRateLimitBucketsInTransaction(
+  db: Db,
+  windowStart: string,
+  buckets: HostedRateLimitBucket[],
+): Promise<boolean> {
+  if (buckets.length === 0) return true;
+
+  const sortedBuckets = [...buckets].sort((a, b) =>
+    `${a.bucketType}:${a.bucketKey}`.localeCompare(`${b.bucketType}:${b.bucketKey}`),
+  );
+
+  for (const bucket of sortedBuckets) {
+    await db.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${`hosted-rate:${windowStart}:${bucket.bucketType}:${bucket.bucketKey}`}))`,
+    );
+  }
+
+  const existingBuckets = await Promise.all(
+    sortedBuckets.map((bucket) => findBucket(db, bucket.bucketType, bucket.bucketKey, windowStart)),
+  );
+
+  if (
+    existingBuckets.some((bucket, index) => (bucket?.attempts ?? 0) >= sortedBuckets[index].limit)
+  ) {
+    return false;
+  }
+
+  await Promise.all(
+    sortedBuckets.map((bucket) =>
+      incrementBucket(db, bucket.bucketType, bucket.bucketKey, windowStart),
+    ),
+  );
+  return true;
 }
 
 async function findBucket(

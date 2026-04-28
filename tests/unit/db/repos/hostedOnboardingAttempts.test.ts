@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   hostedOnboardingWindowStart,
+  reserveHostedRateLimitBucketsInTransaction,
   reserveHostedOnboardingAttempt,
 } from "../../../../src/db/repos/hostedOnboardingAttempts.js";
 
@@ -42,6 +43,9 @@ function makeDb({
   });
   const tx = { execute, select, insert };
   return {
+    execute,
+    select,
+    insert,
     transaction: vi.fn((work: (tx: unknown) => Promise<unknown>) => work(tx)),
     _mocks: { execute, insert },
   } as unknown as Parameters<typeof reserveHostedOnboardingAttempt>[0] & {
@@ -95,5 +99,19 @@ describe("hosted onboarding attempt repo", () => {
     ).resolves.toBe(false);
 
     expect(db._mocks.insert).not.toHaveBeenCalled();
+  });
+
+  it("reserves arbitrary hosted rate-limit buckets in deterministic lock order", async () => {
+    const db = makeDb({ globalAttempts: 0, userAttempts: 0 });
+
+    await expect(
+      reserveHostedRateLimitBucketsInTransaction(db as never, "2026-04-28", [
+        { bucketType: "z_bucket", bucketKey: "2", limit: 10 },
+        { bucketType: "a_bucket", bucketKey: "1", limit: 10 },
+      ]),
+    ).resolves.toBe(true);
+
+    expect(db._mocks.execute).toHaveBeenCalledTimes(2);
+    expect(db._mocks.insert).toHaveBeenCalledTimes(2);
   });
 });
