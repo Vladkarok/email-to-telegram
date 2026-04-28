@@ -219,6 +219,10 @@ The test-mode billing launch checklist lives in
 [`stripe-test-mode-runbook.md`](./stripe-test-mode-runbook.md). Run it before
 turning on live Stripe keys.
 
+The hosted pricing and public terms draft lives in
+[`../hosted/pricing-and-terms.md`](../hosted/pricing-and-terms.md). Its pricing
+table is covered by a doc test against `src/billing/plans.ts`.
+
 ## Required Product Changes
 
 ### Data Model
