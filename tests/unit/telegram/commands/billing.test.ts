@@ -9,7 +9,10 @@ vi.mock("../../../../src/config.js", () => ({
 }));
 
 const mockGetPrimaryOrganizationForUser = vi.fn();
+const mockGetBillingOrganizationForUser = vi.fn();
 vi.mock("../../../../src/tenant/currentOrganization.js", () => ({
+  getBillingOrganizationForUser: (...args: unknown[]): unknown =>
+    mockGetBillingOrganizationForUser(...args),
   getPrimaryOrganizationForUser: (...args: unknown[]): unknown =>
     mockGetPrimaryOrganizationForUser(...args),
 }));
@@ -45,6 +48,7 @@ describe("/billing command", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLoadConfig.mockReturnValue({ appMode: "hosted", billingProvider: "stripe" });
+    mockGetBillingOrganizationForUser.mockResolvedValue(null);
     mockUsageMonthForDate.mockReturnValue("2026-04");
     mockGetOrganizationUsageMonth.mockResolvedValue({
       organizationId: "org-1",
@@ -90,6 +94,13 @@ describe("/billing command", () => {
       subscriptionStatus: "free",
       currentPeriodEnd: null,
     });
+    mockGetBillingOrganizationForUser.mockResolvedValue({
+      id: "org-1",
+      name: "Acme Co",
+      planCode: "free",
+      subscriptionStatus: "free",
+      currentPeriodEnd: null,
+    });
     const ctx = createMockCtx({ chatType: "private" });
 
     await billingHandler(ctx);
@@ -112,6 +123,28 @@ describe("/billing command", () => {
     const callbacks = flatButtons.map((b) => b.callback_data);
     expect(callbacks).toContain("bill:upgrade");
     expect(callbacks).toContain("bill:portal");
+  });
+
+  it("omits billing action buttons for non-admin organization members", async () => {
+    mockGetPrimaryOrganizationForUser.mockResolvedValue({
+      id: "org-1",
+      name: "Acme Co",
+      planCode: "free",
+      subscriptionStatus: "free",
+      currentPeriodEnd: null,
+    });
+    mockGetBillingOrganizationForUser.mockResolvedValue(null);
+
+    const ctx = createMockCtx({ chatType: "private" });
+    await billingHandler(ctx);
+
+    const [text, opts] = ctx.reply.mock.calls[0] as [
+      string,
+      { parse_mode?: string; reply_markup?: unknown },
+    ];
+    expect(text).toContain("Acme Co");
+    expect(opts.parse_mode).toBe("HTML");
+    expect(opts.reply_markup).toBeUndefined();
   });
 
   it("shows monthly accepted count and current alias usage", async () => {

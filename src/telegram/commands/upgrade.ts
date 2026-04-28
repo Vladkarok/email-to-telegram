@@ -1,7 +1,7 @@
 import { InlineKeyboard, type Context, type CallbackQueryContext } from "grammy";
 import { loadConfig } from "../../config.js";
 import { getDb } from "../../db/client.js";
-import { getPrimaryOrganizationForUser } from "../../tenant/currentOrganization.js";
+import { getBillingOrganizationForUser } from "../../tenant/currentOrganization.js";
 import { createCheckoutSession, BillingCheckoutConflictError } from "../../billing/checkout.js";
 import { isStripePriceKey, type StripePriceKey } from "../../billing/stripe.js";
 import { getLogger } from "../../utils/logger.js";
@@ -9,8 +9,7 @@ import { getLogger } from "../../utils/logger.js";
 const SELF_HOSTED_MESSAGE =
   "ℹ️ Billing is not enabled in self-hosted mode. /upgrade is only available on the hosted service.";
 
-const NO_ORGANIZATION_MESSAGE =
-  "❌ No hosted workspace found for your account. Use /start to set one up.";
+const BILLING_FORBIDDEN_MESSAGE = "❌ Billing changes require workspace owner or admin access.";
 
 const PLAN_LABELS: Record<StripePriceKey, string> = {
   personal_monthly: "Personal — Monthly",
@@ -48,9 +47,9 @@ export async function upgradeHandler(ctx: Context): Promise<void> {
 
   try {
     const db = getDb();
-    const organization = await getPrimaryOrganizationForUser(db, BigInt(ctx.from.id));
+    const organization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
     if (!organization) {
-      await ctx.reply(NO_ORGANIZATION_MESSAGE);
+      await ctx.reply(BILLING_FORBIDDEN_MESSAGE);
       return;
     }
 
@@ -78,9 +77,9 @@ export async function upgradeCallbackHandler(ctx: CallbackQueryContext<Context>)
 
   try {
     const db = getDb();
-    const organization = await getPrimaryOrganizationForUser(db, BigInt(ctx.from.id));
+    const organization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
     if (!organization) {
-      await ctx.answerCallbackQuery({ text: NO_ORGANIZATION_MESSAGE, show_alert: true });
+      await ctx.answerCallbackQuery({ text: BILLING_FORBIDDEN_MESSAGE, show_alert: true });
       return;
     }
 
@@ -120,9 +119,9 @@ export async function upgradePlanCallbackHandler(
 
   try {
     const db = getDb();
-    const organization = await getPrimaryOrganizationForUser(db, BigInt(ctx.from.id));
+    const organization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
     if (!organization) {
-      await ctx.answerCallbackQuery({ text: NO_ORGANIZATION_MESSAGE, show_alert: true });
+      await ctx.answerCallbackQuery({ text: BILLING_FORBIDDEN_MESSAGE, show_alert: true });
       return;
     }
 

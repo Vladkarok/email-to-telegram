@@ -8,10 +8,10 @@ vi.mock("../../../../src/config.js", () => ({
   loadConfig: (): unknown => mockLoadConfig(),
 }));
 
-const mockGetPrimaryOrganizationForUser = vi.fn();
+const mockGetBillingOrganizationForUser = vi.fn();
 vi.mock("../../../../src/tenant/currentOrganization.js", () => ({
-  getPrimaryOrganizationForUser: (...args: unknown[]): unknown =>
-    mockGetPrimaryOrganizationForUser(...args),
+  getBillingOrganizationForUser: (...args: unknown[]): unknown =>
+    mockGetBillingOrganizationForUser(...args),
 }));
 
 const mockCreateCustomerPortalSession = vi.fn();
@@ -46,7 +46,7 @@ describe("/portal command", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
-    mockGetPrimaryOrganizationForUser.mockResolvedValue(ORG);
+    mockGetBillingOrganizationForUser.mockResolvedValue(ORG);
     mockCreateCustomerPortalSession.mockResolvedValue("https://billing.stripe.com/session_abc");
   });
 
@@ -56,15 +56,15 @@ describe("/portal command", () => {
     await portalHandler(ctx);
     const [text] = ctx.reply.mock.calls[0] as [string];
     expect(text).toMatch(/self-hosted|billing.*not enabled/i);
-    expect(mockGetPrimaryOrganizationForUser).not.toHaveBeenCalled();
+    expect(mockGetBillingOrganizationForUser).not.toHaveBeenCalled();
   });
 
-  it("in hosted mode with no organization replies defensively", async () => {
-    mockGetPrimaryOrganizationForUser.mockResolvedValue(null);
+  it("in hosted mode without owner/admin access replies defensively", async () => {
+    mockGetBillingOrganizationForUser.mockResolvedValue(null);
     const ctx = createMockCtx({ chatType: "private" });
     await portalHandler(ctx);
     const [text] = ctx.reply.mock.calls[0] as [string];
-    expect(text).toMatch(/no.*workspace|organization.*not found/i);
+    expect(text).toMatch(/owner|admin|billing/i);
   });
 
   it("when no Stripe customer yet, shows upgrade prompt", async () => {
@@ -89,7 +89,7 @@ describe("/portal command", () => {
   });
 
   it("replies with error on DB failure", async () => {
-    mockGetPrimaryOrganizationForUser.mockRejectedValue(new Error("db error"));
+    mockGetBillingOrganizationForUser.mockRejectedValue(new Error("db error"));
     const mockError = vi.fn();
     mockGetLogger.mockReturnValue({ error: mockError });
     const ctx = createMockCtx({ chatType: "private" });
@@ -104,7 +104,7 @@ describe("portalCallbackHandler (bill:portal)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
-    mockGetPrimaryOrganizationForUser.mockResolvedValue(ORG);
+    mockGetBillingOrganizationForUser.mockResolvedValue(ORG);
     mockCreateCustomerPortalSession.mockResolvedValue("https://billing.stripe.com/session_abc");
   });
 
@@ -131,7 +131,7 @@ describe("portalCallbackHandler (bill:portal)", () => {
   });
 
   it("answers with show_alert on error", async () => {
-    mockGetPrimaryOrganizationForUser.mockRejectedValue(new Error("error"));
+    mockGetBillingOrganizationForUser.mockRejectedValue(new Error("error"));
     const mockError = vi.fn();
     mockGetLogger.mockReturnValue({ error: mockError });
     const ctx = createMockCtx({ chatType: "private" });

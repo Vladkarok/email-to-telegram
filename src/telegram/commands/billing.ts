@@ -3,7 +3,10 @@ import { loadConfig } from "../../config.js";
 import { getDb } from "../../db/client.js";
 import { getEffectivePlan } from "../../billing/limits.js";
 import { buildBillingStatusText } from "../../billing/usageSummary.js";
-import { getPrimaryOrganizationForUser } from "../../tenant/currentOrganization.js";
+import {
+  getBillingOrganizationForUser,
+  getPrimaryOrganizationForUser,
+} from "../../tenant/currentOrganization.js";
 import { countActiveAliasesByOrganization } from "../../db/repos/aliases.js";
 import { getOrganizationStorageUsage } from "../../db/repos/storageUsage.js";
 import { getOrganizationUsageMonth, usageMonthForDate } from "../../db/repos/usage.js";
@@ -34,6 +37,7 @@ export async function billingHandler(ctx: Context): Promise<void> {
       await ctx.reply(NO_ORGANIZATION_MESSAGE);
       return;
     }
+    const billingOrganization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
 
     const plan = getEffectivePlan(organization);
     const month = usageMonthForDate();
@@ -55,6 +59,11 @@ export async function billingHandler(ctx: Context): Promise<void> {
       storageBytes,
       aliasesUsed,
     });
+
+    if (!billingOrganization) {
+      await ctx.reply(text, { parse_mode: "HTML" });
+      return;
+    }
 
     const keyboard = new InlineKeyboard()
       .text("⬆️ Upgrade", BILLING_UPGRADE_CALLBACK)

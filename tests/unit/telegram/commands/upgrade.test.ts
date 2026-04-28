@@ -8,10 +8,10 @@ vi.mock("../../../../src/config.js", () => ({
   loadConfig: (): unknown => mockLoadConfig(),
 }));
 
-const mockGetPrimaryOrganizationForUser = vi.fn();
+const mockGetBillingOrganizationForUser = vi.fn();
 vi.mock("../../../../src/tenant/currentOrganization.js", () => ({
-  getPrimaryOrganizationForUser: (...args: unknown[]): unknown =>
-    mockGetPrimaryOrganizationForUser(...args),
+  getBillingOrganizationForUser: (...args: unknown[]): unknown =>
+    mockGetBillingOrganizationForUser(...args),
 }));
 
 const mockCreateCheckoutSession = vi.fn();
@@ -45,7 +45,7 @@ describe("/upgrade command", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
-    mockGetPrimaryOrganizationForUser.mockResolvedValue(ORG);
+    mockGetBillingOrganizationForUser.mockResolvedValue(ORG);
   });
 
   it("in self-hosted mode replies with billing-disabled message", async () => {
@@ -54,15 +54,15 @@ describe("/upgrade command", () => {
     await upgradeHandler(ctx);
     const [text] = ctx.reply.mock.calls[0] as [string];
     expect(text).toMatch(/self-hosted|billing.*not enabled/i);
-    expect(mockGetPrimaryOrganizationForUser).not.toHaveBeenCalled();
+    expect(mockGetBillingOrganizationForUser).not.toHaveBeenCalled();
   });
 
-  it("in hosted mode with no organization replies defensively", async () => {
-    mockGetPrimaryOrganizationForUser.mockResolvedValue(null);
+  it("in hosted mode without owner/admin access replies defensively", async () => {
+    mockGetBillingOrganizationForUser.mockResolvedValue(null);
     const ctx = createMockCtx({ chatType: "private" });
     await upgradeHandler(ctx);
     const [text] = ctx.reply.mock.calls[0] as [string];
-    expect(text).toMatch(/no.*workspace|organization.*not found/i);
+    expect(text).toMatch(/owner|admin|billing/i);
   });
 
   it("shows plan selection keyboard with all 6 plan buttons", async () => {
@@ -88,7 +88,7 @@ describe("/upgrade command", () => {
   });
 
   it("replies with error on DB failure", async () => {
-    mockGetPrimaryOrganizationForUser.mockRejectedValue(new Error("connection refused"));
+    mockGetBillingOrganizationForUser.mockRejectedValue(new Error("connection refused"));
     const mockError = vi.fn();
     mockGetLogger.mockReturnValue({ error: mockError });
     const ctx = createMockCtx({ chatType: "private" });
@@ -103,7 +103,7 @@ describe("upgradeCallbackHandler (bill:upgrade)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
-    mockGetPrimaryOrganizationForUser.mockResolvedValue(ORG);
+    mockGetBillingOrganizationForUser.mockResolvedValue(ORG);
   });
 
   it("answers callback and sends plan selection keyboard", async () => {
@@ -133,7 +133,7 @@ describe("upgradePlanCallbackHandler (upg:{priceKey})", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
-    mockGetPrimaryOrganizationForUser.mockResolvedValue(ORG);
+    mockGetBillingOrganizationForUser.mockResolvedValue(ORG);
     mockCreateCheckoutSession.mockResolvedValue("https://checkout.stripe.com/pay/cs_test_abc");
   });
 
@@ -198,13 +198,13 @@ describe("upgradePlanCallbackHandler (upg:{priceKey})", () => {
   });
 
   it("answers with no-org message when organization not found", async () => {
-    mockGetPrimaryOrganizationForUser.mockResolvedValue(null);
+    mockGetBillingOrganizationForUser.mockResolvedValue(null);
     const ctx = createMockCtx({ chatType: "private" });
     (ctx as unknown as { match: string[] }).match = ["upg:team_monthly", "team_monthly"];
     await upgradePlanCallbackHandler(ctx);
     expect(mockCreateCheckoutSession).not.toHaveBeenCalled();
     const call = ctx.answerCallbackQuery.mock.calls[0][0] as { show_alert: boolean; text: string };
     expect(call.show_alert).toBe(true);
-    expect(call.text).toMatch(/no.*workspace|organization.*not found/i);
+    expect(call.text).toMatch(/owner|admin|billing/i);
   });
 });

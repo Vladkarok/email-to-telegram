@@ -1,7 +1,7 @@
 import { InlineKeyboard, type Context, type CallbackQueryContext } from "grammy";
 import { loadConfig } from "../../config.js";
 import { getDb } from "../../db/client.js";
-import { getPrimaryOrganizationForUser } from "../../tenant/currentOrganization.js";
+import { getBillingOrganizationForUser } from "../../tenant/currentOrganization.js";
 import { createCustomerPortalSession } from "../../billing/customerPortal.js";
 import { buildUpgradePlanKeyboard } from "./upgrade.js";
 import { getLogger } from "../../utils/logger.js";
@@ -9,8 +9,7 @@ import { getLogger } from "../../utils/logger.js";
 const SELF_HOSTED_MESSAGE =
   "ℹ️ Billing is not enabled in self-hosted mode. /portal is only available on the hosted service.";
 
-const NO_ORGANIZATION_MESSAGE =
-  "❌ No hosted workspace found for your account. Use /start to set one up.";
+const BILLING_FORBIDDEN_MESSAGE = "❌ Billing management requires workspace owner or admin access.";
 
 const NO_CUSTOMER_TEXT =
   "ℹ️ You don't have an active billing account yet.\n\nUse /upgrade to choose a plan and start a subscription.\n\n<b>Choose a plan:</b>";
@@ -29,9 +28,9 @@ export async function portalHandler(ctx: Context): Promise<void> {
 
   try {
     const db = getDb();
-    const organization = await getPrimaryOrganizationForUser(db, BigInt(ctx.from.id));
+    const organization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
     if (!organization) {
-      await ctx.reply(NO_ORGANIZATION_MESSAGE);
+      await ctx.reply(BILLING_FORBIDDEN_MESSAGE);
       return;
     }
 
@@ -66,9 +65,9 @@ export async function portalCallbackHandler(ctx: CallbackQueryContext<Context>):
 
   try {
     const db = getDb();
-    const organization = await getPrimaryOrganizationForUser(db, BigInt(ctx.from.id));
+    const organization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
     if (!organization) {
-      await ctx.answerCallbackQuery({ text: NO_ORGANIZATION_MESSAGE, show_alert: true });
+      await ctx.answerCallbackQuery({ text: BILLING_FORBIDDEN_MESSAGE, show_alert: true });
       return;
     }
 
