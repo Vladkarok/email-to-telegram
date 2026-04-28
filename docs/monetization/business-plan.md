@@ -179,6 +179,10 @@ The main risk is not only free-tier generosity. The main risk is shared-domain
 reputation and unbounded egress/support cost if hosted signup is easy but
 abuse handling is weak.
 
+The working hosted abuse and deliverability policy lives in
+[`hosted-abuse-policy.md`](./hosted-abuse-policy.md). Treat it as the operator
+runbook until public legal/policy pages are drafted.
+
 ## Payment Recommendation
 
 Use Stripe first if you are comfortable being the merchant and handling
