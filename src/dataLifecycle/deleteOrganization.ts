@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { eq, or } from "drizzle-orm";
+import { eq, or, sql } from "drizzle-orm";
 import { attachments, chats, deliveryLogs, emailAddresses, organizations } from "../db/schema.js";
 import type * as schema from "../db/schema.js";
 import { deleteFile } from "../storage/disk.js";
@@ -16,36 +16,48 @@ export async function deleteHostedOrganization(
   db: Db,
   organizationId: string,
 ): Promise<DeleteOrganizationResult> {
-  const [organization] = await db
-    .select({ id: organizations.id })
-    .from(organizations)
-    .where(eq(organizations.id, organizationId))
-    .limit(1);
+  const result = await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${organizationId}))`);
 
-  if (!organization) {
-    return { deleted: false, rawEmailFiles: 0, attachmentFiles: 0 };
-  }
+    const [organization] = await tx
+      .select({ id: organizations.id })
+      .from(organizations)
+      .where(eq(organizations.id, organizationId))
+      .limit(1);
 
-  const [rawEmailPaths, attachmentPaths] = await Promise.all([
-    listRawEmailPaths(db, organizationId),
-    listAttachmentPaths(db, organizationId),
-  ]);
+    if (!organization) {
+      return {
+        deleted: false,
+        rawEmailPaths: [],
+        attachmentPaths: [],
+      };
+    }
 
-  for (const filePath of [...rawEmailPaths, ...attachmentPaths]) {
-    await deleteFile(filePath);
-  }
+    const [rawEmailPaths, attachmentPaths] = await Promise.all([
+      listRawEmailPaths(tx as Db, organizationId),
+      listAttachmentPaths(tx as Db, organizationId),
+    ]);
 
-  await db.transaction(async (tx) => {
     await tx.delete(deliveryLogs).where(eq(deliveryLogs.organizationId, organizationId));
     await tx.delete(emailAddresses).where(eq(emailAddresses.organizationId, organizationId));
     await tx.delete(chats).where(eq(chats.organizationId, organizationId));
     await tx.delete(organizations).where(eq(organizations.id, organizationId));
+
+    return {
+      deleted: true,
+      rawEmailPaths,
+      attachmentPaths,
+    };
   });
 
+  for (const filePath of [...result.rawEmailPaths, ...result.attachmentPaths]) {
+    await deleteFile(filePath);
+  }
+
   return {
-    deleted: true,
-    rawEmailFiles: rawEmailPaths.length,
-    attachmentFiles: attachmentPaths.length,
+    deleted: result.deleted,
+    rawEmailFiles: result.rawEmailPaths.length,
+    attachmentFiles: result.attachmentPaths.length,
   };
 }
 

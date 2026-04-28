@@ -22,7 +22,43 @@ function makeDb({
   let selectCallCount = 0;
   const deletedTables: unknown[] = [];
   const deleteWhere = vi.fn().mockResolvedValue({ rowCount: 1 });
+  const execute = vi.fn().mockResolvedValue(undefined);
+  const select = vi.fn(() => {
+    selectCallCount += 1;
+
+    if (selectCallCount === 1) {
+      return {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue(organizationExists ? [{ id: "org-1" }] : []),
+          }),
+        }),
+      };
+    }
+
+    if (selectCallCount === 2) {
+      return {
+        from: vi.fn().mockReturnValue({
+          leftJoin: vi.fn().mockReturnValue({
+            where: vi.fn().mockResolvedValue(rawRows),
+          }),
+        }),
+      };
+    }
+
+    return {
+      from: vi.fn().mockReturnValue({
+        innerJoin: vi.fn().mockReturnValue({
+          leftJoin: vi.fn().mockReturnValue({
+            where: vi.fn().mockResolvedValue(attachmentRows),
+          }),
+        }),
+      }),
+    };
+  });
   const tx = {
+    execute,
+    select,
     delete: vi.fn((table: unknown) => {
       deletedTables.push(table);
       return { where: deleteWhere };
@@ -31,49 +67,18 @@ function makeDb({
   const transaction = vi.fn(async (work: (tx: unknown) => Promise<unknown>) => work(tx));
 
   return {
-    select: vi.fn(() => {
-      selectCallCount += 1;
-
-      if (selectCallCount === 1) {
-        return {
-          from: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              limit: vi.fn().mockResolvedValue(organizationExists ? [{ id: "org-1" }] : []),
-            }),
-          }),
-        };
-      }
-
-      if (selectCallCount === 2) {
-        return {
-          from: vi.fn().mockReturnValue({
-            leftJoin: vi.fn().mockReturnValue({
-              where: vi.fn().mockResolvedValue(rawRows),
-            }),
-          }),
-        };
-      }
-
-      return {
-        from: vi.fn().mockReturnValue({
-          innerJoin: vi.fn().mockReturnValue({
-            leftJoin: vi.fn().mockReturnValue({
-              where: vi.fn().mockResolvedValue(attachmentRows),
-            }),
-          }),
-        }),
-      };
-    }),
     transaction,
     _mocks: {
       deletedTables,
       deleteWhere,
+      execute,
       transaction,
     },
   } as unknown as Parameters<typeof deleteHostedOrganization>[0] & {
     _mocks: {
       deletedTables: unknown[];
       deleteWhere: ReturnType<typeof vi.fn>;
+      execute: ReturnType<typeof vi.fn>;
       transaction: ReturnType<typeof vi.fn>;
     };
   };
@@ -95,10 +100,12 @@ describe("deleteHostedOrganization", () => {
     });
 
     expect(mockDeleteFile).not.toHaveBeenCalled();
-    expect(db._mocks.transaction).not.toHaveBeenCalled();
+    expect(db._mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(db._mocks.execute).toHaveBeenCalledTimes(1);
+    expect(db._mocks.deleteWhere).not.toHaveBeenCalled();
   });
 
-  it("deletes stored files before deleting organization data", async () => {
+  it("deletes organization data under lock before deleting stored files", async () => {
     const db = makeDb({
       rawRows: [
         { rawEmailPath: "/data/raw/a.eml" },
@@ -121,13 +128,25 @@ describe("deleteHostedOrganization", () => {
     expect(mockDeleteFile).toHaveBeenCalledWith("/data/attachments/a.bin");
     expect(mockDeleteFile).toHaveBeenCalledWith("/data/attachments/b.bin");
     expect(mockDeleteFile).toHaveBeenCalledTimes(3);
-    expect(mockDeleteFile.mock.invocationCallOrder.at(-1)).toBeLessThan(
-      db._mocks.transaction.mock.invocationCallOrder[0] ?? 0,
+    expect(db._mocks.transaction.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDeleteFile.mock.invocationCallOrder[0] ?? 0,
     );
+    expect(db._mocks.execute).toHaveBeenCalledTimes(1);
     expect(db._mocks.deletedTables).toEqual([deliveryLogs, emailAddresses, chats, organizations]);
   });
 
-  it("does not delete database rows when file deletion fails", async () => {
+  it("does not delete files when database deletion fails", async () => {
+    const db = makeDb({
+      rawRows: [{ rawEmailPath: "/data/raw/a.eml" }],
+    });
+    db._mocks.deleteWhere.mockRejectedValueOnce(new Error("db down"));
+
+    await expect(deleteHostedOrganization(db, "org-1")).rejects.toThrow("db down");
+
+    expect(mockDeleteFile).not.toHaveBeenCalled();
+  });
+
+  it("surfaces file deletion failures after database deletion commits", async () => {
     const db = makeDb({
       rawRows: [{ rawEmailPath: "/data/raw/a.eml" }],
     });
@@ -135,6 +154,7 @@ describe("deleteHostedOrganization", () => {
 
     await expect(deleteHostedOrganization(db, "org-1")).rejects.toThrow("disk busy");
 
-    expect(db._mocks.transaction).not.toHaveBeenCalled();
+    expect(db._mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(db._mocks.deleteWhere).toHaveBeenCalled();
   });
 });
