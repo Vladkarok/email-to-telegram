@@ -51,6 +51,16 @@ vi.mock("../../../../src/billing/limits.js", () => ({
   ),
 }));
 
+const mockReserveHostedAliasCreateAttempt = vi.fn().mockResolvedValue(undefined);
+class MockHostedAliasCreateRateLimitError extends Error {}
+vi.mock("../../../../src/abuse/hostedAliasCreation.js", () => ({
+  HOSTED_ALIAS_CREATE_RATE_LIMIT_MESSAGE:
+    "⚠️ Too many alias creation attempts. Please try again later.",
+  HostedAliasCreateRateLimitError: MockHostedAliasCreateRateLimitError,
+  reserveHostedAliasCreateAttempt: (...args: unknown[]): unknown =>
+    mockReserveHostedAliasCreateAttempt(...args),
+}));
+
 const { newemailHandler } = await import("../../../../src/telegram/commands/newemail.js");
 
 describe("/newemail command", () => {
@@ -60,6 +70,7 @@ describe("/newemail command", () => {
     vi.clearAllMocks();
     mockCheckAliasCreateLimit.mockResolvedValue({ ok: true });
     mockHasActiveHostedOrganization.mockResolvedValue(true);
+    mockReserveHostedAliasCreateAttempt.mockResolvedValue(undefined);
     mockCanManageChat.mockResolvedValue(true);
     mockFindChatById.mockResolvedValue({
       title: "Test Chat",
@@ -174,6 +185,28 @@ describe("/newemail command", () => {
     ];
     expect(aliasData.organizationId).toBe("org-1");
     expect(aliasData.domainId).toBeNull();
+    expect(mockReserveHostedAliasCreateAttempt).toHaveBeenCalledWith(
+      expect.anything(),
+      "org-1",
+      123456789n,
+    );
+  });
+
+  it("rejects alias creation when hosted alias creation is throttled", async () => {
+    mockFindChatById.mockResolvedValueOnce({
+      title: "Hosted DM",
+      type: "private",
+      organizationId: "org-1",
+    });
+    mockReserveHostedAliasCreateAttempt.mockRejectedValueOnce(
+      new MockHostedAliasCreateRateLimitError(),
+    );
+    const ctx = createMockCtx({ commandMatch: "alerts", chatType: "private" });
+
+    await newemailHandler(ctx);
+
+    expect(mockCreateAlias).not.toHaveBeenCalled();
+    expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("Too many alias"));
   });
 
   it("rejects alias creation when the plan alias limit is reached", async () => {

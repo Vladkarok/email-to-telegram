@@ -14,6 +14,11 @@ import {
 } from "../../billing/limits.js";
 import { getPending, clearPending } from "../session.js";
 import { canManageChat } from "../authorization.js";
+import {
+  HOSTED_ALIAS_CREATE_RATE_LIMIT_MESSAGE,
+  HostedAliasCreateRateLimitError,
+  reserveHostedAliasCreateAttempt,
+} from "../../abuse/hostedAliasCreation.js";
 
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 const generateSuffix = customAlphabet(ALPHABET, 6);
@@ -120,6 +125,8 @@ export async function createEmailAlias(
         throw new Error("quota-blocked");
       }
 
+      await reserveHostedAliasCreateAttempt(tx, organizationId, createdBy);
+
       return createAlias(tx, {
         localPart,
         fullAddress,
@@ -138,6 +145,10 @@ export async function createEmailAlias(
     const msg = err instanceof Error ? err.message : String(err);
     if (msg === "quota-blocked") {
       if (blockedLimit) await replyForAliasLimitFailure(ctx, blockedLimit);
+      return;
+    }
+    if (err instanceof HostedAliasCreateRateLimitError) {
+      await ctx.reply(HOSTED_ALIAS_CREATE_RATE_LIMIT_MESSAGE);
       return;
     }
     if (
