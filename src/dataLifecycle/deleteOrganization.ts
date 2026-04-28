@@ -10,6 +10,7 @@ export interface DeleteOrganizationResult {
   deleted: boolean;
   rawEmailFiles: number;
   attachmentFiles: number;
+  failedFileDeletes: string[];
 }
 
 export async function deleteHostedOrganization(
@@ -50,14 +51,20 @@ export async function deleteHostedOrganization(
     };
   });
 
+  const failedFileDeletes: string[] = [];
   for (const filePath of [...result.rawEmailPaths, ...result.attachmentPaths]) {
-    await deleteFile(filePath);
+    try {
+      await deleteFile(filePath);
+    } catch {
+      failedFileDeletes.push(filePath);
+    }
   }
 
   return {
     deleted: result.deleted,
     rawEmailFiles: result.rawEmailPaths.length,
     attachmentFiles: result.attachmentPaths.length,
+    failedFileDeletes,
   };
 }
 

@@ -97,6 +97,7 @@ describe("deleteHostedOrganization", () => {
       deleted: false,
       rawEmailFiles: 0,
       attachmentFiles: 0,
+      failedFileDeletes: [],
     });
 
     expect(mockDeleteFile).not.toHaveBeenCalled();
@@ -122,6 +123,7 @@ describe("deleteHostedOrganization", () => {
       deleted: true,
       rawEmailFiles: 1,
       attachmentFiles: 2,
+      failedFileDeletes: [],
     });
 
     expect(mockDeleteFile).toHaveBeenCalledWith("/data/raw/a.eml");
@@ -129,6 +131,9 @@ describe("deleteHostedOrganization", () => {
     expect(mockDeleteFile).toHaveBeenCalledWith("/data/attachments/b.bin");
     expect(mockDeleteFile).toHaveBeenCalledTimes(3);
     expect(db._mocks.transaction.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDeleteFile.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(db._mocks.deleteWhere.mock.invocationCallOrder.at(-1)).toBeLessThan(
       mockDeleteFile.mock.invocationCallOrder[0] ?? 0,
     );
     expect(db._mocks.execute).toHaveBeenCalledTimes(1);
@@ -146,15 +151,22 @@ describe("deleteHostedOrganization", () => {
     expect(mockDeleteFile).not.toHaveBeenCalled();
   });
 
-  it("surfaces file deletion failures after database deletion commits", async () => {
+  it("attempts every file and reports file deletion failures after database deletion commits", async () => {
     const db = makeDb({
       rawRows: [{ rawEmailPath: "/data/raw/a.eml" }],
+      attachmentRows: [{ storagePath: "/data/attachments/a.bin" }],
     });
     mockDeleteFile.mockRejectedValueOnce(new Error("disk busy"));
 
-    await expect(deleteHostedOrganization(db, "org-1")).rejects.toThrow("disk busy");
+    await expect(deleteHostedOrganization(db, "org-1")).resolves.toEqual({
+      deleted: true,
+      rawEmailFiles: 1,
+      attachmentFiles: 1,
+      failedFileDeletes: ["/data/raw/a.eml"],
+    });
 
     expect(db._mocks.transaction).toHaveBeenCalledTimes(1);
     expect(db._mocks.deleteWhere).toHaveBeenCalled();
+    expect(mockDeleteFile).toHaveBeenCalledTimes(2);
   });
 });
