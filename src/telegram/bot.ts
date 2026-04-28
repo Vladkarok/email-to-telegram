@@ -14,6 +14,20 @@ import {
 } from "./commands/settings.js";
 import { addAllowRuleForAlias, allowHandler } from "./commands/allow.js";
 import { helpHandler } from "./commands/help.js";
+import { planHandler } from "./commands/plan.js";
+import { usageHandler } from "./commands/usage.js";
+import {
+  billingHandler,
+  BILLING_UPGRADE_CALLBACK,
+  BILLING_PORTAL_CALLBACK,
+} from "./commands/billing.js";
+import {
+  upgradeHandler,
+  upgradeCallbackHandler,
+  upgradePlanCallbackHandler,
+  UPGRADE_PLAN_CALLBACK_PATTERN,
+} from "./commands/upgrade.js";
+import { portalHandler, portalCallbackHandler } from "./commands/portal.js";
 import { chatMemberHandler } from "./handlers/chatMember.js";
 import { editChatSelectionMenu, editChatManagementMenu } from "./menu/chatMenu.js";
 import { editAliasListMenu, editAliasDetailMenu } from "./menu/aliasMenu.js";
@@ -119,6 +133,18 @@ export function createBot(token: string): Bot {
   bot.command("settings", settingsHandler);
   bot.command("allow", allowHandler);
   bot.command("help", helpHandler);
+  bot.command("plan", planHandler);
+  bot.command("usage", usageHandler);
+  bot.command("billing", billingHandler);
+  bot.command("upgrade", upgradeHandler);
+  bot.command("portal", portalHandler);
+
+  // bill:upgrade / bill:portal — inline keyboard buttons from /billing
+  bot.callbackQuery(BILLING_UPGRADE_CALLBACK, upgradeCallbackHandler);
+  bot.callbackQuery(BILLING_PORTAL_CALLBACK, portalCallbackHandler);
+
+  // upg:{priceKey} — plan selection buttons from /upgrade
+  bot.callbackQuery(UPGRADE_PLAN_CALLBACK_PATTERN, upgradePlanCallbackHandler);
 
   // ── Inline keyboard callbacks ───────────────────────────────────────────────
 
