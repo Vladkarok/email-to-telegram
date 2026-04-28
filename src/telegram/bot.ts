@@ -16,6 +16,11 @@ import { addAllowRuleForAlias, allowHandler } from "./commands/allow.js";
 import { helpHandler } from "./commands/help.js";
 import { planHandler } from "./commands/plan.js";
 import { usageHandler } from "./commands/usage.js";
+import {
+  billingHandler,
+  BILLING_UPGRADE_CALLBACK,
+  BILLING_PORTAL_CALLBACK,
+} from "./commands/billing.js";
 import { chatMemberHandler } from "./handlers/chatMember.js";
 import { editChatSelectionMenu, editChatManagementMenu } from "./menu/chatMenu.js";
 import { editAliasListMenu, editAliasDetailMenu } from "./menu/aliasMenu.js";
@@ -123,6 +128,22 @@ export function createBot(token: string): Bot {
   bot.command("help", helpHandler);
   bot.command("plan", planHandler);
   bot.command("usage", usageHandler);
+  bot.command("billing", billingHandler);
+
+  // Placeholder callbacks for /billing inline keyboard buttons.
+  // Sub-slice C replaces these with real Stripe Checkout / Customer Portal deep links.
+  bot.callbackQuery(BILLING_UPGRADE_CALLBACK, async (ctx) => {
+    await ctx.answerCallbackQuery({
+      text: "Upgrade flow coming soon — use /upgrade once available.",
+      show_alert: true,
+    });
+  });
+  bot.callbackQuery(BILLING_PORTAL_CALLBACK, async (ctx) => {
+    await ctx.answerCallbackQuery({
+      text: "Customer portal coming soon — use /portal once available.",
+      show_alert: true,
+    });
+  });
 
   // ── Inline keyboard callbacks ───────────────────────────────────────────────
 

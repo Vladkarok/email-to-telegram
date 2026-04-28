@@ -25,6 +25,7 @@ Only senders matching an allow rule can deliver mail to an alias.
 /allow remove &lt;alias&gt; &lt;email_or_domain&gt;
 
 <b>Billing (hosted only)</b>
+/billing — workspace billing status with Upgrade and Manage Billing buttons
 /plan — show your current plan and limits
 /usage — show this month's accepted/delivered/failed/rejected counts and quotas
 
