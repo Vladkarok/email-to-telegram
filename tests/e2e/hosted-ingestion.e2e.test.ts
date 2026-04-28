@@ -9,6 +9,7 @@ const state = {
     localPart: "alerts",
     fullAddress: "alerts@example.com",
     organizationId: "org-1",
+    domainId: "domain-1",
     chatId: 123n,
     messageThreadId: null,
     status: "active",
@@ -58,6 +59,28 @@ vi.mock("../../src/telegram/api.js", () => ({
 vi.mock("../../src/db/repos/aliases.js", () => ({
   findAliasByLocalPart: vi.fn((_db: unknown, localPart: string) =>
     Promise.resolve(localPart === state.alias.localPart ? { ...state.alias } : null),
+  ),
+  findAliasByLocalPartAndDomainId: vi.fn((_db: unknown, localPart: string, domainId: string) =>
+    Promise.resolve(
+      localPart === state.alias.localPart && domainId === state.alias.domainId
+        ? { ...state.alias }
+        : null,
+    ),
+  ),
+}));
+
+vi.mock("../../src/db/repos/inboundDomains.js", () => ({
+  findInboundDomainByDomain: vi.fn((_db: unknown, domain: string) =>
+    Promise.resolve(
+      domain.toLowerCase() === "example.com"
+        ? {
+            id: "domain-1",
+            domain: "example.com",
+            kind: "shared",
+            status: "active",
+          }
+        : null,
+    ),
   ),
 }));
 

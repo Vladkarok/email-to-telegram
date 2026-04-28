@@ -29,6 +29,7 @@ const mockUsageMonthForDate = vi.fn(() => "2026-04");
 
 vi.mock("../../../src/db/repos/aliases.js", () => ({
   findAliasByLocalPart: (...args: unknown[]): unknown => mockFindAlias(...args),
+  findAliasByLocalPartAndDomainId: (...args: unknown[]): unknown => mockFindAlias(...args),
 }));
 vi.mock("../../../src/db/repos/allowRules.js", () => ({
   checkAllowRule: (...args: unknown[]): unknown => mockCheckAllow(...args),

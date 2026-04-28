@@ -17,8 +17,8 @@ import {
 import { isImageContentType } from "./imageTypes.js";
 import type { PhotoItem } from "../telegram/sender.js";
 import { isDuplicate } from "./dedup.js";
-import { findAliasByLocalPart } from "../db/repos/aliases.js";
 import { checkAllowRule } from "../db/repos/allowRules.js";
+import { findAliasForInbound } from "./inboundRouting.js";
 import {
   countRecentDeliveriesByAlias,
   createDeliveryLog,
@@ -47,6 +47,7 @@ export interface PipelineInput {
   /** Path where the raw email was persisted on disk (for retry). */
   rawEmailPath?: string;
   localPart: string;
+  recipientDomain?: string;
   /** HTTP request ID for correlating pipeline log entries to an inbound request. */
   correlationId?: string;
   /**
@@ -108,7 +109,10 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
   } = input;
 
   // 1. Resolve alias
-  const alias = await findAliasByLocalPart(db, localPart);
+  const alias = await findAliasForInbound(db, {
+    localPart,
+    recipientDomain: input.recipientDomain,
+  });
   if (!alias || alias.status !== "active") {
     return { queued: false, result: { ok: false, reason: "alias_not_found" } };
   }

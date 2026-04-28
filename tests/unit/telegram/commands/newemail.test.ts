@@ -23,14 +23,25 @@ vi.mock("../../../../src/db/repos/chats.js", () => ({
   deactivateChat: vi.fn().mockResolvedValue(undefined),
 }));
 
+const mockEnsureSharedInboundDomain = vi.fn();
+vi.mock("../../../../src/db/repos/inboundDomains.js", () => ({
+  ensureSharedInboundDomain: (...args: unknown[]): unknown =>
+    mockEnsureSharedInboundDomain(...args),
+}));
+
 vi.mock("../../../../src/telegram/session.js", () => ({
   getPending: vi.fn().mockReturnValue(undefined),
   clearPending: vi.fn(),
   setPending: vi.fn(),
 }));
 
+const mockLoadConfig = vi.fn(() => ({
+  appMode: "self-hosted",
+  mailDomain: "tgmail.example.com",
+  hostedMailDomain: undefined,
+}));
 vi.mock("../../../../src/config.js", () => ({
-  loadConfig: () => ({ mailDomain: "tgmail.example.com" }),
+  loadConfig: (): unknown => mockLoadConfig(),
 }));
 
 const mockCanManageChat = vi.fn().mockResolvedValue(true);
@@ -71,6 +82,17 @@ describe("/newemail command", () => {
     mockCheckAliasCreateLimit.mockResolvedValue({ ok: true });
     mockHasActiveHostedOrganization.mockResolvedValue(true);
     mockReserveHostedAliasCreateAttempt.mockResolvedValue(undefined);
+    mockEnsureSharedInboundDomain.mockResolvedValue({
+      id: "shared-domain-1",
+      domain: "inbox.example.com",
+      kind: "shared",
+      status: "active",
+    });
+    mockLoadConfig.mockReturnValue({
+      appMode: "self-hosted",
+      mailDomain: "tgmail.example.com",
+      hostedMailDomain: undefined,
+    });
     mockCanManageChat.mockResolvedValue(true);
     mockFindChatById.mockResolvedValue({
       title: "Test Chat",
@@ -189,6 +211,66 @@ describe("/newemail command", () => {
       expect.anything(),
       "org-1",
       123456789n,
+    );
+  });
+
+  it("uses the hosted shared inbound domain when hosted mode creates aliases", async () => {
+    mockLoadConfig.mockReturnValue({
+      appMode: "hosted",
+      mailDomain: "legacy.example.com",
+      hostedMailDomain: "Inbox.Example.COM",
+    });
+    mockFindChatById.mockResolvedValueOnce({
+      title: "Hosted DM",
+      type: "private",
+      organizationId: "org-1",
+    });
+    mockCreateAlias.mockResolvedValueOnce({
+      id: MOCK_ALIAS_ID,
+      localPart: "alerts-ab12cd",
+      fullAddress: "alerts-ab12cd@inbox.example.com",
+    });
+    const ctx = createMockCtx({ commandMatch: "alerts", chatType: "private" });
+
+    await newemailHandler(ctx);
+
+    expect(mockEnsureSharedInboundDomain).toHaveBeenCalledWith(
+      expect.anything(),
+      "Inbox.Example.COM",
+    );
+    const [, aliasData] = mockCreateAlias.mock.calls[0] as [
+      unknown,
+      { domainId: string | null; fullAddress: string },
+    ];
+    expect(aliasData.domainId).toBe("shared-domain-1");
+    expect(aliasData.fullAddress).toMatch(/@inbox\.example\.com$/);
+    expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain("inbox.example.com");
+    expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain(
+      "/allow add alerts-ab12cd@inbox.example.com domain.com",
+    );
+  });
+
+  it("does not create hosted aliases when the shared inbound domain is unavailable", async () => {
+    mockLoadConfig.mockReturnValue({
+      appMode: "hosted",
+      mailDomain: "legacy.example.com",
+      hostedMailDomain: "inbox.example.com",
+    });
+    mockFindChatById.mockResolvedValueOnce({
+      title: "Hosted DM",
+      type: "private",
+      organizationId: "org-1",
+    });
+    mockEnsureSharedInboundDomain.mockRejectedValueOnce(
+      new Error("ensureSharedInboundDomain: hosted shared domain is not active"),
+    );
+    const ctx = createMockCtx({ commandMatch: "alerts", chatType: "private" });
+
+    await newemailHandler(ctx);
+
+    expect(mockCreateAlias).not.toHaveBeenCalled();
+    expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
+      /workspace|not ready/i,
     );
   });
 
