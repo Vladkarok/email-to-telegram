@@ -28,6 +28,8 @@ Only senders matching an allow rule can deliver mail to an alias.
 /billing — workspace billing status with Upgrade and Manage Billing buttons
 /plan — show your current plan and limits
 /usage — show this month's accepted/delivered/failed/rejected counts and quotas
+/upgrade — choose a plan and get a Stripe checkout link
+/portal — open the Stripe billing portal to manage your subscription
 
 /help — show this message
 
