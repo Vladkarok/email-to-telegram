@@ -1,12 +1,12 @@
 import { execFile } from "child_process";
-import { access, mkdir, constants } from "fs/promises";
+import { access, mkdir, constants, writeFile } from "fs/promises";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { schedule } from "node-cron";
 import { parseStartupOptions } from "./cli.js";
 import { loadConfig } from "./config.js";
 import { buildRetryWorkerOptions, nextPollingStartOptions } from "./startup/runtime.js";
-import { createLogger, setLogger } from "./utils/logger.js";
+import { createLogger, setLogger, stderrLoggerDestination } from "./utils/logger.js";
 import { initDb, closeDb, getDb } from "./db/client.js";
 import { runMigrations } from "./db/migrate.js";
 import { createHttpServer, startHttpServer } from "./http/server.js";
@@ -25,15 +25,29 @@ import {
   backfillStoredEncryption,
   rewrapStoredEncryptionKeys,
 } from "./security/storageMaintenance.js";
+import { exportHostedOrganizationData } from "./dataLifecycle/exportOrganization.js";
+import { deleteHostedOrganization } from "./dataLifecycle/deleteOrganization.js";
+import {
+  assertHostedDataLifecycleAllowed,
+  hasHostedDataLifecycleOperation,
+  hostedDeleteExitCode,
+} from "./startup/hostedDataLifecycle.js";
 
 async function main() {
   const startup = parseStartupOptions(process.argv.slice(2));
 
   // 1. Load and validate config (fail fast)
   const config = loadConfig();
+  const hostedDataLifecycleOperation = hasHostedDataLifecycleOperation(startup);
+  if (hostedDataLifecycleOperation) {
+    assertHostedDataLifecycleAllowed(config);
+  }
 
   // 2. Initialize logger
-  const logger = createLogger(config.logLevel);
+  const logger = createLogger(
+    config.logLevel,
+    hostedDataLifecycleOperation ? stderrLoggerDestination() : undefined,
+  );
   setLogger(logger);
   logger.info("Starting email-to-telegram");
   configureStorageEncryption({
@@ -63,6 +77,48 @@ async function main() {
   if (startup.backfillStorageEncryption) {
     const summary = await backfillStoredEncryption(getDb(), config.rawEmailDir);
     logger.info({ summary }, "Storage encryption backfill complete.");
+    await closeDb();
+    return;
+  }
+
+  if (startup.hostedExportOrganizationId) {
+    const exportData = await exportHostedOrganizationData(
+      getDb(),
+      startup.hostedExportOrganizationId,
+    );
+    if (!exportData) {
+      logger.error(
+        { organizationId: startup.hostedExportOrganizationId },
+        "Hosted organization export failed: organization not found.",
+      );
+      process.exitCode = 1;
+      await closeDb();
+      return;
+    }
+
+    await writeFile(startup.hostedExportOutputPath!, `${JSON.stringify(exportData, null, 2)}\n`, {
+      mode: 0o600,
+      flag: "wx",
+    });
+    logger.info(
+      {
+        organizationId: startup.hostedExportOrganizationId,
+        outputPath: startup.hostedExportOutputPath,
+      },
+      "Hosted organization export complete.",
+    );
+    await closeDb();
+    return;
+  }
+
+  if (startup.hostedDeleteOrganizationId) {
+    const result = await deleteHostedOrganization(getDb(), startup.hostedDeleteOrganizationId);
+    logger.info(
+      { organizationId: startup.hostedDeleteOrganizationId, result },
+      "Hosted organization deletion complete.",
+    );
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    process.exitCode = hostedDeleteExitCode(result);
     await closeDb();
     return;
   }
