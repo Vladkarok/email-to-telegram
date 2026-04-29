@@ -100,6 +100,10 @@ launch live billing until the tax/accounting approach is reviewed.
 Hosted data export, erasure, abuse handling, and shared-domain reputation
 controls are described in:
 
+- [`README.md`](./README.md)
+- [`acceptable-use.md`](./acceptable-use.md)
+- [`privacy-and-data-requests.md`](./privacy-and-data-requests.md)
+- [`launch-checklist.md`](./launch-checklist.md)
 - [`../monetization/hosted-abuse-policy.md`](../monetization/hosted-abuse-policy.md)
 - [`../monetization/stripe-test-mode-runbook.md`](../monetization/stripe-test-mode-runbook.md)
 
