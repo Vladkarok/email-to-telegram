@@ -5,6 +5,9 @@ shared-domain reputation, and hosted-user data requests. It is operational
 guidance, not legal advice. Public terms, privacy, tax, and DPA language should
 still be reviewed before a public launch.
 
+Public-facing hosted policy drafts live in [`../hosted/`](../hosted/). Keep the
+operator runbook here stricter than public copy when needed.
+
 ## Acceptable Use
 
 Hosted email-to-Telegram is for personal alerts, operational notifications,
@@ -154,5 +157,9 @@ Do not launch public hosted signup until all of these are true:
 - shared-domain emergency disable has been tested
 - egress ceilings are enforced for attachment and privacy-view downloads
 - export and delete operator commands have been exercised in staging
-- a public acceptable-use/abuse contact is published
-- privacy/terms/refund/cancellation language has been reviewed
+- a public acceptable-use/abuse contact is published from
+  [`../hosted/acceptable-use.md`](../hosted/acceptable-use.md)
+- privacy/data request language is published from
+  [`../hosted/privacy-and-data-requests.md`](../hosted/privacy-and-data-requests.md)
+- terms/refund/cancellation language has been reviewed from
+  [`../hosted/pricing-and-terms.md`](../hosted/pricing-and-terms.md)
