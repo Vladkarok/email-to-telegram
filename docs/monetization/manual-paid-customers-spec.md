@@ -101,9 +101,10 @@ Behavior:
   - `organizations.plan_code = free`
   - `organizations.subscription_status = free`
   - clears manual entitlement fields
-- if an operator intentionally wants to keep Stripe links for a migration or
-  reconciliation workflow, require an explicit `--keep-stripe-link` flag and
-  record that choice in the manual billing event note
+- `--keep-stripe-link` is forbidden for `personal`, `pro`, `team`, and `free`
+  grants; only `business` can keep Stripe links because the current webhook code
+  already protects `business` plans from unrelated Stripe overwrite
+- when plan is `free`, Stripe customer/subscription IDs are always cleared
 - writes a JSON summary to stdout
 - writes operational logs to stderr
 - exits non-zero if validation fails
@@ -130,11 +131,16 @@ Behavior:
   provided, refuses to proceed and prints the candidate organization IDs
 - if `--organization-id` is provided, verifies the user is already an owner/admin
   of that organization before applying the plan
-- if none exists, creates:
+- if the user has member-only memberships but no owner/admin organization, refuse
+  unless the operator provides `--organization-id` plus an explicit role upgrade
+  command, or uses `--create-new-organization`
+- if the user has no memberships, or `--create-new-organization` is supplied,
+  creates:
   - user row with `id = telegramUserId`
   - organization named `Telegram <telegramUserId>`
   - organization member row with role `owner`
-  - shared inbound domain remains the default hosted domain path
+  - no organization-level inbound domain is set; aliases created later through
+    `/newemail` use the configured hosted shared inbound domain
 - applies the same manual plan update as the organization command
 - outputs both `telegramUserId` and `organizationId`
 
@@ -191,6 +197,10 @@ create table manual_billing_events (
 
 create index idx_manual_billing_events_org_created
   on manual_billing_events(organization_id, created_at desc);
+
+create unique index idx_manual_billing_events_org_payment_ref
+  on manual_billing_events(organization_id, payment_reference)
+  where payment_reference is not null;
 ```
 
 Reason:
@@ -202,8 +212,17 @@ Reason:
 
 Do not store sensitive payment data. Store only external references such as
 invoice ID, Wise transfer reference, PayPal transaction ID, or a short note.
-Limit `note` to operational context, not payment secrets or private support
-transcripts.
+Limit `note` to 1000 characters of operational context, not payment secrets or
+private support transcripts.
+
+Idempotency policy:
+
+- if `payment_reference` is present and an event already exists for the same
+  organization/reference, re-running the command must be idempotent
+- idempotent re-runs may update organization billing state to the same target
+  values, but must not insert another manual billing event
+- JSON output should include `"idempotent": true` and the existing event ID
+- if the operator needs to extend the term, use a new payment reference
 
 ## Repository/API Additions
 
@@ -227,7 +246,8 @@ Implementation should reuse:
 - `findOrganizationById`
 - `createOrganization`
 - `addOrganizationMember`
-- existing user repo upsert helper
+- a new `findOrCreateUserById` helper that inserts `id` with
+  `on conflict do nothing` and never clears an existing username
 - existing plan definitions and plan-code validation
 
 ## CLI Parsing
@@ -246,9 +266,11 @@ manualNote: string | null;
 manualTelegramUserId: string | null;
 manualOrganizationRole: "owner" | "admin" | "member" | null;
 manualKeepStripeLink: boolean;
+manualCreateNewOrganization: boolean;
 ```
 
-Only one startup operation may run at a time. The operation flags are:
+All `--hosted-*` startup operations are mutually exclusive with each other,
+including existing export/delete operations. The manual operation flags are:
 
 - `--hosted-set-organization-plan`
 - `--hosted-set-user-plan`
@@ -258,11 +280,19 @@ Validation rules:
 
 - paid plans require `--status active` or default to `active`
 - paid plans require `--paid-through` unless `--plan business`
-- `--paid-through` must parse to a valid future UTC date
+- `--paid-through` must parse as an ISO 8601 date/time or `YYYY-MM-DD`
+- `--paid-through` must be at least `now() - 7 days`
+- past `--paid-through` values inside that 7-day window should warn in JSON
+  output but not fail; this supports backfilled manual payments
 - `--plan free` must use `--status free`
+- `--plan free` always clears Stripe links and rejects `--keep-stripe-link`
+- `--keep-stripe-link` is allowed only with `--plan business`
 - `--hosted-set-user-plan` may accept `--organization-id` to disambiguate an
   existing owner/admin organization
-- manual grants clear Stripe links unless `--keep-stripe-link` is supplied
+- `--hosted-set-user-plan` refuses member-only existing memberships unless
+  `--organization-id` and a role upgrade path are used, or
+  `--create-new-organization` is supplied
+- manual grants clear Stripe links unless valid `--keep-stripe-link` is supplied
 - `--manual-payment-reference` should be optional but recommended
 - member command requires `--telegram-user-id` and `--role`
 - all manual commands require hosted mode before DB mutation
@@ -274,6 +304,15 @@ Manual active paid plans should use the existing limits logic:
 - `subscription_status = active` gives paid plan limits
 - `plan_code = business` gives business limits regardless of status
 - `plan_code = free` gives free limits
+
+Implementation note:
+
+- verify `getEffectivePlan` does not gate `active` manual plans on
+  `paid_through_at`
+- current intended behavior is that `paid_through_at` only affects `past_due`
+  grace handling, not active manual plans
+- if the limits code changes to gate active plans by `paid_through_at`, manual
+  v1 must either opt manual orgs out or keep `paid_through_at` in the future
 
 Expiry behavior needs one explicit decision.
 
@@ -328,18 +367,22 @@ Required v1 behavior:
 
 - manual grants clear `stripe_customer_id` and `stripe_subscription_id` by
   default
-- keeping Stripe links requires explicit `--keep-stripe-link`
-- if `--keep-stripe-link` is used, webhook overwrite risk must be visible in the
-  JSON output and audit record
-- do not claim webhook safety for non-business manual plans while Stripe links
-  remain attached
+- keeping Stripe links is allowed only for `business`, where current webhook
+  overwrite protection already exists
+- non-business manual grants must not keep Stripe links because a stale
+  `customer.subscription.updated` or `customer.subscription.deleted` event can
+  overwrite `plan_code`/`subscription_status` after the manual grant
+- if `--keep-stripe-link` is used for `business`, the JSON output and audit
+  record must include `keptStripeLink: true`
 
 Add tests for:
 
 - manual `personal`/`pro` org without Stripe IDs is not changed by unrelated
   webhook events
 - manual grants clear stale Stripe links by default
-- `--keep-stripe-link` preserves Stripe links and records the risk explicitly
+- `--keep-stripe-link` is rejected for non-business plans
+- `--keep-stripe-link` preserves Stripe links only for business and records that
+  explicitly
 - if a manual org later migrates to Stripe intentionally, checkout/webhook
   behavior is explicit and tested
 
@@ -411,15 +454,25 @@ Unit tests:
 - CLI parser accepts add-member command
 - parser rejects multiple operation flags
 - parser rejects paid plan without valid paid-through date
+- parser accepts `paid_through_at` inside the 7-day backfill window and records a
+  warning
 - parser rejects `--plan free --status active`
+- parser rejects `--plan free --keep-stripe-link`
+- parser rejects `--keep-stripe-link` for non-business plans
 - manual organization grant updates plan/status/paidThrough and records event
 - missing organization returns non-zero/no mutation
+- repeated command with same organization/payment reference is idempotent and
+  does not insert a second event
 - manual user grant creates user/org/member when needed
 - manual user grant reuses a single unambiguous owner/admin org when present
 - manual user grant refuses when multiple owner/admin orgs exist without
   explicit `--organization-id`
+- manual user grant refuses member-only memberships unless explicitly creating a
+  new organization or upgrading membership through the member command
+- user creation from CLI does not clear an existing username
 - add-member upserts user and membership without billing mutation
 - manual billing events do not store sensitive fields
+- stderr logs omit payment references and notes
 - hosted organization export includes manual billing event summaries
 
 Integration-style tests:
@@ -435,9 +488,13 @@ Integration-style tests:
 - Commands must not start bot polling or HTTP server.
 - Logs must go to stderr for operator commands.
 - JSON result must go to stdout.
+- stderr logs must not include `payment_reference` or `note` content; log only
+  IDs, plan/status, boolean flags, and counts because stderr may be retained by
+  log aggregation
 - No command should accept arbitrary SQL-like values.
 - Plan/status/role must be enum-validated before DB writes.
-- Payment references and notes should be length-limited.
+- Payment references and notes should be length-limited; `paymentReference` is
+  capped at 255 characters and `note` is capped at 1000 characters.
 - The command output should include enough detail to paste into a private
   support log.
 
