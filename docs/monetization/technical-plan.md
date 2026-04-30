@@ -871,7 +871,15 @@ operator checklist.
 - add delete-org and basic export path
 - add hosted-only operator commands and runbook for export/erasure requests
 
-12. Final verification:
+12. Manual paid customers:
+
+- add hosted-only operator commands for granting a plan to an organization or a
+  single Telegram user
+- add manual billing event audit records
+- allow `BILLING_PROVIDER=none` while manually granting paid hosted plans
+- see [`manual-paid-customers-spec.md`](./manual-paid-customers-spec.md)
+
+13. Final verification:
 
 - full test/typecheck/lint/build
 - manual Stripe test mode walkthrough using

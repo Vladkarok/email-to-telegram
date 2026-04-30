@@ -54,6 +54,8 @@ Stripe Checkout.
 - Prices are in USD.
 - Personal, Pro, and Team are self-serve Stripe subscriptions.
 - Business is manually priced and may use a separate agreement or invoice.
+- During early beta, any paid plan may be granted manually after direct payment
+  while automated Stripe billing remains disabled.
 - Annual plans are billed upfront.
 - Upgrades can apply after Stripe webhook delivery updates the organization.
 - Downgrades and cancellations do not delete aliases or stored data
