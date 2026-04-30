@@ -19,6 +19,8 @@ Depending on your settings and message content, the hosted service may process:
   them
 - privacy-view links and one-time view/download state
 - billing identifiers from Stripe, such as customer and subscription IDs
+- manual payment references and operator billing notes when a hosted plan is
+  granted outside automated billing
 - operational logs, abuse blocks, rate-limit records, and usage counters
 
 ## Retention

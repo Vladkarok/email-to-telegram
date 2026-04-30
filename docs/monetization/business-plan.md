@@ -223,6 +223,12 @@ The hosted pricing and public terms draft lives in
 [`../hosted/pricing-and-terms.md`](../hosted/pricing-and-terms.md). Its pricing
 table is covered by a doc test against `src/billing/plans.ts`.
 
+If Stripe or a Merchant of Record is not ready, use the manual paid customer
+path described in
+[`manual-paid-customers-spec.md`](./manual-paid-customers-spec.md): customer
+contacts the operator, pays externally, and the operator grants the plan from a
+hosted-only command.
+
 ## Required Product Changes
 
 ### Data Model

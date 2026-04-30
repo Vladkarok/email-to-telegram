@@ -23,6 +23,20 @@ Use this before enabling public hosted signup or live Stripe billing.
 - Confirm Stripe Customer Portal is enabled and tested in live mode.
 - Confirm refund, cancellation, annual billing, and tax handling are reviewed.
 
+## Manual Billing
+
+- Decide whether early paid customers are handled manually before live Stripe.
+- Review [`../monetization/manual-paid-customers-spec.md`](../monetization/manual-paid-customers-spec.md).
+- Confirm manual paid customers are granted through an operator command, not
+  direct database edits.
+- Record external payment references in the private support log.
+- Do not store card numbers or sensitive payment details in the app.
+- Confirm manual billing events are included in hosted export/erasure scope.
+- Confirm stale Stripe customer/subscription links are cleared when granting a
+  manual plan unless an explicit migration reason exists.
+- Confirm manually paid organizations can be downgraded to Free if payment is
+  not renewed.
+
 ## Abuse And Deliverability
 
 - Run the shared-domain emergency disable procedure in staging.
