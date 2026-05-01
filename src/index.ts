@@ -32,6 +32,20 @@ import {
   hasHostedDataLifecycleOperation,
   hostedDeleteExitCode,
 } from "./startup/hostedDataLifecycle.js";
+import {
+  assertHostedManualBillingAllowed,
+  buildManualBillingMemberInput,
+  buildManualBillingPlanInput,
+  buildManualBillingUserInput,
+  hasHostedManualBillingOperation,
+  hostedManualBillingExitCode,
+  redactManualBillingForLog,
+} from "./startup/hostedManualBilling.js";
+import {
+  addManualOrganizationMember,
+  grantManualOrganizationPlan,
+  grantManualUserPlan,
+} from "./billing/manual.js";
 
 async function main() {
   const startup = parseStartupOptions(process.argv.slice(2));
@@ -39,14 +53,20 @@ async function main() {
   // 1. Load and validate config (fail fast)
   const config = loadConfig();
   const hostedDataLifecycleOperation = hasHostedDataLifecycleOperation(startup);
+  const hostedManualBillingOperation = hasHostedManualBillingOperation(startup);
   if (hostedDataLifecycleOperation) {
     assertHostedDataLifecycleAllowed(config);
   }
+  if (hostedManualBillingOperation) {
+    assertHostedManualBillingAllowed(config);
+  }
+
+  const isOperatorCommand = hostedDataLifecycleOperation || hostedManualBillingOperation;
 
   // 2. Initialize logger
   const logger = createLogger(
     config.logLevel,
-    hostedDataLifecycleOperation ? stderrLoggerDestination() : undefined,
+    isOperatorCommand ? stderrLoggerDestination() : undefined,
   );
   setLogger(logger);
   logger.info("Starting email-to-telegram");
@@ -119,6 +139,73 @@ async function main() {
     );
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     process.exitCode = hostedDeleteExitCode(result);
+    await closeDb();
+    return;
+  }
+
+  if (startup.hostedSetOrganizationPlanId) {
+    if (startup.warnings.length > 0) {
+      for (const w of startup.warnings) logger.warn({ warning: w }, "Manual billing CLI warning");
+    }
+    const input = buildManualBillingPlanInput(startup);
+    const result = await grantManualOrganizationPlan(getDb(), input);
+    if (result.ok) {
+      logger.info(
+        { result: redactManualBillingForLog(result) },
+        "Manual organization plan grant complete.",
+      );
+    } else {
+      logger.error({ code: result.code }, "Manual organization plan grant failed.");
+    }
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    process.exitCode = hostedManualBillingExitCode(result);
+    await closeDb();
+    return;
+  }
+
+  if (startup.hostedSetUserPlanTelegramUserId) {
+    if (startup.warnings.length > 0) {
+      for (const w of startup.warnings) logger.warn({ warning: w }, "Manual billing CLI warning");
+    }
+    const input = buildManualBillingUserInput(startup);
+    const result = await grantManualUserPlan(getDb(), input);
+    if (result.ok) {
+      logger.info(
+        {
+          result: redactManualBillingForLog(result),
+          createdOrganization: result.createdOrganization,
+        },
+        "Manual user plan grant complete.",
+      );
+    } else {
+      logger.error(
+        { code: result.code, organizationIds: result.organizationIds },
+        "Manual user plan grant failed.",
+      );
+    }
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    process.exitCode = hostedManualBillingExitCode(result);
+    await closeDb();
+    return;
+  }
+
+  if (startup.hostedAddOrganizationMemberId) {
+    const input = buildManualBillingMemberInput(startup);
+    const result = await addManualOrganizationMember(getDb(), input);
+    if (result.ok) {
+      logger.info(
+        {
+          organizationId: result.organizationId,
+          telegramUserId: result.telegramUserId,
+          role: result.role,
+        },
+        "Manual organization member add complete.",
+      );
+    } else {
+      logger.error({ code: result.code }, "Manual organization member add failed.");
+    }
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    process.exitCode = hostedManualBillingExitCode(result);
     await closeDb();
     return;
   }
