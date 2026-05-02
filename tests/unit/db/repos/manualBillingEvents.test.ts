@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createManualBillingEvent,
+  findOrCreateManualBillingEvent,
   findManualBillingEventByPaymentReference,
   listManualBillingEventsForOrganization,
 } from "../../../../src/db/repos/manualBillingEvents.js";
@@ -83,6 +84,59 @@ describe("manual billing events repo", () => {
           keptStripeLink: false,
         }),
       ).rejects.toThrow(/no row returned/i);
+    });
+  });
+
+  describe("findOrCreateManualBillingEvent", () => {
+    it("returns { created: true } when insert succeeds", async () => {
+      const row = { id: "event-1", organizationId: "org-1", paymentReference: "ref-1" };
+      const onConflictDoNothing = vi.fn(() => ({ returning: vi.fn().mockResolvedValue([row]) }));
+      const values = vi.fn(() => ({ onConflictDoNothing }));
+      const insert = vi.fn(() => ({ values }));
+      const db = { insert } as unknown as Parameters<typeof findOrCreateManualBillingEvent>[0];
+
+      const result = await findOrCreateManualBillingEvent(db, {
+        organizationId: "org-1",
+        telegramUserId: null,
+        planCode: "pro",
+        subscriptionStatus: "active",
+        paidThroughAt: null,
+        paymentReference: "ref-1",
+        note: null,
+        keptStripeLink: false,
+      });
+
+      expect(result).toEqual({ event: row, created: true });
+    });
+
+    it("returns { created: false } when conflict yields existing row", async () => {
+      const existing = { id: "event-old", organizationId: "org-1", paymentReference: "ref-1" };
+      const onConflictDoNothing = vi.fn(() => ({
+        returning: vi.fn().mockResolvedValue([]),
+      }));
+      const values = vi.fn(() => ({ onConflictDoNothing }));
+      const insert = vi.fn(() => ({ values }));
+      // SELECT path for the fallback read
+      const limit = vi.fn().mockResolvedValue([existing]);
+      const where = vi.fn(() => ({ limit }));
+      const from = vi.fn(() => ({ where }));
+      const select = vi.fn(() => ({ from }));
+      const db = { insert, select } as unknown as Parameters<
+        typeof findOrCreateManualBillingEvent
+      >[0];
+
+      const result = await findOrCreateManualBillingEvent(db, {
+        organizationId: "org-1",
+        telegramUserId: null,
+        planCode: "pro",
+        subscriptionStatus: "active",
+        paidThroughAt: null,
+        paymentReference: "ref-1",
+        note: null,
+        keptStripeLink: false,
+      });
+
+      expect(result).toEqual({ event: existing, created: false });
     });
   });
 

@@ -13,7 +13,7 @@ import {
 } from "../db/repos/organizationMembers.js";
 import {
   createManualBillingEvent,
-  findManualBillingEventByPaymentReference,
+  findOrCreateManualBillingEvent,
   type ManualBillingEventInput,
 } from "../db/repos/manualBillingEvents.js";
 import type { PlanCode } from "./plans.js";
@@ -189,38 +189,31 @@ export async function grantManualOrganizationPlan(
 
     const telegramUserId = input.telegramUserId ?? null;
 
-    let manualBillingEventId: string;
-    let idempotent = false;
     if (input.paymentReference) {
-      const existing = await findManualBillingEventByPaymentReference(
+      // Atomic insert-or-find: race-safe via unique partial index.
+      const { event, created } = await findOrCreateManualBillingEvent(
         tx,
-        input.organizationId,
-        input.paymentReference,
+        buildEventInput(input, input.organizationId, telegramUserId) as ManualBillingEventInput & {
+          paymentReference: string;
+        },
       );
-      if (existing) {
-        manualBillingEventId = existing.id;
-        idempotent = true;
-      } else {
-        const created = await createManualBillingEvent(
-          tx,
-          buildEventInput(input, input.organizationId, telegramUserId),
-        );
-        manualBillingEventId = created.id;
+      if (!created) {
+        // Idempotent replay — return stored event without mutating billing state.
+        const summary = summarize(input, input.organizationId, telegramUserId, event.id);
+        return { ok: true, idempotent: true, updated: true, ...summary };
       }
-    } else {
-      const created = await createManualBillingEvent(
-        tx,
-        buildEventInput(input, input.organizationId, telegramUserId),
-      );
-      manualBillingEventId = created.id;
+      await updateOrganizationBillingState(tx, input.organizationId, buildBillingPatch(input));
+      const summary = summarize(input, input.organizationId, telegramUserId, event.id);
+      return { ok: true, idempotent: false, updated: true, ...summary };
     }
 
+    const created = await createManualBillingEvent(
+      tx,
+      buildEventInput(input, input.organizationId, telegramUserId),
+    );
     await updateOrganizationBillingState(tx, input.organizationId, buildBillingPatch(input));
-
-    const summary = summarize(input, input.organizationId, telegramUserId, manualBillingEventId);
-    return idempotent
-      ? { ok: true, idempotent: true, updated: true, ...summary }
-      : { ok: true, idempotent: false, updated: true, ...summary };
+    const summary = summarize(input, input.organizationId, telegramUserId, created.id);
+    return { ok: true, idempotent: false, updated: true, ...summary };
   });
 }
 
@@ -289,43 +282,33 @@ export async function grantManualUserPlan(
     const organization = await findOrganizationById(tx, resolvedOrganizationId);
     if (!organization) return { ok: false, code: "organization_not_found" };
 
-    let manualBillingEventId: string;
-    let idempotent = false;
     if (input.paymentReference) {
-      const existing = await findManualBillingEventByPaymentReference(
+      const { event, created } = await findOrCreateManualBillingEvent(
         tx,
-        resolvedOrganizationId,
-        input.paymentReference,
+        buildEventInput(
+          input,
+          resolvedOrganizationId,
+          input.telegramUserId,
+        ) as ManualBillingEventInput & {
+          paymentReference: string;
+        },
       );
-      if (existing) {
-        manualBillingEventId = existing.id;
-        idempotent = true;
-      } else {
-        const created = await createManualBillingEvent(
-          tx,
-          buildEventInput(input, resolvedOrganizationId, input.telegramUserId),
-        );
-        manualBillingEventId = created.id;
+      if (!created) {
+        const summary = summarize(input, resolvedOrganizationId, input.telegramUserId, event.id);
+        return { ok: true, idempotent: true, updated: true, createdOrganization, ...summary };
       }
-    } else {
-      const created = await createManualBillingEvent(
-        tx,
-        buildEventInput(input, resolvedOrganizationId, input.telegramUserId),
-      );
-      manualBillingEventId = created.id;
+      await updateOrganizationBillingState(tx, resolvedOrganizationId, buildBillingPatch(input));
+      const summary = summarize(input, resolvedOrganizationId, input.telegramUserId, event.id);
+      return { ok: true, idempotent: false, updated: true, createdOrganization, ...summary };
     }
 
-    await updateOrganizationBillingState(tx, resolvedOrganizationId, buildBillingPatch(input));
-
-    const summary = summarize(
-      input,
-      resolvedOrganizationId,
-      input.telegramUserId,
-      manualBillingEventId,
+    const created = await createManualBillingEvent(
+      tx,
+      buildEventInput(input, resolvedOrganizationId, input.telegramUserId),
     );
-    return idempotent
-      ? { ok: true, idempotent: true, updated: true, createdOrganization, ...summary }
-      : { ok: true, idempotent: false, updated: true, createdOrganization, ...summary };
+    await updateOrganizationBillingState(tx, resolvedOrganizationId, buildBillingPatch(input));
+    const summary = summarize(input, resolvedOrganizationId, input.telegramUserId, created.id);
+    return { ok: true, idempotent: false, updated: true, createdOrganization, ...summary };
   });
 }
 

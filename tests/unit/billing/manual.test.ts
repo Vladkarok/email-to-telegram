@@ -8,7 +8,7 @@ const mockListOrganizationMembershipsForUser = vi.fn();
 const mockUserHasOrganizationRole = vi.fn();
 const mockAddOrganizationMember = vi.fn();
 const mockCreateManualBillingEvent = vi.fn();
-const mockFindManualBillingEventByPaymentReference = vi.fn();
+const mockFindOrCreateManualBillingEvent = vi.fn();
 
 vi.mock("../../../src/db/repos/organizations.js", () => ({
   findOrganizationById: (...args: unknown[]): unknown => mockFindOrganizationById(...args),
@@ -30,8 +30,8 @@ vi.mock("../../../src/db/repos/organizationMembers.js", () => ({
 
 vi.mock("../../../src/db/repos/manualBillingEvents.js", () => ({
   createManualBillingEvent: (...args: unknown[]): unknown => mockCreateManualBillingEvent(...args),
-  findManualBillingEventByPaymentReference: (...args: unknown[]): unknown =>
-    mockFindManualBillingEventByPaymentReference(...args),
+  findOrCreateManualBillingEvent: (...args: unknown[]): unknown =>
+    mockFindOrCreateManualBillingEvent(...args),
 }));
 
 const fakeDb = {
@@ -80,7 +80,13 @@ beforeEach(() => {
       createdAt: new Date(),
     }),
   );
-  mockFindManualBillingEventByPaymentReference.mockResolvedValue(null);
+  mockFindOrCreateManualBillingEvent.mockImplementation(
+    (_tx: unknown, data: Record<string, unknown>) =>
+      Promise.resolve({
+        event: { id: "event-1", ...data, createdAt: new Date() },
+        created: true,
+      }),
+  );
 });
 
 describe("grantManualOrganizationPlan", () => {
@@ -209,7 +215,7 @@ describe("grantManualOrganizationPlan", () => {
         stripeSubscriptionId: null,
       }),
     );
-    expect(mockCreateManualBillingEvent).toHaveBeenCalledWith(
+    expect(mockFindOrCreateManualBillingEvent).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         organizationId: "org-1",
@@ -260,11 +266,14 @@ describe("grantManualOrganizationPlan", () => {
     expect(call["stripeSubscriptionId"]).toBeUndefined();
   });
 
-  it("idempotent: existing event for (org, payment_reference) returns idempotent: true and inserts no second event", async () => {
-    mockFindManualBillingEventByPaymentReference.mockResolvedValueOnce({
-      id: "event-existing",
-      organizationId: "org-1",
-      paymentReference: "wise-2026-04-001",
+  it("idempotent: existing event for (org, payment_reference) returns idempotent: true without mutating billing state", async () => {
+    mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
+      event: {
+        id: "event-existing",
+        organizationId: "org-1",
+        paymentReference: "wise-2026-04-001",
+      },
+      created: false,
     });
     const result = await grantManualOrganizationPlan(fakeDb, {
       organizationId: "org-1",
@@ -281,8 +290,8 @@ describe("grantManualOrganizationPlan", () => {
       manualBillingEventId: "event-existing",
     });
     expect(mockCreateManualBillingEvent).not.toHaveBeenCalled();
-    // Org state still updated to target values for self-healing
-    expect(mockUpdateOrganizationBillingState).toHaveBeenCalled();
+    // Idempotent path must NOT mutate billing state
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
   });
 });
 

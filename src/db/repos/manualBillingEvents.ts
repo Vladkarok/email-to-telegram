@@ -31,6 +31,38 @@ export async function createManualBillingEvent(
   return row;
 }
 
+/**
+ * Atomically insert a billing event or return the existing one when the
+ * `(organization_id, payment_reference)` unique partial index matches.
+ *
+ * Returns `{ event, created }` — `created: false` means an existing row was
+ * found (idempotent replay).
+ */
+export async function findOrCreateManualBillingEvent(
+  db: Db,
+  data: ManualBillingEventInput & { paymentReference: string },
+): Promise<{ event: ManualBillingEvent; created: boolean }> {
+  // INSERT … ON CONFLICT DO NOTHING — if a row with the same
+  // (organization_id, payment_reference) already exists the insert is
+  // silently skipped and returning() yields an empty array.
+  const [inserted] = await db
+    .insert(manualBillingEvents)
+    .values(data)
+    .onConflictDoNothing()
+    .returning();
+
+  if (inserted) return { event: inserted, created: true };
+
+  // Conflict path — read the existing row.
+  const existing = await findManualBillingEventByPaymentReference(
+    db,
+    data.organizationId,
+    data.paymentReference,
+  );
+  if (!existing) throw new Error("findOrCreateManualBillingEvent: race condition lost");
+  return { event: existing, created: false };
+}
+
 export async function findManualBillingEventByPaymentReference(
   db: Db,
   organizationId: string,
