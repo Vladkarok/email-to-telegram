@@ -1,8 +1,9 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { asc, eq, or } from "drizzle-orm";
+import { asc, desc, eq, or } from "drizzle-orm";
 import {
   deliveryLogs,
   emailAddresses,
+  manualBillingEvents,
   organizationStorageUsage,
   organizationUsageMonths,
   organizations,
@@ -51,6 +52,17 @@ export interface OrganizationExport {
     byFinalStatus: Record<string, number>;
     byMonth: Record<string, number>;
   };
+  manualBillingEvents: Array<{
+    id: string;
+    telegramUserId: string | null;
+    planCode: string;
+    subscriptionStatus: string;
+    paidThroughAt: string | null;
+    paymentReference: string | null;
+    note: string | null;
+    keptStripeLink: boolean;
+    createdAt: string;
+  }>;
 }
 
 export async function exportHostedOrganizationData(
@@ -73,11 +85,12 @@ export async function exportHostedOrganizationData(
 
   if (!organization) return null;
 
-  const [aliases, usageMonths, storageRows, deliveryRows] = await Promise.all([
+  const [aliases, usageMonths, storageRows, deliveryRows, manualEventRows] = await Promise.all([
     listAliases(db, organizationId),
     listUsageMonths(db, organizationId),
     listStorageUsage(db, organizationId),
     listDeliverySummaryRows(db, organizationId),
+    listManualBillingEvents(db, organizationId),
   ]);
 
   return {
@@ -113,7 +126,36 @@ export async function exportHostedOrganizationData(
       attachmentBytes: (storageRows[0]?.attachmentBytes ?? 0n).toString(),
     },
     deliverySummary: buildDeliverySummary(deliveryRows),
+    manualBillingEvents: manualEventRows.map((row) => ({
+      id: row.id,
+      telegramUserId: row.telegramUserId?.toString() ?? null,
+      planCode: row.planCode,
+      subscriptionStatus: row.subscriptionStatus,
+      paidThroughAt: row.paidThroughAt ? row.paidThroughAt.toISOString() : null,
+      paymentReference: row.paymentReference,
+      note: row.note,
+      keptStripeLink: row.keptStripeLink,
+      createdAt: row.createdAt.toISOString(),
+    })),
   };
+}
+
+async function listManualBillingEvents(db: Db, organizationId: string) {
+  return db
+    .select({
+      id: manualBillingEvents.id,
+      telegramUserId: manualBillingEvents.telegramUserId,
+      planCode: manualBillingEvents.planCode,
+      subscriptionStatus: manualBillingEvents.subscriptionStatus,
+      paidThroughAt: manualBillingEvents.paidThroughAt,
+      paymentReference: manualBillingEvents.paymentReference,
+      note: manualBillingEvents.note,
+      keptStripeLink: manualBillingEvents.keptStripeLink,
+      createdAt: manualBillingEvents.createdAt,
+    })
+    .from(manualBillingEvents)
+    .where(eq(manualBillingEvents.organizationId, organizationId))
+    .orderBy(desc(manualBillingEvents.createdAt));
 }
 
 async function listAliases(db: Db, organizationId: string) {

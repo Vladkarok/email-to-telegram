@@ -10,6 +10,7 @@ import {
   updateOrganizationBillingState,
   updateOrganizationPaidThroughAtIfLater,
 } from "../db/repos/organizations.js";
+import { findLatestManualBillingEventForOrganization } from "../db/repos/manualBillingEvents.js";
 import { resolvePlanFromStripePriceId } from "./stripe.js";
 
 type Db = NodePgDatabase<typeof schema>;
@@ -33,7 +34,8 @@ export async function processStripeWebhookEvent(
         });
         if (!organization) return "ignored";
         if (
-          shouldIgnoreStripeUpdate(
+          await shouldIgnoreStripeUpdate(
+            txDb,
             organization,
             null,
             typeof session.customer === "string" ? session.customer : null,
@@ -79,7 +81,8 @@ async function applyStripeSubscription(
   });
   if (!organization) return "ignored";
   if (
-    shouldIgnoreStripeUpdate(
+    await shouldIgnoreStripeUpdate(
+      db,
       organization,
       subscription.id,
       typeof subscription.customer === "string" ? subscription.customer : null,
@@ -131,7 +134,8 @@ async function validateStripeInvoiceSubject(db: Db, invoice: Stripe.Invoice): Pr
   });
   if (!organization) return "ignored";
   if (
-    shouldIgnoreStripeUpdate(
+    await shouldIgnoreStripeUpdate(
+      db,
       organization,
       stripeSubscriptionId,
       typeof invoice.customer === "string" ? invoice.customer : null,
@@ -160,7 +164,8 @@ async function applyStripeInvoicePaymentSucceeded(
   });
   if (!organization) return "ignored";
   if (
-    shouldIgnoreStripeUpdate(
+    await shouldIgnoreStripeUpdate(
+      db,
       organization,
       stripeSubscriptionId,
       typeof invoice.customer === "string" ? invoice.customer : null,
@@ -203,15 +208,32 @@ async function findOrganizationForStripeSubject(
   return null;
 }
 
-function shouldIgnoreStripeUpdate(
+async function shouldIgnoreStripeUpdate(
+  db: Db,
   organization: {
+    id: string;
     planCode: string;
     stripeSubscriptionId: string | null;
     stripeCustomerId: string | null;
   },
   stripeSubscriptionId: string | null,
   stripeCustomerId: string | null,
-): boolean {
+): Promise<boolean> {
+  if (!organization.stripeSubscriptionId && !organization.stripeCustomerId) {
+    // Manual paid grants clear Stripe links. A delayed Stripe event may still
+    // carry organizationId metadata, but without a current Stripe link it must
+    // not be allowed to clobber the manual entitlement.
+    if (organization.planCode !== "free") return true;
+
+    // Fresh free organizations also have no Stripe links and must still be able
+    // to start checkout. Protect only free orgs whose latest manual event is the
+    // operator's manual downgrade/cancellation to free.
+    const latestManualEvent = await findLatestManualBillingEventForOrganization(
+      db,
+      organization.id,
+    );
+    if (latestManualEvent?.planCode === "free") return true;
+  }
   if (organization.planCode !== "business") return false;
   return !(
     (stripeSubscriptionId && organization.stripeSubscriptionId === stripeSubscriptionId) ||

@@ -36,3 +36,27 @@ export async function upsertAllowedUser(db: Db, id: bigint): Promise<void> {
       set: { isAllowed: true, updatedAt: new Date() },
     });
 }
+
+/**
+ * Returns an existing user by id, or creates a minimal row when missing.
+ *
+ * Unlike `upsertUser`, this helper never overwrites an existing username and is
+ * safe to call from operator-driven flows that only know the Telegram user id.
+ * It uses INSERT ... ON CONFLICT DO NOTHING and re-reads on race so concurrent
+ * inserts don't error.
+ */
+export async function findOrCreateUserById(db: Db, id: bigint): Promise<User> {
+  const existing = await findUserById(db, id);
+  if (existing) return existing;
+
+  const [created] = await db
+    .insert(users)
+    .values({ id, username: null, isAllowed: false })
+    .onConflictDoNothing({ target: users.id })
+    .returning();
+  if (created) return created;
+
+  const raced = await findUserById(db, id);
+  if (!raced) throw new Error(`findOrCreateUserById: no row returned for id=${id}`);
+  return raced;
+}
