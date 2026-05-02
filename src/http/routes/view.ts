@@ -24,6 +24,7 @@ import {
 } from "../../utils/tokens.js";
 import { getLogger } from "../../utils/logger.js";
 import { readDeliveryLogMetadata } from "../../security/deliveryLogMetadata.js";
+import { escapeHtml, escapeHtmlAttribute } from "../../utils/html.js";
 
 export function deliveryViewRoute(
   app: FastifyInstance,
@@ -593,10 +594,4 @@ function formatBytes(bytes: number): string {
   return `${bytes} B`;
 }
 
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 
-function escapeHtmlAttribute(text: string): string {
-  return escapeHtml(text).replace(/"/g, "&quot;");
-}

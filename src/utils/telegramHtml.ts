@@ -1,4 +1,5 @@
 import sanitizeHtml from "sanitize-html";
+import { escapeHtml } from "../utils/html.js";
 
 const TELEGRAM_ALLOWED_TAGS = [
   "b",
@@ -190,9 +191,6 @@ function truncateCell(text: string, maxWidth: number): string {
   return `${text.slice(0, maxWidth - 1)}…`;
 }
 
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 
 function decodeHtmlEntities(text: string): string {
   return text

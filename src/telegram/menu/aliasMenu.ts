@@ -6,6 +6,7 @@ import type { EmailAddress } from "../../db/schema.js";
 import { listAliasesByChat, findAliasById } from "../../db/repos/aliases.js";
 import { listAllowRules } from "../../db/repos/allowRules.js";
 import { canManageAlias } from "../authorization.js";
+import { escapeHtml } from "../../utils/html.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -15,9 +16,6 @@ function statusIcon(status: string): string {
   return "🗑";
 }
 
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 
 export async function editAliasListMenu(
   ctx: Context,

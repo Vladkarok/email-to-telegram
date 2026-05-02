@@ -47,6 +47,7 @@ import { parseAllowValue } from "./allowValue.js";
 import { getLogger } from "../utils/logger.js";
 import { InlineKeyboard } from "grammy";
 import { hasActiveHostedOrganization } from "../billing/limits.js";
+import { escapeHtml } from "../utils/html.js";
 
 // ── Authorization helpers ────────────────────────────────────────────────────
 
@@ -456,6 +457,3 @@ export async function handlePendingTextMessage(ctx: Context, next: NextFunction)
   await sendAllowRulesMenu(ctx, getDb(), pending.aliasId);
 }
 
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}

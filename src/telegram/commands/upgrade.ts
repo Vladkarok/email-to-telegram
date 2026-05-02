@@ -5,6 +5,7 @@ import { getBillingOrganizationForUser } from "../../tenant/currentOrganization.
 import { createCheckoutSession, BillingCheckoutConflictError } from "../../billing/checkout.js";
 import { isStripePriceKey, type StripePriceKey } from "../../billing/stripe.js";
 import { getLogger } from "../../utils/logger.js";
+import { escapeHtml } from "../../utils/html.js";
 
 const SELF_HOSTED_MESSAGE =
   "ℹ️ Billing is not enabled in self-hosted mode. /upgrade is only available on the hosted service.";
@@ -150,6 +151,3 @@ export async function upgradePlanCallbackHandler(
   }
 }
 
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}

@@ -4,6 +4,7 @@ import { listAliasesByChat, findAliasesByCreator } from "../../db/repos/aliases.
 import { findChatById } from "../../db/repos/chats.js";
 import type { EmailAddress } from "../../db/schema.js";
 import { canManageAlias, canManageChat } from "../authorization.js";
+import { escapeHtml } from "../../utils/html.js";
 
 export async function listemailHandler(ctx: Context): Promise<void> {
   if (!ctx.from || !ctx.chat) return;
@@ -97,6 +98,3 @@ async function filterVisibleAliases(
   return checked.filter(({ allowed }) => allowed).map(({ alias }) => alias);
 }
 
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}

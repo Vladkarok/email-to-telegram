@@ -15,6 +15,7 @@ import {
 } from "../../billing/limits.js";
 import { getPending, clearPending } from "../session.js";
 import { canManageChat } from "../authorization.js";
+import { escapeHtml } from "../../utils/html.js";
 import {
   HOSTED_ALIAS_CREATE_RATE_LIMIT_MESSAGE,
   HostedAliasCreateRateLimitError,
@@ -183,9 +184,6 @@ export async function createEmailAlias(
   );
 }
 
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 
 async function replyForAliasLimitFailure(
   ctx: Context,
