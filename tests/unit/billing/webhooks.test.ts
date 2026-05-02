@@ -23,6 +23,12 @@ vi.mock("../../../src/db/repos/organizations.js", () => ({
     mockUpdateOrganizationPaidThroughAtIfLater(...args),
 }));
 
+const mockFindLatestManualBillingEventForOrganization = vi.fn();
+vi.mock("../../../src/db/repos/manualBillingEvents.js", () => ({
+  findLatestManualBillingEventForOrganization: (...args: unknown[]): unknown =>
+    mockFindLatestManualBillingEventForOrganization(...args),
+}));
+
 const mockLoadConfig = vi.fn();
 vi.mock("../../../src/config.js", () => ({
   loadConfig: (): unknown => mockLoadConfig(),
@@ -34,6 +40,7 @@ describe("processStripeWebhookEvent", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockRecordBillingWebhookEvent.mockResolvedValue(true);
+    mockFindLatestManualBillingEventForOrganization.mockResolvedValue(null);
     mockLoadConfig.mockReturnValue({
       stripePriceIds: {
         personalMonthly: "price_personal_monthly",
@@ -162,6 +169,45 @@ describe("processStripeWebhookEvent", () => {
     expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
   });
 
+  it("does not overwrite unlinked manual paid organizations resolved by metadata", async () => {
+    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue(null);
+    mockFindOrganizationByStripeCustomerId.mockResolvedValue(null);
+    mockFindOrganizationById.mockResolvedValue({
+      id: "org-manual",
+      planCode: "pro",
+      subscriptionStatus: "active",
+      stripeCustomerId: null,
+      stripeSubscriptionId: null,
+    });
+
+    await expect(
+      processStripeWebhookEvent(buildDb(), {
+        id: "evt_stale_manual_subscription",
+        type: "customer.subscription.deleted",
+        data: {
+          object: {
+            id: "sub_old",
+            customer: "cus_old",
+            metadata: { organizationId: "org-manual" },
+            status: "canceled",
+            trial_end: null,
+            items: {
+              data: [
+                {
+                  price: { id: "price_pro_monthly" },
+                  current_period_start: 1_700_000_000,
+                  current_period_end: 1_700_086_400,
+                },
+              ],
+            },
+          },
+        },
+      } as never),
+    ).resolves.toBe("ignored");
+
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
   it("processes checkout completion by linking the Stripe customer", async () => {
     mockFindOrganizationById.mockResolvedValue({
       id: "org-1",
@@ -187,6 +233,81 @@ describe("processStripeWebhookEvent", () => {
     expect(mockUpdateOrganizationBillingState).toHaveBeenCalledWith(expect.anything(), "org-1", {
       stripeCustomerId: "cus_123",
     });
+  });
+
+  it("does not relink a manually downgraded free organization from delayed checkout metadata", async () => {
+    mockFindOrganizationById.mockResolvedValue({
+      id: "org-1",
+      planCode: "free",
+      subscriptionStatus: "free",
+      stripeCustomerId: null,
+      stripeSubscriptionId: null,
+    });
+    mockFindLatestManualBillingEventForOrganization.mockResolvedValue({
+      id: "event-free",
+      organizationId: "org-1",
+      planCode: "free",
+    });
+
+    await expect(
+      processStripeWebhookEvent(buildDb(), {
+        id: "evt_checkout_after_manual_free",
+        type: "checkout.session.completed",
+        data: {
+          object: {
+            customer: "cus_old",
+            metadata: { organizationId: "org-1" },
+            client_reference_id: "org-1",
+          },
+        },
+      } as never),
+    ).resolves.toBe("ignored");
+
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite a manually downgraded free organization from delayed subscription metadata", async () => {
+    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue(null);
+    mockFindOrganizationByStripeCustomerId.mockResolvedValue(null);
+    mockFindOrganizationById.mockResolvedValue({
+      id: "org-1",
+      planCode: "free",
+      subscriptionStatus: "free",
+      stripeCustomerId: null,
+      stripeSubscriptionId: null,
+    });
+    mockFindLatestManualBillingEventForOrganization.mockResolvedValue({
+      id: "event-free",
+      organizationId: "org-1",
+      planCode: "free",
+    });
+
+    await expect(
+      processStripeWebhookEvent(buildDb(), {
+        id: "evt_subscription_after_manual_free",
+        type: "customer.subscription.updated",
+        data: {
+          object: {
+            id: "sub_old",
+            customer: "cus_old",
+            metadata: { organizationId: "org-1" },
+            status: "active",
+            trial_end: null,
+            items: {
+              data: [
+                {
+                  price: { id: "price_pro_monthly" },
+                  current_period_start: 1_700_000_000,
+                  current_period_end: 1_700_086_400,
+                },
+              ],
+            },
+          },
+        },
+      } as never),
+    ).resolves.toBe("ignored");
+
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
   });
 
   it("ignores checkout completion when the organization cannot be resolved", async () => {

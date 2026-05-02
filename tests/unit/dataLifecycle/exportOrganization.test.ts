@@ -81,6 +81,7 @@ describe("exportHostedOrganizationData", () => {
           receivedAt: new Date("2026-04-11T12:00:00.000Z"),
         },
       ],
+      [],
     ]);
 
     await expect(
@@ -134,6 +135,7 @@ describe("exportHostedOrganizationData", () => {
           "2026-04": 2,
         },
       },
+      manualBillingEvents: [],
     });
   });
 
@@ -153,6 +155,7 @@ describe("exportHostedOrganizationData", () => {
       [],
       [],
       [],
+      [],
     ]);
 
     const result = await exportHostedOrganizationData(
@@ -165,5 +168,80 @@ describe("exportHostedOrganizationData", () => {
       rawEmailBytes: "0",
       attachmentBytes: "0",
     });
+    expect(result?.manualBillingEvents).toEqual([]);
+  });
+
+  it("includes manual billing events with safe payment reference and note fields", async () => {
+    const db = makeDb([
+      [
+        {
+          id: "org-1",
+          name: "Acme",
+          planCode: "pro",
+          subscriptionStatus: "active",
+          createdAt: new Date("2026-01-01T00:00:00.000Z"),
+          updatedAt: new Date("2026-01-02T00:00:00.000Z"),
+        },
+      ],
+      [],
+      [],
+      [],
+      [],
+      [
+        {
+          id: "event-2",
+          telegramUserId: 12345n,
+          planCode: "pro",
+          subscriptionStatus: "active",
+          paidThroughAt: new Date("2026-05-30T00:00:00.000Z"),
+          paymentReference: "wise-2026-04-001",
+          note: "Manual Wise payment",
+          keptStripeLink: false,
+          createdAt: new Date("2026-04-15T00:00:00.000Z"),
+        },
+        {
+          id: "event-1",
+          telegramUserId: null,
+          planCode: "free",
+          subscriptionStatus: "free",
+          paidThroughAt: null,
+          paymentReference: null,
+          note: null,
+          keptStripeLink: false,
+          createdAt: new Date("2026-04-01T00:00:00.000Z"),
+        },
+      ],
+    ]);
+
+    const result = await exportHostedOrganizationData(
+      db,
+      "org-1",
+      new Date("2026-04-28T07:00:00.000Z"),
+    );
+
+    expect(result?.manualBillingEvents).toEqual([
+      {
+        id: "event-2",
+        telegramUserId: "12345",
+        planCode: "pro",
+        subscriptionStatus: "active",
+        paidThroughAt: "2026-05-30T00:00:00.000Z",
+        paymentReference: "wise-2026-04-001",
+        note: "Manual Wise payment",
+        keptStripeLink: false,
+        createdAt: "2026-04-15T00:00:00.000Z",
+      },
+      {
+        id: "event-1",
+        telegramUserId: null,
+        planCode: "free",
+        subscriptionStatus: "free",
+        paidThroughAt: null,
+        paymentReference: null,
+        note: null,
+        keptStripeLink: false,
+        createdAt: "2026-04-01T00:00:00.000Z",
+      },
+    ]);
   });
 });

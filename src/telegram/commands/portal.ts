@@ -14,6 +14,9 @@ const BILLING_FORBIDDEN_MESSAGE = "❌ Billing management requires workspace own
 const NO_CUSTOMER_TEXT =
   "ℹ️ You don't have an active billing account yet.\n\nUse /upgrade to choose a plan and start a subscription.\n\n<b>Choose a plan:</b>";
 
+const MANUAL_BILLING_TEXT =
+  "ℹ️ This workspace is managed manually during the hosted beta.\n\nContact support for renewal, cancellation, invoice, or payment questions.";
+
 const PORTAL_TEXT =
   "<b>🧾 Billing Portal</b>\n\nTap below to manage your subscription, view invoices, or update payment details. This link expires in 5 minutes.";
 
@@ -21,7 +24,8 @@ const PORTAL_TEXT =
 export async function portalHandler(ctx: Context): Promise<void> {
   if (!ctx.from) return;
 
-  if (loadConfig().appMode !== "hosted") {
+  const config = loadConfig();
+  if (config.appMode !== "hosted") {
     await ctx.reply(SELF_HOSTED_MESSAGE);
     return;
   }
@@ -31,6 +35,11 @@ export async function portalHandler(ctx: Context): Promise<void> {
     const organization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
     if (!organization) {
       await ctx.reply(BILLING_FORBIDDEN_MESSAGE);
+      return;
+    }
+
+    if (isManualBillingPortal(config.billingProvider, organization)) {
+      await ctx.reply(MANUAL_BILLING_TEXT);
       return;
     }
 
@@ -58,7 +67,8 @@ export async function portalHandler(ctx: Context): Promise<void> {
 export async function portalCallbackHandler(ctx: CallbackQueryContext<Context>): Promise<void> {
   if (!ctx.from) return;
 
-  if (loadConfig().appMode !== "hosted") {
+  const config = loadConfig();
+  if (config.appMode !== "hosted") {
     await ctx.answerCallbackQuery({ text: SELF_HOSTED_MESSAGE, show_alert: true });
     return;
   }
@@ -68,6 +78,12 @@ export async function portalCallbackHandler(ctx: CallbackQueryContext<Context>):
     const organization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
     if (!organization) {
       await ctx.answerCallbackQuery({ text: BILLING_FORBIDDEN_MESSAGE, show_alert: true });
+      return;
+    }
+
+    if (isManualBillingPortal(config.billingProvider, organization)) {
+      await ctx.answerCallbackQuery();
+      await ctx.reply(MANUAL_BILLING_TEXT);
       return;
     }
 
@@ -91,4 +107,12 @@ export async function portalCallbackHandler(ctx: CallbackQueryContext<Context>):
       show_alert: true,
     });
   }
+}
+
+function isManualBillingPortal(
+  billingProvider: string,
+  organization: { planCode: string; stripeCustomerId?: string | null },
+): boolean {
+  if (billingProvider !== "stripe") return true;
+  return organization.planCode !== "free" && !organization.stripeCustomerId;
 }
