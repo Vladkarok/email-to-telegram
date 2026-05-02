@@ -91,3 +91,16 @@ export async function listManualBillingEventsForOrganization(
     .where(eq(manualBillingEvents.organizationId, organizationId))
     .orderBy(desc(manualBillingEvents.createdAt));
 }
+
+export async function findLatestManualBillingEventForOrganization(
+  db: Db,
+  organizationId: string,
+): Promise<ManualBillingEvent | null> {
+  const [row] = await db
+    .select()
+    .from(manualBillingEvents)
+    .where(eq(manualBillingEvents.organizationId, organizationId))
+    .orderBy(desc(manualBillingEvents.createdAt))
+    .limit(1);
+  return row ?? null;
+}

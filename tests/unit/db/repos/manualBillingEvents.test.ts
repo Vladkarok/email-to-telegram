@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createManualBillingEvent,
+  findLatestManualBillingEventForOrganization,
   findOrCreateManualBillingEvent,
   findManualBillingEventByPaymentReference,
   listManualBillingEventsForOrganization,
@@ -172,6 +173,35 @@ describe("manual billing events repo", () => {
       await expect(listManualBillingEventsForOrganization(db, "org-1")).resolves.toEqual(rows);
       expect(mocks.select).toHaveBeenCalled();
       expect(mocks.from).toHaveBeenCalled();
+    });
+  });
+
+  describe("findLatestManualBillingEventForOrganization", () => {
+    it("returns the latest event for an organization", async () => {
+      const row = { id: "event-2", organizationId: "org-1", createdAt: new Date() };
+      const limit = vi.fn().mockResolvedValue([row]);
+      const orderBy = vi.fn(() => ({ limit }));
+      const where = vi.fn(() => ({ orderBy }));
+      const from = vi.fn(() => ({ where }));
+      const select = vi.fn(() => ({ from }));
+      const db = { select } as unknown as Parameters<
+        typeof findLatestManualBillingEventForOrganization
+      >[0];
+
+      await expect(findLatestManualBillingEventForOrganization(db, "org-1")).resolves.toBe(row);
+    });
+
+    it("returns null when the organization has no manual billing events", async () => {
+      const limit = vi.fn().mockResolvedValue([]);
+      const orderBy = vi.fn(() => ({ limit }));
+      const where = vi.fn(() => ({ orderBy }));
+      const from = vi.fn(() => ({ where }));
+      const select = vi.fn(() => ({ from }));
+      const db = { select } as unknown as Parameters<
+        typeof findLatestManualBillingEventForOrganization
+      >[0];
+
+      await expect(findLatestManualBillingEventForOrganization(db, "org-1")).resolves.toBeNull();
     });
   });
 });
