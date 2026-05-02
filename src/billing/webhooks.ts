@@ -212,6 +212,16 @@ function shouldIgnoreStripeUpdate(
   stripeSubscriptionId: string | null,
   stripeCustomerId: string | null,
 ): boolean {
+  if (
+    organization.planCode !== "free" &&
+    !organization.stripeSubscriptionId &&
+    !organization.stripeCustomerId
+  ) {
+    // Manual paid grants clear Stripe links. A delayed Stripe event may still
+    // carry organizationId metadata, but without a current Stripe link it must
+    // not be allowed to clobber the manual entitlement.
+    return true;
+  }
   if (organization.planCode !== "business") return false;
   return !(
     (stripeSubscriptionId && organization.stripeSubscriptionId === stripeSubscriptionId) ||

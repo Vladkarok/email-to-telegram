@@ -273,8 +273,54 @@ export function parseStartupOptions(argv: readonly string[]): StartupOptions {
   const isManualPlanOperation =
     options.hostedSetOrganizationPlanId !== null ||
     options.hostedSetUserPlanTelegramUserId !== null;
+  const isManualBillingOperation =
+    isManualPlanOperation || options.hostedAddOrganizationMemberId !== null;
+  const hasManualAuxFlag =
+    options.manualPlanCode !== null ||
+    options.manualSubscriptionStatus !== null ||
+    options.manualPaidThroughAt !== null ||
+    options.manualPaymentReference !== null ||
+    options.manualNote !== null ||
+    options.manualTelegramUserId !== null ||
+    options.manualOrganizationId !== null ||
+    options.manualOrganizationRole !== null ||
+    options.manualKeepStripeLink ||
+    options.manualCreateNewOrganization;
+
+  if (hasManualAuxFlag && !isManualBillingOperation) {
+    throw new Error("Manual billing arguments require a --hosted-* manual billing operation");
+  }
 
   if (isManualPlanOperation) {
+    if (
+      options.hostedSetOrganizationPlanId !== null &&
+      (options.manualTelegramUserId !== null ||
+        options.manualOrganizationId !== null ||
+        options.manualOrganizationRole !== null ||
+        options.manualCreateNewOrganization)
+    ) {
+      throw new Error(
+        "--hosted-set-organization-plan does not accept --telegram-user-id, --organization-id, --role, or --create-new-organization",
+      );
+    }
+
+    if (
+      options.hostedSetUserPlanTelegramUserId !== null &&
+      (options.manualTelegramUserId !== null || options.manualOrganizationRole !== null)
+    ) {
+      throw new Error("--hosted-set-user-plan does not accept --telegram-user-id or --role");
+    }
+
+    if (
+      options.hostedSetUserPlanTelegramUserId !== null &&
+      options.manualOrganizationId !== null &&
+      options.manualCreateNewOrganization
+    ) {
+      throw new Error(
+        "--organization-id and --create-new-organization cannot be used together with --hosted-set-user-plan",
+      );
+    }
+
     if (!options.manualPlanCode) {
       throw new Error("--plan is required for manual plan operations");
     }
@@ -333,6 +379,20 @@ export function parseStartupOptions(argv: readonly string[]): StartupOptions {
   }
 
   if (options.hostedAddOrganizationMemberId !== null) {
+    if (
+      options.manualPlanCode !== null ||
+      options.manualSubscriptionStatus !== null ||
+      options.manualPaidThroughAt !== null ||
+      options.manualPaymentReference !== null ||
+      options.manualNote !== null ||
+      options.manualOrganizationId !== null ||
+      options.manualKeepStripeLink ||
+      options.manualCreateNewOrganization
+    ) {
+      throw new Error(
+        "--hosted-add-organization-member only accepts --telegram-user-id and --role manual arguments",
+      );
+    }
     if (!options.manualTelegramUserId) {
       throw new Error("--telegram-user-id is required with --hosted-add-organization-member");
     }

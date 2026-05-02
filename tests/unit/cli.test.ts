@@ -324,6 +324,22 @@ describe("parseStartupOptions: manual billing", () => {
       expect(opts.manualCreateNewOrganization).toBe(true);
     });
 
+    it("rejects --organization-id together with --create-new-organization", () => {
+      expect(() =>
+        parseStartupOptions([
+          "--hosted-set-user-plan",
+          "12345",
+          "--plan",
+          "personal",
+          "--paid-through",
+          FUTURE_DATE,
+          "--organization-id",
+          "org-1",
+          "--create-new-organization",
+        ]),
+      ).toThrow(/organization-id.*create-new-organization/i);
+    });
+
     it("rejects non-numeric telegram user id", () => {
       expect(() =>
         parseStartupOptions([
@@ -385,6 +401,45 @@ describe("parseStartupOptions: manual billing", () => {
   });
 
   describe("mutual exclusion across hosted operations", () => {
+    it("rejects manual auxiliary flags without a manual operation", () => {
+      expect(() => parseStartupOptions(["--plan", "pro", "--paid-through", FUTURE_DATE])).toThrow(
+        /manual billing arguments require/i,
+      );
+      expect(() => parseStartupOptions(["--keep-stripe-link"])).toThrow(
+        /manual billing arguments require/i,
+      );
+    });
+
+    it("rejects irrelevant manual flags for organization grants", () => {
+      expect(() =>
+        parseStartupOptions([
+          "--hosted-set-organization-plan",
+          "org-1",
+          "--plan",
+          "business",
+          "--telegram-user-id",
+          "12345",
+        ]),
+      ).toThrow(/hosted-set-organization-plan does not accept/i);
+    });
+
+    it("rejects plan flags for member-add operations", () => {
+      expect(() =>
+        parseStartupOptions([
+          "--hosted-add-organization-member",
+          "org-1",
+          "--telegram-user-id",
+          "12345",
+          "--role",
+          "member",
+          "--plan",
+          "pro",
+          "--paid-through",
+          FUTURE_DATE,
+        ]),
+      ).toThrow(/hosted-add-organization-member only accepts/i);
+    });
+
     it("rejects manual + export together", () => {
       expect(() =>
         parseStartupOptions([

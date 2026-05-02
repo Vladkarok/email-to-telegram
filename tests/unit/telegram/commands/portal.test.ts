@@ -3,7 +3,7 @@ import { createMockCtx } from "../../../helpers/mockContext.js";
 
 vi.mock("../../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
-const mockLoadConfig = vi.fn(() => ({ appMode: "hosted" }));
+const mockLoadConfig = vi.fn(() => ({ appMode: "hosted", billingProvider: "stripe" }));
 vi.mock("../../../../src/config.js", () => ({
   loadConfig: (): unknown => mockLoadConfig(),
 }));
@@ -39,13 +39,14 @@ const ORG = {
   name: "Test",
   planCode: "pro",
   subscriptionStatus: "active",
+  stripeCustomerId: "cus_123",
   currentPeriodEnd: new Date("2030-01-01"),
 };
 
 describe("/portal command", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockLoadConfig.mockReturnValue({ appMode: "hosted" });
+    mockLoadConfig.mockReturnValue({ appMode: "hosted", billingProvider: "stripe" });
     mockGetBillingOrganizationForUser.mockResolvedValue(ORG);
     mockCreateCustomerPortalSession.mockResolvedValue("https://billing.stripe.com/session_abc");
   });
@@ -68,11 +69,34 @@ describe("/portal command", () => {
   });
 
   it("when no Stripe customer yet, shows upgrade prompt", async () => {
+    mockGetBillingOrganizationForUser.mockResolvedValue({
+      ...ORG,
+      planCode: "free",
+      stripeCustomerId: null,
+    });
     mockCreateCustomerPortalSession.mockResolvedValue(null);
     const ctx = createMockCtx({ chatType: "private" });
     await portalHandler(ctx);
     const [text] = ctx.reply.mock.calls[0] as [string];
     expect(text).toMatch(/upgrade|billing account|no.*subscription/i);
+  });
+
+  it("shows manual billing support message when paid org has no Stripe customer", async () => {
+    mockGetBillingOrganizationForUser.mockResolvedValue({ ...ORG, stripeCustomerId: null });
+    const ctx = createMockCtx({ chatType: "private" });
+    await portalHandler(ctx);
+    const [text] = ctx.reply.mock.calls[0] as [string];
+    expect(text).toMatch(/managed manually|support|renewal|invoice/i);
+    expect(mockCreateCustomerPortalSession).not.toHaveBeenCalled();
+  });
+
+  it("shows manual billing support message when billing provider is disabled", async () => {
+    mockLoadConfig.mockReturnValue({ appMode: "hosted", billingProvider: "none" });
+    const ctx = createMockCtx({ chatType: "private" });
+    await portalHandler(ctx);
+    const [text] = ctx.reply.mock.calls[0] as [string];
+    expect(text).toMatch(/managed manually|support|payment/i);
+    expect(mockCreateCustomerPortalSession).not.toHaveBeenCalled();
   });
 
   it("when Stripe customer exists, replies with portal URL button", async () => {
@@ -103,7 +127,7 @@ describe("/portal command", () => {
 describe("portalCallbackHandler (bill:portal)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockLoadConfig.mockReturnValue({ appMode: "hosted" });
+    mockLoadConfig.mockReturnValue({ appMode: "hosted", billingProvider: "stripe" });
     mockGetBillingOrganizationForUser.mockResolvedValue(ORG);
     mockCreateCustomerPortalSession.mockResolvedValue("https://billing.stripe.com/session_abc");
   });
@@ -121,6 +145,11 @@ describe("portalCallbackHandler (bill:portal)", () => {
   });
 
   it("answers callback and shows upgrade prompt when no customer", async () => {
+    mockGetBillingOrganizationForUser.mockResolvedValue({
+      ...ORG,
+      planCode: "free",
+      stripeCustomerId: null,
+    });
     mockCreateCustomerPortalSession.mockResolvedValue(null);
     const ctx = createMockCtx({ chatType: "private" });
     await portalCallbackHandler(ctx);
@@ -128,6 +157,16 @@ describe("portalCallbackHandler (bill:portal)", () => {
     expect(ctx.reply).toHaveBeenCalled();
     const [text] = ctx.reply.mock.calls[0] as [string];
     expect(text).toMatch(/upgrade|plan|billing account/i);
+  });
+
+  it("answers callback and shows manual billing support message for manual paid orgs", async () => {
+    mockGetBillingOrganizationForUser.mockResolvedValue({ ...ORG, stripeCustomerId: null });
+    const ctx = createMockCtx({ chatType: "private" });
+    await portalCallbackHandler(ctx);
+    expect(ctx.answerCallbackQuery).toHaveBeenCalled();
+    const [text] = ctx.reply.mock.calls[0] as [string];
+    expect(text).toMatch(/managed manually|support|renewal/i);
+    expect(mockCreateCustomerPortalSession).not.toHaveBeenCalled();
   });
 
   it("answers with show_alert on error", async () => {

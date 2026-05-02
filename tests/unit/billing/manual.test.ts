@@ -271,7 +271,13 @@ describe("grantManualOrganizationPlan", () => {
       event: {
         id: "event-existing",
         organizationId: "org-1",
+        telegramUserId: null,
+        planCode: "personal",
+        subscriptionStatus: "active",
+        paidThroughAt: new Date("2026-05-10T00:00:00.000Z"),
         paymentReference: "wise-2026-04-001",
+        note: "Original grant",
+        keptStripeLink: false,
       },
       created: false,
     });
@@ -287,6 +293,10 @@ describe("grantManualOrganizationPlan", () => {
     expect(result).toMatchObject({
       ok: true,
       idempotent: true,
+      updated: false,
+      planCode: "personal",
+      paidThroughAt: "2026-05-10T00:00:00.000Z",
+      note: "Original grant",
       manualBillingEventId: "event-existing",
     });
     expect(mockCreateManualBillingEvent).not.toHaveBeenCalled();

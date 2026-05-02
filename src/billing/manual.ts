@@ -74,13 +74,14 @@ export interface ManualGrantSummary {
   subscriptionStatus: ManualSubscriptionStatus;
   paidThroughAt: string | null;
   paymentReference: string | null;
+  note: string | null;
   keptStripeLink: boolean;
   manualBillingEventId: string;
 }
 
 export type GrantManualOrganizationPlanResult =
   | ({ ok: true; idempotent: false; updated: true } & ManualGrantSummary)
-  | ({ ok: true; idempotent: true; updated: true } & ManualGrantSummary)
+  | ({ ok: true; idempotent: true; updated: false } & ManualGrantSummary)
   | { ok: false; code: ManualGrantErrorCode };
 
 export type GrantManualUserPlanResult =
@@ -93,7 +94,7 @@ export type GrantManualUserPlanResult =
   | ({
       ok: true;
       idempotent: true;
-      updated: true;
+      updated: false;
       createdOrganization: boolean;
     } & ManualGrantSummary)
   | { ok: false; code: ManualGrantErrorCode; organizationIds?: string[] };
@@ -171,8 +172,33 @@ function summarize(
     subscriptionStatus: input.subscriptionStatus,
     paidThroughAt: input.paidThroughAt ? input.paidThroughAt.toISOString() : null,
     paymentReference: input.paymentReference,
+    note: input.note,
     keptStripeLink: input.keptStripeLink,
     manualBillingEventId,
+  };
+}
+
+function summarizeEvent(event: {
+  id: string;
+  organizationId: string;
+  telegramUserId: bigint | null;
+  planCode: string;
+  subscriptionStatus: string;
+  paidThroughAt: Date | null;
+  paymentReference: string | null;
+  note: string | null;
+  keptStripeLink: boolean;
+}): ManualGrantSummary {
+  return {
+    organizationId: event.organizationId,
+    telegramUserId: event.telegramUserId == null ? null : event.telegramUserId.toString(),
+    planCode: event.planCode as PlanCode,
+    subscriptionStatus: event.subscriptionStatus as ManualSubscriptionStatus,
+    paidThroughAt: event.paidThroughAt ? event.paidThroughAt.toISOString() : null,
+    paymentReference: event.paymentReference,
+    note: event.note,
+    keptStripeLink: event.keptStripeLink,
+    manualBillingEventId: event.id,
   };
 }
 
@@ -199,8 +225,8 @@ export async function grantManualOrganizationPlan(
       );
       if (!created) {
         // Idempotent replay — return stored event without mutating billing state.
-        const summary = summarize(input, input.organizationId, telegramUserId, event.id);
-        return { ok: true, idempotent: true, updated: true, ...summary };
+        const summary = summarizeEvent(event);
+        return { ok: true, idempotent: true, updated: false, ...summary };
       }
       await updateOrganizationBillingState(tx, input.organizationId, buildBillingPatch(input));
       const summary = summarize(input, input.organizationId, telegramUserId, event.id);
@@ -294,8 +320,8 @@ export async function grantManualUserPlan(
         },
       );
       if (!created) {
-        const summary = summarize(input, resolvedOrganizationId, input.telegramUserId, event.id);
-        return { ok: true, idempotent: true, updated: true, createdOrganization, ...summary };
+        const summary = summarizeEvent(event);
+        return { ok: true, idempotent: true, updated: false, createdOrganization, ...summary };
       }
       await updateOrganizationBillingState(tx, resolvedOrganizationId, buildBillingPatch(input));
       const summary = summarize(input, resolvedOrganizationId, input.telegramUserId, event.id);
