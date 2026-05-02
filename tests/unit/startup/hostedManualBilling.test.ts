@@ -9,6 +9,7 @@ import {
   hasHostedManualBillingOperation,
   hostedManualBillingExitCode,
   redactManualBillingForLog,
+  withManualBillingWarnings,
 } from "../../../src/startup/hostedManualBilling.js";
 
 function startupOptions(overrides: Partial<StartupOptions>): StartupOptions {
@@ -149,5 +150,28 @@ describe("hostedManualBilling helpers", () => {
     expect(
       hostedManualBillingExitCode({ ok: false, code: "organization_not_found" } as never),
     ).toBe(1);
+  });
+
+  it("adds manual billing warnings to stdout payloads when present", () => {
+    const result = {
+      ok: true,
+      idempotent: false,
+      updated: true,
+      organizationId: "org-1",
+      telegramUserId: null,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: "2026-05-30T00:00:00.000Z",
+      paymentReference: null,
+      note: null,
+      keptStripeLink: false,
+      manualBillingEventId: "event-1",
+    } as const;
+
+    expect(withManualBillingWarnings(result, [])).toBe(result);
+    expect(withManualBillingWarnings(result, ["backfill warning"])).toEqual({
+      ...result,
+      warnings: ["backfill warning"],
+    });
   });
 });

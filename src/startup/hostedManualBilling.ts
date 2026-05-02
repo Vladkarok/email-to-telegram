@@ -132,3 +132,10 @@ export function hostedManualBillingExitCode(
 ): number {
   return result.ok ? 0 : 1;
 }
+
+export function withManualBillingWarnings<
+  T extends GrantManualOrganizationPlanResult | GrantManualUserPlanResult,
+>(result: T, warnings: readonly string[]): T | (T & { warnings: string[] }) {
+  if (warnings.length === 0) return result;
+  return { ...result, warnings: [...warnings] };
+}

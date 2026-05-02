@@ -251,6 +251,32 @@ describe("parseStartupOptions: manual billing", () => {
       ).toThrow(/--paid-through/i);
     });
 
+    it("rejects normalized invalid calendar dates for --paid-through", () => {
+      expect(() =>
+        parseStartupOptions([
+          "--hosted-set-organization-plan",
+          "org-1",
+          "--plan",
+          "pro",
+          "--paid-through",
+          "2026-02-31",
+        ]),
+      ).toThrow(/valid calendar date/i);
+    });
+
+    it("rejects non-ISO date formats for --paid-through", () => {
+      expect(() =>
+        parseStartupOptions([
+          "--hosted-set-organization-plan",
+          "org-1",
+          "--plan",
+          "pro",
+          "--paid-through",
+          "05/30/2026",
+        ]),
+      ).toThrow(/YYYY-MM-DD or ISO 8601/i);
+    });
+
     it("rejects unknown --plan value", () => {
       expect(() =>
         parseStartupOptions([

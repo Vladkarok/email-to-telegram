@@ -40,6 +40,7 @@ import {
   hasHostedManualBillingOperation,
   hostedManualBillingExitCode,
   redactManualBillingForLog,
+  withManualBillingWarnings,
 } from "./startup/hostedManualBilling.js";
 import {
   addManualOrganizationMember,
@@ -157,7 +158,9 @@ async function main() {
     } else {
       logger.error({ code: result.code }, "Manual organization plan grant failed.");
     }
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    process.stdout.write(
+      `${JSON.stringify(withManualBillingWarnings(result, startup.warnings), null, 2)}\n`,
+    );
     process.exitCode = hostedManualBillingExitCode(result);
     await closeDb();
     return;
@@ -183,7 +186,9 @@ async function main() {
         "Manual user plan grant failed.",
       );
     }
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    process.stdout.write(
+      `${JSON.stringify(withManualBillingWarnings(result, startup.warnings), null, 2)}\n`,
+    );
     process.exitCode = hostedManualBillingExitCode(result);
     await closeDb();
     return;

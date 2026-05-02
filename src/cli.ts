@@ -406,8 +406,23 @@ export function parseStartupOptions(argv: readonly string[]): StartupOptions {
 
 function parsePaidThrough(value: string): Date {
   // Accept YYYY-MM-DD (treated as UTC midnight) or full ISO 8601
-  const isoDateOnly = /^\d{4}-\d{2}-\d{2}$/;
-  const candidate = isoDateOnly.test(value) ? `${value}T00:00:00.000Z` : value;
+  const isoDateOnly = /^(\d{4})-(\d{2})-(\d{2})$/;
+  const isoDateTime =
+    /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+  const dateOnlyMatch = isoDateOnly.exec(value);
+  const dateTimeMatch = isoDateTime.exec(value);
+  if (!dateOnlyMatch && !dateTimeMatch) {
+    throw new Error(
+      `--paid-through could not be parsed as a date: ${value}. Use YYYY-MM-DD or ISO 8601.`,
+    );
+  }
+
+  const [, year, month, day] = dateOnlyMatch ?? dateTimeMatch!;
+  if (!isValidCalendarDate(Number(year), Number(month), Number(day))) {
+    throw new Error(`--paid-through is not a valid calendar date: ${value}`);
+  }
+
+  const candidate = dateOnlyMatch ? `${value}T00:00:00.000Z` : value;
   const parsed = new Date(candidate);
   if (Number.isNaN(parsed.getTime())) {
     throw new Error(
@@ -415,4 +430,13 @@ function parsePaidThrough(value: string): Date {
     );
   }
   return parsed;
+}
+
+function isValidCalendarDate(year: number, month: number, day: number): boolean {
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return (
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day
+  );
 }
