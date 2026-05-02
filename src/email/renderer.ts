@@ -1,5 +1,6 @@
 import type { ParsedEmail } from "./types.js";
 import { sanitizeTelegramHtml, stripHtml } from "../utils/telegramHtml.js";
+import { escapeHtml, escapeHtmlAttribute } from "../utils/html.js";
 
 const MAX_LEN = 4096;
 const TRUNCATION_NOTICE = "\n[... truncated]";
@@ -184,9 +185,6 @@ function truncateToBudget(text: string, budget: number, mode: RenderMode): strin
   return sanitizeTelegramHtml(truncated);
 }
 
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 
 function normalizeLineEndings(text: string): string {
   return text.replace(/\r\n/g, "\n");
@@ -347,9 +345,6 @@ function replaceDelimited(
   });
 }
 
-function escapeHtmlAttribute(text: string): string {
-  return escapeHtml(text).replace(/"/g, "&quot;");
-}
 
 function finalizeTruncatedRichText(text: string, mode: RenderMode): string {
   if (mode === "plaintext") return text;

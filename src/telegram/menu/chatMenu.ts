@@ -7,6 +7,7 @@ import { getAccessibleChats } from "../authorization.js";
 import { getPrimaryOrganizationForUser } from "../../tenant/currentOrganization.js";
 import { getEffectivePlan } from "../../billing/limits.js";
 import { countActiveAliasesByOrganization } from "../../db/repos/aliases.js";
+import { escapeHtml } from "../../utils/html.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -14,9 +15,6 @@ function chatIcon(type: string): string {
   return type === "private" ? "🏠" : "👥";
 }
 
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 
 /**
  * Returns a one-line plan/alias footer for hosted mode,

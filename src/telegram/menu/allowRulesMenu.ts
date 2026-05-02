@@ -4,12 +4,10 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../../db/schema.js";
 import { findAliasById } from "../../db/repos/aliases.js";
 import { listAllowRules } from "../../db/repos/allowRules.js";
+import { escapeHtml } from "../../utils/html.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 
 function buildAllowRulesKeyboard(
   rules: { id: string; matchType: string; matchValue: string }[],

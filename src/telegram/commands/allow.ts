@@ -17,6 +17,7 @@ import {
 } from "../../billing/limits.js";
 import { canManageAlias } from "../authorization.js";
 import { parseAllowValue } from "../allowValue.js";
+import { escapeHtml } from "../../utils/html.js";
 
 const USAGE = `Usage:
   /allow add <alias_or_address> <email_or_domain>
@@ -123,9 +124,6 @@ async function findAliasForAllowCommand(
   return findAliasByLocalPartAnyDomain(db, aliasName);
 }
 
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 
 export async function addAllowRuleForAlias(
   ctx: Context,

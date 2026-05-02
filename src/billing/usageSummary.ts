@@ -1,5 +1,6 @@
 import type { Organization } from "../db/schema.js";
 import type { PlanDefinition } from "./plans.js";
+import { escapeHtml } from "../utils/html.js";
 
 export interface UsageCounters {
   acceptedBillable: number;
@@ -159,6 +160,3 @@ function formatBytesPercent(used: bigint, limit: bigint): string {
   return `${percent.toString()}%`;
 }
 
-function escapeHtml(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
