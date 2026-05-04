@@ -17,6 +17,8 @@ import {
   CB_ALLOW_RULES,
   CB_ALIAS_SETTINGS,
   CB_ALIAS_LIST,
+  CB_ALIAS_LABEL_EDIT,
+  CB_ALIAS_LABEL_CLEAR,
 } from "../callbacks.js";
 
 type Db = NodePgDatabase<typeof schema>;
@@ -40,9 +42,10 @@ export async function editAliasListMenu(
     keyboard.text("📧 Create First Email", CB_NEW_EMAIL.build(chatId)).row();
   } else {
     for (const alias of aliases) {
-      keyboard
-        .text(`${statusIcon(alias.status)} ${alias.localPart}`, CB_ALIAS_DETAIL.build(alias.id))
-        .row();
+      const buttonLabel = alias.label
+        ? `${statusIcon(alias.status)} ${alias.label}`
+        : `${statusIcon(alias.status)} ${alias.localPart}`;
+      keyboard.text(buttonLabel, CB_ALIAS_DETAIL.build(alias.id)).row();
     }
   }
 
@@ -82,7 +85,10 @@ export async function editAliasDetailMenu(ctx: Context, db: Db, aliasId: string)
           .join("\n")
       : "⚠️ None — all mail rejected";
 
+  const labelLine = alias.label ? `🏷️ <b>${escapeHtml(alias.label)}</b>\n` : "";
+
   const text =
+    labelLine +
     `📧 <code>${escapeHtml(alias.fullAddress)}</code>\n` +
     `Status: ${statusIcon(alias.status)} ${alias.status}\n` +
     `Render: <code>${alias.renderMode}</code>\n` +
@@ -102,6 +108,14 @@ export async function editAliasDetailMenu(ctx: Context, db: Db, aliasId: string)
     .text("📋 Allow Rules", CB_ALLOW_RULES.build(alias.id))
     .text("⚙️ Settings", CB_ALIAS_SETTINGS.build(alias.id))
     .row();
+  if (alias.label) {
+    keyboard
+      .text("✏️ Edit Label", CB_ALIAS_LABEL_EDIT.build(alias.id))
+      .text("🧹 Clear Label", CB_ALIAS_LABEL_CLEAR.build(alias.id))
+      .row();
+  } else {
+    keyboard.text("🏷️ Set Label", CB_ALIAS_LABEL_EDIT.build(alias.id)).row();
+  }
   keyboard.text("⬅️ Back", CB_ALIAS_LIST.build(alias.chatId));
 
   await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: keyboard });

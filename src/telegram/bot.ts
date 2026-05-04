@@ -50,6 +50,10 @@ import {
   CB_ADD_RULE,
   CB_CANCEL_ADD_RULE,
   CB_UPGRADE_PLAN,
+  CB_QUICK_ALLOW,
+  CB_ALIAS_LABEL_EDIT,
+  CB_ALIAS_LABEL_CLEAR,
+  CB_ALIAS_LABEL_CANCEL,
 } from "./callbacks.js";
 import { portalHandler, portalCallbackHandler } from "./commands/portal.js";
 import { chatMemberHandler } from "./handlers/chatMember.js";
@@ -59,6 +63,7 @@ import { sendAllowRulesMenu, editAllowRulesMenu } from "./menu/allowRulesMenu.js
 import {
   findAliasById,
   updateAliasBodyDedup,
+  updateAliasLabel,
   updateAliasPrivacyMode,
   updateAliasStatus,
   updateAliasRenderMode,
@@ -67,6 +72,7 @@ import { findChatById } from "../db/repos/chats.js";
 import { findAllowRuleById, removeAllowRule } from "../db/repos/allowRules.js";
 import { getPending, clearPending, setPending } from "./session.js";
 import { canManageChat, canManageAlias } from "./authorization.js";
+import { aliasResolutionError, resolveManageableAlias } from "./aliasResolver.js";
 import { parseAllowValue } from "./allowValue.js";
 import { getLogger } from "../utils/logger.js";
 import { InlineKeyboard } from "grammy";
@@ -107,6 +113,7 @@ export function createBot(token: string): Bot {
   bot.command("resumeemail", resumeemailHandler);
   bot.command("settings", settingsHandler);
   bot.command("allow", allowHandler);
+  bot.command("label", labelHandler);
   bot.command("help", helpHandler);
   bot.command("plan", planHandler);
   bot.command("usage", usageHandler);
@@ -361,7 +368,115 @@ export function createBot(token: string): Bot {
     await editAllowRulesMenu(ctx, getDb(), ctx.match[1]);
   });
 
+  // qa:{aliasId}:{domain} — quick-add allow domain
+  bot.callbackQuery(CB_QUICK_ALLOW.pattern, async (ctx) => {
+    const aliasId = ctx.match[1];
+    const domain = ctx.match[2];
+    if (!(await assertHostedAliasWorkspaceReady(ctx, aliasId))) return;
+    if (!(await assertAliasAccess(ctx, aliasId))) return;
+    const alias = await findAliasById(getDb(), aliasId);
+    if (!alias) {
+      await ctx.answerCallbackQuery("Alias not found.");
+      return;
+    }
+    await ctx.answerCallbackQuery("Adding…");
+    const added = await addAllowRuleForAlias(ctx, getDb(), alias, domain);
+    if (added) {
+      // Show the alias detail menu so the user sees the new state and next steps.
+      await editAliasDetailMenu(ctx, getDb(), aliasId).catch(() => {});
+    }
+  });
+
+  // ale:{aliasId} — start label-edit flow
+  bot.callbackQuery(CB_ALIAS_LABEL_EDIT.pattern, async (ctx) => {
+    const aliasId = ctx.match[1];
+    if (!(await assertAliasAccess(ctx, aliasId))) return;
+    await ctx.answerCallbackQuery();
+    if (!ctx.from) return;
+    const alias = await findAliasById(getDb(), aliasId);
+    if (!alias) return;
+
+    setPending(ctx.from.id, { action: "alias_label", aliasId });
+
+    const keyboard = new InlineKeyboard().text("✖ Cancel", CB_ALIAS_LABEL_CANCEL.build(aliasId));
+    const current = alias.label ? `\n\nCurrent label: <b>${escapeHtml(alias.label)}</b>` : "";
+    await ctx.editMessageText(
+      `🏷️ Set label for <code>${escapeHtml(alias.fullAddress)}</code>${current}\n\nSend the new label (max 64 characters), or tap Cancel.`,
+      { parse_mode: "HTML", reply_markup: keyboard },
+    );
+  });
+
+  // alc:{aliasId} — clear label
+  bot.callbackQuery(CB_ALIAS_LABEL_CLEAR.pattern, async (ctx) => {
+    const aliasId = ctx.match[1];
+    if (!(await assertAliasAccess(ctx, aliasId))) return;
+    await updateAliasLabel(getDb(), aliasId, null);
+    await ctx.answerCallbackQuery("Label cleared.");
+    await editAliasDetailMenu(ctx, getDb(), aliasId);
+  });
+
+  // alx:{aliasId} — cancel label-edit
+  bot.callbackQuery(CB_ALIAS_LABEL_CANCEL.pattern, async (ctx) => {
+    const aliasId = ctx.match[1];
+    if (!(await assertAliasAccess(ctx, aliasId))) return;
+    if (ctx.from) clearPending(ctx.from.id);
+    await ctx.answerCallbackQuery("Cancelled.");
+    await editAliasDetailMenu(ctx, getDb(), aliasId);
+  });
+
   return bot;
+}
+
+/**
+ * /label <alias-name> <text…> — sets or clears an alias label.
+ *
+ * Pass an empty `<text>` to clear the label.
+ */
+async function labelHandler(ctx: Context): Promise<void> {
+  if (!ctx.from) return;
+  const raw = (ctx as Context & { match?: string }).match ?? "";
+  const trimmed = String(raw).trim();
+  if (!trimmed) {
+    await ctx.reply("Usage: /label <alias-name> <text>\n• To clear: /label <alias-name> --clear", {
+      parse_mode: "HTML",
+    });
+    return;
+  }
+  const firstSpace = trimmed.indexOf(" ");
+  const aliasName = firstSpace === -1 ? trimmed : trimmed.slice(0, firstSpace);
+  const labelInput = firstSpace === -1 ? "" : trimmed.slice(firstSpace + 1).trim();
+
+  const result = await resolveManageableAlias(
+    getDb(),
+    ctx.api,
+    ctx.from.id,
+    BigInt(ctx.chat!.id),
+    aliasName,
+  );
+  if (!result.ok) {
+    await ctx.reply(aliasResolutionError(result, aliasName, ctx.chat!.type), {
+      parse_mode: "HTML",
+    });
+    return;
+  }
+
+  const alias = result.alias;
+  if (!labelInput || labelInput === "--clear") {
+    await updateAliasLabel(getDb(), alias.id, null);
+    await ctx.reply(`🧹 Label cleared for <code>${escapeHtml(alias.fullAddress)}</code>.`, {
+      parse_mode: "HTML",
+    });
+    return;
+  }
+  if (labelInput.length > 64) {
+    await ctx.reply("❌ Label too long. Max 64 characters.");
+    return;
+  }
+  await updateAliasLabel(getDb(), alias.id, labelInput);
+  await ctx.reply(
+    `🏷️ Label set: <b>${escapeHtml(labelInput)}</b> · <code>${escapeHtml(alias.fullAddress)}</code>`,
+    { parse_mode: "HTML" },
+  );
 }
 
 export async function handlePendingTextMessage(ctx: Context, next: NextFunction): Promise<void> {
@@ -392,6 +507,36 @@ export async function handlePendingTextMessage(ctx: Context, next: NextFunction)
     }
     clearPending(ctx.from.id);
     await createEmailAlias(ctx, text.trim(), pending.chatId, null, pending.chatTitle);
+    return;
+  }
+
+  if (pending.action === "alias_label") {
+    const alias = await findAliasById(getDb(), pending.aliasId);
+    if (!alias) {
+      clearPending(ctx.from.id);
+      await ctx.reply("❌ Alias not found.");
+      return;
+    }
+    if (!(await canManageAlias(getDb(), ctx.api, ctx.from.id, pending.aliasId, { fresh: true }))) {
+      clearPending(ctx.from.id);
+      await ctx.reply("⛔ Access denied.");
+      return;
+    }
+    clearPending(ctx.from.id);
+    const labelInput = text.trim();
+    if (!labelInput) {
+      await ctx.reply("❌ Label cannot be empty. Try again or tap Cancel.");
+      return;
+    }
+    if (labelInput.length > 64) {
+      await ctx.reply("❌ Label too long. Max 64 characters.");
+      return;
+    }
+    await updateAliasLabel(getDb(), pending.aliasId, labelInput);
+    await ctx.reply(
+      `🏷️ Label set: <b>${escapeHtml(labelInput)}</b> · <code>${escapeHtml(alias.fullAddress)}</code>`,
+      { parse_mode: "HTML" },
+    );
     return;
   }
 

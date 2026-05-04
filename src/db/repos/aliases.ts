@@ -106,18 +106,6 @@ export async function findAliasesByLocalPartForOrganization(
     );
 }
 
-export async function findAliasByIdAndChat(
-  db: Db,
-  localPart: string,
-  chatId: bigint,
-): Promise<EmailAddress | null> {
-  const [alias] = await db
-    .select()
-    .from(emailAddresses)
-    .where(and(eq(emailAddresses.localPart, localPart), eq(emailAddresses.chatId, chatId)));
-  return alias ?? null;
-}
-
 export async function listAliasesByChat(db: Db, chatId: bigint): Promise<EmailAddress[]> {
   return db
     .select()
@@ -179,5 +167,12 @@ export async function updateAliasPrivacyMode(
   await db
     .update(emailAddresses)
     .set({ privacyModeEnabled, updatedAt: new Date() })
+    .where(eq(emailAddresses.id, id));
+}
+
+export async function updateAliasLabel(db: Db, id: string, label: string | null): Promise<void> {
+  await db
+    .update(emailAddresses)
+    .set({ label, updatedAt: new Date() })
     .where(eq(emailAddresses.id, id));
 }
