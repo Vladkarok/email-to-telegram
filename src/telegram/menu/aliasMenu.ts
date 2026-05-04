@@ -73,10 +73,33 @@ async function filterVisibleAliases(ctx: Context, db: Db, aliases: EmailAddress[
 }
 
 export async function editAliasDetailMenu(ctx: Context, db: Db, aliasId: string): Promise<void> {
+  const detail = await buildAliasDetailMenu(ctx, db, aliasId, "callback");
+  if (!detail) return;
+
+  await ctx.editMessageText(detail.text, { parse_mode: "HTML", reply_markup: detail.keyboard });
+}
+
+export async function sendAliasDetailMenu(ctx: Context, db: Db, aliasId: string): Promise<void> {
+  const detail = await buildAliasDetailMenu(ctx, db, aliasId, "reply");
+  if (!detail) return;
+
+  await ctx.reply(detail.text, { parse_mode: "HTML", reply_markup: detail.keyboard });
+}
+
+async function buildAliasDetailMenu(
+  ctx: Context,
+  db: Db,
+  aliasId: string,
+  missingMode: "callback" | "reply",
+): Promise<{ text: string; keyboard: InlineKeyboard } | null> {
   const alias = await findAliasById(db, aliasId);
   if (!alias) {
-    await ctx.answerCallbackQuery("Alias not found.");
-    return;
+    if (missingMode === "callback") {
+      await ctx.answerCallbackQuery("Alias not found.");
+    } else {
+      await ctx.reply("❌ Alias not found.");
+    }
+    return null;
   }
 
   const rules = await listAllowRules(db, alias.id);
@@ -120,7 +143,7 @@ export async function editAliasDetailMenu(ctx: Context, db: Db, aliasId: string)
   }
   keyboard.text("⬅️ Back", CB_ALIAS_LIST.build(alias.chatId));
 
-  await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: keyboard });
+  return { text, keyboard };
 }
 
 export async function editAliasDeleteConfirmMenu(

@@ -19,7 +19,7 @@ vi.mock("../../../../src/telegram/authorization.js", () => ({
   canManageAlias: (...args: unknown[]): unknown => mockCanManageAlias(...args),
 }));
 
-const { editAliasListMenu, editAliasDetailMenu, editAliasDeleteConfirmMenu } =
+const { editAliasListMenu, editAliasDetailMenu, sendAliasDetailMenu, editAliasDeleteConfirmMenu } =
   await import("../../../../src/telegram/menu/aliasMenu.js");
 
 const fakeDb = {} as Parameters<typeof editAliasListMenu>[1];
@@ -160,6 +160,23 @@ describe("editAliasDetailMenu", () => {
     await editAliasDetailMenu(ctx, fakeDb, "nonexistent-id");
     expect(ctx.answerCallbackQuery).toHaveBeenCalled();
     expect(ctx.editMessageText).not.toHaveBeenCalled();
+  });
+
+  it("can send alias details as a fresh bottom message", async () => {
+    mockFindAliasById.mockResolvedValue({ ...fakeAlias, label: "Ops Alerts" });
+    mockListAllowRules.mockResolvedValue([]);
+    const ctx = createMockCtx({ chatType: "private" });
+
+    await sendAliasDetailMenu(ctx, fakeDb, fakeAlias.id);
+
+    expect(ctx.reply).toHaveBeenCalledOnce();
+    const [text, opts] = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      { reply_markup: { inline_keyboard: { text: string }[][] } },
+    ];
+    expect(text).toContain("Ops Alerts");
+    const buttons = opts.reply_markup.inline_keyboard.flat().map((b) => b.text);
+    expect(buttons.some((t) => t.includes("Edit Label"))).toBe(true);
   });
 });
 
