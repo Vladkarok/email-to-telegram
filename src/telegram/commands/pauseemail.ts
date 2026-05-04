@@ -19,6 +19,7 @@ export async function pauseemailHandler(ctx: CommandContext<Context>): Promise<v
     ctx.from.id,
     BigInt(ctx.chat.id),
     aliasName,
+    ctx.chat.type,
   );
 
   if (!result.ok) {

@@ -40,6 +40,7 @@ export async function settingsHandler(ctx: CommandContext<Context>): Promise<voi
     ctx.from.id,
     BigInt(ctx.chat.id),
     aliasName,
+    ctx.chat.type,
   );
 
   if (!result.ok) {
