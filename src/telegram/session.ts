@@ -2,6 +2,7 @@ export interface PendingNewEmail {
   action: "newemail";
   chatId: bigint;
   chatTitle: string;
+  messageThreadId?: bigint | null;
 }
 
 export interface PendingAllowRule {

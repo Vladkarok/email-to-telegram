@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { Context } from "grammy";
+import { Context, InlineKeyboard } from "grammy";
 import { createMockCtx } from "../../helpers/mockContext.js";
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
@@ -49,9 +49,13 @@ vi.mock("../../../src/telegram/menu/allowRulesMenu.js", () => ({
 
 vi.mock("../../../src/telegram/commands/start.js", () => ({ startHandler: vi.fn() }));
 const mockCreateEmailAlias = vi.fn();
+const mockPromptForEmailAliasName = vi.fn();
 vi.mock("../../../src/telegram/commands/newemail.js", () => ({
   newemailHandler: vi.fn(),
   createEmailAlias: (...args: unknown[]): unknown => mockCreateEmailAlias(...args),
+  promptForEmailAliasName: (...args: unknown[]): unknown => mockPromptForEmailAliasName(...args),
+  buildQuickAllowKeyboard: (aliasId: string): InlineKeyboard =>
+    new InlineKeyboard().text("✅ github.com", `qr:${aliasId}:github.com`),
 }));
 vi.mock("../../../src/telegram/commands/listemail.js", () => ({ listemailHandler: vi.fn() }));
 vi.mock("../../../src/telegram/commands/deleteemail.js", () => ({ deleteemailHandler: vi.fn() }));
@@ -97,6 +101,9 @@ const {
 const mockAnswerCallbackQuery = vi
   .spyOn(Context.prototype, "answerCallbackQuery")
   .mockResolvedValue(true as never);
+const mockEditMessageText = vi
+  .spyOn(Context.prototype, "editMessageText")
+  .mockResolvedValue({} as never);
 
 function buildCallbackUpdate(data: string) {
   return {
@@ -165,6 +172,7 @@ describe("pending text flow", () => {
 
   afterAll(() => {
     mockAnswerCallbackQuery.mockRestore();
+    mockEditMessageText.mockRestore();
   });
 
   it("creates a pending alias when the hosted workspace is active", async () => {
@@ -310,5 +318,30 @@ describe("pending text flow", () => {
     expect(mockAnswerCallbackQuery).toHaveBeenCalledWith(
       expect.stringMatching(/hosted workspace inactive/i),
     );
+  });
+
+  it("shows quick allow buttons when starting add-rule flow from the menu", async () => {
+    mockFindAliasById.mockResolvedValue({
+      id: "550e8400-e29b-41d4-a716-446655440000",
+      localPart: "alerts",
+      organizationId: "org-1",
+    });
+    const bot = createInitializedBot();
+
+    await bot.handleUpdate(buildCallbackUpdate("aa:550e8400-e29b-41d4-a716-446655440000") as never);
+
+    expect(mockAnswerCallbackQuery).toHaveBeenCalled();
+    const [, opts] = mockEditMessageText.mock.calls[0] as [
+      string,
+      {
+        reply_markup?: { inline_keyboard?: Array<Array<{ text: string; callback_data: string }>> };
+      },
+    ];
+    const buttons = opts.reply_markup?.inline_keyboard?.flat() ?? [];
+    expect(
+      buttons.some(
+        (button) => button.callback_data === "qr:550e8400-e29b-41d4-a716-446655440000:github.com",
+      ),
+    ).toBe(true);
   });
 });

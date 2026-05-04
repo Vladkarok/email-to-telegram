@@ -9,7 +9,8 @@ export async function helpHandler(ctx: Context): Promise<void> {
 /start — open the management menu
 
 <b>Aliases</b>
-/newemail &lt;alias&gt; — create a new email alias
+/newemail — create a new email alias
+/newemail &lt;alias&gt; — create one immediately with a specific name
 /listemail — list all your aliases
 /pauseemail &lt;alias&gt; — pause an alias
 /resumeemail &lt;alias&gt; — resume a paused alias

@@ -8,7 +8,12 @@ import {
   assertHostedAliasWorkspaceReady,
 } from "./middleware/authorization.js";
 import { startHandler } from "./commands/start.js";
-import { newemailHandler, createEmailAlias } from "./commands/newemail.js";
+import {
+  newemailHandler,
+  createEmailAlias,
+  promptForEmailAliasName,
+  buildQuickAllowKeyboard,
+} from "./commands/newemail.js";
 import { listemailHandler } from "./commands/listemail.js";
 import { deleteemailHandler } from "./commands/deleteemail.js";
 import { pauseemailHandler } from "./commands/pauseemail.js";
@@ -51,6 +56,7 @@ import {
   CB_CANCEL_ADD_RULE,
   CB_UPGRADE_PLAN,
   CB_QUICK_ALLOW,
+  CB_QUICK_ALLOW_RULES,
   CB_ALIAS_LABEL_EDIT,
   CB_ALIAS_LABEL_CLEAR,
   CB_ALIAS_LABEL_CANCEL,
@@ -169,17 +175,7 @@ export function createBot(token: string): Bot {
     const chat = await findChatById(getDb(), chatId);
     const chatTitle = chat?.title ?? `Chat ${ctx.match[1]}`;
 
-    setPending(ctx.from.id, { action: "newemail", chatId, chatTitle });
-
-    const keyboard = new InlineKeyboard()
-      .text("⏭ Skip — auto name", CB_SKIP_ALIAS.build(ctx.match[1]))
-      .row()
-      .text("✖ Cancel", CB_NEW_CANCEL);
-
-    await ctx.editMessageText(
-      `📧 Creating alias for <b>${escapeHtml(chatTitle)}</b>\n\nSend me the alias prefix (e.g. <code>alerts</code>), or tap Skip to pick a friendly default like <code>inbox</code>.`,
-      { parse_mode: "HTML", reply_markup: keyboard },
-    );
+    await promptForEmailAliasName(ctx, chatId, chatTitle, null, "edit");
   });
 
   // ns:{chatId} — skip (random alias)
@@ -353,9 +349,11 @@ export function createBot(token: string): Bot {
       aliasLocalPart: alias.localPart,
     });
 
-    const keyboard = new InlineKeyboard().text("✖ Cancel", CB_CANCEL_ADD_RULE.build(alias.id));
+    const keyboard = buildQuickAllowKeyboard(alias.id, "rules")
+      .row()
+      .text("✖ Cancel", CB_CANCEL_ADD_RULE.build(alias.id));
     await ctx.editMessageText(
-      `📋 Add allow rule for <code>${escapeHtml(alias.localPart)}</code>\n\nSend a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).`,
+      `📋 Add allow rule for <code>${escapeHtml(alias.localPart)}</code>\n\nTap a quick pick, or send a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).`,
       { parse_mode: "HTML", reply_markup: keyboard },
     );
   });
@@ -384,6 +382,24 @@ export function createBot(token: string): Bot {
     if (added) {
       // Show the alias detail menu so the user sees the new state and next steps.
       await editAliasDetailMenu(ctx, getDb(), aliasId).catch(() => {});
+    }
+  });
+
+  // qr:{aliasId}:{domain} — quick-add allow domain and return to allow-rules menu
+  bot.callbackQuery(CB_QUICK_ALLOW_RULES.pattern, async (ctx) => {
+    const aliasId = ctx.match[1];
+    const domain = ctx.match[2];
+    if (!(await assertHostedAliasWorkspaceReady(ctx, aliasId))) return;
+    if (!(await assertAliasAccess(ctx, aliasId))) return;
+    const alias = await findAliasById(getDb(), aliasId);
+    if (!alias) {
+      await ctx.answerCallbackQuery("Alias not found.");
+      return;
+    }
+    await ctx.answerCallbackQuery("Adding…");
+    const added = await addAllowRuleForAlias(ctx, getDb(), alias, domain);
+    if (added) {
+      await editAllowRulesMenu(ctx, getDb(), aliasId).catch(() => {});
     }
   });
 
@@ -517,7 +533,13 @@ export async function handlePendingTextMessage(ctx: Context, next: NextFunction)
       return;
     }
     clearPending(ctx.from.id);
-    await createEmailAlias(ctx, text.trim(), pending.chatId, null, pending.chatTitle);
+    await createEmailAlias(
+      ctx,
+      text.trim(),
+      pending.chatId,
+      pending.messageThreadId ?? null,
+      pending.chatTitle,
+    );
     return;
   }
 

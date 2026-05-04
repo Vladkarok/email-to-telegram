@@ -1,5 +1,13 @@
 import { InlineKeyboard } from "grammy";
-import { CB_BILLING_UPGRADE, CB_ALIAS_DETAIL, CB_QUICK_ALLOW, CB_ADD_RULE } from "../callbacks.js";
+import {
+  CB_BILLING_UPGRADE,
+  CB_ALIAS_DETAIL,
+  CB_QUICK_ALLOW,
+  CB_ADD_RULE,
+  CB_SKIP_ALIAS,
+  CB_NEW_CANCEL,
+  CB_QUICK_ALLOW_RULES,
+} from "../callbacks.js";
 import type { CommandContext, Context } from "grammy";
 import { customAlphabet } from "nanoid";
 import { getDb } from "../../db/client.js";
@@ -13,7 +21,7 @@ import {
   hasActiveHostedOrganization,
   withOrganizationQuotaLock,
 } from "../../billing/limits.js";
-import { getPending, clearPending } from "../session.js";
+import { getPending, clearPending, setPending } from "../session.js";
 import { canManageChat } from "../authorization.js";
 import { escapeHtml } from "../../utils/html.js";
 import {
@@ -33,6 +41,54 @@ const MAX_NAME_ATTEMPTS = 5;
 
 /** Quick-pick allow-rule domains shown right after alias creation. */
 const QUICK_ALLOW_DOMAINS = ["gmail.com", "github.com", "stripe.com"] as const;
+
+export function buildQuickAllowKeyboard(
+  aliasId: string,
+  returnTo: "detail" | "rules" = "detail",
+): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  for (const domain of QUICK_ALLOW_DOMAINS) {
+    const callback =
+      returnTo === "rules"
+        ? CB_QUICK_ALLOW_RULES.build(aliasId, domain)
+        : CB_QUICK_ALLOW.build(aliasId, domain);
+    keyboard.text(`✅ ${domain}`, callback);
+  }
+  keyboard.row().text("✏️ Custom domain…", CB_ADD_RULE.build(aliasId));
+  return keyboard;
+}
+
+export function appendAliasManageButton(keyboard: InlineKeyboard, aliasId: string): InlineKeyboard {
+  return keyboard.row().text("⚙️ Manage alias", CB_ALIAS_DETAIL.build(aliasId));
+}
+
+export async function promptForEmailAliasName(
+  ctx: Context,
+  chatId: bigint,
+  chatTitle: string,
+  messageThreadId: bigint | null,
+  mode: "reply" | "edit",
+): Promise<void> {
+  if (!ctx.from) return;
+
+  setPending(ctx.from.id, { action: "newemail", chatId, chatTitle, messageThreadId });
+
+  const keyboard = new InlineKeyboard()
+    .text("⏭ Auto name", CB_SKIP_ALIAS.build(chatId))
+    .row()
+    .text("✖ Cancel", CB_NEW_CANCEL);
+
+  const text =
+    `📧 Creating alias for <b>${escapeHtml(chatTitle)}</b>\n\n` +
+    `Send an alias name (e.g. <code>alerts</code>), or tap Auto name to use a friendly default like <code>inbox</code>.`;
+
+  if (mode === "edit") {
+    await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: keyboard });
+    return;
+  }
+
+  await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
+}
 
 export async function newemailHandler(ctx: CommandContext<Context>): Promise<void> {
   if (!ctx.from) return;
@@ -58,6 +114,27 @@ export async function newemailHandler(ctx: CommandContext<Context>): Promise<voi
     const chat = await findChatById(db, targetChatId);
     targetChatTitle = chat?.title;
     targetChatOrganizationId = chat?.organizationId;
+  }
+
+  if (rawName.length === 0 && !pending) {
+    if (!(await hasActiveHostedOrganization(db, targetChatOrganizationId ?? null))) {
+      await replyForAliasLimitFailure(ctx, { ok: false, code: "subscription_inactive" });
+      return;
+    }
+
+    if (!(await canManageChat(ctx.api, ctx.from.id, targetChatId, { fresh: true }))) {
+      await ctx.reply("⛔ Access denied.");
+      return;
+    }
+
+    await promptForEmailAliasName(
+      ctx,
+      targetChatId,
+      targetChatTitle ?? "this chat",
+      targetThreadId,
+      "reply",
+    );
+    return;
   }
 
   if (!(await hasActiveHostedOrganization(db, targetChatOrganizationId ?? null))) {
@@ -226,12 +303,7 @@ export async function createEmailAlias(
   const fullAddress = alias.fullAddress;
 
   // Quick-pick keyboard: top common domains, then Custom… and Manage entries.
-  const keyboard = new InlineKeyboard();
-  for (const domain of QUICK_ALLOW_DOMAINS) {
-    keyboard.text(`✅ ${domain}`, CB_QUICK_ALLOW.build(alias.id, domain));
-  }
-  keyboard.row().text("✏️ Custom domain…", CB_ADD_RULE.build(alias.id));
-  keyboard.row().text("⚙️ Manage alias", CB_ALIAS_DETAIL.build(alias.id));
+  const keyboard = appendAliasManageButton(buildQuickAllowKeyboard(alias.id), alias.id);
 
   await ctx.reply(
     `✅ Email alias created!\n\n📧 <code>${fullAddress}</code>${chatNote}\n\n⚠️ All mail is rejected until you allow at least one sender.\nTap a quick pick or add a custom domain:`,
