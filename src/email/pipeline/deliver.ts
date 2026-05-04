@@ -21,9 +21,7 @@ import {
 } from "../renderer.js";
 import { isImageContentType } from "../imageTypes.js";
 import type { PhotoItem } from "../../telegram/sender.js";
-import {
-  insertDeliveryAttempt,
-} from "../../db/repos/deliveryAttempts.js";
+import { insertDeliveryAttempt } from "../../db/repos/deliveryAttempts.js";
 import { updateDeliveryLogStatus } from "../../db/repos/deliveryLogs.js";
 import { createAttachment } from "../../db/repos/attachments.js";
 import { createAttachmentLink } from "../../db/repos/attachmentLinks.js";
@@ -158,9 +156,7 @@ export async function deliverQueuedEmail(
 
     // 9. Send — parse_mode depends on render mode; plaintext uses none (avoids HTML metachar issues)
     if (api) {
-      const { sendTelegramMessage, sendTelegramPhotos } = await import(
-        "../../telegram/sender.js"
-      );
+      const { sendTelegramMessage, sendTelegramPhotos } = await import("../../telegram/sender.js");
       const parseMode = privacyMode ? "HTML" : parseModeForRenderMode(renderMode);
 
       const result = await sendTelegramMessage(api, {

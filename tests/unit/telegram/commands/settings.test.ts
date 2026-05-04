@@ -24,7 +24,8 @@ vi.mock("../../../../src/telegram/aliasResolver.js", () => ({
     raw: string,
   ): string => {
     if (result.reason === "forbidden") return "⛔ Access denied.";
-    if (result.reason === "ambiguous") return `❌ Alias <code>${raw}</code> matches more than one inbox.`;
+    if (result.reason === "ambiguous")
+      return `❌ Alias <code>${raw}</code> matches more than one inbox.`;
     return `❌ Alias <code>${raw}</code> not found.`;
   },
 }));

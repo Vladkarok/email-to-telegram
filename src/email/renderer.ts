@@ -185,7 +185,6 @@ function truncateToBudget(text: string, budget: number, mode: RenderMode): strin
   return sanitizeTelegramHtml(truncated);
 }
 
-
 function normalizeLineEndings(text: string): string {
   return text.replace(/\r\n/g, "\n");
 }
@@ -344,7 +343,6 @@ function replaceDelimited(
     return match;
   });
 }
-
 
 function finalizeTruncatedRichText(text: string, mode: RenderMode): string {
   if (mode === "plaintext") return text;
