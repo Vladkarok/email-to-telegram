@@ -1,5 +1,5 @@
 import { execFile } from "child_process";
-import { access, mkdir, constants, writeFile } from "fs/promises";
+import { access, mkdir, constants } from "fs/promises";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { schedule } from "node-cron";
@@ -22,31 +22,14 @@ import { startSessionSweep, destroySessionStore } from "./telegram/session.js";
 import { configureStorageEncryption } from "./security/encryption.js";
 import { assertStorageEncryptionReadiness } from "./startup/storageReadiness.js";
 import {
-  backfillStoredEncryption,
-  rewrapStoredEncryptionKeys,
-} from "./security/storageMaintenance.js";
-import { exportHostedOrganizationData } from "./dataLifecycle/exportOrganization.js";
-import { deleteHostedOrganization } from "./dataLifecycle/deleteOrganization.js";
-import {
   assertHostedDataLifecycleAllowed,
   hasHostedDataLifecycleOperation,
-  hostedDeleteExitCode,
 } from "./startup/hostedDataLifecycle.js";
 import {
   assertHostedManualBillingAllowed,
-  buildManualBillingMemberInput,
-  buildManualBillingPlanInput,
-  buildManualBillingUserInput,
   hasHostedManualBillingOperation,
-  hostedManualBillingExitCode,
-  redactManualBillingForLog,
-  withManualBillingWarnings,
 } from "./startup/hostedManualBilling.js";
-import {
-  addManualOrganizationMember,
-  grantManualOrganizationPlan,
-  grantManualUserPlan,
-} from "./billing/manual.js";
+import { dispatchOperatorCommand } from "./cli/dispatcher.js";
 
 async function main() {
   const startup = parseStartupOptions(process.argv.slice(2));
@@ -82,136 +65,7 @@ async function main() {
   initDb(config.databaseUrl);
   await runMigrations();
 
-  if (startup.migrateOnly) {
-    logger.info("Migrations complete.");
-    await closeDb();
-    return;
-  }
-
-  if (startup.rewrapStorageKeys) {
-    const summary = await rewrapStoredEncryptionKeys(getDb(), config.rawEmailDir);
-    logger.info({ summary }, "Storage key rewrap complete.");
-    await closeDb();
-    return;
-  }
-
-  if (startup.backfillStorageEncryption) {
-    const summary = await backfillStoredEncryption(getDb(), config.rawEmailDir);
-    logger.info({ summary }, "Storage encryption backfill complete.");
-    await closeDb();
-    return;
-  }
-
-  if (startup.hostedExportOrganizationId) {
-    const exportData = await exportHostedOrganizationData(
-      getDb(),
-      startup.hostedExportOrganizationId,
-    );
-    if (!exportData) {
-      logger.error(
-        { organizationId: startup.hostedExportOrganizationId },
-        "Hosted organization export failed: organization not found.",
-      );
-      process.exitCode = 1;
-      await closeDb();
-      return;
-    }
-
-    await writeFile(startup.hostedExportOutputPath!, `${JSON.stringify(exportData, null, 2)}\n`, {
-      mode: 0o600,
-      flag: "wx",
-    });
-    logger.info(
-      {
-        organizationId: startup.hostedExportOrganizationId,
-        outputPath: startup.hostedExportOutputPath,
-      },
-      "Hosted organization export complete.",
-    );
-    await closeDb();
-    return;
-  }
-
-  if (startup.hostedDeleteOrganizationId) {
-    const result = await deleteHostedOrganization(getDb(), startup.hostedDeleteOrganizationId);
-    logger.info(
-      { organizationId: startup.hostedDeleteOrganizationId, result },
-      "Hosted organization deletion complete.",
-    );
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    process.exitCode = hostedDeleteExitCode(result);
-    await closeDb();
-    return;
-  }
-
-  if (startup.hostedSetOrganizationPlanId) {
-    if (startup.warnings.length > 0) {
-      for (const w of startup.warnings) logger.warn({ warning: w }, "Manual billing CLI warning");
-    }
-    const input = buildManualBillingPlanInput(startup);
-    const result = await grantManualOrganizationPlan(getDb(), input);
-    if (result.ok) {
-      logger.info(
-        { result: redactManualBillingForLog(result) },
-        "Manual organization plan grant complete.",
-      );
-    } else {
-      logger.error({ code: result.code }, "Manual organization plan grant failed.");
-    }
-    process.stdout.write(
-      `${JSON.stringify(withManualBillingWarnings(result, startup.warnings), null, 2)}\n`,
-    );
-    process.exitCode = hostedManualBillingExitCode(result);
-    await closeDb();
-    return;
-  }
-
-  if (startup.hostedSetUserPlanTelegramUserId) {
-    if (startup.warnings.length > 0) {
-      for (const w of startup.warnings) logger.warn({ warning: w }, "Manual billing CLI warning");
-    }
-    const input = buildManualBillingUserInput(startup);
-    const result = await grantManualUserPlan(getDb(), input);
-    if (result.ok) {
-      logger.info(
-        {
-          result: redactManualBillingForLog(result),
-          createdOrganization: result.createdOrganization,
-        },
-        "Manual user plan grant complete.",
-      );
-    } else {
-      logger.error(
-        { code: result.code, organizationIds: result.organizationIds },
-        "Manual user plan grant failed.",
-      );
-    }
-    process.stdout.write(
-      `${JSON.stringify(withManualBillingWarnings(result, startup.warnings), null, 2)}\n`,
-    );
-    process.exitCode = hostedManualBillingExitCode(result);
-    await closeDb();
-    return;
-  }
-
-  if (startup.hostedAddOrganizationMemberId) {
-    const input = buildManualBillingMemberInput(startup);
-    const result = await addManualOrganizationMember(getDb(), input);
-    if (result.ok) {
-      logger.info(
-        {
-          organizationId: result.organizationId,
-          telegramUserId: result.telegramUserId,
-          role: result.role,
-        },
-        "Manual organization member add complete.",
-      );
-    } else {
-      logger.error({ code: result.code }, "Manual organization member add failed.");
-    }
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    process.exitCode = hostedManualBillingExitCode(result);
-    await closeDb();
+  if (await dispatchOperatorCommand({ startup, config, logger })) {
     return;
   }
 

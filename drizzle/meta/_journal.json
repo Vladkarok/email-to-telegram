@@ -6,56 +6,56 @@
       "idx": 0,
       "version": "7",
       "when": 1775376439404,
-      "tag": "0000_tough_silvermane",
+      "tag": "0000_initial_schema",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
       "when": 1775421616316,
-      "tag": "0001_yielding_husk",
+      "tag": "0001_add_chats",
       "breakpoints": true
     },
     {
       "idx": 2,
       "version": "7",
       "when": 1775492729384,
-      "tag": "0002_lyrical_violations",
+      "tag": "0002_delivery_log_dedup_indexes",
       "breakpoints": true
     },
     {
       "idx": 3,
       "version": "7",
       "when": 1775560793923,
-      "tag": "0003_slow_celestials",
+      "tag": "0003_alias_body_dedup",
       "breakpoints": true
     },
     {
       "idx": 4,
       "version": "7",
       "when": 1775563650033,
-      "tag": "0004_bent_viper",
+      "tag": "0004_delivery_view_links",
       "breakpoints": true
     },
     {
       "idx": 5,
       "version": "7",
       "when": 1775565700482,
-      "tag": "0005_brief_zemo",
+      "tag": "0005_attachment_encryption",
       "breakpoints": true
     },
     {
       "idx": 6,
       "version": "7",
       "when": 1775566372255,
-      "tag": "0006_bumpy_katie_power",
+      "tag": "0006_raw_email_encryption",
       "breakpoints": true
     },
     {
       "idx": 7,
       "version": "7",
       "when": 1775567639606,
-      "tag": "0007_blue_boom_boom",
+      "tag": "0007_delivery_view_link_unique_per_log",
       "breakpoints": true
     },
     {
@@ -69,7 +69,7 @@
       "idx": 9,
       "version": "7",
       "when": 1777121220198,
-      "tag": "0009_harsh_mordo",
+      "tag": "0009_billing_webhook_events",
       "breakpoints": true
     },
     {
@@ -83,7 +83,7 @@
       "idx": 11,
       "version": "7",
       "when": 1777272529488,
-      "tag": "0011_left_prodigy",
+      "tag": "0011_org_subscription_status_expand",
       "breakpoints": true
     },
     {

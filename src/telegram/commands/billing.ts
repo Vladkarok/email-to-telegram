@@ -11,15 +11,13 @@ import { countActiveAliasesByOrganization } from "../../db/repos/aliases.js";
 import { getOrganizationStorageUsage } from "../../db/repos/storageUsage.js";
 import { getOrganizationUsageMonth, usageMonthForDate } from "../../db/repos/usage.js";
 import { getLogger } from "../../utils/logger.js";
+import { CB_BILLING_UPGRADE, CB_BILLING_PORTAL } from "../callbacks.js";
 
 const SELF_HOSTED_MESSAGE =
   "ℹ️ Billing is not enabled in self-hosted mode. /billing is only available on the hosted service.";
 
 const NO_ORGANIZATION_MESSAGE =
   "❌ No hosted workspace found for your account. Use /start to set one up.";
-
-export const BILLING_UPGRADE_CALLBACK = "bill:upgrade";
-export const BILLING_PORTAL_CALLBACK = "bill:portal";
 
 export async function billingHandler(ctx: Context): Promise<void> {
   if (!ctx.from) return;
@@ -66,8 +64,8 @@ export async function billingHandler(ctx: Context): Promise<void> {
     }
 
     const keyboard = new InlineKeyboard()
-      .text("⬆️ Upgrade", BILLING_UPGRADE_CALLBACK)
-      .text("🧾 Manage Billing", BILLING_PORTAL_CALLBACK);
+      .text("⬆️ Upgrade", CB_BILLING_UPGRADE)
+      .text("🧾 Manage Billing", CB_BILLING_PORTAL);
 
     await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
   } catch (err: unknown) {
