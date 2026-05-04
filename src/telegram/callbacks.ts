@@ -78,6 +78,18 @@ export const CB_ALIAS_DELETE = {
   build: (aliasId: string): string => `ad:${aliasId}`,
 } as const;
 
+/** Confirm alias delete — adc:{aliasId} */
+export const CB_ALIAS_DELETE_CONFIRM = {
+  pattern: /^adc:([0-9a-f-]{36})$/,
+  build: (aliasId: string): string => `adc:${aliasId}`,
+} as const;
+
+/** Cancel alias delete — adx:{aliasId} */
+export const CB_ALIAS_DELETE_CANCEL = {
+  pattern: /^adx:([0-9a-f-]{36})$/,
+  build: (aliasId: string): string => `adx:${aliasId}`,
+} as const;
+
 /** Alias settings — ac:{aliasId} */
 export const CB_ALIAS_SETTINGS = {
   pattern: /^ac:([0-9a-f-]{36})$/,

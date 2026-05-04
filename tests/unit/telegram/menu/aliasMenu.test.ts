@@ -19,7 +19,7 @@ vi.mock("../../../../src/telegram/authorization.js", () => ({
   canManageAlias: (...args: unknown[]): unknown => mockCanManageAlias(...args),
 }));
 
-const { editAliasListMenu, editAliasDetailMenu } =
+const { editAliasListMenu, editAliasDetailMenu, editAliasDeleteConfirmMenu } =
   await import("../../../../src/telegram/menu/aliasMenu.js");
 
 const fakeDb = {} as Parameters<typeof editAliasListMenu>[1];
@@ -160,5 +160,27 @@ describe("editAliasDetailMenu", () => {
     await editAliasDetailMenu(ctx, fakeDb, "nonexistent-id");
     expect(ctx.answerCallbackQuery).toHaveBeenCalled();
     expect(ctx.editMessageText).not.toHaveBeenCalled();
+  });
+});
+
+describe("editAliasDeleteConfirmMenu", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("asks for confirmation before deleting an alias", async () => {
+    mockFindAliasById.mockResolvedValue(fakeAlias);
+    const ctx = createMockCtx({ chatType: "private" });
+
+    await editAliasDeleteConfirmMenu(ctx, fakeDb, fakeAlias.id);
+
+    expect(ctx.editMessageText).toHaveBeenCalledOnce();
+    const [text, opts] = (ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      { reply_markup: { inline_keyboard: { text: string; callback_data: string }[][] } },
+    ];
+    expect(text).toContain(fakeAlias.fullAddress);
+    expect(text).toMatch(/delete this email alias/i);
+    const buttons = opts.reply_markup.inline_keyboard.flat();
+    expect(buttons.some((button) => button.callback_data === `adc:${fakeAlias.id}`)).toBe(true);
+    expect(buttons.some((button) => button.callback_data === `adx:${fakeAlias.id}`)).toBe(true);
   });
 });
