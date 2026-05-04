@@ -14,6 +14,8 @@ import {
   CB_ALIAS_PAUSE,
   CB_ALIAS_RESUME,
   CB_ALIAS_DELETE,
+  CB_ALIAS_DELETE_CANCEL,
+  CB_ALIAS_DELETE_CONFIRM,
   CB_ALLOW_RULES,
   CB_ALIAS_SETTINGS,
   CB_ALIAS_LIST,
@@ -117,6 +119,30 @@ export async function editAliasDetailMenu(ctx: Context, db: Db, aliasId: string)
     keyboard.text("🏷️ Set Label", CB_ALIAS_LABEL_EDIT.build(alias.id)).row();
   }
   keyboard.text("⬅️ Back", CB_ALIAS_LIST.build(alias.chatId));
+
+  await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: keyboard });
+}
+
+export async function editAliasDeleteConfirmMenu(
+  ctx: Context,
+  db: Db,
+  aliasId: string,
+): Promise<void> {
+  const alias = await findAliasById(db, aliasId);
+  if (!alias) {
+    await ctx.answerCallbackQuery("Alias not found.");
+    return;
+  }
+
+  const keyboard = new InlineKeyboard()
+    .text("🗑 Yes, delete", CB_ALIAS_DELETE_CONFIRM.build(alias.id))
+    .row()
+    .text("⬅️ Keep alias", CB_ALIAS_DELETE_CANCEL.build(alias.id));
+
+  const text =
+    `⚠️ Delete this email alias?\n\n` +
+    `📧 <code>${escapeHtml(alias.fullAddress)}</code>\n\n` +
+    `Future emails sent to this address will be rejected.`;
 
   await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: keyboard });
 }

@@ -46,6 +46,8 @@ import {
   CB_ALIAS_PAUSE,
   CB_ALIAS_RESUME,
   CB_ALIAS_DELETE,
+  CB_ALIAS_DELETE_CANCEL,
+  CB_ALIAS_DELETE_CONFIRM,
   CB_ALIAS_SETTINGS,
   CB_SET_MODE,
   CB_TOGGLE_BODY_DEDUP,
@@ -64,7 +66,11 @@ import {
 import { portalHandler, portalCallbackHandler } from "./commands/portal.js";
 import { chatMemberHandler } from "./handlers/chatMember.js";
 import { editChatSelectionMenu, editChatManagementMenu } from "./menu/chatMenu.js";
-import { editAliasListMenu, editAliasDetailMenu } from "./menu/aliasMenu.js";
+import {
+  editAliasListMenu,
+  editAliasDetailMenu,
+  editAliasDeleteConfirmMenu,
+} from "./menu/aliasMenu.js";
 import { sendAllowRulesMenu, editAllowRulesMenu } from "./menu/allowRulesMenu.js";
 import {
   findAliasById,
@@ -222,8 +228,22 @@ export function createBot(token: string): Bot {
     await editAliasDetailMenu(ctx, getDb(), ctx.match[1]);
   });
 
-  // ad:{aliasId} — delete alias
+  // ad:{aliasId} — ask for delete confirmation
   bot.callbackQuery(CB_ALIAS_DELETE.pattern, async (ctx) => {
+    if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
+    await ctx.answerCallbackQuery();
+    await editAliasDeleteConfirmMenu(ctx, getDb(), ctx.match[1]);
+  });
+
+  // adx:{aliasId} — cancel delete confirmation
+  bot.callbackQuery(CB_ALIAS_DELETE_CANCEL.pattern, async (ctx) => {
+    if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
+    await ctx.answerCallbackQuery("Kept.");
+    await editAliasDetailMenu(ctx, getDb(), ctx.match[1]);
+  });
+
+  // adc:{aliasId} — confirmed delete alias
+  bot.callbackQuery(CB_ALIAS_DELETE_CONFIRM.pattern, async (ctx) => {
     if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
     await ctx.answerCallbackQuery("Deleted.");
     const alias = await findAliasById(getDb(), ctx.match[1]);

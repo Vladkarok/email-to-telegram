@@ -27,11 +27,12 @@ vi.mock("../../../src/billing/limits.js", () => ({
 
 const mockFindAliasById = vi.fn();
 const mockFindChatById = vi.fn();
+const mockUpdateAliasStatus = vi.fn();
 vi.mock("../../../src/db/repos/aliases.js", () => ({
   findAliasById: (...args: unknown[]): unknown => mockFindAliasById(...args),
   updateAliasBodyDedup: vi.fn(),
   updateAliasPrivacyMode: vi.fn(),
-  updateAliasStatus: vi.fn(),
+  updateAliasStatus: (...args: unknown[]): unknown => mockUpdateAliasStatus(...args),
   updateAliasRenderMode: vi.fn(),
 }));
 
@@ -75,6 +76,7 @@ vi.mock("../../../src/telegram/menu/chatMenu.js", () => ({
 vi.mock("../../../src/telegram/menu/aliasMenu.js", () => ({
   editAliasListMenu: vi.fn(),
   editAliasDetailMenu: vi.fn(),
+  editAliasDeleteConfirmMenu: vi.fn(),
 }));
 vi.mock("../../../src/db/repos/chats.js", () => ({
   findChatById: (...args: unknown[]): unknown => mockFindChatById(...args),
