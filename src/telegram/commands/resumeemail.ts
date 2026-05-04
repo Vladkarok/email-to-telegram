@@ -19,6 +19,7 @@ export async function resumeemailHandler(ctx: CommandContext<Context>): Promise<
     ctx.from.id,
     BigInt(ctx.chat.id),
     aliasName,
+    ctx.chat.type,
   );
 
   if (!result.ok) {

@@ -20,10 +20,12 @@ export type ResolveResult =
  *
  * Accepts either a full address (`name@domain.tld`) or just a local part.
  * Resolution order:
- *  1. If the input contains `@`, look up by full address.
+ *  1. If the input contains `@`, look up by full address (cross-chat).
  *  2. Otherwise:
- *     a. Prefer an alias in the current chat with matching local part (group context).
- *     b. Fall back to aliases the user created with that local part (DM context).
+ *     a. In a group/supergroup chat: scope strictly to the current chat. We
+ *        don't want a stray `/deleteemail foo` in one group to nuke a
+ *        same-named alias in another chat.
+ *     b. In a private chat (DM): fall back to anything the user created.
  *  3. Verify the user can manage the resolved alias.
  *
  * Returns a discriminated result so callers can render context-appropriate errors.
@@ -34,6 +36,7 @@ export async function resolveManageableAlias(
   userId: number,
   currentChatId: bigint,
   rawInput: string,
+  chatType: string,
 ): Promise<ResolveResult> {
   const input = rawInput.trim().toLowerCase();
   if (!input) return { ok: false, reason: "not_found" };
@@ -43,18 +46,15 @@ export async function resolveManageableAlias(
   if (input.includes("@")) {
     const exact = await findAliasByFullAddress(db, input);
     if (exact) candidates = [exact];
+  } else if (chatType === "private") {
+    // DM: search every alias the user owns (the alias's chatId points to the
+    // delivery chat, not the DM where the user is typing).
+    const owned = await findAliasesByCreator(db, BigInt(userId));
+    candidates = owned.filter((a) => a.localPart === input);
   } else {
-    // 1. Try current chat first — typical group usage
-    const inCurrent = (await listAliasesByChat(db, currentChatId)).filter(
-      (a) => a.localPart === input,
-    );
-    if (inCurrent.length > 0) {
-      candidates = inCurrent;
-    } else {
-      // 2. Fall back to anything the user owns (typical DM usage)
-      const owned = await findAliasesByCreator(db, BigInt(userId));
-      candidates = owned.filter((a) => a.localPart === input);
-    }
+    // Group: stay strictly within this chat. Operating on aliases from other
+    // chats from a group context would be surprising and unsafe.
+    candidates = (await listAliasesByChat(db, currentChatId)).filter((a) => a.localPart === input);
   }
 
   if (candidates.length > 1) return { ok: false, reason: "ambiguous" };

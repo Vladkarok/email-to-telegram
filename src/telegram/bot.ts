@@ -172,12 +172,12 @@ export function createBot(token: string): Bot {
     setPending(ctx.from.id, { action: "newemail", chatId, chatTitle });
 
     const keyboard = new InlineKeyboard()
-      .text("⏭ Skip — random alias", CB_SKIP_ALIAS.build(ctx.match[1]))
+      .text("⏭ Skip — auto name", CB_SKIP_ALIAS.build(ctx.match[1]))
       .row()
       .text("✖ Cancel", CB_NEW_CANCEL);
 
     await ctx.editMessageText(
-      `📧 Creating alias for <b>${escapeHtml(chatTitle)}</b>\n\nSend me the alias prefix (e.g. <code>alerts</code>), or tap Skip for a random one.`,
+      `📧 Creating alias for <b>${escapeHtml(chatTitle)}</b>\n\nSend me the alias prefix (e.g. <code>alerts</code>), or tap Skip to pick a friendly default like <code>inbox</code>.`,
       { parse_mode: "HTML", reply_markup: keyboard },
     );
   });
@@ -428,9 +428,11 @@ export function createBot(token: string): Bot {
 }
 
 /**
- * /label <alias-name> <text…> — sets or clears an alias label.
+ * /label <alias-name> <text…> — sets an alias label.
  *
- * Pass an empty `<text>` to clear the label.
+ * Use `/label <alias-name> --clear` to remove an existing label. Calling the
+ * command without a label argument shows usage so users don't accidentally
+ * wipe their existing label.
  */
 async function labelHandler(ctx: Context): Promise<void> {
   if (!ctx.from) return;
@@ -446,12 +448,21 @@ async function labelHandler(ctx: Context): Promise<void> {
   const aliasName = firstSpace === -1 ? trimmed : trimmed.slice(0, firstSpace);
   const labelInput = firstSpace === -1 ? "" : trimmed.slice(firstSpace + 1).trim();
 
+  // No label text → show usage rather than silently clearing the label.
+  if (!labelInput) {
+    await ctx.reply("Usage: /label <alias-name> <text>\n• To clear: /label <alias-name> --clear", {
+      parse_mode: "HTML",
+    });
+    return;
+  }
+
   const result = await resolveManageableAlias(
     getDb(),
     ctx.api,
     ctx.from.id,
     BigInt(ctx.chat!.id),
     aliasName,
+    ctx.chat!.type,
   );
   if (!result.ok) {
     await ctx.reply(aliasResolutionError(result, aliasName, ctx.chat!.type), {
@@ -461,7 +472,7 @@ async function labelHandler(ctx: Context): Promise<void> {
   }
 
   const alias = result.alias;
-  if (!labelInput || labelInput === "--clear") {
+  if (labelInput === "--clear") {
     await updateAliasLabel(getDb(), alias.id, null);
     await ctx.reply(`🧹 Label cleared for <code>${escapeHtml(alias.fullAddress)}</code>.`, {
       parse_mode: "HTML",
