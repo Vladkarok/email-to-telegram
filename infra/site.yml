@@ -1,0 +1,6 @@
+---
+- name: Configure prod server
+  hosts: prod
+  roles:
+    - common
+    - docker

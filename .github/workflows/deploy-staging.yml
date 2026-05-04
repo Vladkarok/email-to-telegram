@@ -1,0 +1,83 @@
+name: Deploy Staging
+
+on:
+  push:
+    branches: [main]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    name: Build and push :main image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/vladkarok/email-to-telegram:main
+
+  deploy:
+    name: Deploy to staging VPS
+    runs-on: ubuntu-latest
+    needs: build-and-push
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST_STAGING }}
+          username: ${{ secrets.SSH_USER_STAGING }}
+          port: ${{ secrets.SSH_PORT_STAGING }}
+          key: ${{ secrets.SSH_KEY_STAGING }}
+          envs: GHCR_TOKEN
+          script: |
+            set -e
+            cd ~/email-to-telegram
+
+            git fetch origin main
+            git checkout --detach origin/main
+
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u vladkarok --password-stdin
+            IMAGE_TAG=main docker compose --env-file .env pull app
+            IMAGE_TAG=main docker compose --env-file .env up -d --remove-orphans --no-build
+
+            container_id=$(IMAGE_TAG=main docker compose --env-file .env ps -q app)
+            test -n "$container_id"
+
+            attempts=0
+            while true; do
+              attempts=$((attempts + 1))
+              health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id")
+              if [ "$health" = "healthy" ]; then
+                break
+              fi
+              if [ "$health" = "unhealthy" ] || [ "$health" = "exited" ] || [ "$health" = "dead" ] || [ "$attempts" -ge 30 ]; then
+                docker logs "$container_id" --tail 100
+                exit 1
+              fi
+              sleep 5
+            done
+
+            echo "Staging deploy complete at $(date)"
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}

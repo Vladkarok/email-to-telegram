@@ -5,11 +5,20 @@ workers_dev = false
 preview_urls = false
 
 # Secrets — set with:
-#   wrangler secret put WORKER_SECRET
-#   wrangler secret put VPS_URL
+#   wrangler secret put WORKER_SECRET [--env staging|production]
+#   wrangler secret put VPS_URL       [--env staging|production]
 #
 # VPS_URL example: https://mail.example.com
 #
-# Email routing is configured in the Cloudflare dashboard for the zone root
-# (for example `example.com`):
+# Email routing is configured in the Cloudflare dashboard per zone:
 #   Email → Email Routing → Routing rules → Catch-all → Send to Worker → <this worker>
+#
+# Deploy:
+#   wrangler deploy --env staging
+#   wrangler deploy --env production
+
+[env.staging]
+name = "email-to-telegram-staging"
+
+[env.production]
+name = "email-to-telegram-production"
