@@ -90,102 +90,95 @@ jobs:
   deploy-from-tag-push:
     name: Deploy to VPS
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, email-tg-prod]
     needs: [resolve-release, build-and-push]
 
     steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.2.0
+      - name: Checkout release
+        uses: actions/checkout@v4
         with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          port: ${{ secrets.SSH_PORT }}
-          key: ${{ secrets.SSH_KEY }}
-          envs: GHCR_TOKEN,RELEASE_SHA,RELEASE_TAG
-          script: |
-            set -e
-            cd ~/email-to-telegram
+          ref: ${{ needs.resolve-release.outputs.release_sha }}
 
-            # Check out the exact tagged commit so the runtime config matches
-            # the image built for this release.
-            git fetch origin main --tags
-            git checkout --detach "$RELEASE_SHA"
+      - name: Copy compose file to prod
+        run: scp docker-compose.yml prod:~/email-to-telegram/docker-compose.yml
 
-            # Authenticate to GHCR and pull new image
-            echo "$GHCR_TOKEN" | docker login ghcr.io -u vladkarok --password-stdin
-            IMAGE_TAG="$RELEASE_TAG" docker compose --env-file .env pull app
-
-            # Restart with the exact tagged image; the app entrypoint runs migrations on startup.
-            IMAGE_TAG="$RELEASE_TAG" docker compose --env-file .env up -d --remove-orphans --no-build
-
-            container_id=$(IMAGE_TAG="$RELEASE_TAG" docker compose --env-file .env ps -q app)
-            test -n "$container_id"
-
-            attempts=0
-            while true; do
-              attempts=$((attempts + 1))
-              health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id")
-              if [ "$health" = "healthy" ]; then
-                break
-              fi
-              if [ "$health" = "unhealthy" ] || [ "$health" = "exited" ] || [ "$health" = "dead" ] || [ "$attempts" -ge 30 ]; then
-                docker logs "$container_id" --tail 100
-                exit 1
-              fi
-              sleep 5
-            done
-
-            echo "Deploy complete at $(date)"
+      - name: Deploy
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-          RELEASE_SHA: ${{ needs.resolve-release.outputs.release_sha }}
           RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+        run: |
+          ssh prod bash << EOF
+          set -e
+          cd ~/email-to-telegram
+
+          echo "${GHCR_TOKEN}" | docker login ghcr.io -u vladkarok --password-stdin
+          IMAGE_TAG="${RELEASE_TAG}" docker compose --env-file .env pull app
+          IMAGE_TAG="${RELEASE_TAG}" docker compose --env-file .env up -d --remove-orphans --no-build
+
+          container_id=\$(IMAGE_TAG="${RELEASE_TAG}" docker compose --env-file .env ps -q app)
+          test -n "\$container_id"
+
+          attempts=0
+          while true; do
+            attempts=\$((attempts + 1))
+            health=\$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "\$container_id")
+            if [ "\$health" = "healthy" ]; then
+              break
+            fi
+            if [ "\$health" = "unhealthy" ] || [ "\$health" = "exited" ] || [ "\$health" = "dead" ] || [ "\$attempts" -ge 30 ]; then
+              docker logs "\$container_id" --tail 100
+              exit 1
+            fi
+            sleep 5
+          done
+
+          echo "Deploy complete at \$(date)"
+          EOF
 
   redeploy-existing-release:
     name: Redeploy existing release to VPS
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, email-tg-prod]
     needs: resolve-release
 
     steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.2.0
+      - name: Checkout release
+        uses: actions/checkout@v4
         with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          port: ${{ secrets.SSH_PORT }}
-          key: ${{ secrets.SSH_KEY }}
-          envs: GHCR_TOKEN,RELEASE_SHA,RELEASE_TAG
-          script: |
-            set -e
-            cd ~/email-to-telegram
+          ref: ${{ needs.resolve-release.outputs.release_sha }}
 
-            git fetch origin main --tags
-            git checkout --detach "$RELEASE_SHA"
+      - name: Copy compose file to prod
+        run: scp docker-compose.yml prod:~/email-to-telegram/docker-compose.yml
 
-            echo "$GHCR_TOKEN" | docker login ghcr.io -u vladkarok --password-stdin
-            IMAGE_TAG="$RELEASE_TAG" docker compose --env-file .env pull app
-            IMAGE_TAG="$RELEASE_TAG" docker compose --env-file .env up -d --remove-orphans --no-build
-
-            container_id=$(IMAGE_TAG="$RELEASE_TAG" docker compose --env-file .env ps -q app)
-            test -n "$container_id"
-
-            attempts=0
-            while true; do
-              attempts=$((attempts + 1))
-              health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id")
-              if [ "$health" = "healthy" ]; then
-                break
-              fi
-              if [ "$health" = "unhealthy" ] || [ "$health" = "exited" ] || [ "$health" = "dead" ] || [ "$attempts" -ge 30 ]; then
-                docker logs "$container_id" --tail 100
-                exit 1
-              fi
-              sleep 5
-            done
-
-            echo "Manual redeploy complete at $(date)"
+      - name: Deploy
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-          RELEASE_SHA: ${{ needs.resolve-release.outputs.release_sha }}
           RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+        run: |
+          ssh prod bash << EOF
+          set -e
+          cd ~/email-to-telegram
+
+          echo "${GHCR_TOKEN}" | docker login ghcr.io -u vladkarok --password-stdin
+          IMAGE_TAG="${RELEASE_TAG}" docker compose --env-file .env pull app
+          IMAGE_TAG="${RELEASE_TAG}" docker compose --env-file .env up -d --remove-orphans --no-build
+
+          container_id=\$(IMAGE_TAG="${RELEASE_TAG}" docker compose --env-file .env ps -q app)
+          test -n "\$container_id"
+
+          attempts=0
+          while true; do
+            attempts=\$((attempts + 1))
+            health=\$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "\$container_id")
+            if [ "\$health" = "healthy" ]; then
+              break
+            fi
+            if [ "\$health" = "unhealthy" ] || [ "\$health" = "exited" ] || [ "\$health" = "dead" ] || [ "\$attempts" -ge 30 ]; then
+              docker logs "\$container_id" --tail 100
+              exit 1
+            fi
+            sleep 5
+          done
+
+          echo "Manual redeploy complete at \$(date)"
+          EOF
