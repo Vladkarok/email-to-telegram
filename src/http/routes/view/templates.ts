@@ -32,9 +32,7 @@ export function buildPrivacyAttachmentExpiry(
 
 // ─── Email body renderer ──────────────────────────────────────────────────────
 
-export function renderEmailBodyHtml(
-  parsed: Awaited<ReturnType<typeof parseEmail>>,
-): string {
+export function renderEmailBodyHtml(parsed: Awaited<ReturnType<typeof parseEmail>>): string {
   if (parsed.htmlBody) {
     const sanitized = sanitizeHtml(parsed.htmlBody, {
       allowedTags: [

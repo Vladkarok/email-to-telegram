@@ -191,7 +191,6 @@ function truncateCell(text: string, maxWidth: number): string {
   return `${text.slice(0, maxWidth - 1)}…`;
 }
 
-
 function decodeHtmlEntities(text: string): string {
   return text
     .replace(/&nbsp;/gi, " ")

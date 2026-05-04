@@ -84,6 +84,30 @@ export const CB_ALIAS_SETTINGS = {
   build: (aliasId: string): string => `ac:${aliasId}`,
 } as const;
 
+/** Start label-edit flow — ale:{aliasId} */
+export const CB_ALIAS_LABEL_EDIT = {
+  pattern: /^ale:([0-9a-f-]{36})$/,
+  build: (aliasId: string): string => `ale:${aliasId}`,
+} as const;
+
+/** Clear label — alc:{aliasId} */
+export const CB_ALIAS_LABEL_CLEAR = {
+  pattern: /^alc:([0-9a-f-]{36})$/,
+  build: (aliasId: string): string => `alc:${aliasId}`,
+} as const;
+
+/** Cancel label-edit flow — alx:{aliasId} */
+export const CB_ALIAS_LABEL_CANCEL = {
+  pattern: /^alx:([0-9a-f-]{36})$/,
+  build: (aliasId: string): string => `alx:${aliasId}`,
+} as const;
+
+/** Quick-add allow domain — qa:{aliasId}:{domain} */
+export const CB_QUICK_ALLOW = {
+  pattern: /^qa:([0-9a-f-]{36}):(.+)$/,
+  build: (aliasId: string, domain: string): string => `qa:${aliasId}:${domain}`,
+} as const;
+
 /** Set render mode — set_mode:{aliasId}:{mode} */
 export const CB_SET_MODE = {
   pattern: /^set_mode:(.+):(.+)$/,

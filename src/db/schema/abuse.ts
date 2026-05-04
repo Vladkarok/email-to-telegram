@@ -1,4 +1,14 @@
-import { pgTable, varchar, timestamp, uuid, integer, text, uniqueIndex, primaryKey, check } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  varchar,
+  timestamp,
+  uuid,
+  integer,
+  text,
+  uniqueIndex,
+  primaryKey,
+  check,
+} from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 // ─── hosted_onboarding_attempts ──────────────────────────────────────────────

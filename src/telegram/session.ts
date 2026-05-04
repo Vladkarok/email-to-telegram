@@ -10,7 +10,12 @@ export interface PendingAllowRule {
   aliasLocalPart: string;
 }
 
-export type PendingAction = PendingNewEmail | PendingAllowRule;
+export interface PendingAliasLabel {
+  action: "alias_label";
+  aliasId: string;
+}
+
+export type PendingAction = PendingNewEmail | PendingAllowRule | PendingAliasLabel;
 
 interface UserSession {
   pending?: PendingAction;

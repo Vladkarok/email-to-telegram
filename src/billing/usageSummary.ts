@@ -159,4 +159,3 @@ function formatBytesPercent(used: bigint, limit: bigint): string {
   const percent = (clamped * 100n) / limit;
   return `${percent.toString()}%`;
 }
-
