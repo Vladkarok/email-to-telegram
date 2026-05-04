@@ -4,8 +4,10 @@ import { createMockCtx } from "../../../helpers/mockContext.js";
 vi.mock("../../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
 const mockCreateAlias = vi.fn();
+const mockListAliasesByChat = vi.fn().mockResolvedValue([]);
 vi.mock("../../../../src/db/repos/aliases.js", () => ({
   createAlias: (...args: unknown[]): unknown => mockCreateAlias(...args),
+  listAliasesByChat: (...args: unknown[]): unknown => mockListAliasesByChat(...args),
   findAliasByLocalPart: vi.fn().mockResolvedValue(null),
   findAliasById: vi.fn().mockResolvedValue(null),
   findAliasesByCreator: vi.fn().mockResolvedValue([]),
@@ -106,7 +108,12 @@ describe("/newemail command", () => {
     });
   });
 
-  it("creates an alias with the given name and a random suffix", async () => {
+  it("creates an alias with the given name as-is on the first try", async () => {
+    mockCreateAlias.mockResolvedValueOnce({
+      id: MOCK_ALIAS_ID,
+      localPart: "alerts",
+      fullAddress: "alerts@tgmail.example.com",
+    });
     const ctx = createMockCtx({ commandMatch: "alerts" });
 
     await newemailHandler(ctx);
@@ -116,13 +123,31 @@ describe("/newemail command", () => {
       unknown,
       { localPart: string; privacyModeEnabled: boolean; bodyDedupEnabled: boolean },
     ];
-    expect(aliasData.localPart).toMatch(/^alerts-[a-z0-9]{6}$/);
+    expect(aliasData.localPart).toBe("alerts");
     expect(aliasData.privacyModeEnabled).toBe(false);
     expect(aliasData.bodyDedupEnabled).toBe(false);
     expect(ctx.reply).toHaveBeenCalledOnce();
     expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain(
       "tgmail.example.com",
     );
+  });
+
+  it("retries with a random suffix on duplicate-name collision", async () => {
+    mockCreateAlias.mockRejectedValueOnce(
+      new Error("duplicate key value violates unique constraint idx_alias_local_part"),
+    );
+    mockCreateAlias.mockResolvedValueOnce({
+      id: MOCK_ALIAS_ID,
+      localPart: "alerts-abc123",
+      fullAddress: "alerts-abc123@tgmail.example.com",
+    });
+    const ctx = createMockCtx({ commandMatch: "alerts" });
+
+    await newemailHandler(ctx);
+
+    expect(mockCreateAlias).toHaveBeenCalledTimes(2);
+    const [, second] = mockCreateAlias.mock.calls[1] as [unknown, { localPart: string }];
+    expect(second.localPart).toMatch(/^alerts-[a-z0-9]{6}$/);
   });
 
   it("'Add Allow Rule' button uses alias UUID not localPart", async () => {
@@ -141,14 +166,39 @@ describe("/newemail command", () => {
     expect(buttonData).not.toContain("am:alerts");
   });
 
-  it("generates a fully random alias when no name is provided", async () => {
+  it("uses 'inbox' as the default friendly name when no name is provided", async () => {
+    mockListAliasesByChat.mockResolvedValueOnce([]);
+    mockCreateAlias.mockResolvedValueOnce({
+      id: MOCK_ALIAS_ID,
+      localPart: "inbox",
+      fullAddress: "inbox@tgmail.example.com",
+    });
     const ctx = createMockCtx({ commandMatch: "" });
 
     await newemailHandler(ctx);
 
     expect(mockCreateAlias).toHaveBeenCalledOnce();
     const [, aliasData] = mockCreateAlias.mock.calls[0] as [unknown, { localPart: string }];
-    expect(aliasData.localPart).toMatch(/^[a-z0-9]{8,}$/);
+    expect(aliasData.localPart).toBe("inbox");
+  });
+
+  it("picks the next inbox-N when prior inbox aliases exist", async () => {
+    mockListAliasesByChat.mockResolvedValueOnce([
+      { localPart: "inbox" },
+      { localPart: "inbox-2" },
+      { localPart: "inbox-3" },
+    ]);
+    mockCreateAlias.mockResolvedValueOnce({
+      id: MOCK_ALIAS_ID,
+      localPart: "inbox-4",
+      fullAddress: "inbox-4@tgmail.example.com",
+    });
+    const ctx = createMockCtx({ commandMatch: "" });
+
+    await newemailHandler(ctx);
+
+    const [, aliasData] = mockCreateAlias.mock.calls[0] as [unknown, { localPart: string }];
+    expect(aliasData.localPart).toBe("inbox-4");
   });
 
   it("rejects names with uppercase letters", async () => {
@@ -245,9 +295,6 @@ describe("/newemail command", () => {
     expect(aliasData.domainId).toBe("shared-domain-1");
     expect(aliasData.fullAddress).toMatch(/@inbox\.example\.com$/);
     expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain("inbox.example.com");
-    expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain(
-      "/allow add alerts-ab12cd@inbox.example.com domain.com",
-    );
   });
 
   it("does not create hosted aliases when the shared inbound domain is unavailable", async () => {
@@ -387,15 +434,19 @@ describe("/newemail command", () => {
     expect(aliasData.messageThreadId).toBeNull();
   });
 
-  it("shows friendly error on duplicate alias name", async () => {
-    mockCreateAlias.mockRejectedValueOnce(
+  it("shows fallback error after exhausting all suffix attempts", async () => {
+    // 5 attempts max — every retry collides
+    mockCreateAlias.mockRejectedValue(
       new Error("duplicate key value violates unique constraint idx_alias_local_part"),
     );
     const ctx = createMockCtx({ commandMatch: "alerts" });
 
     await newemailHandler(ctx);
 
+    expect(mockCreateAlias).toHaveBeenCalledTimes(5);
     expect(ctx.reply).toHaveBeenCalledOnce();
-    expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/taken|duplicate/i);
+    expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
+      /could not pick a unique/i,
+    );
   });
 });

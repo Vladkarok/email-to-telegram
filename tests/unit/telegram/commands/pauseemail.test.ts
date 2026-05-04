@@ -5,16 +5,22 @@ import { createMockCtx } from "../../../helpers/mockContext.js";
 
 vi.mock("../../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
-const mockFindAlias = vi.fn();
 const mockUpdateStatus = vi.fn();
 vi.mock("../../../../src/db/repos/aliases.js", () => ({
-  findAliasByIdAndChat: (...args: unknown[]): unknown => mockFindAlias(...args),
   updateAliasStatus: (...args: unknown[]): unknown => mockUpdateStatus(...args),
 }));
 
-vi.mock("../../../../src/telegram/authorization.js", () => ({
-  canManageAlias: vi.fn().mockResolvedValue(true),
-  canManageChat: vi.fn().mockResolvedValue(true),
+const mockResolve = vi.fn();
+vi.mock("../../../../src/telegram/aliasResolver.js", () => ({
+  resolveManageableAlias: (...args: unknown[]): unknown => mockResolve(...args),
+  aliasResolutionError: (
+    result: { reason: "not_found" | "ambiguous" | "forbidden" },
+    raw: string,
+  ): string => {
+    if (result.reason === "forbidden") return "⛔ Access denied.";
+    if (result.reason === "ambiguous") return `❌ Alias <code>${raw}</code> matches more than one inbox.`;
+    return `❌ Alias <code>${raw}</code> not found.`;
+  },
 }));
 
 describe("/pauseemail command", () => {
@@ -25,17 +31,16 @@ describe("/pauseemail command", () => {
   });
 
   it("replies not found when alias missing", async () => {
-    mockFindAlias.mockResolvedValue(null);
+    mockResolve.mockResolvedValue({ ok: false, reason: "not_found" });
     const ctx = createMockCtx({ commandMatch: "alerts" });
     await pauseemailHandler(ctx);
     expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("not found"), expect.anything());
   });
 
   it("notifies when alias is already paused", async () => {
-    mockFindAlias.mockResolvedValue({
-      id: "uuid-1",
-      fullAddress: "alerts@example.com",
-      status: "paused",
+    mockResolve.mockResolvedValue({
+      ok: true,
+      alias: { id: "uuid-1", fullAddress: "alerts@example.com", status: "paused" },
     });
     const ctx = createMockCtx({ commandMatch: "alerts" });
     await pauseemailHandler(ctx);
@@ -47,10 +52,9 @@ describe("/pauseemail command", () => {
   });
 
   it("pauses an active alias and confirms", async () => {
-    mockFindAlias.mockResolvedValue({
-      id: "uuid-2",
-      fullAddress: "news@example.com",
-      status: "active",
+    mockResolve.mockResolvedValue({
+      ok: true,
+      alias: { id: "uuid-2", fullAddress: "news@example.com", status: "active" },
     });
     mockUpdateStatus.mockResolvedValue(undefined);
     const ctx = createMockCtx({ commandMatch: "news" });
@@ -68,10 +72,9 @@ describe("/resumeemail command", () => {
   });
 
   it("notifies when alias is already active", async () => {
-    mockFindAlias.mockResolvedValue({
-      id: "uuid-3",
-      fullAddress: "alerts@example.com",
-      status: "active",
+    mockResolve.mockResolvedValue({
+      ok: true,
+      alias: { id: "uuid-3", fullAddress: "alerts@example.com", status: "active" },
     });
     const ctx = createMockCtx({ commandMatch: "alerts" });
     await resumeemailHandler(ctx);
@@ -82,10 +85,9 @@ describe("/resumeemail command", () => {
   });
 
   it("resumes a paused alias and confirms", async () => {
-    mockFindAlias.mockResolvedValue({
-      id: "uuid-4",
-      fullAddress: "news@example.com",
-      status: "paused",
+    mockResolve.mockResolvedValue({
+      ok: true,
+      alias: { id: "uuid-4", fullAddress: "news@example.com", status: "paused" },
     });
     mockUpdateStatus.mockResolvedValue(undefined);
     const ctx = createMockCtx({ commandMatch: "news" });

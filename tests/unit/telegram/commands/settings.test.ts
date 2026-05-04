@@ -7,21 +7,26 @@ import { createMockCtx } from "../../../helpers/mockContext.js";
 
 vi.mock("../../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
-const mockFindAlias = vi.fn();
 const mockUpdateMode = vi.fn();
 const mockUpdateBodyDedup = vi.fn();
 const mockUpdatePrivacyMode = vi.fn();
 vi.mock("../../../../src/db/repos/aliases.js", () => ({
-  findAliasByIdAndChat: (...args: unknown[]): unknown => mockFindAlias(...args),
   updateAliasRenderMode: (...args: unknown[]): unknown => mockUpdateMode(...args),
   updateAliasBodyDedup: (...args: unknown[]): unknown => mockUpdateBodyDedup(...args),
   updateAliasPrivacyMode: (...args: unknown[]): unknown => mockUpdatePrivacyMode(...args),
 }));
 
-const mockCanManageAlias = vi.fn().mockResolvedValue(true);
-vi.mock("../../../../src/telegram/authorization.js", () => ({
-  canManageAlias: (...args: unknown[]): unknown => mockCanManageAlias(...args),
-  canManageChat: vi.fn().mockResolvedValue(true),
+const mockResolve = vi.fn();
+vi.mock("../../../../src/telegram/aliasResolver.js", () => ({
+  resolveManageableAlias: (...args: unknown[]): unknown => mockResolve(...args),
+  aliasResolutionError: (
+    result: { reason: "not_found" | "ambiguous" | "forbidden" },
+    raw: string,
+  ): string => {
+    if (result.reason === "forbidden") return "⛔ Access denied.";
+    if (result.reason === "ambiguous") return `❌ Alias <code>${raw}</code> matches more than one inbox.`;
+    return `❌ Alias <code>${raw}</code> not found.`;
+  },
 }));
 
 describe("/settings command", () => {
@@ -35,19 +40,22 @@ describe("/settings command", () => {
   });
 
   it("replies not found when alias missing", async () => {
-    mockFindAlias.mockResolvedValue(null);
+    mockResolve.mockResolvedValue({ ok: false, reason: "not_found" });
     const ctx = createMockCtx({ commandMatch: "alerts" });
     await settingsHandler(ctx);
     expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("not found"), expect.anything());
   });
 
   it("applies render mode directly when given as argument", async () => {
-    mockFindAlias.mockResolvedValue({
-      id: "uuid-1",
-      fullAddress: "alerts@example.com",
-      renderMode: "plaintext",
-      privacyModeEnabled: false,
-      bodyDedupEnabled: false,
+    mockResolve.mockResolvedValue({
+      ok: true,
+      alias: {
+        id: "uuid-1",
+        fullAddress: "alerts@example.com",
+        renderMode: "plaintext",
+        privacyModeEnabled: false,
+        bodyDedupEnabled: false,
+      },
     });
     mockUpdateMode.mockResolvedValue(undefined);
     const ctx = createMockCtx({ commandMatch: "alerts html" });
@@ -60,12 +68,15 @@ describe("/settings command", () => {
   });
 
   it("applies body dedup directly when given as argument", async () => {
-    mockFindAlias.mockResolvedValue({
-      id: "uuid-1",
-      fullAddress: "alerts@example.com",
-      renderMode: "plaintext",
-      privacyModeEnabled: false,
-      bodyDedupEnabled: false,
+    mockResolve.mockResolvedValue({
+      ok: true,
+      alias: {
+        id: "uuid-1",
+        fullAddress: "alerts@example.com",
+        renderMode: "plaintext",
+        privacyModeEnabled: false,
+        bodyDedupEnabled: false,
+      },
     });
     mockUpdateBodyDedup.mockResolvedValue(undefined);
     const ctx = createMockCtx({ commandMatch: "alerts dedup on" });
@@ -78,12 +89,15 @@ describe("/settings command", () => {
   });
 
   it("applies privacy mode directly when given as argument", async () => {
-    mockFindAlias.mockResolvedValue({
-      id: "uuid-1",
-      fullAddress: "alerts@example.com",
-      renderMode: "plaintext",
-      privacyModeEnabled: false,
-      bodyDedupEnabled: false,
+    mockResolve.mockResolvedValue({
+      ok: true,
+      alias: {
+        id: "uuid-1",
+        fullAddress: "alerts@example.com",
+        renderMode: "plaintext",
+        privacyModeEnabled: false,
+        bodyDedupEnabled: false,
+      },
     });
     mockUpdatePrivacyMode.mockResolvedValue(undefined);
     const ctx = createMockCtx({ commandMatch: "alerts privacy on" });
@@ -96,12 +110,15 @@ describe("/settings command", () => {
   });
 
   it("shows inline keyboard when no mode argument", async () => {
-    mockFindAlias.mockResolvedValue({
-      id: "uuid-2",
-      fullAddress: "news@example.com",
-      renderMode: "plaintext",
-      privacyModeEnabled: false,
-      bodyDedupEnabled: false,
+    mockResolve.mockResolvedValue({
+      ok: true,
+      alias: {
+        id: "uuid-2",
+        fullAddress: "news@example.com",
+        renderMode: "plaintext",
+        privacyModeEnabled: false,
+        bodyDedupEnabled: false,
+      },
     });
     const ctx = createMockCtx({ commandMatch: "news" });
     await settingsHandler(ctx);
@@ -112,45 +129,34 @@ describe("/settings command", () => {
     expect(call[1]).toHaveProperty("reply_markup");
   });
 
-  it("rejects access when the caller cannot manage the alias", async () => {
-    mockFindAlias.mockResolvedValue({
-      id: "uuid-2",
-      fullAddress: "news@example.com",
-      renderMode: "plaintext",
-      privacyModeEnabled: false,
-      bodyDedupEnabled: false,
-    });
-    mockCanManageAlias.mockResolvedValueOnce(false);
+  it("rejects access when resolver returns forbidden", async () => {
+    mockResolve.mockResolvedValue({ ok: false, reason: "forbidden" });
     const ctx = createMockCtx({ commandMatch: "news" });
 
     await settingsHandler(ctx);
 
-    expect(ctx.reply).toHaveBeenCalledWith("⛔ Access denied.");
+    expect(ctx.reply).toHaveBeenCalledWith("⛔ Access denied.", expect.anything());
   });
 
-  it("rejects access when the update has no sender", async () => {
-    mockFindAlias.mockResolvedValue({
-      id: "uuid-2",
-      fullAddress: "news@example.com",
-      renderMode: "plaintext",
-      privacyModeEnabled: false,
-      bodyDedupEnabled: false,
-    });
+  it("does not reply when the update has no sender", async () => {
     const ctx = createMockCtx({ commandMatch: "news" });
     (ctx as { from?: unknown }).from = undefined;
 
     await settingsHandler(ctx);
 
-    expect(ctx.reply).toHaveBeenCalledWith("⛔ Access denied.");
+    expect(ctx.reply).not.toHaveBeenCalled();
   });
 
   it("shows usage for invalid dedup values", async () => {
-    mockFindAlias.mockResolvedValue({
-      id: "uuid-1",
-      fullAddress: "alerts@example.com",
-      renderMode: "plaintext",
-      privacyModeEnabled: false,
-      bodyDedupEnabled: false,
+    mockResolve.mockResolvedValue({
+      ok: true,
+      alias: {
+        id: "uuid-1",
+        fullAddress: "alerts@example.com",
+        renderMode: "plaintext",
+        privacyModeEnabled: false,
+        bodyDedupEnabled: false,
+      },
     });
 
     const ctx = createMockCtx({ commandMatch: "alerts dedup maybe" });
@@ -163,12 +169,15 @@ describe("/settings command", () => {
   });
 
   it("shows usage for invalid privacy values", async () => {
-    mockFindAlias.mockResolvedValue({
-      id: "uuid-1",
-      fullAddress: "alerts@example.com",
-      renderMode: "plaintext",
-      privacyModeEnabled: false,
-      bodyDedupEnabled: false,
+    mockResolve.mockResolvedValue({
+      ok: true,
+      alias: {
+        id: "uuid-1",
+        fullAddress: "alerts@example.com",
+        renderMode: "plaintext",
+        privacyModeEnabled: false,
+        bodyDedupEnabled: false,
+      },
     });
 
     const ctx = createMockCtx({ commandMatch: "alerts privacy maybe" });
@@ -181,12 +190,15 @@ describe("/settings command", () => {
   });
 
   it("shows usage for unknown settings", async () => {
-    mockFindAlias.mockResolvedValue({
-      id: "uuid-1",
-      fullAddress: "alerts@example.com",
-      renderMode: "plaintext",
-      privacyModeEnabled: false,
-      bodyDedupEnabled: false,
+    mockResolve.mockResolvedValue({
+      ok: true,
+      alias: {
+        id: "uuid-1",
+        fullAddress: "alerts@example.com",
+        renderMode: "plaintext",
+        privacyModeEnabled: false,
+        bodyDedupEnabled: false,
+      },
     });
 
     const ctx = createMockCtx({ commandMatch: "alerts surprise on" });
