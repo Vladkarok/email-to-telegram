@@ -6,6 +6,7 @@ import { createCheckoutSession, BillingCheckoutConflictError } from "../../billi
 import { isStripePriceKey, type StripePriceKey } from "../../billing/stripe.js";
 import { getLogger } from "../../utils/logger.js";
 import { escapeHtml } from "../../utils/html.js";
+import { CB_UPGRADE_PLAN } from "../callbacks.js";
 
 const SELF_HOSTED_MESSAGE =
   "ℹ️ Billing is not enabled in self-hosted mode. /upgrade is only available on the hosted service.";
@@ -21,20 +22,17 @@ const PLAN_LABELS: Record<StripePriceKey, string> = {
   team_yearly: "Team — Yearly",
 };
 
-/** Regex used by bot.ts to register the upg:{priceKey} callback handler. */
-export const UPGRADE_PLAN_CALLBACK_PATTERN = /^upg:(.+)$/;
-
 /** Builds the plan selection inline keyboard shown by /upgrade and bill:upgrade. */
 export function buildUpgradePlanKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("Personal — Monthly", "upg:personal_monthly")
-    .text("Personal — Yearly", "upg:personal_yearly")
+    .text("Personal — Monthly", CB_UPGRADE_PLAN.build("personal_monthly"))
+    .text("Personal — Yearly", CB_UPGRADE_PLAN.build("personal_yearly"))
     .row()
-    .text("Pro — Monthly", "upg:pro_monthly")
-    .text("Pro — Yearly", "upg:pro_yearly")
+    .text("Pro — Monthly", CB_UPGRADE_PLAN.build("pro_monthly"))
+    .text("Pro — Yearly", CB_UPGRADE_PLAN.build("pro_yearly"))
     .row()
-    .text("Team — Monthly", "upg:team_monthly")
-    .text("Team — Yearly", "upg:team_yearly");
+    .text("Team — Monthly", CB_UPGRADE_PLAN.build("team_monthly"))
+    .text("Team — Yearly", CB_UPGRADE_PLAN.build("team_yearly"));
 }
 
 /** /upgrade command handler — shows plan selection keyboard. */
@@ -150,4 +148,3 @@ export async function upgradePlanCallbackHandler(
     });
   }
 }
-

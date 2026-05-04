@@ -1,5 +1,5 @@
 import { InlineKeyboard } from "grammy";
-import { BILLING_UPGRADE_CALLBACK } from "./billing.js";
+import { CB_BILLING_UPGRADE, CB_ALIAS_DETAIL } from "../callbacks.js";
 import type { CommandContext, Context } from "grammy";
 import { customAlphabet } from "nanoid";
 import { getDb } from "../../db/client.js";
@@ -176,14 +176,13 @@ export async function createEmailAlias(
   const fullAddress = alias.fullAddress;
 
   // Use alias.id (UUID) — the am: callback regex expects a UUID, not a localPart string
-  const keyboard = new InlineKeyboard().text("🔐 Add Allow Rule", `am:${alias.id}`);
+  const keyboard = new InlineKeyboard().text("🔐 Add Allow Rule", CB_ALIAS_DETAIL.build(alias.id));
 
   await ctx.reply(
     `✅ Email alias created!\n\n📧 <code>${fullAddress}</code>${chatNote}\n\n⚠️ Add at least one allow rule — until then all mail is rejected.\n\n<code>/allow add ${fullAddress} domain.com</code>`,
     { parse_mode: "HTML", reply_markup: keyboard },
   );
 }
-
 
 async function replyForAliasLimitFailure(
   ctx: Context,
@@ -197,7 +196,7 @@ async function replyForAliasLimitFailure(
   }
 
   if (limit.code === "alias_limit") {
-    const keyboard = new InlineKeyboard().text("⬆️ Upgrade Plan", BILLING_UPGRADE_CALLBACK);
+    const keyboard = new InlineKeyboard().text("⬆️ Upgrade Plan", CB_BILLING_UPGRADE);
     await ctx.reply(
       `📦 Plan limit reached: ${limit.used ?? limit.limit}/${limit.limit} aliases used. Upgrade to create more aliases.`,
       { reply_markup: keyboard },

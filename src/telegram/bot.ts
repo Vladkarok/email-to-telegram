@@ -1,6 +1,12 @@
-import { Bot, type Context, type CallbackQueryContext, type NextFunction } from "grammy";
+import { Bot, type Context, type NextFunction } from "grammy";
 import { getDb } from "../db/client.js";
 import { authMiddleware } from "./middleware/auth.js";
+import {
+  assertChatAccess,
+  assertAliasAccess,
+  assertHostedChatWorkspaceReady,
+  assertHostedAliasWorkspaceReady,
+} from "./middleware/authorization.js";
 import { startHandler } from "./commands/start.js";
 import { newemailHandler, createEmailAlias } from "./commands/newemail.js";
 import { listemailHandler } from "./commands/listemail.js";
@@ -16,17 +22,35 @@ import { addAllowRuleForAlias, allowHandler } from "./commands/allow.js";
 import { helpHandler } from "./commands/help.js";
 import { planHandler } from "./commands/plan.js";
 import { usageHandler } from "./commands/usage.js";
-import {
-  billingHandler,
-  BILLING_UPGRADE_CALLBACK,
-  BILLING_PORTAL_CALLBACK,
-} from "./commands/billing.js";
+import { billingHandler } from "./commands/billing.js";
 import {
   upgradeHandler,
   upgradeCallbackHandler,
   upgradePlanCallbackHandler,
-  UPGRADE_PLAN_CALLBACK_PATTERN,
 } from "./commands/upgrade.js";
+import {
+  CB_CHAT_SELECTION,
+  CB_NEW_CANCEL,
+  CB_BILLING_UPGRADE,
+  CB_BILLING_PORTAL,
+  CB_CHAT_MENU,
+  CB_ALIAS_LIST,
+  CB_NEW_EMAIL,
+  CB_SKIP_ALIAS,
+  CB_ALIAS_DETAIL,
+  CB_ALIAS_PAUSE,
+  CB_ALIAS_RESUME,
+  CB_ALIAS_DELETE,
+  CB_ALIAS_SETTINGS,
+  CB_SET_MODE,
+  CB_TOGGLE_BODY_DEDUP,
+  CB_TOGGLE_PRIVACY_MODE,
+  CB_ALLOW_RULES,
+  CB_DELETE_RULE,
+  CB_ADD_RULE,
+  CB_CANCEL_ADD_RULE,
+  CB_UPGRADE_PLAN,
+} from "./callbacks.js";
 import { portalHandler, portalCallbackHandler } from "./commands/portal.js";
 import { chatMemberHandler } from "./handlers/chatMember.js";
 import { editChatSelectionMenu, editChatManagementMenu } from "./menu/chatMenu.js";
@@ -49,60 +73,10 @@ import { InlineKeyboard } from "grammy";
 import { hasActiveHostedOrganization } from "../billing/limits.js";
 import { escapeHtml } from "../utils/html.js";
 
-// ── Authorization helpers ────────────────────────────────────────────────────
-
-async function assertChatAccess(
-  ctx: CallbackQueryContext<Context>,
-  chatId: bigint,
-): Promise<boolean> {
-  if (!ctx.from) {
-    await ctx.answerCallbackQuery("⛔ Access denied");
-    return false;
-  }
-  const allowed = await canManageChat(ctx.api, ctx.from.id, chatId);
-  if (!allowed) await ctx.answerCallbackQuery("⛔ Access denied");
-  return allowed;
-}
-
-async function assertAliasAccess(
-  ctx: CallbackQueryContext<Context>,
-  aliasId: string,
-): Promise<boolean> {
-  if (!ctx.from) {
-    await ctx.answerCallbackQuery("⛔ Access denied");
-    return false;
-  }
-  const allowed = await canManageAlias(getDb(), ctx.api, ctx.from.id, aliasId);
-  if (!allowed) await ctx.answerCallbackQuery("⛔ Access denied");
-  return allowed;
-}
-
-export async function assertHostedChatWorkspaceReady(
-  ctx: CallbackQueryContext<Context>,
-  chatId: bigint,
-): Promise<boolean> {
-  const chat = await findChatById(getDb(), chatId);
-  if (await hasActiveHostedOrganization(getDb(), chat?.organizationId ?? null)) {
-    return true;
-  }
-
-  await ctx.answerCallbackQuery("⛔ Hosted workspace inactive");
-  return false;
-}
-
-export async function assertHostedAliasWorkspaceReady(
-  ctx: CallbackQueryContext<Context>,
-  aliasId: string,
-): Promise<boolean> {
-  const alias = await findAliasById(getDb(), aliasId);
-  if (!alias) return true;
-  if (await hasActiveHostedOrganization(getDb(), alias.organizationId ?? null)) {
-    return true;
-  }
-
-  await ctx.answerCallbackQuery("⛔ Hosted workspace inactive");
-  return false;
-}
+export {
+  assertHostedChatWorkspaceReady,
+  assertHostedAliasWorkspaceReady,
+} from "./middleware/authorization.js";
 
 export function createBot(token: string): Bot {
   const bot = new Bot(token);
@@ -141,22 +115,22 @@ export function createBot(token: string): Bot {
   bot.command("portal", portalHandler);
 
   // bill:upgrade / bill:portal — inline keyboard buttons from /billing
-  bot.callbackQuery(BILLING_UPGRADE_CALLBACK, upgradeCallbackHandler);
-  bot.callbackQuery(BILLING_PORTAL_CALLBACK, portalCallbackHandler);
+  bot.callbackQuery(CB_BILLING_UPGRADE, upgradeCallbackHandler);
+  bot.callbackQuery(CB_BILLING_PORTAL, portalCallbackHandler);
 
   // upg:{priceKey} — plan selection buttons from /upgrade
-  bot.callbackQuery(UPGRADE_PLAN_CALLBACK_PATTERN, upgradePlanCallbackHandler);
+  bot.callbackQuery(CB_UPGRADE_PLAN.pattern, upgradePlanCallbackHandler);
 
   // ── Inline keyboard callbacks ───────────────────────────────────────────────
 
   // cs — back to chat selection
-  bot.callbackQuery("cs", async (ctx) => {
+  bot.callbackQuery(CB_CHAT_SELECTION, async (ctx) => {
     await ctx.answerCallbackQuery();
     await editChatSelectionMenu(ctx, getDb());
   });
 
   // cm:{chatId} — chat management menu
-  bot.callbackQuery(/^cm:(-?\d+)$/, async (ctx) => {
+  bot.callbackQuery(CB_CHAT_MENU.pattern, async (ctx) => {
     const chatId = BigInt(ctx.match[1]);
     if (!(await assertChatAccess(ctx, chatId))) return;
     await ctx.answerCallbackQuery();
@@ -169,7 +143,7 @@ export function createBot(token: string): Bot {
   });
 
   // cl:{chatId} — alias list for a chat
-  bot.callbackQuery(/^cl:(-?\d+)$/, async (ctx) => {
+  bot.callbackQuery(CB_ALIAS_LIST.pattern, async (ctx) => {
     const chatId = BigInt(ctx.match[1]);
     if (!(await assertChatAccess(ctx, chatId))) return;
     await ctx.answerCallbackQuery();
@@ -179,7 +153,7 @@ export function createBot(token: string): Bot {
   });
 
   // cn:{chatId} — start new email flow
-  bot.callbackQuery(/^cn:(-?\d+)$/, async (ctx) => {
+  bot.callbackQuery(CB_NEW_EMAIL.pattern, async (ctx) => {
     const chatId = BigInt(ctx.match[1]);
     if (!(await assertHostedChatWorkspaceReady(ctx, chatId))) return;
     if (!(await assertChatAccess(ctx, chatId))) return;
@@ -191,9 +165,9 @@ export function createBot(token: string): Bot {
     setPending(ctx.from.id, { action: "newemail", chatId, chatTitle });
 
     const keyboard = new InlineKeyboard()
-      .text("⏭ Skip — random alias", `ns:${ctx.match[1]}`)
+      .text("⏭ Skip — random alias", CB_SKIP_ALIAS.build(ctx.match[1]))
       .row()
-      .text("✖ Cancel", "nc");
+      .text("✖ Cancel", CB_NEW_CANCEL);
 
     await ctx.editMessageText(
       `📧 Creating alias for <b>${escapeHtml(chatTitle)}</b>\n\nSend me the alias prefix (e.g. <code>alerts</code>), or tap Skip for a random one.`,
@@ -202,7 +176,7 @@ export function createBot(token: string): Bot {
   });
 
   // ns:{chatId} — skip (random alias)
-  bot.callbackQuery(/^ns:(-?\d+)$/, async (ctx) => {
+  bot.callbackQuery(CB_SKIP_ALIAS.pattern, async (ctx) => {
     const chatId = BigInt(ctx.match[1]);
     if (!(await assertHostedChatWorkspaceReady(ctx, chatId))) return;
     if (!(await assertChatAccess(ctx, chatId))) return;
@@ -216,21 +190,21 @@ export function createBot(token: string): Bot {
   });
 
   // nc — cancel new email
-  bot.callbackQuery("nc", async (ctx) => {
+  bot.callbackQuery(CB_NEW_CANCEL, async (ctx) => {
     await ctx.answerCallbackQuery("Cancelled.");
     if (ctx.from) clearPending(ctx.from.id);
     await editChatSelectionMenu(ctx, getDb());
   });
 
   // am:{aliasId} — alias detail menu
-  bot.callbackQuery(/^am:([0-9a-f-]{36})$/, async (ctx) => {
+  bot.callbackQuery(CB_ALIAS_DETAIL.pattern, async (ctx) => {
     if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
     await ctx.answerCallbackQuery();
     await editAliasDetailMenu(ctx, getDb(), ctx.match[1]);
   });
 
   // ap:{aliasId} — pause alias
-  bot.callbackQuery(/^ap:([0-9a-f-]{36})$/, async (ctx) => {
+  bot.callbackQuery(CB_ALIAS_PAUSE.pattern, async (ctx) => {
     if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
     await ctx.answerCallbackQuery("Paused.");
     await updateAliasStatus(getDb(), ctx.match[1], "paused");
@@ -238,7 +212,7 @@ export function createBot(token: string): Bot {
   });
 
   // ar:{aliasId} — resume alias
-  bot.callbackQuery(/^ar:([0-9a-f-]{36})$/, async (ctx) => {
+  bot.callbackQuery(CB_ALIAS_RESUME.pattern, async (ctx) => {
     if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
     await ctx.answerCallbackQuery("Resumed.");
     await updateAliasStatus(getDb(), ctx.match[1], "active");
@@ -246,7 +220,7 @@ export function createBot(token: string): Bot {
   });
 
   // ad:{aliasId} — delete alias
-  bot.callbackQuery(/^ad:([0-9a-f-]{36})$/, async (ctx) => {
+  bot.callbackQuery(CB_ALIAS_DELETE.pattern, async (ctx) => {
     if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
     await ctx.answerCallbackQuery("Deleted.");
     const alias = await findAliasById(getDb(), ctx.match[1]);
@@ -259,7 +233,7 @@ export function createBot(token: string): Bot {
   });
 
   // ac:{aliasId} — alias settings
-  bot.callbackQuery(/^ac:([0-9a-f-]{36})$/, async (ctx) => {
+  bot.callbackQuery(CB_ALIAS_SETTINGS.pattern, async (ctx) => {
     if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
     await ctx.answerCallbackQuery();
     const alias = await findAliasById(getDb(), ctx.match[1]);
@@ -271,7 +245,7 @@ export function createBot(token: string): Bot {
   });
 
   // set_mode:{aliasId}:{mode} — apply render mode
-  bot.callbackQuery(/^set_mode:(.+):(.+)$/, async (ctx) => {
+  bot.callbackQuery(CB_SET_MODE.pattern, async (ctx) => {
     const [, aliasId, mode] = ctx.match;
     if (!(await assertAliasAccess(ctx, aliasId))) return;
     const validModes = ["plaintext", "html", "markdown"];
@@ -290,7 +264,7 @@ export function createBot(token: string): Bot {
   });
 
   // toggle_body_dedup:{aliasId} — toggle body-hash dedup for an alias
-  bot.callbackQuery(/^toggle_body_dedup:([0-9a-f-]{36})$/, async (ctx) => {
+  bot.callbackQuery(CB_TOGGLE_BODY_DEDUP.pattern, async (ctx) => {
     const aliasId = ctx.match[1];
     if (!(await assertAliasAccess(ctx, aliasId))) return;
     const alias = await findAliasById(getDb(), aliasId);
@@ -312,7 +286,7 @@ export function createBot(token: string): Bot {
   });
 
   // toggle_privacy_mode:{aliasId} — toggle privacy mode for an alias
-  bot.callbackQuery(/^toggle_privacy_mode:([0-9a-f-]{36})$/, async (ctx) => {
+  bot.callbackQuery(CB_TOGGLE_PRIVACY_MODE.pattern, async (ctx) => {
     const aliasId = ctx.match[1];
     if (!(await assertAliasAccess(ctx, aliasId))) return;
     const alias = await findAliasById(getDb(), aliasId);
@@ -334,14 +308,14 @@ export function createBot(token: string): Bot {
   });
 
   // al:{aliasId} — allow rules menu
-  bot.callbackQuery(/^al:([0-9a-f-]{36})$/, async (ctx) => {
+  bot.callbackQuery(CB_ALLOW_RULES.pattern, async (ctx) => {
     if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
     await ctx.answerCallbackQuery();
     await editAllowRulesMenu(ctx, getDb(), ctx.match[1]);
   });
 
   // dr:{ruleId} — delete allow rule
-  bot.callbackQuery(/^dr:([0-9a-f-]{36})$/, async (ctx) => {
+  bot.callbackQuery(CB_DELETE_RULE.pattern, async (ctx) => {
     const rule = await findAllowRuleById(getDb(), ctx.match[1]);
     if (!rule) {
       await ctx.answerCallbackQuery("Rule not found.");
@@ -358,7 +332,7 @@ export function createBot(token: string): Bot {
   });
 
   // aa:{aliasId} — start add allow rule flow
-  bot.callbackQuery(/^aa:([0-9a-f-]{36})$/, async (ctx) => {
+  bot.callbackQuery(CB_ADD_RULE.pattern, async (ctx) => {
     if (!(await assertHostedAliasWorkspaceReady(ctx, ctx.match[1]))) return;
     if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
     await ctx.answerCallbackQuery();
@@ -372,7 +346,7 @@ export function createBot(token: string): Bot {
       aliasLocalPart: alias.localPart,
     });
 
-    const keyboard = new InlineKeyboard().text("✖ Cancel", `na:${alias.id}`);
+    const keyboard = new InlineKeyboard().text("✖ Cancel", CB_CANCEL_ADD_RULE.build(alias.id));
     await ctx.editMessageText(
       `📋 Add allow rule for <code>${escapeHtml(alias.localPart)}</code>\n\nSend a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).`,
       { parse_mode: "HTML", reply_markup: keyboard },
@@ -380,7 +354,7 @@ export function createBot(token: string): Bot {
   });
 
   // na:{aliasId} — cancel add allow rule
-  bot.callbackQuery(/^na:([0-9a-f-]{36})$/, async (ctx) => {
+  bot.callbackQuery(CB_CANCEL_ADD_RULE.pattern, async (ctx) => {
     if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
     await ctx.answerCallbackQuery("Cancelled.");
     if (ctx.from) clearPending(ctx.from.id);
@@ -456,4 +430,3 @@ export async function handlePendingTextMessage(ctx: Context, next: NextFunction)
   }
   await sendAllowRulesMenu(ctx, getDb(), pending.aliasId);
 }
-

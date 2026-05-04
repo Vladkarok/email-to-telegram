@@ -8,13 +8,13 @@ import { getPrimaryOrganizationForUser } from "../../tenant/currentOrganization.
 import { getEffectivePlan } from "../../billing/limits.js";
 import { countActiveAliasesByOrganization } from "../../db/repos/aliases.js";
 import { escapeHtml } from "../../utils/html.js";
+import { CB_CHAT_SELECTION, CB_CHAT_MENU, CB_NEW_EMAIL, CB_ALIAS_LIST } from "../callbacks.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
 function chatIcon(type: string): string {
   return type === "private" ? "🏠" : "👥";
 }
-
 
 /**
  * Returns a one-line plan/alias footer for hosted mode,
@@ -54,7 +54,7 @@ export async function sendChatSelectionMenu(
 
   const keyboard = new InlineKeyboard();
   for (const chat of chats) {
-    keyboard.text(`${chatIcon(chat.type)} ${chat.title}`, `cm:${chat.id}`).row();
+    keyboard.text(`${chatIcon(chat.type)} ${chat.title}`, CB_CHAT_MENU.build(chat.id)).row();
   }
 
   const footer = await buildPlanFooter(db, ctx.from.id);
@@ -78,7 +78,7 @@ export async function editChatSelectionMenu(ctx: Context, db: Db): Promise<void>
 
   const keyboard = new InlineKeyboard();
   for (const chat of chats) {
-    keyboard.text(`${chatIcon(chat.type)} ${chat.title}`, `cm:${chat.id}`).row();
+    keyboard.text(`${chatIcon(chat.type)} ${chat.title}`, CB_CHAT_MENU.build(chat.id)).row();
   }
 
   const footer = await buildPlanFooter(db, ctx.from.id);
@@ -93,10 +93,10 @@ export async function editChatManagementMenu(
   chatTitle: string,
 ): Promise<void> {
   const keyboard = new InlineKeyboard()
-    .text("📧 New Email", `cn:${chatId}`)
-    .text("📋 List Emails", `cl:${chatId}`)
+    .text("📧 New Email", CB_NEW_EMAIL.build(chatId))
+    .text("📋 List Emails", CB_ALIAS_LIST.build(chatId))
     .row()
-    .text("⬅️ Back", "cs");
+    .text("⬅️ Back", CB_CHAT_SELECTION);
 
   await ctx.editMessageText(`Managing: <b>${escapeHtml(chatTitle)}</b>`, {
     parse_mode: "HTML",

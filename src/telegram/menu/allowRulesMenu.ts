@@ -5,9 +5,9 @@ import type * as schema from "../../db/schema.js";
 import { findAliasById } from "../../db/repos/aliases.js";
 import { listAllowRules } from "../../db/repos/allowRules.js";
 import { escapeHtml } from "../../utils/html.js";
+import { CB_DELETE_RULE, CB_ADD_RULE, CB_ALIAS_DETAIL } from "../callbacks.js";
 
 type Db = NodePgDatabase<typeof schema>;
-
 
 function buildAllowRulesKeyboard(
   rules: { id: string; matchType: string; matchValue: string }[],
@@ -16,10 +16,10 @@ function buildAllowRulesKeyboard(
   const keyboard = new InlineKeyboard();
   for (const rule of rules) {
     const icon = rule.matchType === "domain" ? "🌐" : "📧";
-    keyboard.text(`❌ ${icon} ${rule.matchValue}`, `dr:${rule.id}`).row();
+    keyboard.text(`❌ ${icon} ${rule.matchValue}`, CB_DELETE_RULE.build(rule.id)).row();
   }
-  keyboard.text("➕ Add Rule", `aa:${aliasId}`).row();
-  keyboard.text("⬅️ Back", `am:${aliasId}`);
+  keyboard.text("➕ Add Rule", CB_ADD_RULE.build(aliasId)).row();
+  keyboard.text("⬅️ Back", CB_ALIAS_DETAIL.build(aliasId));
   return keyboard;
 }
 

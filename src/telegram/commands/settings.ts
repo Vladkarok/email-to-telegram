@@ -18,6 +18,12 @@ import {
   renderModeGuidance,
   type TelegramRenderMode,
 } from "../renderModeGuidance.js";
+import {
+  CB_SET_MODE,
+  CB_TOGGLE_PRIVACY_MODE,
+  CB_TOGGLE_BODY_DEDUP,
+  CB_ALIAS_DETAIL,
+} from "../callbacks.js";
 
 export async function settingsHandler(ctx: CommandContext<Context>): Promise<void> {
   const parts = ctx.match.trim().split(/\s+/);
@@ -121,16 +127,16 @@ export function buildAliasSettingsKeyboard(
 
   for (const mode of RENDER_MODES) {
     const current = mode === alias.renderMode ? "✓ " : "";
-    keyboard.text(`${current}${mode}`, `set_mode:${alias.id}:${mode}`);
+    keyboard.text(`${current}${mode}`, CB_SET_MODE.build(alias.id, mode));
   }
 
   keyboard
     .row()
-    .text(`${alias.privacyModeEnabled ? "✓" : "○"} Privacy`, `toggle_privacy_mode:${alias.id}`)
-    .text(`${alias.bodyDedupEnabled ? "✓" : "○"} Body Dedup`, `toggle_body_dedup:${alias.id}`);
+    .text(`${alias.privacyModeEnabled ? "✓" : "○"} Privacy`, CB_TOGGLE_PRIVACY_MODE.build(alias.id))
+    .text(`${alias.bodyDedupEnabled ? "✓" : "○"} Body Dedup`, CB_TOGGLE_BODY_DEDUP.build(alias.id));
 
   if (includeBack) {
-    keyboard.row().text("⬅️ Back", `am:${alias.id}`);
+    keyboard.row().text("⬅️ Back", CB_ALIAS_DETAIL.build(alias.id));
   }
 
   return keyboard;

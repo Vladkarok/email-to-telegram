@@ -1,6 +1,6 @@
 import { InlineKeyboard } from "grammy";
 import type { CommandContext, Context } from "grammy";
-import { BILLING_UPGRADE_CALLBACK } from "./billing.js";
+import { CB_BILLING_UPGRADE } from "../callbacks.js";
 import { getDb } from "../../db/client.js";
 import { findAliasByFullAddress, findAliasByLocalPartAnyDomain } from "../../db/repos/aliases.js";
 import type { EmailAddress } from "../../db/schema.js";
@@ -124,7 +124,6 @@ async function findAliasForAllowCommand(
   return findAliasByLocalPartAnyDomain(db, aliasName);
 }
 
-
 export async function addAllowRuleForAlias(
   ctx: Context,
   db: ReturnType<typeof getDb>,
@@ -206,7 +205,7 @@ async function replyForAllowRuleLimitFailure(
   }
 
   if (limit.code === "allow_rule_limit") {
-    const keyboard = new InlineKeyboard().text("⬆️ Upgrade Plan", BILLING_UPGRADE_CALLBACK);
+    const keyboard = new InlineKeyboard().text("⬆️ Upgrade Plan", CB_BILLING_UPGRADE);
     await ctx.reply(
       `📦 Plan limit reached for <code>${escapeHtml(localPart)}</code>: ${limit.used ?? limit.limit}/${limit.limit} allow rules used. Upgrade to add more.`,
       { parse_mode: "HTML", reply_markup: keyboard },

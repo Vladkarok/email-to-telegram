@@ -7,6 +7,17 @@ import { listAliasesByChat, findAliasById } from "../../db/repos/aliases.js";
 import { listAllowRules } from "../../db/repos/allowRules.js";
 import { canManageAlias } from "../authorization.js";
 import { escapeHtml } from "../../utils/html.js";
+import {
+  CB_NEW_EMAIL,
+  CB_ALIAS_DETAIL,
+  CB_CHAT_MENU,
+  CB_ALIAS_PAUSE,
+  CB_ALIAS_RESUME,
+  CB_ALIAS_DELETE,
+  CB_ALLOW_RULES,
+  CB_ALIAS_SETTINGS,
+  CB_ALIAS_LIST,
+} from "../callbacks.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -15,7 +26,6 @@ function statusIcon(status: string): string {
   if (status === "paused") return "⏸";
   return "🗑";
 }
-
 
 export async function editAliasListMenu(
   ctx: Context,
@@ -27,14 +37,16 @@ export async function editAliasListMenu(
   const keyboard = new InlineKeyboard();
 
   if (aliases.length === 0) {
-    keyboard.text("📧 Create First Email", `cn:${chatId}`).row();
+    keyboard.text("📧 Create First Email", CB_NEW_EMAIL.build(chatId)).row();
   } else {
     for (const alias of aliases) {
-      keyboard.text(`${statusIcon(alias.status)} ${alias.localPart}`, `am:${alias.id}`).row();
+      keyboard
+        .text(`${statusIcon(alias.status)} ${alias.localPart}`, CB_ALIAS_DETAIL.build(alias.id))
+        .row();
     }
   }
 
-  keyboard.text("⬅️ Back", `cm:${chatId}`);
+  keyboard.text("⬅️ Back", CB_CHAT_MENU.build(chatId));
 
   const header =
     aliases.length === 0
@@ -81,13 +93,16 @@ export async function editAliasDetailMenu(ctx: Context, db: Db, aliasId: string)
   const keyboard = new InlineKeyboard();
 
   if (alias.status === "active") {
-    keyboard.text("⏸ Pause", `ap:${alias.id}`);
+    keyboard.text("⏸ Pause", CB_ALIAS_PAUSE.build(alias.id));
   } else if (alias.status === "paused") {
-    keyboard.text("▶️ Resume", `ar:${alias.id}`);
+    keyboard.text("▶️ Resume", CB_ALIAS_RESUME.build(alias.id));
   }
-  keyboard.text("🗑 Delete", `ad:${alias.id}`).row();
-  keyboard.text("📋 Allow Rules", `al:${alias.id}`).text("⚙️ Settings", `ac:${alias.id}`).row();
-  keyboard.text("⬅️ Back", `cl:${alias.chatId}`);
+  keyboard.text("🗑 Delete", CB_ALIAS_DELETE.build(alias.id)).row();
+  keyboard
+    .text("📋 Allow Rules", CB_ALLOW_RULES.build(alias.id))
+    .text("⚙️ Settings", CB_ALIAS_SETTINGS.build(alias.id))
+    .row();
+  keyboard.text("⬅️ Back", CB_ALIAS_LIST.build(alias.chatId));
 
   await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: keyboard });
 }
