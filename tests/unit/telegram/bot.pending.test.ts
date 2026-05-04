@@ -28,11 +28,13 @@ vi.mock("../../../src/billing/limits.js", () => ({
 const mockFindAliasById = vi.fn();
 const mockFindChatById = vi.fn();
 const mockUpdateAliasStatus = vi.fn();
+const mockUpdateAliasLabel = vi.fn();
 vi.mock("../../../src/db/repos/aliases.js", () => ({
   findAliasById: (...args: unknown[]): unknown => mockFindAliasById(...args),
   updateAliasBodyDedup: vi.fn(),
   updateAliasPrivacyMode: vi.fn(),
   updateAliasStatus: (...args: unknown[]): unknown => mockUpdateAliasStatus(...args),
+  updateAliasLabel: (...args: unknown[]): unknown => mockUpdateAliasLabel(...args),
   updateAliasRenderMode: vi.fn(),
 }));
 
@@ -73,9 +75,11 @@ vi.mock("../../../src/telegram/menu/chatMenu.js", () => ({
   editChatSelectionMenu: vi.fn(),
   editChatManagementMenu: vi.fn(),
 }));
+const mockSendAliasDetailMenu = vi.fn();
 vi.mock("../../../src/telegram/menu/aliasMenu.js", () => ({
   editAliasListMenu: vi.fn(),
   editAliasDetailMenu: vi.fn(),
+  sendAliasDetailMenu: (...args: unknown[]): unknown => mockSendAliasDetailMenu(...args),
   editAliasDeleteConfirmMenu: vi.fn(),
 }));
 vi.mock("../../../src/db/repos/chats.js", () => ({
@@ -265,6 +269,56 @@ describe("pending text flow", () => {
       expect.anything(),
       "alias-1",
     );
+  });
+
+  it("sends the updated alias management menu after setting a pending label", async () => {
+    mockGetPending.mockReturnValue({
+      action: "alias_label",
+      aliasId: "alias-1",
+      promptChatId: 123456789,
+      promptMessageId: 42,
+    });
+    mockFindAliasById.mockResolvedValue({
+      id: "alias-1",
+      localPart: "alerts",
+      fullAddress: "alerts@example.com",
+      organizationId: "org-1",
+    });
+    const ctx = createMockCtx({ chatType: "private", text: "alerts due" });
+
+    await handlePendingTextMessage(ctx, next);
+
+    expect(mockUpdateAliasLabel).toHaveBeenCalledWith(expect.anything(), "alias-1", "alerts due");
+    const editMarkupCalls = (ctx.api.editMessageReplyMarkup as ReturnType<typeof vi.fn>).mock.calls;
+    expect(editMarkupCalls).toContainEqual([
+      123456789,
+      42,
+      {
+        reply_markup: undefined,
+      },
+    ]);
+    expect(mockSendAliasDetailMenu).toHaveBeenCalledWith(ctx, expect.anything(), "alias-1");
+    expect(ctx.reply).not.toHaveBeenCalledWith(
+      expect.stringMatching(/Label set/i),
+      expect.anything(),
+    );
+  });
+
+  it("keeps the pending label flow active when the label is invalid", async () => {
+    mockGetPending.mockReturnValue({
+      action: "alias_label",
+      aliasId: "alias-1",
+      promptChatId: 123456789,
+      promptMessageId: 42,
+    });
+    const ctx = createMockCtx({ text: "   " });
+
+    await handlePendingTextMessage(ctx, next);
+
+    expect(mockClearPending).not.toHaveBeenCalled();
+    expect(mockUpdateAliasLabel).not.toHaveBeenCalled();
+    expect(mockSendAliasDetailMenu).not.toHaveBeenCalled();
+    expect(ctx.reply).toHaveBeenCalledWith(expect.stringMatching(/cannot be empty/i));
   });
 
   it("does not reopen the menu when quota/inactive-org helper rejects the rule", async () => {

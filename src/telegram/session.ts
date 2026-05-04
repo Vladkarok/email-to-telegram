@@ -14,6 +14,8 @@ export interface PendingAllowRule {
 export interface PendingAliasLabel {
   action: "alias_label";
   aliasId: string;
+  promptChatId?: number;
+  promptMessageId?: number;
 }
 
 export type PendingAction = PendingNewEmail | PendingAllowRule | PendingAliasLabel;

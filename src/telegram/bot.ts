@@ -69,6 +69,7 @@ import { editChatSelectionMenu, editChatManagementMenu } from "./menu/chatMenu.j
 import {
   editAliasListMenu,
   editAliasDetailMenu,
+  sendAliasDetailMenu,
   editAliasDeleteConfirmMenu,
 } from "./menu/aliasMenu.js";
 import { sendAllowRulesMenu, editAllowRulesMenu } from "./menu/allowRulesMenu.js";
@@ -432,7 +433,12 @@ export function createBot(token: string): Bot {
     const alias = await findAliasById(getDb(), aliasId);
     if (!alias) return;
 
-    setPending(ctx.from.id, { action: "alias_label", aliasId });
+    setPending(ctx.from.id, {
+      action: "alias_label",
+      aliasId,
+      promptChatId: ctx.callbackQuery.message?.chat.id,
+      promptMessageId: ctx.callbackQuery.message?.message_id,
+    });
 
     const keyboard = new InlineKeyboard().text("✖ Cancel", CB_ALIAS_LABEL_CANCEL.build(aliasId));
     const current = alias.label ? `\n\nCurrent label: <b>${escapeHtml(alias.label)}</b>` : "";
@@ -575,7 +581,6 @@ export async function handlePendingTextMessage(ctx: Context, next: NextFunction)
       await ctx.reply("⛔ Access denied.");
       return;
     }
-    clearPending(ctx.from.id);
     const labelInput = text.trim();
     if (!labelInput) {
       await ctx.reply("❌ Label cannot be empty. Try again or tap Cancel.");
@@ -585,11 +590,10 @@ export async function handlePendingTextMessage(ctx: Context, next: NextFunction)
       await ctx.reply("❌ Label too long. Max 64 characters.");
       return;
     }
+    clearPending(ctx.from.id);
     await updateAliasLabel(getDb(), pending.aliasId, labelInput);
-    await ctx.reply(
-      `🏷️ Label set: <b>${escapeHtml(labelInput)}</b> · <code>${escapeHtml(alias.fullAddress)}</code>`,
-      { parse_mode: "HTML" },
-    );
+    await clearPromptKeyboard(ctx, pending);
+    await sendAliasDetailMenu(ctx, getDb(), pending.aliasId);
     return;
   }
 
@@ -627,4 +631,16 @@ export async function handlePendingTextMessage(ctx: Context, next: NextFunction)
     return;
   }
   await sendAllowRulesMenu(ctx, getDb(), pending.aliasId);
+}
+
+async function clearPromptKeyboard(
+  ctx: Context,
+  pending: { promptChatId?: number; promptMessageId?: number },
+): Promise<void> {
+  if (!pending.promptChatId || !pending.promptMessageId) return;
+  await ctx.api
+    .editMessageReplyMarkup(pending.promptChatId, pending.promptMessageId, {
+      reply_markup: undefined,
+    })
+    .catch(() => {});
 }
