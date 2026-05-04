@@ -11,16 +11,11 @@ import { parseEmail } from "../parser.js";
 import { isDuplicate } from "../dedup.js";
 import { checkAllowRule } from "../../db/repos/allowRules.js";
 import { findAliasForInbound } from "../inboundRouting.js";
-import {
-  countRecentDeliveriesByAlias,
-  createDeliveryLog,
-} from "../../db/repos/deliveryLogs.js";
+import { countRecentDeliveriesByAlias, createDeliveryLog } from "../../db/repos/deliveryLogs.js";
 import { prepareDeliveryLogMetadataWrite } from "../../security/deliveryLogMetadata.js";
 import { checkInboundLimit } from "../../billing/limits.js";
 import { incrementOrganizationUsageMonth, usageMonthForDate } from "../../db/repos/usage.js";
-import {
-  incrementOrganizationStorageUsage,
-} from "../../db/repos/storageUsage.js";
+import { incrementOrganizationStorageUsage } from "../../db/repos/storageUsage.js";
 import type { Db, PipelineInput, QueueInboundResult } from "./types.js";
 
 export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<QueueInboundResult> {

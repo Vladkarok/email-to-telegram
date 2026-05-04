@@ -1,34 +1,35 @@
 import type { CommandContext, Context } from "grammy";
 import { getDb } from "../../db/client.js";
-import { findAliasByIdAndChat, updateAliasStatus } from "../../db/repos/aliases.js";
-import { canManageAlias } from "../authorization.js";
+import { updateAliasStatus } from "../../db/repos/aliases.js";
+import { aliasResolutionError, resolveManageableAlias } from "../aliasResolver.js";
 import { escapeHtml } from "../../utils/html.js";
 
 export async function resumeemailHandler(ctx: CommandContext<Context>): Promise<void> {
-  const localPart = ctx.match.trim();
+  if (!ctx.from) return;
+  const aliasName = ctx.match.trim();
 
-  if (!localPart) {
+  if (!aliasName) {
     await ctx.reply("Usage: /resumeemail <alias-name>");
     return;
   }
 
-  const chatId = BigInt(ctx.chat.id);
-  const alias = await findAliasByIdAndChat(getDb(), localPart, chatId);
+  const result = await resolveManageableAlias(
+    getDb(),
+    ctx.api,
+    ctx.from.id,
+    BigInt(ctx.chat.id),
+    aliasName,
+    ctx.chat.type,
+  );
 
-  if (!alias) {
-    await ctx.reply(`❌ Alias <code>${escapeHtml(localPart)}</code> not found in this chat.`, {
+  if (!result.ok) {
+    await ctx.reply(aliasResolutionError(result, aliasName, ctx.chat.type), {
       parse_mode: "HTML",
     });
     return;
   }
 
-  if (
-    !ctx.from ||
-    !(await canManageAlias(getDb(), ctx.api, ctx.from.id, alias.id, { fresh: true }))
-  ) {
-    await ctx.reply("⛔ Access denied.");
-    return;
-  }
+  const alias = result.alias;
 
   if (alias.status === "active") {
     await ctx.reply(`✅ Alias <code>${escapeHtml(alias.fullAddress)}</code> is already active.`, {
@@ -43,4 +44,3 @@ export async function resumeemailHandler(ctx: CommandContext<Context>): Promise<
     { parse_mode: "HTML" },
   );
 }
-

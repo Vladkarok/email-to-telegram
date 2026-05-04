@@ -11,7 +11,10 @@ export const exportCommand: OperatorCommand = {
     const exportData = await exportHostedOrganizationData(getDb(), organizationId);
 
     if (!exportData) {
-      logger.error({ organizationId }, "Hosted organization export failed: organization not found.");
+      logger.error(
+        { organizationId },
+        "Hosted organization export failed: organization not found.",
+      );
       process.exitCode = 1;
       return;
     }

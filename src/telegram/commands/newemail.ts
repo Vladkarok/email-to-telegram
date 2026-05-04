@@ -1,9 +1,9 @@
 import { InlineKeyboard } from "grammy";
-import { CB_BILLING_UPGRADE, CB_ALIAS_DETAIL } from "../callbacks.js";
+import { CB_BILLING_UPGRADE, CB_ALIAS_DETAIL, CB_QUICK_ALLOW, CB_ADD_RULE } from "../callbacks.js";
 import type { CommandContext, Context } from "grammy";
 import { customAlphabet } from "nanoid";
 import { getDb } from "../../db/client.js";
-import { createAlias } from "../../db/repos/aliases.js";
+import { createAlias, listAliasesByChat } from "../../db/repos/aliases.js";
 import type { EmailAddress } from "../../db/schema.js";
 import { findChatById } from "../../db/repos/chats.js";
 import { ensureSharedInboundDomain } from "../../db/repos/inboundDomains.js";
@@ -24,10 +24,15 @@ import {
 
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 const generateSuffix = customAlphabet(ALPHABET, 6);
-const generateRandom = customAlphabet(ALPHABET, 12);
 
 /** Validates user-supplied name before lowercasing */
 const NAME_RE = /^[a-z0-9._-]{1,32}$/;
+
+/** Maximum candidate-name attempts before giving up. */
+const MAX_NAME_ATTEMPTS = 5;
+
+/** Quick-pick allow-rule domains shown right after alias creation. */
+const QUICK_ALLOW_DOMAINS = ["gmail.com", "github.com", "stripe.com"] as const;
 
 export async function newemailHandler(ctx: CommandContext<Context>): Promise<void> {
   if (!ctx.from) return;
@@ -79,6 +84,48 @@ export async function newemailHandler(ctx: CommandContext<Context>): Promise<voi
   );
 }
 
+/**
+ * Generates the next available friendly auto-name for a chat ("inbox", "inbox-2", …).
+ *
+ * Scans existing aliases for the chat and returns the next free `inbox-N` slot.
+ * Falls back to "inbox" if no inbox-* aliases exist.
+ */
+async function nextInboxName(db: ReturnType<typeof getDb>, chatId: bigint): Promise<string> {
+  const aliases = await listAliasesByChat(db, chatId);
+  let maxN = 0;
+  let plainInboxTaken = false;
+  const re = /^inbox-(\d+)$/;
+  for (const a of aliases) {
+    if (a.localPart === "inbox") {
+      plainInboxTaken = true;
+      continue;
+    }
+    const m = a.localPart.match(re);
+    if (m && m[1]) {
+      const n = parseInt(m[1], 10);
+      if (Number.isFinite(n) && n > maxN) maxN = n;
+    }
+  }
+  if (!plainInboxTaken && maxN === 0) return "inbox";
+  return `inbox-${Math.max(maxN, 1) + 1}`;
+}
+
+/**
+ * True when the error indicates a unique-constraint violation on `local_part`.
+ *
+ * The driver surfaces these via Postgres error class 23505 ("unique_violation"),
+ * with various message shapes depending on the index involved.
+ */
+function isLocalPartConflict(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    msg.includes("idx_alias_local_part") ||
+    msg.includes("idx_alias_domain_local_part") ||
+    msg.includes("duplicate key value") ||
+    msg.includes("unique constraint")
+  );
+}
+
 export async function createEmailAlias(
   ctx: Context,
   rawName: string,
@@ -89,8 +136,6 @@ export async function createEmailAlias(
 ): Promise<void> {
   if (!ctx.from) return;
   const config = loadConfig();
-
-  let prefix: string;
 
   if (rawName.length > 0) {
     if (rawName.length > 32) {
@@ -103,83 +148,93 @@ export async function createEmailAlias(
       );
       return;
     }
-    prefix = rawName;
-  } else {
-    prefix = generateRandom();
   }
 
-  const localPart = rawName.length > 0 ? `${prefix}-${generateSuffix()}` : prefix;
   const db = getDb();
   const createdBy = BigInt(ctx.from.id);
   const organizationId =
     chatOrganizationId === undefined
       ? ((await findChatById(db, chatId))?.organizationId ?? null)
       : chatOrganizationId;
+
+  const baseName = rawName.length > 0 ? rawName : await nextInboxName(db, chatId);
+
   let blockedLimit: Awaited<ReturnType<typeof checkAliasCreateLimit>> | null = null;
+  let alias: EmailAddress | null = null;
 
-  let alias: EmailAddress;
-  try {
-    alias = await withOrganizationQuotaLock(db, organizationId, async (tx) => {
-      const inboundDomain =
-        config.appMode === "hosted"
-          ? await ensureSharedInboundDomain(tx, config.hostedMailDomain!)
-          : null;
-      const fullAddress = `${localPart}@${inboundDomain?.domain ?? config.mailDomain}`;
-      const limit = await checkAliasCreateLimit(tx, organizationId);
-      if (!limit.ok) {
-        blockedLimit = limit;
-        throw new Error("quota-blocked");
-      }
+  for (let attempt = 0; attempt < MAX_NAME_ATTEMPTS; attempt++) {
+    const candidate = attempt === 0 ? baseName : `${baseName}-${generateSuffix()}`;
 
-      await reserveHostedAliasCreateAttempt(tx, organizationId, createdBy);
+    try {
+      alias = await withOrganizationQuotaLock(db, organizationId, async (tx) => {
+        const inboundDomain =
+          config.appMode === "hosted"
+            ? await ensureSharedInboundDomain(tx, config.hostedMailDomain!)
+            : null;
+        const fullAddress = `${candidate}@${inboundDomain?.domain ?? config.mailDomain}`;
+        const limit = await checkAliasCreateLimit(tx, organizationId);
+        if (!limit.ok) {
+          blockedLimit = limit;
+          throw new Error("quota-blocked");
+        }
 
-      return createAlias(tx, {
-        localPart,
-        fullAddress,
-        organizationId,
-        domainId: inboundDomain?.id ?? null,
-        chatId,
-        messageThreadId: threadId,
-        createdBy,
-        renderMode: "plaintext",
-        privacyModeEnabled: false,
-        bodyDedupEnabled: false,
-        status: "active",
+        await reserveHostedAliasCreateAttempt(tx, organizationId, createdBy);
+
+        return createAlias(tx, {
+          localPart: candidate,
+          fullAddress,
+          organizationId,
+          domainId: inboundDomain?.id ?? null,
+          chatId,
+          messageThreadId: threadId,
+          createdBy,
+          renderMode: "plaintext",
+          privacyModeEnabled: false,
+          bodyDedupEnabled: false,
+          status: "active",
+        });
       });
-    });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg === "quota-blocked") {
-      if (blockedLimit) await replyForAliasLimitFailure(ctx, blockedLimit);
-      return;
+      break;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg === "quota-blocked") {
+        if (blockedLimit) await replyForAliasLimitFailure(ctx, blockedLimit);
+        return;
+      }
+      if (err instanceof HostedAliasCreateRateLimitError) {
+        await ctx.reply(HOSTED_ALIAS_CREATE_RATE_LIMIT_MESSAGE);
+        return;
+      }
+      if (msg.includes("ensureSharedInboundDomain")) {
+        await ctx.reply("⛔ This hosted workspace is not ready for alias creation right now.");
+        return;
+      }
+      if (isLocalPartConflict(err)) {
+        // Try again with a suffix
+        continue;
+      }
+      throw err;
     }
-    if (err instanceof HostedAliasCreateRateLimitError) {
-      await ctx.reply(HOSTED_ALIAS_CREATE_RATE_LIMIT_MESSAGE);
-      return;
-    }
-    if (msg.includes("ensureSharedInboundDomain")) {
-      await ctx.reply("⛔ This hosted workspace is not ready for alias creation right now.");
-      return;
-    }
-    if (
-      msg.includes("duplicate") ||
-      msg.includes("unique") ||
-      msg.includes("idx_alias_local_part")
-    ) {
-      await ctx.reply("❌ That alias name is already taken. Try a different one.");
-      return;
-    }
-    throw err;
+  }
+
+  if (!alias) {
+    await ctx.reply("❌ Could not pick a unique alias name. Try a different one.");
+    return;
   }
 
   const chatNote = chatTitle ? `\nDelivering to: <b>${escapeHtml(chatTitle)}</b>` : "";
   const fullAddress = alias.fullAddress;
 
-  // Use alias.id (UUID) — the am: callback regex expects a UUID, not a localPart string
-  const keyboard = new InlineKeyboard().text("🔐 Add Allow Rule", CB_ALIAS_DETAIL.build(alias.id));
+  // Quick-pick keyboard: top common domains, then Custom… and Manage entries.
+  const keyboard = new InlineKeyboard();
+  for (const domain of QUICK_ALLOW_DOMAINS) {
+    keyboard.text(`✅ ${domain}`, CB_QUICK_ALLOW.build(alias.id, domain));
+  }
+  keyboard.row().text("✏️ Custom domain…", CB_ADD_RULE.build(alias.id));
+  keyboard.row().text("⚙️ Manage alias", CB_ALIAS_DETAIL.build(alias.id));
 
   await ctx.reply(
-    `✅ Email alias created!\n\n📧 <code>${fullAddress}</code>${chatNote}\n\n⚠️ Add at least one allow rule — until then all mail is rejected.\n\n<code>/allow add ${fullAddress} domain.com</code>`,
+    `✅ Email alias created!\n\n📧 <code>${fullAddress}</code>${chatNote}\n\n⚠️ All mail is rejected until you allow at least one sender.\nTap a quick pick or add a custom domain:`,
     { parse_mode: "HTML", reply_markup: keyboard },
   );
 }

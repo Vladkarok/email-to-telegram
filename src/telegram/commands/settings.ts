@@ -3,12 +3,11 @@ import { InlineKeyboard } from "grammy";
 import { getDb } from "../../db/client.js";
 import type { EmailAddress } from "../../db/schema.js";
 import {
-  findAliasByIdAndChat,
   updateAliasBodyDedup,
   updateAliasPrivacyMode,
   updateAliasRenderMode,
 } from "../../db/repos/aliases.js";
-import { canManageAlias } from "../authorization.js";
+import { aliasResolutionError, resolveManageableAlias } from "../aliasResolver.js";
 import { escapeHtml } from "../../utils/html.js";
 import {
   RENDER_MODES,
@@ -26,31 +25,32 @@ import {
 } from "../callbacks.js";
 
 export async function settingsHandler(ctx: CommandContext<Context>): Promise<void> {
+  if (!ctx.from) return;
   const parts = ctx.match.trim().split(/\s+/);
-  const [localPart, setting, value] = parts;
+  const [aliasName, setting, value] = parts;
 
-  if (!localPart) {
+  if (!aliasName) {
     await ctx.reply(settingsUsageText(), { parse_mode: "HTML" });
     return;
   }
 
-  const chatId = BigInt(ctx.chat.id);
-  const alias = await findAliasByIdAndChat(getDb(), localPart, chatId);
+  const result = await resolveManageableAlias(
+    getDb(),
+    ctx.api,
+    ctx.from.id,
+    BigInt(ctx.chat.id),
+    aliasName,
+    ctx.chat.type,
+  );
 
-  if (!alias) {
-    await ctx.reply(`❌ Alias <code>${escapeHtml(localPart)}</code> not found in this chat.`, {
+  if (!result.ok) {
+    await ctx.reply(aliasResolutionError(result, aliasName, ctx.chat.type), {
       parse_mode: "HTML",
     });
     return;
   }
 
-  if (
-    !ctx.from ||
-    !(await canManageAlias(getDb(), ctx.api, ctx.from.id, alias.id, { fresh: true }))
-  ) {
-    await ctx.reply("⛔ Access denied.");
-    return;
-  }
+  const alias = result.alias;
 
   if (setting && RENDER_MODES.includes(setting as TelegramRenderMode) && !value) {
     await updateAliasRenderMode(getDb(), alias.id, setting as TelegramRenderMode);

@@ -10,7 +10,13 @@ import { queueInboundEmail } from "./queue.js";
 import { deliverQueuedEmail } from "./deliver.js";
 import type { Db, PipelineInput, PipelineResult } from "./types.js";
 
-export type { Db, PipelineInput, PipelineResult, QueuedInboundEmail, QueueInboundResult } from "./types.js";
+export type {
+  Db,
+  PipelineInput,
+  PipelineResult,
+  QueuedInboundEmail,
+  QueueInboundResult,
+} from "./types.js";
 export { queueInboundEmail } from "./queue.js";
 export { deliverQueuedEmail } from "./deliver.js";
 

@@ -30,6 +30,8 @@ export const emailAddresses = pgTable(
     createdBy: bigint("created_by", { mode: "bigint" })
       .notNull()
       .references(() => users.id),
+    /** Optional human-friendly nickname; nullable. */
+    label: varchar("label", { length: 64 }),
     renderMode: varchar("render_mode", { length: 20 }).notNull().default("plaintext"),
     privacyModeEnabled: boolean("privacy_mode_enabled").notNull().default(false),
     bodyDedupEnabled: boolean("body_dedup_enabled").notNull().default(false),
