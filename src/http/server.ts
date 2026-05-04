@@ -60,6 +60,11 @@ export async function createHttpServer(config: AppConfig): Promise<FastifyInstan
 
   registerRoutes(app, config);
 
+  // Return an empty 404 for unknown routes — avoids leaking framework details.
+  app.setNotFoundHandler((_req, reply) => {
+    void reply.status(404).send();
+  });
+
   return app;
 }
 
