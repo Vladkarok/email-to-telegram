@@ -31,10 +31,11 @@ vi.mock("../../../../src/db/repos/inboundDomains.js", () => ({
     mockEnsureSharedInboundDomain(...args),
 }));
 
+const mockSetPending = vi.fn();
 vi.mock("../../../../src/telegram/session.js", () => ({
   getPending: vi.fn().mockReturnValue(undefined),
   clearPending: vi.fn(),
-  setPending: vi.fn(),
+  setPending: (...args: unknown[]): unknown => mockSetPending(...args),
 }));
 
 const mockLoadConfig = vi.fn(() => ({
@@ -74,7 +75,8 @@ vi.mock("../../../../src/abuse/hostedAliasCreation.js", () => ({
     mockReserveHostedAliasCreateAttempt(...args),
 }));
 
-const { newemailHandler } = await import("../../../../src/telegram/commands/newemail.js");
+const { newemailHandler, createEmailAlias } =
+  await import("../../../../src/telegram/commands/newemail.js");
 
 describe("/newemail command", () => {
   const MOCK_ALIAS_ID = "550e8400-e29b-41d4-a716-446655440000";
@@ -166,7 +168,25 @@ describe("/newemail command", () => {
     expect(buttonData).not.toContain("am:alerts");
   });
 
-  it("uses 'inbox' as the default friendly name when no name is provided", async () => {
+  it("starts the naming dialog when no name is provided to the direct command", async () => {
+    const ctx = createMockCtx({ commandMatch: "" });
+
+    await newemailHandler(ctx);
+
+    expect(mockCreateAlias).not.toHaveBeenCalled();
+    expect(mockSetPending).toHaveBeenCalledWith(123456789, {
+      action: "newemail",
+      chatId: -1001234567890n,
+      chatTitle: "Test Chat",
+      messageThreadId: null,
+    });
+    expect(ctx.reply).toHaveBeenCalledWith(
+      expect.stringMatching(/creating alias|auto name/i),
+      expect.objectContaining({ parse_mode: "HTML" }),
+    );
+  });
+
+  it("uses 'inbox' as the default friendly name when auto name is selected", async () => {
     mockListAliasesByChat.mockResolvedValueOnce([]);
     mockCreateAlias.mockResolvedValueOnce({
       id: MOCK_ALIAS_ID,
@@ -175,7 +195,7 @@ describe("/newemail command", () => {
     });
     const ctx = createMockCtx({ commandMatch: "" });
 
-    await newemailHandler(ctx);
+    await createEmailAlias(ctx, "", -1001234567890n, null, "Test Chat");
 
     expect(mockCreateAlias).toHaveBeenCalledOnce();
     const [, aliasData] = mockCreateAlias.mock.calls[0] as [unknown, { localPart: string }];
@@ -195,7 +215,7 @@ describe("/newemail command", () => {
     });
     const ctx = createMockCtx({ commandMatch: "" });
 
-    await newemailHandler(ctx);
+    await createEmailAlias(ctx, "", -1001234567890n, null, "Test Chat");
 
     const [, aliasData] = mockCreateAlias.mock.calls[0] as [unknown, { localPart: string }];
     expect(aliasData.localPart).toBe("inbox-4");

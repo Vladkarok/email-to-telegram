@@ -108,6 +108,12 @@ export const CB_QUICK_ALLOW = {
   build: (aliasId: string, domain: string): string => `qa:${aliasId}:${domain}`,
 } as const;
 
+/** Quick-add allow domain and return to allow-rules menu — qr:{aliasId}:{domain} */
+export const CB_QUICK_ALLOW_RULES = {
+  pattern: /^qr:([0-9a-f-]{36}):(.+)$/,
+  build: (aliasId: string, domain: string): string => `qr:${aliasId}:${domain}`,
+} as const;
+
 /** Set render mode — set_mode:{aliasId}:{mode} */
 export const CB_SET_MODE = {
   pattern: /^set_mode:(.+):(.+)$/,
