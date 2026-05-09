@@ -96,6 +96,21 @@ describe("/upgrade command", () => {
     expect(callbacks).toContain("upg:team_yearly");
   });
 
+  it("shows manual billing message for manual paid organizations", async () => {
+    mockGetBillingOrganizationForUser.mockResolvedValue({
+      ...ORG,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      stripeCustomerId: null,
+    });
+    const ctx = createMockCtx({ chatType: "private" });
+
+    await upgradeHandler(ctx);
+
+    const [text] = ctx.reply.mock.calls[0] as [string];
+    expect(text).toMatch(/self-serve payments|manual|support/i);
+  });
+
   it("replies with error on DB failure", async () => {
     mockGetBillingOrganizationForUser.mockRejectedValue(new Error("connection refused"));
     const mockError = vi.fn();
@@ -146,6 +161,22 @@ describe("upgradeCallbackHandler (bill:upgrade)", () => {
     expect(text).toMatch(/self-serve payments|manual|support/i);
     expect(mockGetBillingOrganizationForUser).not.toHaveBeenCalled();
   });
+
+  it("answers callback and sends manual billing message for manual paid organizations", async () => {
+    mockGetBillingOrganizationForUser.mockResolvedValue({
+      ...ORG,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      stripeCustomerId: null,
+    });
+    const ctx = createMockCtx({ chatType: "private" });
+
+    await upgradeCallbackHandler(ctx);
+
+    expect(ctx.answerCallbackQuery).toHaveBeenCalled();
+    const [text] = ctx.reply.mock.calls[0] as [string];
+    expect(text).toMatch(/self-serve payments|manual|support/i);
+  });
 });
 
 describe("upgradePlanCallbackHandler (upg:{priceKey})", () => {
@@ -186,6 +217,24 @@ describe("upgradePlanCallbackHandler (upg:{priceKey})", () => {
     const ctx = createMockCtx({ chatType: "private" });
     (ctx as unknown as { match: string[] }).match = ["upg:personal_monthly", "personal_monthly"];
     await upgradePlanCallbackHandler(ctx);
+    expect(mockCreateCheckoutSession).not.toHaveBeenCalled();
+    const call = ctx.answerCallbackQuery.mock.calls[0][0] as { show_alert: boolean; text: string };
+    expect(call.show_alert).toBe(true);
+    expect(call.text).toMatch(/self-serve payments/i);
+  });
+
+  it("answers with show_alert for manual paid organizations", async () => {
+    mockGetBillingOrganizationForUser.mockResolvedValue({
+      ...ORG,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      stripeCustomerId: null,
+    });
+    const ctx = createMockCtx({ chatType: "private" });
+    (ctx as unknown as { match: string[] }).match = ["upg:personal_monthly", "personal_monthly"];
+
+    await upgradePlanCallbackHandler(ctx);
+
     expect(mockCreateCheckoutSession).not.toHaveBeenCalled();
     const call = ctx.answerCallbackQuery.mock.calls[0][0] as { show_alert: boolean; text: string };
     expect(call.show_alert).toBe(true);

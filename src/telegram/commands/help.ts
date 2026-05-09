@@ -5,14 +5,17 @@ import { isSelfServeBillingEnabled } from "../../billing/selfServe.js";
 
 export async function helpHandler(ctx: Context): Promise<void> {
   const config = loadConfig();
-  const billingHelp = isSelfServeBillingEnabled(config)
-    ? `<b>Billing (hosted only)</b>
+  const billingHelp =
+    config.appMode !== "hosted"
+      ? ""
+      : isSelfServeBillingEnabled(config)
+        ? `<b>Billing (hosted only)</b>
 /billing — workspace billing status with Upgrade and Manage Billing buttons
 /plan — show your current plan and limits
 /usage — show this month's accepted/delivered/failed/rejected counts and quotas
 /upgrade — choose a plan and get a Stripe checkout link
 /portal — open the Stripe billing portal to manage your subscription`
-    : `<b>Plan and usage</b>
+        : `<b>Plan and usage</b>
 /billing — workspace plan and quota status
 /plan — show your current plan and limits
 /usage — show this month's accepted/delivered/failed/rejected counts and quotas`;
@@ -40,8 +43,7 @@ Only senders matching an allow rule can deliver mail to an alias.
 /allow add &lt;alias&gt; &lt;email_or_domain&gt;
 /allow remove &lt;alias&gt; &lt;email_or_domain&gt;
 
-${billingHelp}
-
+${billingHelp ? `${billingHelp}\n\n` : ""}
 /help — show this message
 
 ${safetyDisclaimerText()}

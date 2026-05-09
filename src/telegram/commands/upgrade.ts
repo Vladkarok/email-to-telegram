@@ -7,7 +7,11 @@ import { isStripePriceKey, type StripePriceKey } from "../../billing/stripe.js";
 import { getLogger } from "../../utils/logger.js";
 import { escapeHtml } from "../../utils/html.js";
 import { CB_UPGRADE_PLAN } from "../callbacks.js";
-import { isSelfServeBillingEnabled, MANUAL_BILLING_MESSAGE } from "../../billing/selfServe.js";
+import {
+  canUseSelfServeBilling,
+  isSelfServeBillingEnabled,
+  MANUAL_BILLING_MESSAGE,
+} from "../../billing/selfServe.js";
 
 const SELF_HOSTED_MESSAGE =
   "ℹ️ Billing is not enabled in self-hosted mode. /upgrade is only available on the hosted service.";
@@ -57,6 +61,10 @@ export async function upgradeHandler(ctx: Context): Promise<void> {
       await ctx.reply(BILLING_FORBIDDEN_MESSAGE);
       return;
     }
+    if (!canUseSelfServeBilling(config, organization)) {
+      await ctx.reply(MANUAL_BILLING_MESSAGE);
+      return;
+    }
 
     await ctx.reply("<b>⬆️ Upgrade your plan</b>\n\nSelect a plan to start your upgrade:", {
       parse_mode: "HTML",
@@ -91,6 +99,11 @@ export async function upgradeCallbackHandler(ctx: CallbackQueryContext<Context>)
     const organization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
     if (!organization) {
       await ctx.answerCallbackQuery({ text: BILLING_FORBIDDEN_MESSAGE, show_alert: true });
+      return;
+    }
+    if (!canUseSelfServeBilling(config, organization)) {
+      await ctx.answerCallbackQuery();
+      await ctx.reply(MANUAL_BILLING_MESSAGE);
       return;
     }
 
@@ -141,6 +154,13 @@ export async function upgradePlanCallbackHandler(
     const organization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
     if (!organization) {
       await ctx.answerCallbackQuery({ text: BILLING_FORBIDDEN_MESSAGE, show_alert: true });
+      return;
+    }
+    if (!canUseSelfServeBilling(config, organization)) {
+      await ctx.answerCallbackQuery({
+        text: "Self-serve payments are temporarily unavailable for this workspace.",
+        show_alert: true,
+      });
       return;
     }
 
