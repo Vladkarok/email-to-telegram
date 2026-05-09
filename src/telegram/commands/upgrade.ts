@@ -7,6 +7,12 @@ import { isStripePriceKey, type StripePriceKey } from "../../billing/stripe.js";
 import { getLogger } from "../../utils/logger.js";
 import { escapeHtml } from "../../utils/html.js";
 import { CB_UPGRADE_PLAN } from "../callbacks.js";
+import {
+  isManualBillingOrganization,
+  isSelfServeBillingEnabled,
+  MANUAL_BILLING_ALERT,
+  MANUAL_BILLING_MESSAGE,
+} from "../../billing/selfServe.js";
 
 const SELF_HOSTED_MESSAGE =
   "ℹ️ Billing is not enabled in self-hosted mode. /upgrade is only available on the hosted service.";
@@ -39,8 +45,13 @@ export function buildUpgradePlanKeyboard(): InlineKeyboard {
 export async function upgradeHandler(ctx: Context): Promise<void> {
   if (!ctx.from) return;
 
-  if (loadConfig().appMode !== "hosted") {
+  const config = loadConfig();
+  if (config.appMode !== "hosted") {
     await ctx.reply(SELF_HOSTED_MESSAGE);
+    return;
+  }
+  if (!isSelfServeBillingEnabled(config)) {
+    await ctx.reply(MANUAL_BILLING_MESSAGE);
     return;
   }
 
@@ -49,6 +60,10 @@ export async function upgradeHandler(ctx: Context): Promise<void> {
     const organization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
     if (!organization) {
       await ctx.reply(BILLING_FORBIDDEN_MESSAGE);
+      return;
+    }
+    if (isManualBillingOrganization(organization)) {
+      await ctx.reply(MANUAL_BILLING_MESSAGE);
       return;
     }
 
@@ -69,8 +84,14 @@ export async function upgradeHandler(ctx: Context): Promise<void> {
 export async function upgradeCallbackHandler(ctx: CallbackQueryContext<Context>): Promise<void> {
   if (!ctx.from) return;
 
-  if (loadConfig().appMode !== "hosted") {
+  const config = loadConfig();
+  if (config.appMode !== "hosted") {
     await ctx.answerCallbackQuery({ text: SELF_HOSTED_MESSAGE, show_alert: true });
+    return;
+  }
+  if (!isSelfServeBillingEnabled(config)) {
+    await ctx.answerCallbackQuery();
+    await ctx.reply(MANUAL_BILLING_MESSAGE);
     return;
   }
 
@@ -79,6 +100,11 @@ export async function upgradeCallbackHandler(ctx: CallbackQueryContext<Context>)
     const organization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
     if (!organization) {
       await ctx.answerCallbackQuery({ text: BILLING_FORBIDDEN_MESSAGE, show_alert: true });
+      return;
+    }
+    if (isManualBillingOrganization(organization)) {
+      await ctx.answerCallbackQuery();
+      await ctx.reply(MANUAL_BILLING_MESSAGE);
       return;
     }
 
@@ -105,8 +131,16 @@ export async function upgradePlanCallbackHandler(
 ): Promise<void> {
   if (!ctx.from) return;
 
-  if (loadConfig().appMode !== "hosted") {
+  const config = loadConfig();
+  if (config.appMode !== "hosted") {
     await ctx.answerCallbackQuery({ text: SELF_HOSTED_MESSAGE, show_alert: true });
+    return;
+  }
+  if (!isSelfServeBillingEnabled(config)) {
+    await ctx.answerCallbackQuery({
+      text: MANUAL_BILLING_ALERT,
+      show_alert: true,
+    });
     return;
   }
 
@@ -121,6 +155,13 @@ export async function upgradePlanCallbackHandler(
     const organization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
     if (!organization) {
       await ctx.answerCallbackQuery({ text: BILLING_FORBIDDEN_MESSAGE, show_alert: true });
+      return;
+    }
+    if (isManualBillingOrganization(organization)) {
+      await ctx.answerCallbackQuery({
+        text: MANUAL_BILLING_ALERT,
+        show_alert: true,
+      });
       return;
     }
 
