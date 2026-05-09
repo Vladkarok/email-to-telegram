@@ -39,18 +39,22 @@ Recommended branch order:
    - Goal: authenticated internal web admin with read-only customer search and
      organization detail pages.
 
-3. `codex/operator-admin-manual-billing`
+3. `codex/operator-audit-foundation`
+   - Goal: audit event shape, operator identity/source, and redaction rules for
+     admin mutations before write access exists.
+
+4. `codex/operator-admin-manual-billing`
    - Goal: grant, renew, downgrade, and audit manual plans from the admin UI.
 
-4. `codex/i18n-foundation`
+5. `codex/i18n-foundation`
    - Goal: message catalog and locale selection for English, Ukrainian, and
      Russian.
 
-5. `codex/observability-foundation`
+6. `codex/observability-foundation`
    - Goal: structured audit events, Prometheus metrics endpoint, and operator
      dashboard/runbook.
 
-6. `codex/license-source-strategy`
+7. `codex/license-source-strategy`
    - Goal: document and apply the chosen license/source model.
 
 Each PR should include tests and a short operator note. Avoid combining admin,
@@ -83,6 +87,19 @@ This is enough for a one-operator beta. Later, replace with:
 - Tailscale/Cloudflare Access in front of `/admin`
 - per-operator audit identity
 
+Minimum browser-security requirements for the first admin PR:
+
+- login endpoint rate limit by IP and by submitted secret fingerprint
+- secure session cookie with `HttpOnly`, `Secure`, and `SameSite=Strict`
+- CSRF token or strict origin/referrer validation for every mutating form
+- short session TTL and explicit logout
+- constant-time secret comparison
+- no admin routes when `ADMIN_ENABLED` is false
+- production startup fails if admin is enabled without HTTPS public base URL
+
+Manual billing mutations additionally require a fresh confirmation step or
+re-auth check before downgrade, plan grant, or renewal.
+
 ### PR 1: Admin Foundation
 
 Branch: `codex/operator-admin-foundation`
@@ -90,12 +107,18 @@ Branch: `codex/operator-admin-foundation`
 Scope:
 
 - add `ADMIN_ENABLED`, `ADMIN_SECRET`, and `ADMIN_SESSION_TTL_MINUTES`
+- add a small cookie/session helper dependency or local helper explicitly
 - add `/admin/login`, `/admin/logout`, `/admin`
 - add `/admin/users` search by Telegram ID or username
 - add `/admin/organizations/:id` read-only detail page
 - show plan, status, paid-through, aliases used, storage, monthly usage, and
   latest manual billing events
 - add route-level tests for auth and read-only pages
+- widen HTTP route config types to include admin settings
+- register admin routes only when enabled
+- redact payment references and notes by default; reveal them only behind an
+  explicit operator action if truly needed
+- log admin page access without logging payment references, notes, or tokens
 
 Non-goals:
 
@@ -104,7 +127,28 @@ Non-goals:
 - no abuse block edits
 - no multi-operator roles
 
-### PR 2: Admin Manual Billing
+### PR 2: Audit Foundation
+
+Branch: `codex/operator-audit-foundation`
+
+Scope:
+
+- define operator audit event fields before admin mutations exist
+- represent operator source as at least `cli` or `admin`
+- store a safe operator identifier:
+  - `cli` for current CLI operations
+  - `admin:<stable hash or configured operator id>` for first web admin
+- define redaction rules for payment references, manual notes, tokens, raw
+  email content, and customer identifiers
+- add tests proving audit events do not expose sensitive content
+- update manual billing service input so both CLI and admin can pass operator
+  source/identity
+
+This PR should land before admin write access. Billing changes are entitlement
+changes, so auditability and redaction should be designed before the form that
+performs them.
+
+### PR 3: Admin Manual Billing
 
 Branch: `codex/operator-admin-manual-billing`
 
@@ -119,8 +163,10 @@ Scope:
 - show idempotency conflicts clearly when a payment reference already exists
 - require confirmation for downgrade
 - write manual billing events exactly as CLI does
+- write audit events with `operatorSource=admin`
 - add tests for success, validation failure, duplicate payment reference, and
   forbidden access
+- add CSRF/origin tests for all mutating forms
 
 Key design rule:
 
@@ -233,6 +279,8 @@ Scope:
   - quota rejections by reason
   - active organizations by plan
 - add tests for `/metrics` auth and basic metric output
+- widen HTTP route config types to include metrics settings
+- keep tenant identifiers out of Prometheus labels
 
 Logs:
 
@@ -242,6 +290,13 @@ Logs:
 - include organization ID and alias ID where useful
 - never log raw email content, tokens, payment references, or manual notes
 
+Metric label policy:
+
+- labels may include route, status class, result, plan, and rejection reason
+- labels must not include organization ID, alias ID, Telegram user ID, email
+  address, domain, payment reference, or free-form error text
+- tenant drilldowns belong in admin-only DB/UI queries, not metric labels
+
 Suggested dashboard panels:
 
 - bot health and HTTP readiness
@@ -250,7 +305,8 @@ Suggested dashboard panels:
 - quota rejections
 - manual billing actions
 - storage usage trend
-- top noisy aliases/organizations by rejected mail
+- admin-only noisy alias/organization drilldown by rejected mail, outside
+  Prometheus labels
 
 Alert candidates:
 
@@ -274,11 +330,13 @@ remain available under MIT even if you change future versions.
 
 ### Recommendation
 
-For this project, the cleanest strategy is:
+For this project, decide the source boundary before implementing hosted-only
+admin and observability branches. The cleanest default strategy is:
 
 - keep the self-hosted core open source under MIT
-- keep hosted operations, billing/admin automation, and deployment-specific
-  secrets/config private if needed
+- keep hosted-only operations, billing/admin automation, and deployment-specific
+  config private if needed, or consciously keep them in the public repo if the
+  hosted business is based on service quality rather than code exclusivity
 - sell managed hosting, support, uptime, backups, deliverability, abuse
   handling, and convenience
 
@@ -306,6 +364,8 @@ Scope:
 - document contribution expectations
 - document commercial hosted offering boundaries
 - add a short README section pointing to the source strategy
+- decide whether admin and observability code lives in this public repo before
+  those implementation PRs are opened
 
 Decision gate before changing license:
 
@@ -318,11 +378,13 @@ Decision gate before changing license:
 ## Suggested Execution Order
 
 1. Merge self-serve billing toggle.
-2. Build admin read-only foundation.
-3. Build admin manual billing mutations.
-4. Add observability foundation before public traffic increases.
-5. Add i18n foundation once the main bot flows stabilize.
-6. Finalize source strategy before pushing larger public-launch marketing.
+2. Decide source boundary for hosted-only admin and observability code.
+3. Build admin read-only foundation.
+4. Build audit foundation.
+5. Build admin manual billing mutations.
+6. Add observability foundation before public traffic increases.
+7. Add i18n foundation once the main bot flows stabilize.
+8. Finalize public-facing source strategy before larger launch marketing.
 
 The reason admin comes before i18n is operational: manual billing and support
 will be painful immediately. Language support matters, but it is safer after
