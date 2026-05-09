@@ -86,7 +86,7 @@ describe("/portal command", () => {
     const ctx = createMockCtx({ chatType: "private" });
     await portalHandler(ctx);
     const [text] = ctx.reply.mock.calls[0] as [string];
-    expect(text).toMatch(/managed manually|support|renewal|invoice/i);
+    expect(text).toMatch(/self-serve payments|manual|support/i);
     expect(mockCreateCustomerPortalSession).not.toHaveBeenCalled();
   });
 
@@ -95,7 +95,7 @@ describe("/portal command", () => {
     const ctx = createMockCtx({ chatType: "private" });
     await portalHandler(ctx);
     const [text] = ctx.reply.mock.calls[0] as [string];
-    expect(text).toMatch(/managed manually|support|payment/i);
+    expect(text).toMatch(/self-serve payments|manual|support/i);
     expect(mockCreateCustomerPortalSession).not.toHaveBeenCalled();
   });
 
@@ -165,7 +165,19 @@ describe("portalCallbackHandler (bill:portal)", () => {
     await portalCallbackHandler(ctx);
     expect(ctx.answerCallbackQuery).toHaveBeenCalled();
     const [text] = ctx.reply.mock.calls[0] as [string];
-    expect(text).toMatch(/managed manually|support|renewal/i);
+    expect(text).toMatch(/self-serve payments|manual|support/i);
+    expect(mockCreateCustomerPortalSession).not.toHaveBeenCalled();
+  });
+
+  it("answers callback and shows manual billing support message when billing provider is disabled", async () => {
+    mockLoadConfig.mockReturnValue({ appMode: "hosted", billingProvider: "none" });
+    const ctx = createMockCtx({ chatType: "private" });
+
+    await portalCallbackHandler(ctx);
+
+    expect(ctx.answerCallbackQuery).toHaveBeenCalled();
+    const [text] = ctx.reply.mock.calls[0] as [string];
+    expect(text).toMatch(/self-serve payments|manual|support/i);
     expect(mockCreateCustomerPortalSession).not.toHaveBeenCalled();
   });
 
