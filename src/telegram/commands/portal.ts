@@ -5,6 +5,7 @@ import { getBillingOrganizationForUser } from "../../tenant/currentOrganization.
 import { createCustomerPortalSession } from "../../billing/customerPortal.js";
 import { buildUpgradePlanKeyboard } from "./upgrade.js";
 import { getLogger } from "../../utils/logger.js";
+import { isSelfServeBillingEnabled, MANUAL_BILLING_MESSAGE } from "../../billing/selfServe.js";
 
 const SELF_HOSTED_MESSAGE =
   "ℹ️ Billing is not enabled in self-hosted mode. /portal is only available on the hosted service.";
@@ -13,9 +14,6 @@ const BILLING_FORBIDDEN_MESSAGE = "❌ Billing management requires workspace own
 
 const NO_CUSTOMER_TEXT =
   "ℹ️ You don't have an active billing account yet.\n\nUse /upgrade to choose a plan and start a subscription.\n\n<b>Choose a plan:</b>";
-
-const MANUAL_BILLING_TEXT =
-  "ℹ️ This workspace is managed manually during the hosted beta.\n\nContact support for renewal, cancellation, invoice, or payment questions.";
 
 const PORTAL_TEXT =
   "<b>🧾 Billing Portal</b>\n\nTap below to manage your subscription, view invoices, or update payment details. This link expires in 5 minutes.";
@@ -38,8 +36,11 @@ export async function portalHandler(ctx: Context): Promise<void> {
       return;
     }
 
-    if (isManualBillingPortal(config.billingProvider, organization)) {
-      await ctx.reply(MANUAL_BILLING_TEXT);
+    if (
+      !isSelfServeBillingEnabled(config) ||
+      isManualBillingPortal(config.billingProvider, organization)
+    ) {
+      await ctx.reply(MANUAL_BILLING_MESSAGE);
       return;
     }
 
@@ -81,9 +82,12 @@ export async function portalCallbackHandler(ctx: CallbackQueryContext<Context>):
       return;
     }
 
-    if (isManualBillingPortal(config.billingProvider, organization)) {
+    if (
+      !isSelfServeBillingEnabled(config) ||
+      isManualBillingPortal(config.billingProvider, organization)
+    ) {
       await ctx.answerCallbackQuery();
-      await ctx.reply(MANUAL_BILLING_TEXT);
+      await ctx.reply(MANUAL_BILLING_MESSAGE);
       return;
     }
 

@@ -12,6 +12,7 @@ import { getOrganizationStorageUsage } from "../../db/repos/storageUsage.js";
 import { getOrganizationUsageMonth, usageMonthForDate } from "../../db/repos/usage.js";
 import { getLogger } from "../../utils/logger.js";
 import { CB_BILLING_UPGRADE, CB_BILLING_PORTAL } from "../callbacks.js";
+import { isSelfServeBillingEnabled } from "../../billing/selfServe.js";
 
 const SELF_HOSTED_MESSAGE =
   "ℹ️ Billing is not enabled in self-hosted mode. /billing is only available on the hosted service.";
@@ -22,7 +23,8 @@ const NO_ORGANIZATION_MESSAGE =
 export async function billingHandler(ctx: Context): Promise<void> {
   if (!ctx.from) return;
 
-  if (loadConfig().appMode !== "hosted") {
+  const config = loadConfig();
+  if (config.appMode !== "hosted") {
     await ctx.reply(SELF_HOSTED_MESSAGE);
     return;
   }
@@ -58,7 +60,7 @@ export async function billingHandler(ctx: Context): Promise<void> {
       aliasesUsed,
     });
 
-    if (!billingOrganization) {
+    if (!billingOrganization || !isSelfServeBillingEnabled(config)) {
       await ctx.reply(text, { parse_mode: "HTML" });
       return;
     }
