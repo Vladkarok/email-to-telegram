@@ -8,8 +8,9 @@ import { getLogger } from "../../utils/logger.js";
 import { escapeHtml } from "../../utils/html.js";
 import { CB_UPGRADE_PLAN } from "../callbacks.js";
 import {
-  canUseSelfServeBilling,
+  isManualBillingOrganization,
   isSelfServeBillingEnabled,
+  MANUAL_BILLING_ALERT,
   MANUAL_BILLING_MESSAGE,
 } from "../../billing/selfServe.js";
 
@@ -61,7 +62,7 @@ export async function upgradeHandler(ctx: Context): Promise<void> {
       await ctx.reply(BILLING_FORBIDDEN_MESSAGE);
       return;
     }
-    if (!canUseSelfServeBilling(config, organization)) {
+    if (isManualBillingOrganization(organization)) {
       await ctx.reply(MANUAL_BILLING_MESSAGE);
       return;
     }
@@ -101,7 +102,7 @@ export async function upgradeCallbackHandler(ctx: CallbackQueryContext<Context>)
       await ctx.answerCallbackQuery({ text: BILLING_FORBIDDEN_MESSAGE, show_alert: true });
       return;
     }
-    if (!canUseSelfServeBilling(config, organization)) {
+    if (isManualBillingOrganization(organization)) {
       await ctx.answerCallbackQuery();
       await ctx.reply(MANUAL_BILLING_MESSAGE);
       return;
@@ -137,7 +138,7 @@ export async function upgradePlanCallbackHandler(
   }
   if (!isSelfServeBillingEnabled(config)) {
     await ctx.answerCallbackQuery({
-      text: "Self-serve payments are temporarily unavailable.",
+      text: MANUAL_BILLING_ALERT,
       show_alert: true,
     });
     return;
@@ -156,9 +157,9 @@ export async function upgradePlanCallbackHandler(
       await ctx.answerCallbackQuery({ text: BILLING_FORBIDDEN_MESSAGE, show_alert: true });
       return;
     }
-    if (!canUseSelfServeBilling(config, organization)) {
+    if (isManualBillingOrganization(organization)) {
       await ctx.answerCallbackQuery({
-        text: "Self-serve payments are temporarily unavailable for this workspace.",
+        text: MANUAL_BILLING_ALERT,
         show_alert: true,
       });
       return;

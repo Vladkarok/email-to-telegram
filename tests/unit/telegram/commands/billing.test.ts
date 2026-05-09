@@ -172,6 +172,7 @@ describe("/billing command", () => {
       { parse_mode?: string; reply_markup?: unknown },
     ];
     expect(text).toContain("Acme Co");
+    expect(text).toMatch(/self-serve payments|manual|support/i);
     expect(opts.parse_mode).toBe("HTML");
     expect(opts.reply_markup).toBeUndefined();
   });
@@ -202,6 +203,7 @@ describe("/billing command", () => {
       { parse_mode?: string; reply_markup?: unknown },
     ];
     expect(text).toContain("Acme Co");
+    expect(text).toMatch(/self-serve payments|manual|support/i);
     expect(opts.parse_mode).toBe("HTML");
     expect(opts.reply_markup).toBeUndefined();
   });
