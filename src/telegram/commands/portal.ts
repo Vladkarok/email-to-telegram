@@ -5,7 +5,7 @@ import { getBillingOrganizationForUser } from "../../tenant/currentOrganization.
 import { createCustomerPortalSession } from "../../billing/customerPortal.js";
 import { buildUpgradePlanKeyboard } from "./upgrade.js";
 import { getLogger } from "../../utils/logger.js";
-import { isSelfServeBillingEnabled, MANUAL_BILLING_MESSAGE } from "../../billing/selfServe.js";
+import { canUseSelfServeBilling, MANUAL_BILLING_MESSAGE } from "../../billing/selfServe.js";
 
 const SELF_HOSTED_MESSAGE =
   "ℹ️ Billing is not enabled in self-hosted mode. /portal is only available on the hosted service.";
@@ -36,10 +36,7 @@ export async function portalHandler(ctx: Context): Promise<void> {
       return;
     }
 
-    if (
-      !isSelfServeBillingEnabled(config) ||
-      isManualBillingPortal(config.billingProvider, organization)
-    ) {
+    if (!canUseSelfServeBilling(config, organization)) {
       await ctx.reply(MANUAL_BILLING_MESSAGE);
       return;
     }
@@ -82,10 +79,7 @@ export async function portalCallbackHandler(ctx: CallbackQueryContext<Context>):
       return;
     }
 
-    if (
-      !isSelfServeBillingEnabled(config) ||
-      isManualBillingPortal(config.billingProvider, organization)
-    ) {
+    if (!canUseSelfServeBilling(config, organization)) {
       await ctx.answerCallbackQuery();
       await ctx.reply(MANUAL_BILLING_MESSAGE);
       return;
@@ -111,12 +105,4 @@ export async function portalCallbackHandler(ctx: CallbackQueryContext<Context>):
       show_alert: true,
     });
   }
-}
-
-function isManualBillingPortal(
-  billingProvider: string,
-  organization: { planCode: string; stripeCustomerId?: string | null },
-): boolean {
-  if (billingProvider !== "stripe") return true;
-  return organization.planCode !== "free" && !organization.stripeCustomerId;
 }

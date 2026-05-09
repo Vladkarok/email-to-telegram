@@ -169,6 +169,18 @@ describe("portalCallbackHandler (bill:portal)", () => {
     expect(mockCreateCustomerPortalSession).not.toHaveBeenCalled();
   });
 
+  it("answers callback and shows manual billing support message when billing provider is disabled", async () => {
+    mockLoadConfig.mockReturnValue({ appMode: "hosted", billingProvider: "none" });
+    const ctx = createMockCtx({ chatType: "private" });
+
+    await portalCallbackHandler(ctx);
+
+    expect(ctx.answerCallbackQuery).toHaveBeenCalled();
+    const [text] = ctx.reply.mock.calls[0] as [string];
+    expect(text).toMatch(/self-serve payments|manual|support/i);
+    expect(mockCreateCustomerPortalSession).not.toHaveBeenCalled();
+  });
+
   it("answers with show_alert on error", async () => {
     mockGetBillingOrganizationForUser.mockRejectedValue(new Error("error"));
     const mockError = vi.fn();

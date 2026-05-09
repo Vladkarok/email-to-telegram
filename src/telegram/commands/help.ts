@@ -19,6 +19,7 @@ export async function helpHandler(ctx: Context): Promise<void> {
 /billing — workspace plan and quota status
 /plan — show your current plan and limits
 /usage — show this month's accepted/delivered/failed/rejected counts and quotas`;
+  const billingSection = billingHelp ? `\n${billingHelp}\n` : "";
 
   await ctx.reply(
     `<b>📖 Help</b>
@@ -42,8 +43,7 @@ Only senders matching an allow rule can deliver mail to an alias.
 /allow list &lt;alias&gt;
 /allow add &lt;alias&gt; &lt;email_or_domain&gt;
 /allow remove &lt;alias&gt; &lt;email_or_domain&gt;
-
-${billingHelp ? `${billingHelp}\n\n` : ""}
+${billingSection}
 /help — show this message
 
 ${safetyDisclaimerText()}
