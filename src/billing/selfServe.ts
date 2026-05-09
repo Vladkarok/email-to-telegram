@@ -8,3 +8,17 @@ export function isSelfServeBillingEnabled(
 ): boolean {
   return config.appMode === "hosted" && config.billingProvider === "stripe";
 }
+
+export function isManualBillingOrganization(organization: {
+  planCode: string;
+  stripeCustomerId?: string | null;
+}): boolean {
+  return organization.planCode !== "free" && !organization.stripeCustomerId;
+}
+
+export function canUseSelfServeBilling(
+  config: Pick<AppConfig, "appMode" | "billingProvider">,
+  organization: { planCode: string; stripeCustomerId?: string | null },
+): boolean {
+  return isSelfServeBillingEnabled(config) && !isManualBillingOrganization(organization);
+}

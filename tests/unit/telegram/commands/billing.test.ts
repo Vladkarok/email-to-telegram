@@ -176,6 +176,36 @@ describe("/billing command", () => {
     expect(opts.reply_markup).toBeUndefined();
   });
 
+  it("omits billing action buttons for manual paid organizations even when Stripe is enabled", async () => {
+    mockGetPrimaryOrganizationForUser.mockResolvedValue({
+      id: "org-1",
+      name: "Acme Co",
+      planCode: "pro",
+      subscriptionStatus: "active",
+      stripeCustomerId: null,
+      currentPeriodEnd: null,
+    });
+    mockGetBillingOrganizationForUser.mockResolvedValue({
+      id: "org-1",
+      name: "Acme Co",
+      planCode: "pro",
+      subscriptionStatus: "active",
+      stripeCustomerId: null,
+      currentPeriodEnd: null,
+    });
+
+    const ctx = createMockCtx({ chatType: "private" });
+    await billingHandler(ctx);
+
+    const [text, opts] = ctx.reply.mock.calls[0] as [
+      string,
+      { parse_mode?: string; reply_markup?: unknown },
+    ];
+    expect(text).toContain("Acme Co");
+    expect(opts.parse_mode).toBe("HTML");
+    expect(opts.reply_markup).toBeUndefined();
+  });
+
   it("shows monthly accepted count and current alias usage", async () => {
     mockGetPrimaryOrganizationForUser.mockResolvedValue({
       id: "org-1",
