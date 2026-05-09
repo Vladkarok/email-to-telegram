@@ -15,6 +15,8 @@ complete.
   privacy and data request language
 - [`launch-checklist.md`](./launch-checklist.md): final public policy and live
   billing readiness checklist
+- [`realization-plan.md`](./realization-plan.md): implementation plan for admin,
+  localization, observability, and source strategy
 
 ## Required Public Contacts
 
