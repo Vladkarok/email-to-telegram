@@ -35,27 +35,28 @@ Recommended branch order:
    - Status: implemented separately.
    - Goal: Stripe UI is hidden when `BILLING_PROVIDER=none`.
 
-2. `codex/operator-admin-foundation`
+2. `codex/license-source-strategy`
+   - Goal: document and apply the chosen license/source model before hosted-only
+     admin and observability code is implemented.
+
+3. `codex/operator-admin-foundation`
    - Goal: authenticated internal web admin with read-only customer search and
      organization detail pages.
 
-3. `codex/operator-audit-foundation`
+4. `codex/operator-audit-foundation`
    - Goal: audit event shape, operator identity/source, and redaction rules for
      admin mutations before write access exists.
 
-4. `codex/operator-admin-manual-billing`
+5. `codex/operator-admin-manual-billing`
    - Goal: grant, renew, downgrade, and audit manual plans from the admin UI.
-
-5. `codex/i18n-foundation`
-   - Goal: message catalog and locale selection for English, Ukrainian, and
-     Russian.
 
 6. `codex/observability-foundation`
    - Goal: structured audit events, Prometheus metrics endpoint, and operator
      dashboard/runbook.
 
-7. `codex/license-source-strategy`
-   - Goal: document and apply the chosen license/source model.
+7. `codex/i18n-foundation`
+   - Goal: message catalog and locale selection for English and Ukrainian, with
+     Russian documented as a deferred product decision.
 
 Each PR should include tests and a short operator note. Avoid combining admin,
 i18n, observability, and license changes into one PR.
@@ -87,15 +88,27 @@ This is enough for a one-operator beta. Later, replace with:
 - Tailscale/Cloudflare Access in front of `/admin`
 - per-operator audit identity
 
+Session and cookie implementation:
+
+- add `@fastify/cookie`
+- add `@fastify/session`
+- use the default in-memory session store for the single-operator beta
+- enforce `ADMIN_SESSION_TTL_MINUTES` through session cookie max age and a
+  server-side login timestamp check
+- rotate all admin sessions by changing `ADMIN_SECRET` and restarting the app
+- document that in-memory sessions are intentionally cleared on restart
+
 Minimum browser-security requirements for the first admin PR:
 
 - login endpoint rate limit by IP and by submitted secret fingerprint
 - secure session cookie with `HttpOnly`, `Secure`, and `SameSite=Strict`
-- CSRF token or strict origin/referrer validation for every mutating form
+- CSRF tokens for every mutating form, stored in the admin session and submitted
+  through hidden form fields
 - short session TTL and explicit logout
 - constant-time secret comparison
 - no admin routes when `ADMIN_ENABLED` is false
-- production startup fails if admin is enabled without HTTPS public base URL
+- extend the existing production `PUBLIC_BASE_URL` HTTPS startup check so admin
+  cannot be enabled unless the public base URL is HTTPS
 
 Manual billing mutations additionally require a fresh confirmation step or
 re-auth check before downgrade, plan grant, or renewal.
@@ -107,7 +120,8 @@ Branch: `codex/operator-admin-foundation`
 Scope:
 
 - add `ADMIN_ENABLED`, `ADMIN_SECRET`, and `ADMIN_SESSION_TTL_MINUTES`
-- add a small cookie/session helper dependency or local helper explicitly
+- add `@fastify/cookie` and `@fastify/session`
+- validate admin config in `src/config.ts` with the existing Zod env schema
 - add `/admin/login`, `/admin/logout`, `/admin`
 - add `/admin/users` search by Telegram ID or username
 - add `/admin/organizations/:id` read-only detail page
@@ -134,12 +148,18 @@ Branch: `codex/operator-audit-foundation`
 Scope:
 
 - define operator audit event fields before admin mutations exist
+- use the existing `manual_billing_events.operator_source` column explicitly
+  instead of relying on its database default
+- update `src/billing/manual.ts` inputs and `buildEventInput()` so manual
+  billing callers can pass `operatorSource`
 - represent operator source as at least `cli` or `admin`
 - store a safe operator identifier:
   - `cli` for current CLI operations
   - `admin:<stable hash or configured operator id>` for first web admin
 - define redaction rules for payment references, manual notes, tokens, raw
   email content, and customer identifiers
+- preserve and reuse the existing `redactManualBillingForLog()` pattern for CLI
+  logs, and add equivalent redaction for admin logs/audit views
 - add tests proving audit events do not expose sensitive content
 - update manual billing service input so both CLI and admin can pass operator
   source/identity
@@ -166,7 +186,7 @@ Scope:
 - write audit events with `operatorSource=admin`
 - add tests for success, validation failure, duplicate payment reference, and
   forbidden access
-- add CSRF/origin tests for all mutating forms
+- add CSRF token tests for all mutating forms
 
 Key design rule:
 
@@ -196,7 +216,14 @@ Initial locales:
 
 - `en`
 - `uk`
+
+Deferred locale:
+
 - `ru`
+
+Russian should be a deliberate product/support decision, not automatic v1
+scope. Track it in the catalog structure, but do not translate or expose it
+until support capacity and audience policy are clear.
 
 Default:
 
@@ -212,7 +239,9 @@ Branch: `codex/i18n-foundation`
 Scope:
 
 - add `locale` column to `users`
-- add `src/i18n/locales/en.ts`, `uk.ts`, `ru.ts`
+- add a Drizzle migration with nullable `users.locale`; existing users fall
+  back to Telegram `language_code` or English until they choose a language
+- add `src/i18n/locales/en.ts` and `uk.ts`
 - add typed translation keys and interpolation helper
 - add locale middleware or helper that resolves current user locale
 - add `/language` command with inline keyboard
@@ -259,6 +288,7 @@ Scope:
 
 - add `METRICS_ENABLED=true`
 - add `METRICS_TOKEN=<long random value>`
+- add `prom-client`
 - expose `/metrics` in Prometheus text format
 - protect `/metrics` with bearer token unless bound to private network only
 - add process/runtime metrics:
@@ -285,8 +315,14 @@ Scope:
 Logs:
 
 - keep Pino JSON in production
-- add stable event names for billing, inbound rejection, delivery failure, and
-  admin mutations
+- add stable dot-separated event names:
+  - `billing.manual_grant.created`
+  - `billing.manual_grant.idempotent`
+  - `inbound.preflight.rejected`
+  - `inbound.raw.rejected`
+  - `delivery.telegram.failed`
+  - `admin.session.created`
+  - `admin.billing.mutated`
 - include organization ID and alias ID where useful
 - never log raw email content, tokens, payment references, or manual notes
 
@@ -378,13 +414,12 @@ Decision gate before changing license:
 ## Suggested Execution Order
 
 1. Merge self-serve billing toggle.
-2. Decide source boundary for hosted-only admin and observability code.
+2. Merge license/source strategy and decide the hosted-only code boundary.
 3. Build admin read-only foundation.
 4. Build audit foundation.
 5. Build admin manual billing mutations.
 6. Add observability foundation before public traffic increases.
 7. Add i18n foundation once the main bot flows stabilize.
-8. Finalize public-facing source strategy before larger launch marketing.
 
 The reason admin comes before i18n is operational: manual billing and support
 will be painful immediately. Language support matters, but it is safer after
