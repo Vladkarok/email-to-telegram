@@ -17,6 +17,10 @@ describe("escapeHtml", () => {
   it("escapes multiple special chars", () => {
     expect(escapeHtml("<a & b>")).toBe("&lt;a &amp; b&gt;");
   });
+
+  it("escapes single quotes", () => {
+    expect(escapeHtml("it's")).toBe("it&#39;s");
+  });
 });
 
 describe("escapeHtmlAttribute", () => {

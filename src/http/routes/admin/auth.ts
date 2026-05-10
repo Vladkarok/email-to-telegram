@@ -47,6 +47,7 @@ export function requireAdmin(
   return async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     if (!isAdminAuthenticated(req, sessionTtlMinutes)) {
       await reply.redirect("/admin/login");
+      return;
     }
   };
 }
