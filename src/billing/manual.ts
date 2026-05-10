@@ -37,7 +37,7 @@ export interface ManualPlanGrantInput {
   paymentReference: string | null;
   note: string | null;
   keptStripeLink: boolean;
-  operatorSource?: OperatorSource;
+  operatorSource: OperatorSource;
 }
 
 export interface GrantManualOrganizationPlanInput extends ManualPlanGrantInput {
@@ -159,7 +159,7 @@ function buildEventInput(
     paymentReference: input.paymentReference,
     note: input.note,
     keptStripeLink: input.keptStripeLink,
-    operatorSource: input.operatorSource ?? "cli",
+    operatorSource: input.operatorSource,
   };
 }
 
@@ -179,7 +179,7 @@ function summarize(
     note: input.note,
     keptStripeLink: input.keptStripeLink,
     manualBillingEventId,
-    operatorSource: input.operatorSource ?? "cli",
+    operatorSource: input.operatorSource,
   };
 }
 
@@ -231,9 +231,15 @@ export async function grantManualOrganizationPlan(
         },
       );
       if (!created) {
-        // Idempotent replay — return stored event without mutating billing state.
+        // Idempotent replay — stored event data, but current caller's operatorSource.
         const summary = summarizeEvent(event);
-        return { ok: true, idempotent: true, updated: false, ...summary };
+        return {
+          ok: true,
+          idempotent: true,
+          updated: false,
+          ...summary,
+          operatorSource: input.operatorSource,
+        };
       }
       await updateOrganizationBillingState(tx, input.organizationId, buildBillingPatch(input));
       const summary = summarize(input, input.organizationId, telegramUserId, event.id);
@@ -327,8 +333,16 @@ export async function grantManualUserPlan(
         },
       );
       if (!created) {
+        // Idempotent replay — stored event data, but current caller's operatorSource.
         const summary = summarizeEvent(event);
-        return { ok: true, idempotent: true, updated: false, createdOrganization, ...summary };
+        return {
+          ok: true,
+          idempotent: true,
+          updated: false,
+          createdOrganization,
+          ...summary,
+          operatorSource: input.operatorSource,
+        };
       }
       await updateOrganizationBillingState(tx, resolvedOrganizationId, buildBillingPatch(input));
       const summary = summarize(input, resolvedOrganizationId, input.telegramUserId, event.id);

@@ -100,6 +100,7 @@ describe("grantManualOrganizationPlan", () => {
       paymentReference: null,
       note: null,
       keptStripeLink: false,
+      operatorSource: "cli",
     });
     expect(result).toEqual({ ok: false, code: "organization_not_found" });
     expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
@@ -115,6 +116,7 @@ describe("grantManualOrganizationPlan", () => {
       paymentReference: null,
       note: null,
       keptStripeLink: true,
+      operatorSource: "cli",
     });
     expect(result).toEqual({ ok: false, code: "keep_stripe_link_not_allowed" });
   });
@@ -128,6 +130,7 @@ describe("grantManualOrganizationPlan", () => {
       paymentReference: null,
       note: null,
       keptStripeLink: true,
+      operatorSource: "cli",
     });
     expect(result).toEqual({ ok: false, code: "keep_stripe_link_not_allowed" });
   });
@@ -141,6 +144,7 @@ describe("grantManualOrganizationPlan", () => {
       paymentReference: null,
       note: null,
       keptStripeLink: false,
+      operatorSource: "cli",
     });
     expect(result).toEqual({ ok: false, code: "free_status_required" });
   });
@@ -154,6 +158,7 @@ describe("grantManualOrganizationPlan", () => {
       paymentReference: null,
       note: null,
       keptStripeLink: false,
+      operatorSource: "cli",
     });
     expect(result).toEqual({ ok: false, code: "paid_through_required" });
   });
@@ -167,6 +172,7 @@ describe("grantManualOrganizationPlan", () => {
       paymentReference: null,
       note: null,
       keptStripeLink: false,
+      operatorSource: "cli",
     });
     expect(result.ok).toBe(true);
     expect(mockUpdateOrganizationBillingState).toHaveBeenCalledWith(
@@ -190,6 +196,7 @@ describe("grantManualOrganizationPlan", () => {
       paymentReference: "wise-2026-04-001",
       note: "Manual Wise payment",
       keptStripeLink: false,
+      operatorSource: "cli",
     });
 
     expect(result).toMatchObject({
@@ -202,6 +209,7 @@ describe("grantManualOrganizationPlan", () => {
       paymentReference: "wise-2026-04-001",
       keptStripeLink: false,
       manualBillingEventId: "event-1",
+      operatorSource: "cli",
     });
 
     expect(mockUpdateOrganizationBillingState).toHaveBeenCalledWith(
@@ -224,6 +232,7 @@ describe("grantManualOrganizationPlan", () => {
         paymentReference: "wise-2026-04-001",
         note: "Manual Wise payment",
         keptStripeLink: false,
+        operatorSource: "cli",
       }),
     );
   });
@@ -237,6 +246,7 @@ describe("grantManualOrganizationPlan", () => {
       paymentReference: null,
       note: null,
       keptStripeLink: false,
+      operatorSource: "cli",
     });
     expect(mockUpdateOrganizationBillingState).toHaveBeenCalledWith(
       expect.anything(),
@@ -260,6 +270,7 @@ describe("grantManualOrganizationPlan", () => {
       paymentReference: null,
       note: null,
       keptStripeLink: true,
+      operatorSource: "cli",
     });
     const call = mockUpdateOrganizationBillingState.mock.calls[0][2] as Record<string, unknown>;
     expect(call["stripeCustomerId"]).toBeUndefined();
@@ -278,6 +289,7 @@ describe("grantManualOrganizationPlan", () => {
         paymentReference: "wise-2026-04-001",
         note: "Original grant",
         keptStripeLink: false,
+        operatorSource: "cli",
       },
       created: false,
     });
@@ -289,6 +301,7 @@ describe("grantManualOrganizationPlan", () => {
       paymentReference: "wise-2026-04-001",
       note: null,
       keptStripeLink: false,
+      operatorSource: "cli",
     });
     expect(result).toMatchObject({
       ok: true,
@@ -302,6 +315,39 @@ describe("grantManualOrganizationPlan", () => {
     expect(mockCreateManualBillingEvent).not.toHaveBeenCalled();
     // Idempotent path must NOT mutate billing state
     expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
+  it("idempotent replay uses the current caller's operatorSource, not the stored event's", async () => {
+    mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
+      event: {
+        id: "event-existing",
+        organizationId: "org-1",
+        telegramUserId: null,
+        planCode: "personal",
+        subscriptionStatus: "active",
+        paidThroughAt: new Date("2026-05-10T00:00:00.000Z"),
+        paymentReference: "wise-2026-04-001",
+        note: null,
+        keptStripeLink: false,
+        operatorSource: "cli",
+      },
+      created: false,
+    });
+    const result = await grantManualOrganizationPlan(fakeDb, {
+      organizationId: "org-1",
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "wise-2026-04-001",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "admin:abcdef1234567890",
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      idempotent: true,
+      operatorSource: "admin:abcdef1234567890",
+    });
   });
 });
 
@@ -345,6 +391,7 @@ describe("grantManualUserPlan", () => {
       keptStripeLink: false,
       organizationId: null,
       createNewOrganization: false,
+      operatorSource: "cli",
     });
 
     expect(result.ok).toBe(true);
@@ -376,6 +423,7 @@ describe("grantManualUserPlan", () => {
       keptStripeLink: false,
       organizationId: null,
       createNewOrganization: false,
+      operatorSource: "cli",
     });
 
     expect(result.ok).toBe(true);
@@ -401,6 +449,7 @@ describe("grantManualUserPlan", () => {
       keptStripeLink: false,
       organizationId: null,
       createNewOrganization: false,
+      operatorSource: "cli",
     });
 
     expect(result).toMatchObject({ ok: false, code: "ambiguous_organization" });
@@ -423,6 +472,7 @@ describe("grantManualUserPlan", () => {
       keptStripeLink: false,
       organizationId: null,
       createNewOrganization: false,
+      operatorSource: "cli",
     });
 
     expect(result).toMatchObject({ ok: false, code: "member_only_memberships" });
@@ -452,6 +502,7 @@ describe("grantManualUserPlan", () => {
       keptStripeLink: false,
       organizationId: null,
       createNewOrganization: true,
+      operatorSource: "cli",
     });
 
     expect(result.ok).toBe(true);
@@ -473,6 +524,7 @@ describe("grantManualUserPlan", () => {
       keptStripeLink: false,
       organizationId: "org-x",
       createNewOrganization: false,
+      operatorSource: "cli",
     });
 
     expect(result).toMatchObject({ ok: false, code: "user_not_in_organization" });
