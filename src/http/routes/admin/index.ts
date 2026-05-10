@@ -265,10 +265,20 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
       const paidThroughRaw = getString("paid_through") ?? "";
       const paymentReferenceRaw = getString("payment_reference") ?? "";
       const noteRaw = getString("note") ?? "";
+
+      // Checkboxes send their form `value` attribute when checked, nothing when unchecked.
+      // Parsed early so renderError can preserve the submitted checkbox state on re-render.
+      const keepStripeLinkRaw = body?.["keep_stripe_link"];
+      const confirmDowngradeRaw = body?.["_confirm_downgrade"];
+      const keptStripeLink = keepStripeLinkRaw === "on";
+      const confirmDowngrade = confirmDowngradeRaw === "yes";
+
       const renderError = async (message: string): Promise<void> => {
         const detail = await buildOrganizationDetail(orgId);
         const flash: BillingFlash = { type: "error", message };
-        await reply.type("text/html").send(renderOrganizationDetailPage(csrfToken, detail, flash));
+        await reply
+          .type("text/html")
+          .send(renderOrganizationDetailPage(csrfToken, detail, flash, keptStripeLink));
       };
 
       const allFields = [
@@ -285,10 +295,7 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         return;
       }
 
-      // Checkboxes send their form `value` attribute when checked, nothing when unchecked.
-      // Reject any scalar that isn't the exact expected value or absent — fail closed.
-      const keepStripeLinkRaw = body?.["keep_stripe_link"];
-      const confirmDowngradeRaw = body?.["_confirm_downgrade"];
+      // Reject any scalar checkbox value that isn't the expected sentinel — fail closed.
       if (keepStripeLinkRaw !== undefined && keepStripeLinkRaw !== "on") {
         await renderError("Invalid request: unexpected value for keep_stripe_link.");
         return;
@@ -297,8 +304,6 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         await renderError("Invalid request: unexpected value for confirmation field.");
         return;
       }
-      const keptStripeLink = keepStripeLinkRaw === "on";
-      const confirmDowngrade = confirmDowngradeRaw === "yes";
 
       if (!VALID_PLAN_CODES.includes(planRaw)) {
         await renderError("Invalid plan selected.");
@@ -383,7 +388,11 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         return;
       }
 
-      logger.info(redactManualBillingForLog(result), "admin.billing.mutated");
+      if (!result.idempotent) {
+        logger.info(redactManualBillingForLog(result), "admin.billing.mutated");
+      } else {
+        logger.info({ organizationId: orgId }, "admin.billing.idempotent");
+      }
       const flashParam = result.idempotent ? "idempotent" : "granted";
       await reply.redirect(`/admin/organizations/${orgId}?billing=${flashParam}`);
     },
