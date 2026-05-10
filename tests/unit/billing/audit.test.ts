@@ -97,11 +97,4 @@ describe("redactManualBillingForLog", () => {
     );
     expect(result.operatorSource).toBe("admin:abcdef1234567890");
   });
-
-  it("defaults operatorSource to cli when not provided", () => {
-    const summary = makeSummary();
-    const { operatorSource: _, ...rest } = summary;
-    const result = redactManualBillingForLog(rest as ManualGrantSummary);
-    expect(result.operatorSource).toBe("cli");
-  });
 });

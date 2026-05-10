@@ -12,9 +12,13 @@ import type { ManualGrantSummary } from "./manual.js";
 export type OperatorSource = "cli" | `admin:${string}`;
 
 /**
- * Derives a stable, non-reversible operator fingerprint from the admin secret.
- * Returns the first 16 hex chars of SHA-256(secret) — enough to distinguish
- * operators in logs without revealing the secret.
+ * Derives a stable credential fingerprint from the admin secret.
+ * Returns "admin:<first-16-hex-chars-of-SHA256(secret)>".
+ *
+ * This identifies WHICH admin credential was used, not individual operators.
+ * If multiple humans share ADMIN_SECRET, all their actions produce the same
+ * fingerprint. Rotating the secret makes the same human appear as a new actor.
+ * Treat this as a credential-presence indicator, not per-person attribution.
  */
 export function adminOperatorSource(adminSecret: string): OperatorSource {
   const hash = createHash("sha256").update(adminSecret).digest("hex").slice(0, 16);
