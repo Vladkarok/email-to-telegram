@@ -338,6 +338,12 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         return;
       }
 
+      // _org_version is required: omitting it would bypass the concurrency guard.
+      if (!orgVersionRaw) {
+        await renderError("Missing page version token. Please reload and resubmit.");
+        return;
+      }
+
       const paymentReference = paymentReferenceRaw;
       const note = noteRaw || null;
 
@@ -364,20 +370,6 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
       }
 
       const db = getDb();
-
-      // Stale-page guard: re-fetch the org and compare its updatedAt to the version token
-      // embedded in the form at render time. A mismatch means billing state changed since
-      // the operator loaded the page — reject to prevent clobbering a newer decision.
-      if (orgVersionRaw) {
-        const currentOrg = await findOrganizationById(db, orgId);
-        if (currentOrg && currentOrg.updatedAt.toISOString() !== orgVersionRaw) {
-          await renderError(
-            "Organization billing state was updated since this page was loaded. Please reload and review before resubmitting.",
-          );
-          return;
-        }
-      }
-
       const result = await grantManualOrganizationPlan(db, {
         organizationId: orgId,
         planCode: planRaw as PlanCode,
@@ -387,6 +379,7 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         note,
         keptStripeLink,
         operatorSource: adminOperatorSource(loginSecret),
+        expectedUpdatedAt: orgVersionRaw,
       });
 
       if (!result.ok) {
@@ -399,6 +392,8 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
             'Paid plans cannot use "free" subscription status.',
           paid_through_required: "Paid-through date is required for active paid plans.",
           keep_stripe_link_not_allowed: "Keep Stripe link is only allowed for the Business plan.",
+          concurrent_update:
+            "Organization billing state was updated since this page was loaded. Please reload and review before resubmitting.",
         };
         await renderError(errorMessages[result.code] ?? result.code);
         return;
