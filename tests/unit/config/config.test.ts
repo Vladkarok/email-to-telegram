@@ -312,14 +312,14 @@ describe("loadConfig", () => {
   it("rejects admin without a secret", () => {
     process.env["ADMIN_ENABLED"] = "true";
 
-    expect(() => loadConfig()).toThrow(/ADMIN_SECRET must be at least 16 characters/);
+    expect(() => loadConfig()).toThrow(/ADMIN_SECRET must be at least 32 characters/);
   });
 
   it("rejects admin with a short secret", () => {
     process.env["ADMIN_ENABLED"] = "true";
     process.env["ADMIN_SECRET"] = "short";
 
-    expect(() => loadConfig()).toThrow(/ADMIN_SECRET must be at least 16 characters/);
+    expect(() => loadConfig()).toThrow(/ADMIN_SECRET must be at least 32 characters/);
   });
 
   it("rejects admin with short session secret", () => {
@@ -327,7 +327,7 @@ describe("loadConfig", () => {
     process.env["ADMIN_SECRET"] = "a".repeat(32);
     process.env["ADMIN_SESSION_SECRET"] = "short";
 
-    expect(() => loadConfig()).toThrow(/ADMIN_SESSION_SECRET must be at least 16 characters/);
+    expect(() => loadConfig()).toThrow(/ADMIN_SESSION_SECRET must be at least 32 characters/);
   });
 
   it("rejects admin with non-HTTPS in production", () => {
