@@ -107,7 +107,7 @@ describe("grantManualOrganizationPlan", () => {
       planCode: "pro",
       subscriptionStatus: "active",
       paidThroughAt: PAID_THROUGH,
-      paymentReference: null,
+      paymentReference: "ref-notfound-001",
       note: null,
       keptStripeLink: false,
       operatorSource: "cli",
@@ -115,6 +115,21 @@ describe("grantManualOrganizationPlan", () => {
     expect(result).toEqual({ ok: false, code: "organization_not_found" });
     expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
     expect(mockCreateManualBillingEvent).not.toHaveBeenCalled();
+  });
+
+  it("rejects when paymentReference is missing at service layer", async () => {
+    const result = await grantManualOrganizationPlan(fakeDb, {
+      organizationId: "org-1",
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "" as unknown as string,
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    });
+    expect(result).toEqual({ ok: false, code: "payment_reference_required" });
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
   });
 
   it("rejects keep_stripe_link for non-business plans", async () => {
@@ -179,7 +194,7 @@ describe("grantManualOrganizationPlan", () => {
       planCode: "business",
       subscriptionStatus: "active",
       paidThroughAt: null,
-      paymentReference: null,
+      paymentReference: "business-ref-001",
       note: null,
       keptStripeLink: false,
       operatorSource: "cli",
@@ -309,14 +324,14 @@ describe("grantManualOrganizationPlan", () => {
       paidThroughAt: null,
       updatedAt: orgUpdatedAt,
     });
-    mockCreateManualBillingEvent.mockResolvedValue({ id: "evt-123" });
+    // Default mockFindOrCreateManualBillingEvent returns { created: true }
 
     const result = await grantManualOrganizationPlan(fakeDb, {
       organizationId: "org-1",
       planCode: "pro",
       subscriptionStatus: "active",
       paidThroughAt: new Date("2026-12-31"),
-      paymentReference: null,
+      paymentReference: "version-match-ref-001",
       note: null,
       keptStripeLink: false,
       operatorSource: "cli",
@@ -333,7 +348,7 @@ describe("grantManualOrganizationPlan", () => {
       planCode: "free",
       subscriptionStatus: "free",
       paidThroughAt: null,
-      paymentReference: null,
+      paymentReference: "downgrade-ref-001",
       note: null,
       keptStripeLink: false,
       operatorSource: "cli",
@@ -357,7 +372,7 @@ describe("grantManualOrganizationPlan", () => {
       planCode: "business",
       subscriptionStatus: "active",
       paidThroughAt: null,
-      paymentReference: null,
+      paymentReference: "keep-stripe-ref-001",
       note: null,
       keptStripeLink: true,
       operatorSource: "cli",
@@ -506,7 +521,7 @@ describe("grantManualUserPlan", () => {
       planCode: "personal",
       subscriptionStatus: "active",
       paidThroughAt: PAID_THROUGH,
-      paymentReference: null,
+      paymentReference: "user-plan-ref-001",
       note: null,
       keptStripeLink: false,
       organizationId: null,
@@ -538,7 +553,7 @@ describe("grantManualUserPlan", () => {
       planCode: "pro",
       subscriptionStatus: "active",
       paidThroughAt: PAID_THROUGH,
-      paymentReference: null,
+      paymentReference: "user-plan-ref-001",
       note: null,
       keptStripeLink: false,
       organizationId: null,
@@ -564,7 +579,7 @@ describe("grantManualUserPlan", () => {
       planCode: "pro",
       subscriptionStatus: "active",
       paidThroughAt: PAID_THROUGH,
-      paymentReference: null,
+      paymentReference: "user-plan-ref-001",
       note: null,
       keptStripeLink: false,
       organizationId: null,
@@ -587,7 +602,7 @@ describe("grantManualUserPlan", () => {
       planCode: "pro",
       subscriptionStatus: "active",
       paidThroughAt: PAID_THROUGH,
-      paymentReference: null,
+      paymentReference: "user-plan-ref-001",
       note: null,
       keptStripeLink: false,
       organizationId: null,
@@ -617,7 +632,7 @@ describe("grantManualUserPlan", () => {
       planCode: "pro",
       subscriptionStatus: "active",
       paidThroughAt: PAID_THROUGH,
-      paymentReference: null,
+      paymentReference: "user-plan-ref-001",
       note: null,
       keptStripeLink: false,
       organizationId: null,
@@ -639,7 +654,7 @@ describe("grantManualUserPlan", () => {
       planCode: "pro",
       subscriptionStatus: "active",
       paidThroughAt: PAID_THROUGH,
-      paymentReference: null,
+      paymentReference: "user-plan-ref-001",
       note: null,
       keptStripeLink: false,
       organizationId: "org-x",

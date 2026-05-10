@@ -1115,6 +1115,34 @@ describe("admin billing mutations", () => {
     expect(res.headers["location"]).toBe(`/admin/organizations/${ORG_ID}?billing=granted`);
   });
 
+  it("preserves submitted _org_version in re-rendered form on validation error (stale-guard regression)", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const csrf = await getCsrfToken(app, cookie);
+
+    // Stale version — different from MOCK_ORG_UPDATED_AT ("2026-01-15T10:00:00.000Z")
+    const staleOrgVersion = "2025-03-01T00:00:00.000Z";
+
+    mockGrantManualOrganizationPlan.mockResolvedValue({
+      ok: false,
+      code: "paid_through_required",
+    });
+    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(staleOrgVersion)}&plan=personal&status=active&payment_reference=wise-test-stale`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    // Re-rendered form must show the submitted stale version, not the fresh DB value
+    const rerenderedVersion = extractOrgVersion(res.body);
+    expect(rerenderedVersion).toBe(staleOrgVersion);
+    expect(rerenderedVersion).not.toBe(MOCK_ORG_UPDATED_AT.toISOString());
+  });
+
   it("does not log billing.mutated for idempotent replay (redirects with idempotent flash)", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);

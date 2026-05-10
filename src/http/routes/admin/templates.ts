@@ -280,6 +280,7 @@ export interface BillingFormOverrides {
   paidThrough: string;
   paymentReference: string;
   note: string;
+  orgVersion: string;
 }
 
 function renderBillingForm(
@@ -331,7 +332,7 @@ function renderBillingForm(
     ${flashHtml}
     <form method="post" action="/admin/organizations/${escapeHtmlAttribute(org.id)}/billing">
       <input type="hidden" name="_csrf" value="${escapeHtmlAttribute(csrfToken)}" />
-      <input type="hidden" name="_org_version" value="${escapeHtmlAttribute(org.updatedAt)}" />
+      <input type="hidden" name="_org_version" value="${escapeHtmlAttribute(submittedValues?.orgVersion ?? org.updatedAt)}" />
       <div style="margin-bottom:12px;">
         <label for="bf-plan" style="display:block;margin-bottom:4px;" class="muted">Plan</label>
         <select id="bf-plan" name="plan">${planOptions}</select>
