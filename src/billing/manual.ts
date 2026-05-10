@@ -71,7 +71,9 @@ export type ManualGrantErrorCode =
   | "member_only_memberships"
   | "user_not_in_organization"
   | "free_status_not_allowed_for_paid_plan"
-  | "concurrent_update";
+  | "concurrent_update"
+  | "payment_reference_too_long"
+  | "note_too_long";
 
 export interface ManualGrantSummary {
   organizationId: string;
@@ -134,6 +136,12 @@ function validatePlanInput(
     input.planCode === "personal" || input.planCode === "pro" || input.planCode === "team";
   if (isPaidPlan && input.subscriptionStatus === "active" && input.paidThroughAt == null) {
     return { ok: false, code: "paid_through_required" };
+  }
+  if (input.paymentReference !== null && input.paymentReference.length > 255) {
+    return { ok: false, code: "payment_reference_too_long" };
+  }
+  if (input.note !== null && input.note.length > 1000) {
+    return { ok: false, code: "note_too_long" };
   }
   return { ok: true };
 }

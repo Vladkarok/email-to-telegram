@@ -906,6 +906,32 @@ describe("admin billing mutations", () => {
     expect(res.body).toContain('name="keep_stripe_link" checked');
   });
 
+  it("preserves submitted plan, status, paid_through, payment_reference, note on validation error re-render", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const csrf = await getCsrfToken(app, cookie);
+
+    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+
+    // Submit valid fields except note is too long (triggers server-side error after _org_version check)
+    // Use a simpler trigger: missing payment_reference (caught before _org_version)
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-06-30&payment_reference=wise-rerender-test&note=my+note`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    // Missing _org_version triggers re-render — submitted values should be preserved
+    expect(res.body).toContain("Missing page version token");
+    expect(res.body).toContain('value="pro" selected');
+    expect(res.body).toContain('value="active" selected');
+    expect(res.body).toContain('value="2026-06-30"');
+    expect(res.body).toContain('value="wise-rerender-test"');
+    expect(res.body).toContain("my note");
+  });
+
   it("renders keep_stripe_link unchecked on error re-render when not submitted", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
@@ -1046,6 +1072,29 @@ describe("admin billing mutations", () => {
     expect(res.body).toContain("updated since this page was loaded");
     // Must NOT preserve submitted checkbox — the user must reload to see current org state first.
     expect(res.body).not.toContain('name="keep_stripe_link" checked');
+  });
+
+  it("concurrent_update re-render shows org state, not submitted plan/payment_reference", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const { csrf, orgVersion } = await getCsrfAndVersion(app, cookie);
+
+    mockGrantManualOrganizationPlan.mockResolvedValue({ ok: false, code: "concurrent_update" });
+    // MOCK_ORG has planCode: "free" — submitted plan is "business"
+    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=business&status=active&payment_reference=wise-stale-ref&note=stale+note`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("updated since this page was loaded");
+    // Submitted reference and note must NOT appear — operator must reload and review
+    expect(res.body).not.toContain("wise-stale-ref");
+    expect(res.body).not.toContain("stale note");
   });
 
   it("accepts POST when org version matches (no stale conflict)", async () => {

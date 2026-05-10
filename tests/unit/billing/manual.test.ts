@@ -439,6 +439,36 @@ describe("grantManualOrganizationPlan", () => {
       operatorSource: "admin:abcdef1234567890",
     });
   });
+
+  it("rejects paymentReference longer than 255 characters at service layer", async () => {
+    const result = await grantManualOrganizationPlan(fakeDb, {
+      organizationId: "org-1",
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "x".repeat(256),
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    });
+    expect(result).toEqual({ ok: false, code: "payment_reference_too_long" });
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
+  it("rejects note longer than 1000 characters at service layer", async () => {
+    const result = await grantManualOrganizationPlan(fakeDb, {
+      organizationId: "org-1",
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "ref-001",
+      note: "n".repeat(1001),
+      keptStripeLink: false,
+      operatorSource: "cli",
+    });
+    expect(result).toEqual({ ok: false, code: "note_too_long" });
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
 });
 
 describe("grantManualUserPlan", () => {
