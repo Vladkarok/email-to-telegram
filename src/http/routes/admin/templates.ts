@@ -124,6 +124,17 @@ export function renderLoginPage(error?: string): string {
 </html>`;
 }
 
+export function renderErrorPage(title: string, message: string): string {
+  return adminLayout(
+    title,
+    `<div class="panel">
+      <h1>${escapeHtml(title)}</h1>
+      <p>${escapeHtml(message)}</p>
+      <p><a href="/admin">&larr; Back to dashboard</a></p>
+    </div>`,
+  );
+}
+
 export function renderDashboardPage(csrfToken: string): string {
   return adminLayout(
     "Dashboard",

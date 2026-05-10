@@ -73,6 +73,7 @@ const ADMIN_CONFIG = {
   maxSizeBytes: 1024 * 1024,
   adminEnabled: true,
   adminSecret: ADMIN_SECRET,
+  adminSessionSecret: undefined,
   adminSessionTtlMinutes: 60,
 };
 
@@ -95,7 +96,7 @@ async function buildApp(config = ADMIN_CONFIG) {
       }
     },
   );
-  registerRoutes(app, config);
+  await registerRoutes(app, config);
   await app.ready();
   return app;
 }
@@ -354,6 +355,48 @@ describe("admin organization detail", () => {
     expect(res.body).toContain("Test Org");
     expect(res.body).toContain("personal");
     expect(res.body).toContain("42 delivered");
+  });
+});
+
+describe("admin CSRF protection", () => {
+  it("verifyCsrfToken rejects missing token", async () => {
+    const { verifyCsrfToken } = await import("../../../src/http/routes/admin/auth.js");
+    const req = {
+      session: { admin: { csrfToken: "abc123" } },
+      body: {},
+    } as unknown as import("fastify").FastifyRequest;
+    expect(verifyCsrfToken(req)).toBe(false);
+  });
+
+  it("verifyCsrfToken rejects wrong token", async () => {
+    const { verifyCsrfToken } = await import("../../../src/http/routes/admin/auth.js");
+    const req = {
+      session: { admin: { csrfToken: "correct-token" } },
+      body: { _csrf: "wrong-token" },
+    } as unknown as import("fastify").FastifyRequest;
+    expect(verifyCsrfToken(req)).toBe(false);
+  });
+
+  it("verifyCsrfToken accepts matching token", async () => {
+    const { verifyCsrfToken, generateCsrfToken } =
+      await import("../../../src/http/routes/admin/auth.js");
+    const token = generateCsrfToken();
+    const req = {
+      session: { admin: { csrfToken: token } },
+      body: { _csrf: token },
+    } as unknown as import("fastify").FastifyRequest;
+    expect(verifyCsrfToken(req)).toBe(true);
+  });
+
+  it("does not apply CSRF check to login POST", async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/admin/login",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: "secret=wrong",
+    });
+    expect(res.statusCode).toBe(401);
   });
 });
 

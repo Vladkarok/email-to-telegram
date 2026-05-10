@@ -70,6 +70,10 @@ const TEST_CONFIG = {
   rawEmailDir: "/tmp/rawemails",
   rawEmailTtlHours: 24,
   maxSizeBytes: 1024 * 1024,
+  adminEnabled: false,
+  adminSecret: undefined,
+  adminSessionSecret: undefined,
+  adminSessionTtlMinutes: 60,
 };
 
 const RAW_EMAIL = Buffer.from(
@@ -109,7 +113,7 @@ async function buildApp() {
       done(null, body);
     },
   );
-  registerRoutes(app, TEST_CONFIG);
+  await registerRoutes(app, TEST_CONFIG);
   return app;
 }
 

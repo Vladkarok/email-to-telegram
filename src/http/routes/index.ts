@@ -19,10 +19,11 @@ export type RouteConfig = Pick<
   | "maxSizeBytes"
   | "adminEnabled"
   | "adminSecret"
+  | "adminSessionSecret"
   | "adminSessionTtlMinutes"
 >;
 
-export function registerRoutes(app: FastifyInstance, config: RouteConfig): void {
+export async function registerRoutes(app: FastifyInstance, config: RouteConfig): Promise<void> {
   healthzRoute(app);
   readyzRoute(app);
   preflightRoute(app);
@@ -32,7 +33,7 @@ export function registerRoutes(app: FastifyInstance, config: RouteConfig): void 
   billingRoutes(app);
 
   if (config.adminEnabled && config.adminSecret) {
-    void app.register(async (instance) => {
+    await app.register(async (instance) => {
       await adminRoutes(instance, config);
     });
   }

@@ -8,6 +8,7 @@ import {
   renderUsersPage,
   renderUserDetailPage,
   renderOrganizationDetailPage,
+  renderErrorPage,
   type UserSearchResult,
   type UserDetail,
   type OrganizationDetail,
@@ -27,32 +28,47 @@ import { eq, ilike } from "drizzle-orm";
 import cookie from "@fastify/cookie";
 import session from "@fastify/session";
 
-type AdminConfig = Pick<AppConfig, "adminEnabled" | "adminSecret" | "adminSessionTtlMinutes">;
+type AdminConfig = Pick<
+  AppConfig,
+  "adminEnabled" | "adminSecret" | "adminSessionSecret" | "adminSessionTtlMinutes"
+>;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Promise<void> {
   if (!config.adminEnabled || !config.adminSecret) return;
 
-  const secret = config.adminSecret;
+  const loginSecret = config.adminSecret;
+  const sessionSecret = config.adminSessionSecret ?? config.adminSecret;
   const sessionTtlMinutes = config.adminSessionTtlMinutes;
   const logger = getLogger();
   const guard = requireAdmin(sessionTtlMinutes);
 
   await app.register(cookie);
   await app.register(session, {
-    secret,
+    secret: sessionSecret,
     cookie: {
       httpOnly: true,
       secure: "auto",
       sameSite: "strict",
-      maxAge: 24 * 60 * 60 * 1000,
+      maxAge: sessionTtlMinutes * 60 * 1000,
       path: "/admin",
     },
     saveUninitialized: false,
   });
 
-  const loginRateLimit = { max: 10, timeWindow: "15 minutes" };
+  // CSRF check must be registered before route handlers
+  app.addHook("preHandler", async (req, reply) => {
+    if (req.url.startsWith("/admin") && req.method === "POST" && req.url !== "/admin/login") {
+      if (!verifyCsrfToken(req)) {
+        await reply.status(403).send("Invalid CSRF token");
+      }
+    }
+  });
 
-  app.get("/admin/login", { config: { rateLimit: loginRateLimit } }, async (_req, reply) => {
+  const loginRateLimit = { max: 5, timeWindow: "15 minutes" };
+
+  app.get("/admin/login", async (_req, reply) => {
     await reply.type("text/html").send(renderLoginPage());
   });
 
@@ -60,7 +76,7 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
     const body = req.body as Record<string, unknown> | undefined;
     const submitted = typeof body?.["secret"] === "string" ? body["secret"] : "";
 
-    if (!verifyAdminSecret(submitted, secret)) {
+    if (!verifyAdminSecret(submitted, loginSecret)) {
       logger.warn({ ip: req.ip }, "admin.login.failed");
       await reply.status(401).type("text/html").send(renderLoginPage("Invalid secret."));
       return;
@@ -125,7 +141,10 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
       const userId = req.params.id;
 
       if (!/^-?\d+$/.test(userId)) {
-        await reply.status(400).type("text/html").send(renderLoginPage("Invalid user ID."));
+        await reply
+          .status(400)
+          .type("text/html")
+          .send(renderErrorPage("Bad Request", "Invalid user ID."));
         return;
       }
 
@@ -160,6 +179,14 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
       const csrfToken = req.session.admin?.csrfToken ?? "";
       const orgId = req.params.id;
 
+      if (!UUID_RE.test(orgId)) {
+        await reply
+          .status(400)
+          .type("text/html")
+          .send(renderErrorPage("Bad Request", "Invalid organization ID."));
+        return;
+      }
+
       const db = getDb();
       const org = await findOrganizationById(db, orgId);
       if (!org) {
@@ -171,14 +198,6 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
       await reply.type("text/html").send(renderOrganizationDetailPage(csrfToken, detail));
     },
   );
-
-  app.addHook("preHandler", async (req, reply) => {
-    if (req.url.startsWith("/admin") && req.method === "POST" && req.url !== "/admin/login") {
-      if (!verifyCsrfToken(req)) {
-        await reply.status(403).send("Invalid CSRF token");
-      }
-    }
-  });
 }
 
 async function buildOrganizationDetail(orgId: string): Promise<OrganizationDetail> {
