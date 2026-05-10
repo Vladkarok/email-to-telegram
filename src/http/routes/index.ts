@@ -7,19 +7,22 @@ import { rawRoute } from "./raw.js";
 import { downloadRoute } from "./download.js";
 import { deliveryViewRoute } from "./view.js";
 import { billingRoutes } from "./billing.js";
+import { adminRoutes } from "./admin/index.js";
 
-export function registerRoutes(
-  app: FastifyInstance,
-  config: Pick<
-    AppConfig,
-    | "publicBaseUrl"
-    | "attachmentDir"
-    | "attachmentTtlHours"
-    | "rawEmailDir"
-    | "rawEmailTtlHours"
-    | "maxSizeBytes"
-  >,
-): void {
+export type RouteConfig = Pick<
+  AppConfig,
+  | "publicBaseUrl"
+  | "attachmentDir"
+  | "attachmentTtlHours"
+  | "rawEmailDir"
+  | "rawEmailTtlHours"
+  | "maxSizeBytes"
+  | "adminEnabled"
+  | "adminSecret"
+  | "adminSessionTtlMinutes"
+>;
+
+export function registerRoutes(app: FastifyInstance, config: RouteConfig): void {
   healthzRoute(app);
   readyzRoute(app);
   preflightRoute(app);
@@ -27,4 +30,10 @@ export function registerRoutes(
   downloadRoute(app);
   deliveryViewRoute(app, config);
   billingRoutes(app);
+
+  if (config.adminEnabled && config.adminSecret) {
+    void app.register(async (instance) => {
+      await adminRoutes(instance, config);
+    });
+  }
 }
