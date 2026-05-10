@@ -30,7 +30,7 @@ import session from "@fastify/session";
 
 type AdminConfig = Pick<
   AppConfig,
-  "adminEnabled" | "adminSecret" | "adminSessionSecret" | "adminSessionTtlMinutes"
+  "adminEnabled" | "adminSecret" | "adminSessionSecret" | "adminSessionTtlMinutes" | "nodeEnv"
 >;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -49,7 +49,7 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
     secret: sessionSecret,
     cookie: {
       httpOnly: true,
-      secure: process.env["NODE_ENV"] === "production",
+      secure: config.nodeEnv === "production",
       sameSite: "strict",
       maxAge: sessionTtlMinutes * 60 * 1000,
       path: "/admin",

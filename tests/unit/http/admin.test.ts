@@ -74,6 +74,7 @@ const ADMIN_CONFIG = {
   adminEnabled: true,
   adminSecret: ADMIN_SECRET,
   adminSessionSecret: undefined,
+  nodeEnv: "test",
   adminSessionTtlMinutes: 60,
 };
 
