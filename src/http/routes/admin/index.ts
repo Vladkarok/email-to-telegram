@@ -49,7 +49,7 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
     secret: sessionSecret,
     cookie: {
       httpOnly: true,
-      secure: "auto",
+      secure: process.env["NODE_ENV"] === "production",
       sameSite: "strict",
       maxAge: sessionTtlMinutes * 60 * 1000,
       path: "/admin",
