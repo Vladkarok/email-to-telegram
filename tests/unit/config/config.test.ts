@@ -41,6 +41,7 @@ const OPTIONAL_ENV = [
   "BILLING_CANCEL_URL",
   "ADMIN_ENABLED",
   "ADMIN_SECRET",
+  "ADMIN_SESSION_SECRET",
   "ADMIN_SESSION_TTL_MINUTES",
 ];
 
@@ -319,6 +320,14 @@ describe("loadConfig", () => {
     process.env["ADMIN_SECRET"] = "short";
 
     expect(() => loadConfig()).toThrow(/ADMIN_SECRET must be at least 16 characters/);
+  });
+
+  it("rejects admin with short session secret", () => {
+    process.env["ADMIN_ENABLED"] = "true";
+    process.env["ADMIN_SECRET"] = "a".repeat(32);
+    process.env["ADMIN_SESSION_SECRET"] = "short";
+
+    expect(() => loadConfig()).toThrow(/ADMIN_SESSION_SECRET must be at least 16 characters/);
   });
 
   it("rejects admin with non-HTTPS in production", () => {

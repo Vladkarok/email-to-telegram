@@ -266,6 +266,11 @@ export function loadConfig(): AppConfig {
         "Invalid configuration:\n  ADMIN_SECRET must be at least 16 characters when ADMIN_ENABLED=true",
       );
     }
+    if (env.ADMIN_SESSION_SECRET && env.ADMIN_SESSION_SECRET.length < 16) {
+      throw new Error(
+        "Invalid configuration:\n  ADMIN_SESSION_SECRET must be at least 16 characters when provided",
+      );
+    }
     if (env.NODE_ENV === "production" && new URL(env.PUBLIC_BASE_URL).protocol !== "https:") {
       throw new Error(
         "Invalid configuration:\n  ADMIN_ENABLED=true requires HTTPS PUBLIC_BASE_URL in production",

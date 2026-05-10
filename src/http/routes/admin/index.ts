@@ -62,6 +62,7 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
     if (req.url.startsWith("/admin") && req.method === "POST" && req.url !== "/admin/login") {
       if (!verifyCsrfToken(req)) {
         await reply.status(403).send("Invalid CSRF token");
+        return;
       }
     }
   });
@@ -194,15 +195,18 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         return;
       }
 
-      const detail = await buildOrganizationDetail(orgId);
+      const detail = await buildOrganizationDetail(orgId, org);
       await reply.type("text/html").send(renderOrganizationDetailPage(csrfToken, detail));
     },
   );
 }
 
-async function buildOrganizationDetail(orgId: string): Promise<OrganizationDetail> {
+async function buildOrganizationDetail(
+  orgId: string,
+  prefetched?: NonNullable<Awaited<ReturnType<typeof findOrganizationById>>>,
+): Promise<OrganizationDetail> {
   const db = getDb();
-  const org = await findOrganizationById(db, orgId);
+  const org = prefetched ?? (await findOrganizationById(db, orgId));
   if (!org) {
     return {
       id: orgId,
