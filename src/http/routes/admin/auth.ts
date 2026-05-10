@@ -36,8 +36,8 @@ export function verifyCsrfToken(req: FastifyRequest): boolean {
   const sessionToken = req.session?.admin?.csrfToken;
   if (!sessionToken) return false;
   const body = req.body as Record<string, unknown> | undefined;
-  const submittedToken = body?.["_csrf"] as string | undefined;
-  if (!submittedToken) return false;
+  const submittedToken = body?.["_csrf"];
+  if (typeof submittedToken !== "string" || !submittedToken) return false;
   return verifyAdminSecret(submittedToken, sessionToken);
 }
 
