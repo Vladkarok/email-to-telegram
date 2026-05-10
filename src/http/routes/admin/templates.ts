@@ -288,9 +288,17 @@ function renderBillingForm(
     (p) => `<option value="${p}"${org.planCode === p ? " selected" : ""}>${p}</option>`,
   ).join("");
 
-  const statusOptions = SUBSCRIPTION_STATUSES.map(
-    (s) => `<option value="${s}"${org.subscriptionStatus === s ? " selected" : ""}>${s}</option>`,
-  ).join("");
+  const statusIsManual = (SUBSCRIPTION_STATUSES as readonly string[]).includes(
+    org.subscriptionStatus,
+  );
+  const currentStatusOption = statusIsManual
+    ? ""
+    : `<option value="${escapeHtmlAttribute(org.subscriptionStatus)}" selected disabled>(current: ${escapeHtml(org.subscriptionStatus)} — read-only)</option>`;
+  const statusOptions =
+    currentStatusOption +
+    SUBSCRIPTION_STATUSES.map(
+      (s) => `<option value="${s}"${org.subscriptionStatus === s ? " selected" : ""}>${s}</option>`,
+    ).join("");
 
   const paidThroughValue = org.paidThroughAt
     ? escapeHtmlAttribute(org.paidThroughAt.slice(0, 10))
