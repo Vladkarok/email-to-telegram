@@ -67,7 +67,8 @@ export type ManualGrantErrorCode =
   | "keep_stripe_link_not_allowed"
   | "ambiguous_organization"
   | "member_only_memberships"
-  | "user_not_in_organization";
+  | "user_not_in_organization"
+  | "free_status_not_allowed_for_paid_plan";
 
 export interface ManualGrantSummary {
   organizationId: string;
@@ -117,6 +118,9 @@ function validatePlanInput(
   }
   if (input.planCode === "free" && input.subscriptionStatus !== "free") {
     return { ok: false, code: "free_status_required" };
+  }
+  if (input.planCode !== "free" && input.subscriptionStatus === "free") {
+    return { ok: false, code: "free_status_not_allowed_for_paid_plan" };
   }
   if (input.keptStripeLink && input.planCode !== "business") {
     // --keep-stripe-link is allowed only with --plan business; webhook

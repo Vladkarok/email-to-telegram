@@ -237,6 +237,21 @@ describe("grantManualOrganizationPlan", () => {
     );
   });
 
+  it("rejects paid plan with free subscription status at service layer", async () => {
+    const result = await grantManualOrganizationPlan(fakeDb, {
+      organizationId: "org-1",
+      planCode: "pro",
+      subscriptionStatus: "free",
+      paidThroughAt: null,
+      paymentReference: null,
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    });
+    expect(result).toEqual({ ok: false, code: "free_status_not_allowed_for_paid_plan" });
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
   it("clears stripe ids on free downgrade", async () => {
     await grantManualOrganizationPlan(fakeDb, {
       organizationId: "org-1",

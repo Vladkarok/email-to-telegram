@@ -362,6 +362,8 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
           invalid_plan: "Invalid plan selected.",
           invalid_status: "Invalid subscription status.",
           free_status_required: 'Free plan requires "free" subscription status.',
+          free_status_not_allowed_for_paid_plan:
+            'Paid plans cannot use "free" subscription status.',
           paid_through_required: "Paid-through date is required for active paid plans.",
           keep_stripe_link_not_allowed: "Keep Stripe link is only allowed for the Business plan.",
         };
