@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { parse as parseQs } from "querystring";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
@@ -55,6 +56,18 @@ export async function createHttpServer(config: AppConfig): Promise<FastifyInstan
     (req, body: Buffer, done) => {
       setRawBody(req, body);
       done(null, body);
+    },
+  );
+
+  app.addContentTypeParser(
+    "application/x-www-form-urlencoded",
+    { parseAs: "buffer" },
+    (_req, body: Buffer, done) => {
+      try {
+        done(null, parseQs(body.toString("utf-8")));
+      } catch (err: unknown) {
+        done(err instanceof Error ? err : new Error(String(err)));
+      }
     },
   );
 
