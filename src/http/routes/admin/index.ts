@@ -66,9 +66,12 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
     }
   });
 
-  // CSRF check must be registered before route handlers
+  // CSRF check must be registered before route handlers.
+  // Use routeOptions.url (the matched, decoded pattern) not req.url (raw, percent-encoded)
+  // to avoid bypasses like POST /%61dmin/action skipping the check.
+  // Login is excluded — no session exists yet, so there is no token to bind.
   app.addHook("preHandler", async (req, reply) => {
-    if (req.url.startsWith("/admin") && req.method === "POST" && req.url !== "/admin/login") {
+    if (req.method === "POST" && req.routeOptions.url !== "/admin/login") {
       if (!verifyCsrfToken(req)) {
         await reply.status(403).send("Invalid CSRF token");
         return;
@@ -76,12 +79,10 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
     }
   });
 
-  // Key on socket IP to prevent X-Forwarded-For spoofing
-  const loginRateLimit = {
-    max: 5,
-    timeWindow: "15 minutes",
-    keyGenerator: (req: import("fastify").FastifyRequest) => req.socket.remoteAddress ?? req.ip,
-  };
+  // req.ip is sourced from X-Forwarded-For (trustProxy: true) which Caddy sets to the real
+  // client IP. Caddy must be configured to strip/overwrite X-Forwarded-For on ingress so
+  // clients cannot spoof their way around this limit.
+  const loginRateLimit = { max: 5, timeWindow: "15 minutes" };
 
   app.get("/admin/login", async (_req, reply) => {
     await reply.type("text/html").send(renderLoginPage());
