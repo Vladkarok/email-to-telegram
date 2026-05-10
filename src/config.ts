@@ -261,14 +261,14 @@ export function loadConfig(): AppConfig {
   }
 
   if (env.ADMIN_ENABLED) {
-    if (!env.ADMIN_SECRET || env.ADMIN_SECRET.length < 16) {
+    if (!env.ADMIN_SECRET || env.ADMIN_SECRET.length < 32) {
       throw new Error(
-        "Invalid configuration:\n  ADMIN_SECRET must be at least 16 characters when ADMIN_ENABLED=true",
+        "Invalid configuration:\n  ADMIN_SECRET must be at least 32 characters when ADMIN_ENABLED=true",
       );
     }
-    if (env.ADMIN_SESSION_SECRET && env.ADMIN_SESSION_SECRET.length < 16) {
+    if (env.ADMIN_SESSION_SECRET && env.ADMIN_SESSION_SECRET.length < 32) {
       throw new Error(
-        "Invalid configuration:\n  ADMIN_SESSION_SECRET must be at least 16 characters when provided",
+        "Invalid configuration:\n  ADMIN_SESSION_SECRET must be at least 32 characters when provided",
       );
     }
     if (env.NODE_ENV === "production" && new URL(env.PUBLIC_BASE_URL).protocol !== "https:") {
