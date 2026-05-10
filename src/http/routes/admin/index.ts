@@ -265,20 +265,28 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
       const paidThroughRaw = getString("paid_through") ?? "";
       const paymentReferenceRaw = getString("payment_reference") ?? "";
       const noteRaw = getString("note") ?? "";
-      const keptStripeLink = body?.["keep_stripe_link"] === "on";
-      const confirmDowngrade = body?.["_confirm_downgrade"] === "yes";
-
       const renderError = async (message: string): Promise<void> => {
         const detail = await buildOrganizationDetail(orgId);
         const flash: BillingFlash = { type: "error", message };
         await reply.type("text/html").send(renderOrganizationDetailPage(csrfToken, detail, flash));
       };
 
-      const fieldsWithArrays = ["plan", "status", "paid_through", "payment_reference", "note"];
-      if (fieldsWithArrays.some((k) => Array.isArray(body?.[k]))) {
+      const allFields = [
+        "plan",
+        "status",
+        "paid_through",
+        "payment_reference",
+        "note",
+        "keep_stripe_link",
+        "_confirm_downgrade",
+      ];
+      if (allFields.some((k) => Array.isArray(body?.[k]))) {
         await renderError("Invalid request: duplicate form fields are not allowed.");
         return;
       }
+
+      const keptStripeLink = body?.["keep_stripe_link"] === "on";
+      const confirmDowngrade = body?.["_confirm_downgrade"] === "yes";
 
       if (!VALID_PLAN_CODES.includes(planRaw)) {
         await renderError("Invalid plan selected.");
