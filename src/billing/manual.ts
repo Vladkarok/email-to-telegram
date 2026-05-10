@@ -17,6 +17,7 @@ import {
   type ManualBillingEventInput,
 } from "../db/repos/manualBillingEvents.js";
 import type { PlanCode } from "./plans.js";
+import type { OperatorSource } from "./audit.js";
 import type * as schema from "../db/schema.js";
 
 type Db = NodePgDatabase<typeof schema>;
@@ -36,6 +37,7 @@ export interface ManualPlanGrantInput {
   paymentReference: string | null;
   note: string | null;
   keptStripeLink: boolean;
+  operatorSource?: OperatorSource;
 }
 
 export interface GrantManualOrganizationPlanInput extends ManualPlanGrantInput {
@@ -77,6 +79,7 @@ export interface ManualGrantSummary {
   note: string | null;
   keptStripeLink: boolean;
   manualBillingEventId: string;
+  operatorSource: string;
 }
 
 export type GrantManualOrganizationPlanResult =
@@ -156,6 +159,7 @@ function buildEventInput(
     paymentReference: input.paymentReference,
     note: input.note,
     keptStripeLink: input.keptStripeLink,
+    operatorSource: input.operatorSource ?? "cli",
   };
 }
 
@@ -175,6 +179,7 @@ function summarize(
     note: input.note,
     keptStripeLink: input.keptStripeLink,
     manualBillingEventId,
+    operatorSource: input.operatorSource ?? "cli",
   };
 }
 
@@ -188,6 +193,7 @@ function summarizeEvent(event: {
   paymentReference: string | null;
   note: string | null;
   keptStripeLink: boolean;
+  operatorSource?: string | null;
 }): ManualGrantSummary {
   return {
     organizationId: event.organizationId,
@@ -199,6 +205,7 @@ function summarizeEvent(event: {
     note: event.note,
     keptStripeLink: event.keptStripeLink,
     manualBillingEventId: event.id,
+    operatorSource: event.operatorSource ?? "cli",
   };
 }
 

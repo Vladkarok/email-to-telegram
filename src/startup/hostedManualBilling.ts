@@ -7,8 +7,8 @@ import type {
   GrantManualOrganizationPlanResult,
   GrantManualUserPlanInput,
   GrantManualUserPlanResult,
-  ManualGrantSummary,
 } from "../billing/manual.js";
+export { redactManualBillingForLog } from "../billing/audit.js";
 
 export function hasHostedManualBillingOperation(startup: StartupOptions): boolean {
   return Boolean(
@@ -44,6 +44,7 @@ export function buildManualBillingPlanInput(
     paymentReference: startup.manualPaymentReference,
     note: startup.manualNote,
     keptStripeLink: startup.manualKeepStripeLink,
+    operatorSource: "cli",
   };
 }
 
@@ -67,6 +68,7 @@ export function buildManualBillingUserInput(startup: StartupOptions): GrantManua
     paymentReference: startup.manualPaymentReference,
     note: startup.manualNote,
     keptStripeLink: startup.manualKeepStripeLink,
+    operatorSource: "cli",
   };
 }
 
@@ -86,41 +88,6 @@ export function buildManualBillingMemberInput(
     organizationId: startup.hostedAddOrganizationMemberId,
     telegramUserId: BigInt(startup.manualTelegramUserId),
     role: startup.manualOrganizationRole,
-  };
-}
-
-/**
- * Strips payment_reference and note CONTENT before logging to stderr because
- * stderr is often shipped to log aggregation, while payment references and
- * notes may be subject to retention/erasure requests. Replaces with boolean
- * presence flags so operators still see whether values were supplied.
- */
-export function redactManualBillingForLog(
-  summary: ManualGrantSummary & {
-    paymentReference: string | null;
-    note?: string | null;
-  },
-): {
-  organizationId: string;
-  telegramUserId: string | null;
-  planCode: string;
-  subscriptionStatus: string;
-  paidThroughAt: string | null;
-  paymentReferencePresent: boolean;
-  notePresent: boolean;
-  keptStripeLink: boolean;
-  manualBillingEventId: string;
-} {
-  return {
-    organizationId: summary.organizationId,
-    telegramUserId: summary.telegramUserId,
-    planCode: summary.planCode,
-    subscriptionStatus: summary.subscriptionStatus,
-    paidThroughAt: summary.paidThroughAt,
-    paymentReferencePresent: summary.paymentReference != null && summary.paymentReference !== "",
-    notePresent: summary.note != null && summary.note !== "",
-    keptStripeLink: summary.keptStripeLink,
-    manualBillingEventId: summary.manualBillingEventId,
   };
 }
 
