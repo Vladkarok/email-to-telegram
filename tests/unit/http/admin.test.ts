@@ -795,4 +795,19 @@ describe("admin billing mutations", () => {
     expect(res.body).toContain("duplicate form fields");
     expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
   });
+
+  it("returns 403 (not 500) when _csrf field is duplicated", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: "_csrf=bad&_csrf=alsoBad&plan=pro&status=active",
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+  });
 });
