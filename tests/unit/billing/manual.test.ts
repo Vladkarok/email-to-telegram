@@ -252,6 +252,65 @@ describe("grantManualOrganizationPlan", () => {
     expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
   });
 
+  it("rejects with concurrent_update when expectedUpdatedAt does not match org.updatedAt", async () => {
+    const orgUpdatedAt = new Date("2026-01-15T10:00:00.000Z");
+    mockFindOrganizationById.mockResolvedValue({
+      id: "org-1",
+      name: "Org 1",
+      planCode: "free",
+      subscriptionStatus: "free",
+      stripeCustomerId: null,
+      stripeSubscriptionId: null,
+      paidThroughAt: null,
+      updatedAt: orgUpdatedAt,
+    });
+
+    const result = await grantManualOrganizationPlan(fakeDb, {
+      organizationId: "org-1",
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: new Date("2026-12-31"),
+      paymentReference: "wise-test-001",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+      expectedUpdatedAt: "2026-01-14T10:00:00.000Z", // stale — differs from org.updatedAt
+    });
+
+    expect(result).toEqual({ ok: false, code: "concurrent_update" });
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
+  it("proceeds normally when expectedUpdatedAt matches org.updatedAt", async () => {
+    const orgUpdatedAt = new Date("2026-01-15T10:00:00.000Z");
+    mockFindOrganizationById.mockResolvedValue({
+      id: "org-1",
+      name: "Org 1",
+      planCode: "free",
+      subscriptionStatus: "free",
+      stripeCustomerId: null,
+      stripeSubscriptionId: null,
+      paidThroughAt: null,
+      updatedAt: orgUpdatedAt,
+    });
+    mockCreateManualBillingEvent.mockResolvedValue({ id: "evt-123" });
+
+    const result = await grantManualOrganizationPlan(fakeDb, {
+      organizationId: "org-1",
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: new Date("2026-12-31"),
+      paymentReference: null,
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+      expectedUpdatedAt: "2026-01-15T10:00:00.000Z", // matches
+    });
+
+    expect(result).toMatchObject({ ok: true, planCode: "pro" });
+    expect(mockUpdateOrganizationBillingState).toHaveBeenCalled();
+  });
+
   it("clears stripe ids on free downgrade", async () => {
     await grantManualOrganizationPlan(fakeDb, {
       organizationId: "org-1",

@@ -43,6 +43,7 @@ export interface ManualPlanGrantInput {
 export interface GrantManualOrganizationPlanInput extends ManualPlanGrantInput {
   organizationId: string;
   telegramUserId?: bigint | null;
+  expectedUpdatedAt?: string | null;
 }
 
 export interface GrantManualUserPlanInput extends ManualPlanGrantInput {
@@ -68,7 +69,8 @@ export type ManualGrantErrorCode =
   | "ambiguous_organization"
   | "member_only_memberships"
   | "user_not_in_organization"
-  | "free_status_not_allowed_for_paid_plan";
+  | "free_status_not_allowed_for_paid_plan"
+  | "concurrent_update";
 
 export interface ManualGrantSummary {
   organizationId: string;
@@ -223,6 +225,15 @@ export async function grantManualOrganizationPlan(
   return db.transaction(async (tx) => {
     const organization = await findOrganizationById(tx, input.organizationId);
     if (!organization) return { ok: false, code: "organization_not_found" };
+
+    // Optimistic concurrency: check inside the transaction so the version read
+    // and the billing write are atomic — eliminates the pre-transaction TOCTOU.
+    if (
+      input.expectedUpdatedAt != null &&
+      organization.updatedAt.toISOString() !== input.expectedUpdatedAt
+    ) {
+      return { ok: false, code: "concurrent_update" };
+    }
 
     const telegramUserId = input.telegramUserId ?? null;
 
