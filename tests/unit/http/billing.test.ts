@@ -57,15 +57,20 @@ const TEST_CONFIG = {
   rawEmailDir: "/tmp/rawemails",
   rawEmailTtlHours: 24,
   maxSizeBytes: 1024 * 1024,
+  adminEnabled: false,
+  adminSecret: undefined,
+  adminSessionSecret: undefined,
+  nodeEnv: "test",
+  adminSessionTtlMinutes: 60,
 };
 
-function buildApp() {
+async function buildApp() {
   const app = Fastify({ logger: false });
   app.addContentTypeParser("application/json", { parseAs: "buffer" }, (req, body: Buffer, done) => {
     req.rawBody = body;
     done(null, JSON.parse(body.toString("utf8")) as Record<string, unknown>);
   });
-  registerRoutes(app, TEST_CONFIG);
+  await registerRoutes(app, TEST_CONFIG);
   return app;
 }
 
@@ -88,7 +93,7 @@ describe("billing routes", () => {
   });
 
   it("creates checkout sessions for owner/admin users", async () => {
-    const app = buildApp();
+    const app = await buildApp();
     const res = await app.inject({
       method: "POST",
       url: "/billing/checkout",
@@ -106,7 +111,7 @@ describe("billing routes", () => {
 
   it("rejects checkout when the token is invalid", async () => {
     mockVerifyBillingAccessToken.mockReturnValue(null);
-    const app = buildApp();
+    const app = await buildApp();
     const res = await app.inject({
       method: "POST",
       url: "/billing/checkout",
@@ -118,7 +123,7 @@ describe("billing routes", () => {
 
   it("rejects checkout when the user lacks org ownership", async () => {
     mockUserHasOrganizationRole.mockResolvedValue(false);
-    const app = buildApp();
+    const app = await buildApp();
     const res = await app.inject({
       method: "POST",
       url: "/billing/checkout",
@@ -129,7 +134,7 @@ describe("billing routes", () => {
   });
 
   it("rejects checkout when the requested price key is invalid", async () => {
-    const app = buildApp();
+    const app = await buildApp();
     const res = await app.inject({
       method: "POST",
       url: "/billing/checkout",
@@ -144,7 +149,7 @@ describe("billing routes", () => {
     const { BillingCheckoutConflictError } = await import("../../../src/billing/checkout.js");
     mockCreateCheckoutSession.mockRejectedValue(new BillingCheckoutConflictError());
 
-    const app = buildApp();
+    const app = await buildApp();
     const res = await app.inject({
       method: "POST",
       url: "/billing/checkout",
@@ -157,7 +162,7 @@ describe("billing routes", () => {
 
   it("returns 409 from portal when no Stripe customer exists", async () => {
     mockCreateCustomerPortalSession.mockResolvedValue(null);
-    const app = buildApp();
+    const app = await buildApp();
     const res = await app.inject({
       method: "POST",
       url: "/billing/portal",
@@ -168,7 +173,7 @@ describe("billing routes", () => {
   });
 
   it("creates a portal session for owner/admin users", async () => {
-    const app = buildApp();
+    const app = await buildApp();
     const res = await app.inject({
       method: "POST",
       url: "/billing/portal",
@@ -181,7 +186,7 @@ describe("billing routes", () => {
 
   it("rejects portal when the token is invalid", async () => {
     mockVerifyBillingAccessToken.mockReturnValue(null);
-    const app = buildApp();
+    const app = await buildApp();
     const res = await app.inject({
       method: "POST",
       url: "/billing/portal",
@@ -193,7 +198,7 @@ describe("billing routes", () => {
 
   it("rejects portal when the user lacks org ownership", async () => {
     mockUserHasOrganizationRole.mockResolvedValue(false);
-    const app = buildApp();
+    const app = await buildApp();
     const res = await app.inject({
       method: "POST",
       url: "/billing/portal",
@@ -204,7 +209,7 @@ describe("billing routes", () => {
   });
 
   it("verifies and processes Stripe webhooks from the raw body", async () => {
-    const app = buildApp();
+    const app = await buildApp();
     const body = Buffer.from(JSON.stringify({ id: "evt_1" }));
     const res = await app.inject({
       method: "POST",
@@ -223,7 +228,7 @@ describe("billing routes", () => {
   });
 
   it("rejects webhook requests without a Stripe signature", async () => {
-    const app = buildApp();
+    const app = await buildApp();
     const res = await app.inject({
       method: "POST",
       url: "/billing/stripe/webhook",
@@ -242,7 +247,7 @@ describe("billing routes", () => {
       throw new Error("bad signature");
     });
 
-    const app = buildApp();
+    const app = await buildApp();
     const res = await app.inject({
       method: "POST",
       url: "/billing/stripe/webhook",

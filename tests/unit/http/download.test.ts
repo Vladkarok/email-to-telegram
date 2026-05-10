@@ -50,14 +50,20 @@ vi.mock("../../../src/db/repos/usage.js", () => ({
 
 const HMAC_SECRET = "test-secret-that-is-long-enough-abc";
 
-function buildApp() {
+async function buildApp() {
   const app = Fastify({ logger: false });
-  registerRoutes(app, {
+  await registerRoutes(app, {
     publicBaseUrl: "https://example.com",
     attachmentDir: "/tmp/attachments",
     attachmentTtlHours: 336,
     rawEmailDir: "/tmp/raw",
+    rawEmailTtlHours: 336,
     maxSizeBytes: 10_485_760,
+    adminEnabled: false,
+    adminSecret: undefined,
+    adminSessionSecret: undefined,
+    adminSessionTtlMinutes: 60,
+    nodeEnv: "test",
   });
   return app;
 }
@@ -90,7 +96,7 @@ describe("GET /dl/:token", () => {
   it("returns 404 when token is not found in DB", async () => {
     mockFindLink.mockResolvedValue(null);
     const { token } = generateDownloadToken("attach-uuid-1");
-    const app = buildApp();
+    const app = await buildApp();
     const res = await app.inject({ method: "GET", url: `/dl/${token}` });
     expect(res.statusCode).toBe(404);
   });
@@ -108,7 +114,7 @@ describe("GET /dl/:token", () => {
         contentType: "application/pdf",
       },
     });
-    const app = buildApp();
+    const app = await buildApp();
     const res = await app.inject({ method: "GET", url: `/dl/${token}` });
     expect(res.statusCode).toBe(410);
   });
@@ -127,7 +133,7 @@ describe("GET /dl/:token", () => {
         contentType: "application/pdf",
       },
     });
-    const app = buildApp();
+    const app = await buildApp();
     const res = await app.inject({ method: "GET", url: `/dl/${token}` });
     expect(res.statusCode).toBe(410);
   });
@@ -157,7 +163,7 @@ describe("GET /dl/:token", () => {
       size: fileContent.length,
     });
 
-    const app = buildApp();
+    const app = await buildApp();
     const res = await app.inject({ method: "GET", url: `/dl/${token}` });
     expect(res.statusCode).toBe(200);
     expect(res.headers["content-type"]).toContain("application/pdf");
@@ -197,7 +203,7 @@ describe("GET /dl/:token", () => {
     });
     mockMarkDownloaded.mockResolvedValue(false); // another request beat us
 
-    const app = buildApp();
+    const app = await buildApp();
     const res = await app.inject({ method: "GET", url: `/dl/${token}` });
     expect(res.statusCode).toBe(410);
     expect(mockDisposeOpened).toHaveBeenCalledOnce();
@@ -229,7 +235,7 @@ describe("GET /dl/:token", () => {
     });
     mockCheckEgressLimit.mockResolvedValue({ ok: false, code: "egress_limit" });
 
-    const app = buildApp();
+    const app = await buildApp();
     const res = await app.inject({ method: "GET", url: `/dl/${token}` });
 
     expect(res.statusCode).toBe(403);
@@ -264,7 +270,7 @@ describe("GET /dl/:token", () => {
     mockMarkDownloaded.mockResolvedValue(true);
     mockOpenAttachment.mockRejectedValue(new Error("decrypt failed"));
 
-    const app = buildApp();
+    const app = await buildApp();
     const res = await app.inject({ method: "GET", url: `/dl/${token}` });
 
     expect(res.statusCode).toBe(500);
@@ -290,7 +296,7 @@ describe("GET /dl/:token", () => {
       },
     });
 
-    const app = buildApp();
+    const app = await buildApp();
     const res = await app.inject({ method: "GET", url: `/dl/${token}` });
 
     expect(res.statusCode).toBe(403);
@@ -323,7 +329,7 @@ describe("GET /dl/:token", () => {
       size: fileContent.length,
     });
 
-    const app = buildApp();
+    const app = await buildApp();
     const res = await app.inject({ method: "GET", url: `/dl/${token}` });
 
     expect(res.statusCode).toBe(200);
@@ -357,7 +363,7 @@ describe("GET /dl/:token", () => {
       size: fileContent.length,
     });
 
-    const app = buildApp();
+    const app = await buildApp();
     const res = await app.inject({ method: "GET", url: `/dl/${token}` });
 
     expect(res.statusCode).toBe(200);
@@ -389,7 +395,7 @@ describe("GET /dl/:token", () => {
       size: fileContent.length,
     });
 
-    const app = buildApp();
+    const app = await buildApp();
     const res = await app.inject({ method: "GET", url: `/dl/${token}` });
 
     expect(res.statusCode).toBe(200);

@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { parse as parseQs } from "querystring";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
@@ -58,7 +59,19 @@ export async function createHttpServer(config: AppConfig): Promise<FastifyInstan
     },
   );
 
-  registerRoutes(app, config);
+  app.addContentTypeParser(
+    "application/x-www-form-urlencoded",
+    { parseAs: "buffer" },
+    (_req, body: Buffer, done) => {
+      try {
+        done(null, parseQs(body.toString("utf-8")));
+      } catch (err: unknown) {
+        done(err instanceof Error ? err : new Error(String(err)));
+      }
+    },
+  );
+
+  await registerRoutes(app, config);
 
   // Return an empty 404 for unknown routes — avoids leaking framework details.
   app.setNotFoundHandler((_req, reply) => {
