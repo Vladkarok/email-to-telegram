@@ -65,6 +65,7 @@ const TEST_CONFIG = {
   adminEnabled: false,
   adminSecret: undefined,
   adminSessionSecret: undefined,
+  nodeEnv: "test",
   adminSessionTtlMinutes: 60,
 };
 

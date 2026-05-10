@@ -21,6 +21,7 @@ export type RouteConfig = Pick<
   | "adminSecret"
   | "adminSessionSecret"
   | "adminSessionTtlMinutes"
+  | "nodeEnv"
 >;
 
 export async function registerRoutes(app: FastifyInstance, config: RouteConfig): Promise<void> {

@@ -63,6 +63,7 @@ async function buildApp() {
     adminSecret: undefined,
     adminSessionSecret: undefined,
     adminSessionTtlMinutes: 60,
+    nodeEnv: "test",
   });
   return app;
 }
