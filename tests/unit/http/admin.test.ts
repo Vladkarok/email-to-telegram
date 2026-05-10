@@ -964,6 +964,30 @@ describe("admin billing mutations", () => {
     expect(res.body).not.toContain('name="keep_stripe_link" checked');
   });
 
+  it("renders Stripe-managed status as a disabled selected option in billing form", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+
+    mockFindOrganizationById.mockResolvedValueOnce({
+      ...MOCK_ORG,
+      planCode: "pro",
+      subscriptionStatus: "past_due",
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/admin/organizations/${ORG_ID}`,
+      headers: { cookie },
+    });
+
+    expect(res.statusCode).toBe(200);
+    // Current Stripe-managed status shown as a disabled read-only option
+    expect(res.body).toContain('value="past_due" selected disabled');
+    // Manual-edit options still present
+    expect(res.body).toContain('value="active"');
+    expect(res.body).toContain('value="canceled"');
+  });
+
   it("rejects POST when _org_version is missing", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
