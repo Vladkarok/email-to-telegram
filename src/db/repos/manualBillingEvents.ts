@@ -20,7 +20,7 @@ export type ManualBillingEventInput = Pick<
   | "note"
   | "keptStripeLink"
 > &
-  Partial<Pick<NewManualBillingEvent, "operatorSource">>;
+  Pick<Required<NewManualBillingEvent>, "operatorSource">;
 
 export async function createManualBillingEvent(
   db: Db,
