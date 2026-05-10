@@ -12,7 +12,14 @@ import {
   type UserSearchResult,
   type UserDetail,
   type OrganizationDetail,
+  type BillingFlash,
 } from "./templates.js";
+import { adminOperatorSource, redactManualBillingForLog } from "../../../billing/audit.js";
+import {
+  grantManualOrganizationPlan,
+  type ManualSubscriptionStatus,
+} from "../../../billing/manual.js";
+import type { PlanCode } from "../../../billing/plans.js";
 import { getDb } from "../../../db/client.js";
 import { findUserById } from "../../../db/repos/users.js";
 import { findOrganizationById } from "../../../db/repos/organizations.js";
@@ -210,8 +217,113 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         return;
       }
 
+      const billingParam = (req.query as Record<string, string>).billing;
+      let flash: BillingFlash | undefined;
+      if (billingParam === "granted") {
+        flash = { type: "success", message: "Plan updated successfully." };
+      } else if (billingParam === "idempotent") {
+        flash = {
+          type: "idempotent",
+          message: "No change: a billing event with this payment reference already exists.",
+        };
+      }
+
       const detail = await buildOrganizationDetail(orgId, org);
-      await reply.type("text/html").send(renderOrganizationDetailPage(csrfToken, detail));
+      await reply.type("text/html").send(renderOrganizationDetailPage(csrfToken, detail, flash));
+    },
+  );
+
+  const VALID_PLAN_CODES: readonly string[] = ["free", "personal", "pro", "team", "business"];
+  const VALID_STATUSES: readonly string[] = ["free", "active", "canceled"];
+
+  app.post<{ Params: { id: string } }>(
+    "/admin/organizations/:id/billing",
+    { preHandler: guard },
+    async (req, reply) => {
+      const orgId = req.params.id;
+      const csrfToken = req.session.admin?.csrfToken ?? "";
+
+      if (!UUID_RE.test(orgId)) {
+        await reply
+          .status(400)
+          .type("text/html")
+          .send(renderErrorPage("Bad Request", "Invalid organization ID."));
+        return;
+      }
+
+      const body = req.body as Record<string, unknown> | undefined;
+      const planRaw = typeof body?.["plan"] === "string" ? body["plan"].trim() : "";
+      const statusRaw = typeof body?.["status"] === "string" ? body["status"].trim() : "";
+      const paidThroughRaw =
+        typeof body?.["paid_through"] === "string" ? body["paid_through"].trim() : "";
+      const paymentReference =
+        typeof body?.["payment_reference"] === "string" && body["payment_reference"].trim()
+          ? body["payment_reference"].trim()
+          : null;
+      const note =
+        typeof body?.["note"] === "string" && body["note"].trim() ? body["note"].trim() : null;
+      const keptStripeLink = body?.["keep_stripe_link"] === "on";
+      const confirmDowngrade = body?.["_confirm_downgrade"] === "yes";
+
+      const renderError = async (message: string): Promise<void> => {
+        const detail = await buildOrganizationDetail(orgId);
+        const flash: BillingFlash = { type: "error", message };
+        await reply.type("text/html").send(renderOrganizationDetailPage(csrfToken, detail, flash));
+      };
+
+      if (!VALID_PLAN_CODES.includes(planRaw)) {
+        await renderError("Invalid plan selected.");
+        return;
+      }
+      if (!VALID_STATUSES.includes(statusRaw)) {
+        await renderError("Invalid subscription status.");
+        return;
+      }
+      if (planRaw === "free" && !confirmDowngrade) {
+        await renderError(
+          "Downgrade to free requires confirmation. Check the confirmation box and resubmit.",
+        );
+        return;
+      }
+
+      let paidThroughAt: Date | null = null;
+      if (paidThroughRaw) {
+        const d = new Date(paidThroughRaw);
+        if (isNaN(d.getTime())) {
+          await renderError("Invalid paid-through date. Use YYYY-MM-DD format.");
+          return;
+        }
+        paidThroughAt = d;
+      }
+
+      const db = getDb();
+      const result = await grantManualOrganizationPlan(db, {
+        organizationId: orgId,
+        planCode: planRaw as PlanCode,
+        subscriptionStatus: statusRaw as ManualSubscriptionStatus,
+        paidThroughAt,
+        paymentReference,
+        note,
+        keptStripeLink,
+        operatorSource: adminOperatorSource(loginSecret),
+      });
+
+      if (!result.ok) {
+        const errorMessages: Record<string, string> = {
+          organization_not_found: "Organization not found.",
+          invalid_plan: "Invalid plan selected.",
+          invalid_status: "Invalid subscription status.",
+          free_status_required: 'Free plan requires "free" subscription status.',
+          paid_through_required: "Paid-through date is required for active paid plans.",
+          keep_stripe_link_not_allowed: "Keep Stripe link is only allowed for the Business plan.",
+        };
+        await renderError(errorMessages[result.code] ?? result.code);
+        return;
+      }
+
+      logger.info(redactManualBillingForLog(result), "admin.billing.mutated");
+      const flashParam = result.idempotent ? "idempotent" : "granted";
+      await reply.redirect(`/admin/organizations/${orgId}?billing=${flashParam}`);
     },
   );
 }

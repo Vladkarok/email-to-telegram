@@ -10,6 +10,7 @@ const mockFindOrganizationById = vi.fn();
 const mockCountActiveAliasesByOrganization = vi.fn();
 const mockGetOrganizationUsageMonth = vi.fn();
 const mockListManualBillingEventsForOrganization = vi.fn();
+const mockGrantManualOrganizationPlan = vi.fn();
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 vi.mock("../../../src/db/repos/users.js", () => ({
@@ -35,6 +36,10 @@ vi.mock("../../../src/db/repos/usage.js", () => ({
 vi.mock("../../../src/db/repos/manualBillingEvents.js", () => ({
   listManualBillingEventsForOrganization: (...args: unknown[]): unknown =>
     mockListManualBillingEventsForOrganization(...args),
+}));
+vi.mock("../../../src/billing/manual.js", () => ({
+  grantManualOrganizationPlan: (...args: unknown[]): unknown =>
+    mockGrantManualOrganizationPlan(...args),
 }));
 vi.mock("../../../src/telegram/health.js", () => ({
   isBotHealthy: () => true,
@@ -114,6 +119,42 @@ async function loginSession(app: FastifyInstance): Promise<string> {
   return Array.isArray(cookies) ? cookies.join("; ") : (cookies ?? "");
 }
 
+const ORG_ID = "00000000-0000-0000-0000-000000000001";
+
+const MOCK_ORG = {
+  id: ORG_ID,
+  name: "Test Org",
+  planCode: "personal",
+  subscriptionStatus: "active",
+  paidThroughAt: new Date("2026-06-01"),
+  createdAt: new Date("2025-01-01"),
+  updatedAt: new Date(),
+};
+
+function extractCsrfToken(html: string): string {
+  const match = html.match(/name="csrf-token" content="([a-f0-9]{64})"/);
+  return match?.[1] ?? "";
+}
+
+function makeGrantSuccess(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    ok: true,
+    idempotent: false,
+    updated: true,
+    organizationId: ORG_ID,
+    telegramUserId: null,
+    planCode: "pro",
+    subscriptionStatus: "active",
+    paidThroughAt: "2026-12-31T00:00:00.000Z",
+    paymentReference: null,
+    note: null,
+    keptStripeLink: false,
+    manualBillingEventId: "evt-1",
+    operatorSource: "admin:abcdef1234567890",
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   mockFindUserById.mockReset();
   mockListOrganizationMembershipsForUser.mockReset().mockResolvedValue([]);
@@ -122,6 +163,7 @@ beforeEach(() => {
   mockCountActiveAliasesByOrganization.mockReset().mockResolvedValue(0);
   mockGetOrganizationUsageMonth.mockReset().mockResolvedValue(null);
   mockListManualBillingEventsForOrganization.mockReset().mockResolvedValue([]);
+  mockGrantManualOrganizationPlan.mockReset();
 });
 
 describe("admin routes disabled", () => {
@@ -413,5 +455,206 @@ describe("admin auth module", () => {
     const { generateCsrfToken } = await import("../../../src/http/routes/admin/auth.js");
     const token = generateCsrfToken();
     expect(token).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+async function getCsrfToken(app: FastifyInstance, cookie: string): Promise<string> {
+  mockFindOrganizationById.mockResolvedValueOnce(MOCK_ORG);
+  const res = await app.inject({
+    method: "GET",
+    url: `/admin/organizations/${ORG_ID}`,
+    headers: { cookie },
+  });
+  return extractCsrfToken(res.body);
+}
+
+describe("admin billing mutations", () => {
+  it("grants a plan and redirects with billing=granted flash", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const csrf = await getCsrfToken(app, cookie);
+
+    mockGrantManualOrganizationPlan.mockResolvedValue(makeGrantSuccess());
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-2026-001`,
+    });
+
+    expect(res.statusCode).toBe(302);
+    expect(res.headers["location"]).toBe(`/admin/organizations/${ORG_ID}?billing=granted`);
+    expect(mockGrantManualOrganizationPlan).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        organizationId: ORG_ID,
+        planCode: "pro",
+        subscriptionStatus: "active",
+        paymentReference: "wise-2026-001",
+        operatorSource: expect.stringMatching(/^admin:/) as unknown,
+      }),
+    );
+  });
+
+  it("redirects with billing=idempotent when payment reference already exists", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const csrf = await getCsrfToken(app, cookie);
+
+    mockGrantManualOrganizationPlan.mockResolvedValue(
+      makeGrantSuccess({ idempotent: true, updated: false }),
+    );
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-2026-001`,
+    });
+
+    expect(res.statusCode).toBe(302);
+    expect(res.headers["location"]).toBe(`/admin/organizations/${ORG_ID}?billing=idempotent`);
+  });
+
+  it("shows success flash on GET after redirect", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/admin/organizations/${ORG_ID}?billing=granted`,
+      headers: { cookie },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("Plan updated successfully");
+  });
+
+  it("shows idempotent flash on GET after redirect", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/admin/organizations/${ORG_ID}?billing=idempotent`,
+      headers: { cookie },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("payment reference already exists");
+  });
+
+  it("rejects POST without CSRF token with 403", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: "plan=pro&status=active&paid_through=2026-12-31",
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it("rejects unauthenticated POST with 403 (CSRF check fires before auth guard)", async () => {
+    const app = await buildApp();
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: "plan=pro&status=active",
+    });
+
+    // No session → no CSRF token in session → CSRF preHandler rejects before auth guard
+    expect(res.statusCode).toBe(403);
+  });
+
+  it("shows error when downgrading to free without confirmation", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const csrf = await getCsrfToken(app, cookie);
+
+    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&plan=free&status=free`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("confirmation");
+    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+  });
+
+  it("allows downgrade to free when confirmation checkbox is checked", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const csrf = await getCsrfToken(app, cookie);
+
+    mockGrantManualOrganizationPlan.mockResolvedValue(
+      makeGrantSuccess({ planCode: "free", subscriptionStatus: "free", paidThroughAt: null }),
+    );
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&plan=free&status=free&_confirm_downgrade=yes`,
+    });
+
+    expect(res.statusCode).toBe(302);
+    expect(mockGrantManualOrganizationPlan).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ planCode: "free", subscriptionStatus: "free" }),
+    );
+  });
+
+  it("re-renders form with error on service validation failure", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const csrf = await getCsrfToken(app, cookie);
+
+    mockGrantManualOrganizationPlan.mockResolvedValue({
+      ok: false,
+      code: "paid_through_required",
+    });
+    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&plan=pro&status=active`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("Paid-through date is required");
+  });
+
+  it("uses operatorSource with admin: prefix when calling the billing service", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const csrf = await getCsrfToken(app, cookie);
+
+    mockGrantManualOrganizationPlan.mockResolvedValue(makeGrantSuccess());
+
+    await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-12-31`,
+    });
+
+    const callArgs = mockGrantManualOrganizationPlan.mock.calls[0][1] as Record<string, unknown>;
+    expect(typeof callArgs["operatorSource"]).toBe("string");
+    expect((callArgs["operatorSource"] as string).startsWith("admin:")).toBe(true);
   });
 });

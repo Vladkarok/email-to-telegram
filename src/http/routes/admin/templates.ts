@@ -39,14 +39,18 @@ table { width: 100%; border-collapse: collapse; margin: 10px 0; }
 th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
 th { font-size: 0.82rem; text-transform: uppercase; color: var(--muted); letter-spacing: 0.06em; }
 .muted { color: var(--muted); }
-input[type="text"], input[type="password"] {
+input[type="text"], input[type="password"], select, textarea {
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 8px 12px;
   font: inherit;
   width: 100%;
   max-width: 400px;
+  background: var(--panel);
 }
+textarea { resize: vertical; }
+.flash-success { background: #e6f4ea; color: #1a5c2a; border: 1px solid #a8d5b3; }
+.flash-info { background: #e8f0fe; color: #1a3a6b; border: 1px solid #a8c4f5; }
 button, .btn {
   background: var(--accent);
   color: #fff;
@@ -193,6 +197,11 @@ export function renderUsersPage(
   );
 }
 
+export interface BillingFlash {
+  type: "success" | "error" | "idempotent";
+  message: string;
+}
+
 export interface OrganizationDetail {
   id: string;
   name: string;
@@ -260,7 +269,71 @@ export function renderUserDetailPage(csrfToken: string, user: UserDetail): strin
   );
 }
 
-export function renderOrganizationDetailPage(csrfToken: string, org: OrganizationDetail): string {
+const PLAN_CODES = ["free", "personal", "pro", "team", "business"] as const;
+const SUBSCRIPTION_STATUSES = ["free", "active", "canceled"] as const;
+
+function renderBillingForm(
+  csrfToken: string,
+  org: OrganizationDetail,
+  flash?: BillingFlash,
+): string {
+  const flashHtml = flash
+    ? `<div class="flash flash-${flash.type === "success" ? "success" : flash.type === "idempotent" ? "info" : "error"}">${escapeHtml(flash.message)}</div>`
+    : "";
+
+  const planOptions = PLAN_CODES.map(
+    (p) => `<option value="${p}"${org.planCode === p ? " selected" : ""}>${p}</option>`,
+  ).join("");
+
+  const statusOptions = SUBSCRIPTION_STATUSES.map(
+    (s) => `<option value="${s}"${org.subscriptionStatus === s ? " selected" : ""}>${s}</option>`,
+  ).join("");
+
+  const paidThroughValue = org.paidThroughAt
+    ? escapeHtmlAttribute(org.paidThroughAt.slice(0, 10))
+    : "";
+
+  return `<div class="panel">
+    <h2>Grant / Update Plan</h2>
+    ${flashHtml}
+    <form method="post" action="/admin/organizations/${escapeHtmlAttribute(org.id)}/billing">
+      <input type="hidden" name="_csrf" value="${escapeHtmlAttribute(csrfToken)}" />
+      <div style="margin-bottom:12px;">
+        <label for="bf-plan" style="display:block;margin-bottom:4px;" class="muted">Plan</label>
+        <select id="bf-plan" name="plan">${planOptions}</select>
+      </div>
+      <div style="margin-bottom:12px;">
+        <label for="bf-status" style="display:block;margin-bottom:4px;" class="muted">Status</label>
+        <select id="bf-status" name="status">${statusOptions}</select>
+      </div>
+      <div style="margin-bottom:12px;">
+        <label for="bf-paid-through" style="display:block;margin-bottom:4px;" class="muted">Paid Through (YYYY-MM-DD)</label>
+        <input type="text" id="bf-paid-through" name="paid_through" placeholder="2026-12-31" value="${paidThroughValue}" maxlength="10" />
+      </div>
+      <div style="margin-bottom:12px;">
+        <label for="bf-ref" style="display:block;margin-bottom:4px;" class="muted">Payment Reference</label>
+        <input type="text" id="bf-ref" name="payment_reference" placeholder="wise-2026-…" maxlength="255" />
+      </div>
+      <div style="margin-bottom:12px;">
+        <label for="bf-note" style="display:block;margin-bottom:4px;" class="muted">Note</label>
+        <textarea id="bf-note" name="note" rows="2" maxlength="1000"></textarea>
+      </div>
+      <div style="margin-bottom:8px;">
+        <label><input type="checkbox" name="keep_stripe_link" /> Keep Stripe link (business plan only)</label>
+      </div>
+      <div style="margin-bottom:16px;">
+        <label><input type="checkbox" name="_confirm_downgrade" value="yes" /> Confirm downgrade to free plan</label>
+      </div>
+      <button type="submit">Apply</button>
+    </form>
+  </div>`;
+}
+
+export function renderOrganizationDetailPage(
+  csrfToken: string,
+  org: OrganizationDetail,
+  flash?: BillingFlash,
+): string {
   const membersHtml = org.members
     .map(
       (m) =>
@@ -317,7 +390,8 @@ export function renderOrganizationDetailPage(csrfToken: string, org: Organizatio
           ? `<table><thead><tr><th>Date</th><th>Plan</th><th>Status</th><th>Source</th></tr></thead><tbody>${billingHtml}</tbody></table>`
           : '<p class="muted">No billing events.</p>'
       }
-    </div>`,
+    </div>
+    ${renderBillingForm(csrfToken, org, flash)}`,
     csrfToken,
   );
 }
