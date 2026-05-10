@@ -71,7 +71,7 @@ export async function createHttpServer(config: AppConfig): Promise<FastifyInstan
     },
   );
 
-  registerRoutes(app, config);
+  await registerRoutes(app, config);
 
   // Return an empty 404 for unknown routes — avoids leaking framework details.
   app.setNotFoundHandler((_req, reply) => {

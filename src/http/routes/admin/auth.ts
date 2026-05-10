@@ -1,4 +1,4 @@
-import { timingSafeEqual, randomBytes } from "crypto";
+import { createHmac, timingSafeEqual, randomBytes } from "crypto";
 import type { FastifyRequest, FastifyReply } from "fastify";
 
 export interface AdminSession {
@@ -13,14 +13,11 @@ declare module "fastify" {
   }
 }
 
+const HMAC_CANARY = randomBytes(32);
+
 export function verifyAdminSecret(submitted: string, expected: string): boolean {
-  const a = Buffer.from(submitted);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length) {
-    const padded = Buffer.alloc(b.length);
-    a.copy(padded);
-    return timingSafeEqual(padded, b) && false;
-  }
+  const a = createHmac("sha256", HMAC_CANARY).update(submitted).digest();
+  const b = createHmac("sha256", HMAC_CANARY).update(expected).digest();
   return timingSafeEqual(a, b);
 }
 

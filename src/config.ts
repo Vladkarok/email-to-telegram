@@ -125,6 +125,7 @@ const envSchema = z.object({
     .default("false")
     .transform((v) => v === "true"),
   ADMIN_SECRET: z.string().optional(),
+  ADMIN_SESSION_SECRET: z.string().optional(),
   ADMIN_SESSION_TTL_MINUTES: adminSessionTtlSchema,
 });
 
@@ -175,6 +176,7 @@ export interface AppConfig {
   billingCancelUrl: string | undefined;
   adminEnabled: boolean;
   adminSecret: string | undefined;
+  adminSessionSecret: string | undefined;
   adminSessionTtlMinutes: number;
 }
 
@@ -318,6 +320,7 @@ export function loadConfig(): AppConfig {
     billingCancelUrl: env.BILLING_CANCEL_URL,
     adminEnabled: env.ADMIN_ENABLED,
     adminSecret: env.ADMIN_SECRET,
+    adminSessionSecret: env.ADMIN_SESSION_SECRET,
     adminSessionTtlMinutes: env.ADMIN_SESSION_TTL_MINUTES,
   };
 }

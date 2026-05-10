@@ -64,6 +64,7 @@ const TEST_CONFIG = {
   maxSizeBytes: 1024 * 1024,
   adminEnabled: false,
   adminSecret: undefined,
+  adminSessionSecret: undefined,
   adminSessionTtlMinutes: 60,
 };
 
@@ -82,7 +83,7 @@ async function buildApp(botHealthy = true) {
       done(null, body);
     },
   );
-  registerRoutes(app, TEST_CONFIG);
+  await registerRoutes(app, TEST_CONFIG);
   return app;
 }
 
