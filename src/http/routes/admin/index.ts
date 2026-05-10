@@ -285,8 +285,20 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         return;
       }
 
-      const keptStripeLink = body?.["keep_stripe_link"] === "on";
-      const confirmDowngrade = body?.["_confirm_downgrade"] === "yes";
+      // Checkboxes send their form `value` attribute when checked, nothing when unchecked.
+      // Reject any scalar that isn't the exact expected value or absent — fail closed.
+      const keepStripeLinkRaw = body?.["keep_stripe_link"];
+      const confirmDowngradeRaw = body?.["_confirm_downgrade"];
+      if (keepStripeLinkRaw !== undefined && keepStripeLinkRaw !== "on") {
+        await renderError("Invalid request: unexpected value for keep_stripe_link.");
+        return;
+      }
+      if (confirmDowngradeRaw !== undefined && confirmDowngradeRaw !== "yes") {
+        await renderError("Invalid request: unexpected value for confirmation field.");
+        return;
+      }
+      const keptStripeLink = keepStripeLinkRaw === "on";
+      const confirmDowngrade = confirmDowngradeRaw === "yes";
 
       if (!VALID_PLAN_CODES.includes(planRaw)) {
         await renderError("Invalid plan selected.");

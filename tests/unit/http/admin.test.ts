@@ -830,6 +830,25 @@ describe("admin billing mutations", () => {
     expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
   });
 
+  it("rejects malformed keep_stripe_link=1 instead of silently clearing Stripe link", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const csrf = await getCsrfToken(app, cookie);
+
+    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&plan=business&status=active&payment_reference=ref-001&keep_stripe_link=1`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("unexpected value for keep_stripe_link");
+    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+  });
+
   it("rejects duplicate keep_stripe_link fields instead of silently clearing Stripe link", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
