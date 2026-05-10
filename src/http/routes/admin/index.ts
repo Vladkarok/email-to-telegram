@@ -13,6 +13,7 @@ import {
   type UserDetail,
   type OrganizationDetail,
   type BillingFlash,
+  type BillingFormOverrides,
 } from "./templates.js";
 import { adminOperatorSource, redactManualBillingForLog } from "../../../billing/audit.js";
 import {
@@ -274,7 +275,19 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
       const keptStripeLink = keepStripeLinkRaw === "on";
       const confirmDowngrade = confirmDowngradeRaw === "yes";
 
-      const renderError = async (message: string, preserveCheckbox = true): Promise<void> => {
+      const submittedOverrides: BillingFormOverrides = {
+        plan: planRaw,
+        status: statusRaw,
+        paidThrough: paidThroughRaw,
+        paymentReference: paymentReferenceRaw,
+        note: noteRaw,
+      };
+
+      const renderError = async (
+        message: string,
+        preserveCheckbox = true,
+        preserveSubmitted = true,
+      ): Promise<void> => {
         const detail = await buildOrganizationDetail(orgId);
         const flash: BillingFlash = { type: "error", message };
         await reply
@@ -285,6 +298,7 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
               detail,
               flash,
               preserveCheckbox ? keptStripeLink : undefined,
+              preserveSubmitted ? submittedOverrides : undefined,
             ),
           );
       };
@@ -402,8 +416,12 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
           concurrent_update:
             "Organization billing state was updated since this page was loaded. Please reload and review before resubmitting.",
         };
-        const preserveCheckbox = result.code !== "concurrent_update";
-        await renderError(errorMessages[result.code] ?? result.code, preserveCheckbox);
+        const isConcurrentUpdate = result.code === "concurrent_update";
+        await renderError(
+          errorMessages[result.code] ?? result.code,
+          !isConcurrentUpdate,
+          !isConcurrentUpdate,
+        );
         return;
       }
 

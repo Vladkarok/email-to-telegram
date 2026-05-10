@@ -274,35 +274,50 @@ export function renderUserDetailPage(csrfToken: string, user: UserDetail): strin
 const PLAN_CODES = ["free", "personal", "pro", "team", "business"] as const;
 const SUBSCRIPTION_STATUSES = ["free", "active", "canceled"] as const;
 
+export interface BillingFormOverrides {
+  plan: string;
+  status: string;
+  paidThrough: string;
+  paymentReference: string;
+  note: string;
+}
+
 function renderBillingForm(
   csrfToken: string,
   org: OrganizationDetail,
   flash?: BillingFlash,
   submittedKeptStripeLink?: boolean,
+  submittedValues?: BillingFormOverrides,
 ): string {
   const flashHtml = flash
     ? `<div class="flash flash-${flash.type === "success" ? "success" : flash.type === "idempotent" ? "info" : "error"}">${escapeHtml(flash.message)}</div>`
     : "";
 
+  const activePlan = submittedValues?.plan ?? org.planCode;
   const planOptions = PLAN_CODES.map(
-    (p) => `<option value="${p}"${org.planCode === p ? " selected" : ""}>${p}</option>`,
+    (p) => `<option value="${p}"${activePlan === p ? " selected" : ""}>${p}</option>`,
   ).join("");
 
+  const activeStatus = submittedValues?.status ?? org.subscriptionStatus;
   const statusIsManual = (SUBSCRIPTION_STATUSES as readonly string[]).includes(
     org.subscriptionStatus,
   );
-  const currentStatusOption = statusIsManual
-    ? ""
-    : `<option value="${escapeHtmlAttribute(org.subscriptionStatus)}" selected disabled>(current: ${escapeHtml(org.subscriptionStatus)} — read-only)</option>`;
+  const currentStatusOption =
+    statusIsManual || submittedValues
+      ? ""
+      : `<option value="${escapeHtmlAttribute(org.subscriptionStatus)}" selected disabled>(current: ${escapeHtml(org.subscriptionStatus)} — read-only)</option>`;
   const statusOptions =
     currentStatusOption +
     SUBSCRIPTION_STATUSES.map(
-      (s) => `<option value="${s}"${org.subscriptionStatus === s ? " selected" : ""}>${s}</option>`,
+      (s) => `<option value="${s}"${activeStatus === s ? " selected" : ""}>${s}</option>`,
     ).join("");
 
-  const paidThroughValue = org.paidThroughAt
-    ? escapeHtmlAttribute(org.paidThroughAt.slice(0, 10))
-    : "";
+  const paidThroughValue =
+    submittedValues?.paidThrough ??
+    (org.paidThroughAt ? escapeHtmlAttribute(org.paidThroughAt.slice(0, 10)) : "");
+
+  const paymentReferenceValue = escapeHtmlAttribute(submittedValues?.paymentReference ?? "");
+  const noteValue = escapeHtml(submittedValues?.note ?? "");
 
   // On error re-render, use the submitted value; on first render, default to the current
   // Stripe-link state so a routine plan update does not accidentally clear Stripe IDs.
@@ -331,11 +346,11 @@ function renderBillingForm(
       </div>
       <div style="margin-bottom:12px;">
         <label for="bf-ref" style="display:block;margin-bottom:4px;" class="muted">Payment Reference <span style="color:var(--danger)">*</span></label>
-        <input type="text" id="bf-ref" name="payment_reference" placeholder="wise-2026-…" maxlength="255" required />
+        <input type="text" id="bf-ref" name="payment_reference" placeholder="wise-2026-…" maxlength="255" required value="${paymentReferenceValue}" />
       </div>
       <div style="margin-bottom:12px;">
         <label for="bf-note" style="display:block;margin-bottom:4px;" class="muted">Note</label>
-        <textarea id="bf-note" name="note" rows="2" maxlength="1000"></textarea>
+        <textarea id="bf-note" name="note" rows="2" maxlength="1000">${noteValue}</textarea>
       </div>
       <div style="margin-bottom:8px;">
         <label><input type="checkbox" name="keep_stripe_link"${keepStripeLinkChecked ? " checked" : ""} /> Keep Stripe link (business plan only) — current: ${stripeLinkStatus}</label>
@@ -353,6 +368,7 @@ export function renderOrganizationDetailPage(
   org: OrganizationDetail,
   flash?: BillingFlash,
   submittedKeptStripeLink?: boolean,
+  submittedValues?: BillingFormOverrides,
 ): string {
   const membersHtml = org.members
     .map(
@@ -412,7 +428,7 @@ export function renderOrganizationDetailPage(
           : '<p class="muted">No billing events.</p>'
       }
     </div>
-    ${renderBillingForm(csrfToken, org, flash, submittedKeptStripeLink)}`,
+    ${renderBillingForm(csrfToken, org, flash, submittedKeptStripeLink, submittedValues)}`,
     csrfToken,
   );
 }
