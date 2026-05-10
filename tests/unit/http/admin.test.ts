@@ -121,6 +121,8 @@ async function loginSession(app: FastifyInstance): Promise<string> {
 
 const ORG_ID = "00000000-0000-0000-0000-000000000001";
 
+const MOCK_ORG_UPDATED_AT = new Date("2026-01-15T10:00:00.000Z");
+
 const MOCK_ORG = {
   id: ORG_ID,
   name: "Test Org",
@@ -128,11 +130,18 @@ const MOCK_ORG = {
   subscriptionStatus: "active",
   paidThroughAt: new Date("2026-06-01"),
   createdAt: new Date("2025-01-01"),
-  updatedAt: new Date(),
+  updatedAt: MOCK_ORG_UPDATED_AT,
+  stripeCustomerId: null,
+  stripeSubscriptionId: null,
 };
 
 function extractCsrfToken(html: string): string {
   const match = html.match(/name="csrf-token" content="([a-f0-9]{64})"/);
+  return match?.[1] ?? "";
+}
+
+function extractOrgVersion(html: string): string {
+  const match = html.match(/name="_org_version" value="([^"]+)"/);
   return match?.[1] ?? "";
 }
 
@@ -458,14 +467,22 @@ describe("admin auth module", () => {
   });
 });
 
-async function getCsrfToken(app: FastifyInstance, cookie: string): Promise<string> {
+async function getCsrfAndVersion(
+  app: FastifyInstance,
+  cookie: string,
+): Promise<{ csrf: string; orgVersion: string }> {
   mockFindOrganizationById.mockResolvedValueOnce(MOCK_ORG);
   const res = await app.inject({
     method: "GET",
     url: `/admin/organizations/${ORG_ID}`,
     headers: { cookie },
   });
-  return extractCsrfToken(res.body);
+  return { csrf: extractCsrfToken(res.body), orgVersion: extractOrgVersion(res.body) };
+}
+
+async function getCsrfToken(app: FastifyInstance, cookie: string): Promise<string> {
+  const { csrf } = await getCsrfAndVersion(app, cookie);
+  return csrf;
 }
 
 describe("admin billing mutations", () => {
@@ -907,6 +924,88 @@ describe("admin billing mutations", () => {
     expect(res.body).toContain("Payment reference is required");
     // Checkbox must NOT be checked when it was not submitted
     expect(res.body).not.toContain('name="keep_stripe_link" checked');
+  });
+
+  it("defaults keep_stripe_link checkbox to checked when org already has Stripe IDs", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+
+    const orgWithStripe = {
+      ...MOCK_ORG,
+      stripeCustomerId: "cus_abc123",
+      stripeSubscriptionId: "sub_xyz",
+    };
+    mockFindOrganizationById.mockResolvedValueOnce(orgWithStripe);
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/admin/organizations/${ORG_ID}`,
+      headers: { cookie },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('name="keep_stripe_link" checked');
+    expect(res.body).toContain("current: ");
+  });
+
+  it("defaults keep_stripe_link checkbox to unchecked when org has no Stripe IDs", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+
+    mockFindOrganizationById.mockResolvedValueOnce(MOCK_ORG); // stripeCustomerId: null
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/admin/organizations/${ORG_ID}`,
+      headers: { cookie },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).not.toContain('name="keep_stripe_link" checked');
+  });
+
+  it("rejects POST when org was updated since page was rendered (stale-page guard)", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const { csrf, orgVersion } = await getCsrfAndVersion(app, cookie);
+
+    // Simulate org updated after form render: bump updatedAt by 1 second
+    const newerOrg = {
+      ...MOCK_ORG,
+      updatedAt: new Date(MOCK_ORG_UPDATED_AT.getTime() + 1000),
+    };
+    mockFindOrganizationById.mockResolvedValue(newerOrg);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-test-001`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("updated since this page was loaded");
+    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+  });
+
+  it("accepts POST when org version matches (no stale conflict)", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const { csrf, orgVersion } = await getCsrfAndVersion(app, cookie);
+
+    mockGrantManualOrganizationPlan.mockResolvedValue(makeGrantSuccess());
+    // org unchanged — same updatedAt
+    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-test-001`,
+    });
+
+    expect(res.statusCode).toBe(302);
+    expect(res.headers["location"]).toBe(`/admin/organizations/${ORG_ID}?billing=granted`);
   });
 
   it("does not log billing.mutated for idempotent replay (redirects with idempotent flash)", async () => {

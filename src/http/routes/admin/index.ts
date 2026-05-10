@@ -265,6 +265,7 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
       const paidThroughRaw = getString("paid_through") ?? "";
       const paymentReferenceRaw = getString("payment_reference") ?? "";
       const noteRaw = getString("note") ?? "";
+      const orgVersionRaw = getString("_org_version") ?? "";
 
       // Checkboxes send their form `value` attribute when checked, nothing when unchecked.
       // Parsed early so renderError can preserve the submitted checkbox state on re-render.
@@ -289,6 +290,7 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         "note",
         "keep_stripe_link",
         "_confirm_downgrade",
+        "_org_version",
       ];
       if (allFields.some((k) => Array.isArray(body?.[k]))) {
         await renderError("Invalid request: duplicate form fields are not allowed.");
@@ -362,6 +364,20 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
       }
 
       const db = getDb();
+
+      // Stale-page guard: re-fetch the org and compare its updatedAt to the version token
+      // embedded in the form at render time. A mismatch means billing state changed since
+      // the operator loaded the page — reject to prevent clobbering a newer decision.
+      if (orgVersionRaw) {
+        const currentOrg = await findOrganizationById(db, orgId);
+        if (currentOrg && currentOrg.updatedAt.toISOString() !== orgVersionRaw) {
+          await renderError(
+            "Organization billing state was updated since this page was loaded. Please reload and review before resubmitting.",
+          );
+          return;
+        }
+      }
+
       const result = await grantManualOrganizationPlan(db, {
         organizationId: orgId,
         planCode: planRaw as PlanCode,
@@ -413,6 +429,8 @@ async function buildOrganizationDetail(
       subscriptionStatus: "-",
       paidThroughAt: null,
       createdAt: "-",
+      updatedAt: "-",
+      hasStripeLink: false,
       aliasCount: 0,
       memberCount: 0,
       members: [],
@@ -445,6 +463,8 @@ async function buildOrganizationDetail(
     subscriptionStatus: org.subscriptionStatus,
     paidThroughAt: org.paidThroughAt?.toISOString() ?? null,
     createdAt: org.createdAt.toISOString(),
+    updatedAt: org.updatedAt.toISOString(),
+    hasStripeLink: org.stripeCustomerId != null || org.stripeSubscriptionId != null,
     aliasCount,
     memberCount: members.length,
     members: memberDetails,

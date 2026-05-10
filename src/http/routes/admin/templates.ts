@@ -209,6 +209,8 @@ export interface OrganizationDetail {
   subscriptionStatus: string;
   paidThroughAt: string | null;
   createdAt: string;
+  updatedAt: string;
+  hasStripeLink: boolean;
   aliasCount: number;
   memberCount: number;
   members: Array<{ userId: string; role: string; username: string | null }>;
@@ -294,14 +296,19 @@ function renderBillingForm(
     ? escapeHtmlAttribute(org.paidThroughAt.slice(0, 10))
     : "";
 
-  // Preserve submitted checkbox state on error re-renders to avoid accidental Stripe-link loss.
-  const keepStripeLinkChecked = submittedKeptStripeLink ?? false;
+  // On error re-render, use the submitted value; on first render, default to the current
+  // Stripe-link state so a routine plan update does not accidentally clear Stripe IDs.
+  const keepStripeLinkChecked = submittedKeptStripeLink ?? org.hasStripeLink;
+  const stripeLinkStatus = org.hasStripeLink
+    ? `<span style="color:#1a5c2a;">linked</span>`
+    : `<span class="muted">none</span>`;
 
   return `<div class="panel">
     <h2>Grant / Update Plan</h2>
     ${flashHtml}
     <form method="post" action="/admin/organizations/${escapeHtmlAttribute(org.id)}/billing">
       <input type="hidden" name="_csrf" value="${escapeHtmlAttribute(csrfToken)}" />
+      <input type="hidden" name="_org_version" value="${escapeHtmlAttribute(org.updatedAt)}" />
       <div style="margin-bottom:12px;">
         <label for="bf-plan" style="display:block;margin-bottom:4px;" class="muted">Plan</label>
         <select id="bf-plan" name="plan">${planOptions}</select>
@@ -323,7 +330,7 @@ function renderBillingForm(
         <textarea id="bf-note" name="note" rows="2" maxlength="1000"></textarea>
       </div>
       <div style="margin-bottom:8px;">
-        <label><input type="checkbox" name="keep_stripe_link"${keepStripeLinkChecked ? " checked" : ""} /> Keep Stripe link (business plan only)</label>
+        <label><input type="checkbox" name="keep_stripe_link"${keepStripeLinkChecked ? " checked" : ""} /> Keep Stripe link (business plan only) — current: ${stripeLinkStatus}</label>
       </div>
       <div style="margin-bottom:16px;">
         <label><input type="checkbox" name="_confirm_downgrade" value="yes" /> Confirm downgrade to free plan</label>
@@ -372,6 +379,7 @@ export function renderOrganizationDetailPage(
         <dt>Status</dt><dd>${escapeHtml(org.subscriptionStatus)}</dd>
         <dt>Paid Through</dt><dd>${org.paidThroughAt ? escapeHtml(org.paidThroughAt) : '<span class="muted">-</span>'}</dd>
         <dt>Created</dt><dd>${escapeHtml(org.createdAt)}</dd>
+        <dt>Stripe Link</dt><dd>${org.hasStripeLink ? "linked" : '<span class="muted">none</span>'}</dd>
         <dt>Aliases</dt><dd>${org.aliasCount}</dd>
         ${
           org.currentMonthUsage
