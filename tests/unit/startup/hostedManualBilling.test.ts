@@ -80,6 +80,7 @@ describe("hostedManualBilling helpers", () => {
       paymentReference: "wise-2026-04-001",
       note: "Manual Wise",
       keptStripeLink: false,
+      operatorSource: "cli",
     });
   });
 
@@ -103,6 +104,7 @@ describe("hostedManualBilling helpers", () => {
       paymentReference: null,
       note: null,
       keptStripeLink: false,
+      operatorSource: "cli",
     });
   });
 
@@ -142,6 +144,7 @@ describe("hostedManualBilling helpers", () => {
       notePresent: true,
       keptStripeLink: false,
       manualBillingEventId: "event-1",
+      operatorSource: "cli",
     });
   });
 
