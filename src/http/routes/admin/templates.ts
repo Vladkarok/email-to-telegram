@@ -276,6 +276,7 @@ function renderBillingForm(
   csrfToken: string,
   org: OrganizationDetail,
   flash?: BillingFlash,
+  submittedKeptStripeLink?: boolean,
 ): string {
   const flashHtml = flash
     ? `<div class="flash flash-${flash.type === "success" ? "success" : flash.type === "idempotent" ? "info" : "error"}">${escapeHtml(flash.message)}</div>`
@@ -292,6 +293,9 @@ function renderBillingForm(
   const paidThroughValue = org.paidThroughAt
     ? escapeHtmlAttribute(org.paidThroughAt.slice(0, 10))
     : "";
+
+  // Preserve submitted checkbox state on error re-renders to avoid accidental Stripe-link loss.
+  const keepStripeLinkChecked = submittedKeptStripeLink ?? false;
 
   return `<div class="panel">
     <h2>Grant / Update Plan</h2>
@@ -319,7 +323,7 @@ function renderBillingForm(
         <textarea id="bf-note" name="note" rows="2" maxlength="1000"></textarea>
       </div>
       <div style="margin-bottom:8px;">
-        <label><input type="checkbox" name="keep_stripe_link" /> Keep Stripe link (business plan only)</label>
+        <label><input type="checkbox" name="keep_stripe_link"${keepStripeLinkChecked ? " checked" : ""} /> Keep Stripe link (business plan only)</label>
       </div>
       <div style="margin-bottom:16px;">
         <label><input type="checkbox" name="_confirm_downgrade" value="yes" /> Confirm downgrade to free plan</label>
@@ -333,6 +337,7 @@ export function renderOrganizationDetailPage(
   csrfToken: string,
   org: OrganizationDetail,
   flash?: BillingFlash,
+  submittedKeptStripeLink?: boolean,
 ): string {
   const membersHtml = org.members
     .map(
@@ -391,7 +396,7 @@ export function renderOrganizationDetailPage(
           : '<p class="muted">No billing events.</p>'
       }
     </div>
-    ${renderBillingForm(csrfToken, org, flash)}`,
+    ${renderBillingForm(csrfToken, org, flash, submittedKeptStripeLink)}`,
     csrfToken,
   );
 }

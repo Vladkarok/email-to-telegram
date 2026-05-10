@@ -867,4 +867,66 @@ describe("admin billing mutations", () => {
     expect(res.body).toContain("duplicate form fields");
     expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
   });
+
+  it("preserves keep_stripe_link=checked state on validation error re-render", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const csrf = await getCsrfToken(app, cookie);
+
+    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+
+    // Submit with keep_stripe_link=on but trigger a validation error (missing payment_reference)
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&plan=business&status=active&paid_through=2026-12-31&keep_stripe_link=on`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("Payment reference is required");
+    // Checkbox should be rendered as checked to avoid accidental Stripe-link loss on retry
+    expect(res.body).toContain('name="keep_stripe_link" checked');
+  });
+
+  it("renders keep_stripe_link unchecked on error re-render when not submitted", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const csrf = await getCsrfToken(app, cookie);
+
+    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-12-31`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("Payment reference is required");
+    // Checkbox must NOT be checked when it was not submitted
+    expect(res.body).not.toContain('name="keep_stripe_link" checked');
+  });
+
+  it("does not log billing.mutated for idempotent replay (redirects with idempotent flash)", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const csrf = await getCsrfToken(app, cookie);
+
+    mockGrantManualOrganizationPlan.mockResolvedValue(
+      makeGrantSuccess({ idempotent: true, updated: false }),
+    );
+
+    // Should redirect to idempotent flash without any error
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-2026-001`,
+    });
+
+    expect(res.statusCode).toBe(302);
+    expect(res.headers["location"]).toBe(`/admin/organizations/${ORG_ID}?billing=idempotent`);
+  });
 });
