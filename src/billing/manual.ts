@@ -13,7 +13,6 @@ import {
   type OrganizationRole,
 } from "../db/repos/organizationMembers.js";
 import {
-  createManualBillingEvent,
   findOrCreateManualBillingEvent,
   type ManualBillingEventInput,
 } from "../db/repos/manualBillingEvents.js";
@@ -35,7 +34,7 @@ export interface ManualPlanGrantInput {
   planCode: PlanCode;
   subscriptionStatus: ManualSubscriptionStatus;
   paidThroughAt: Date | null;
-  paymentReference: string | null;
+  paymentReference: string;
   note: string | null;
   keptStripeLink: boolean;
   operatorSource: OperatorSource;
@@ -72,6 +71,7 @@ export type ManualGrantErrorCode =
   | "user_not_in_organization"
   | "free_status_not_allowed_for_paid_plan"
   | "concurrent_update"
+  | "payment_reference_required"
   | "payment_reference_too_long"
   | "note_too_long";
 
@@ -137,7 +137,10 @@ function validatePlanInput(
   if (isPaidPlan && input.subscriptionStatus === "active" && input.paidThroughAt == null) {
     return { ok: false, code: "paid_through_required" };
   }
-  if (input.paymentReference !== null && input.paymentReference.length > 255) {
+  if (!input.paymentReference) {
+    return { ok: false, code: "payment_reference_required" };
+  }
+  if (input.paymentReference.length > 255) {
     return { ok: false, code: "payment_reference_too_long" };
   }
   if (input.note !== null && input.note.length > 1000) {
@@ -164,7 +167,7 @@ function buildEventInput(
   input: ManualPlanGrantInput,
   organizationId: string,
   telegramUserId: bigint | null,
-): ManualBillingEventInput {
+): ManualBillingEventInput & { paymentReference: string } {
   return {
     organizationId,
     telegramUserId,
@@ -243,57 +246,33 @@ export async function grantManualOrganizationPlan(
 
       const telegramUserId = input.telegramUserId ?? null;
 
-      if (input.paymentReference) {
-        // Atomic insert-or-find: race-safe via unique partial index.
-        // Idempotency result comes BEFORE the version check so a retry of an
-        // already-applied write succeeds even when the caller's page is stale.
-        const { event, created } = await findOrCreateManualBillingEvent(
-          tx,
-          buildEventInput(
-            input,
-            input.organizationId,
-            telegramUserId,
-          ) as ManualBillingEventInput & {
-            paymentReference: string;
-          },
-        );
-        if (!created) {
-          const summary = summarizeEvent(event);
-          return {
-            ok: true,
-            idempotent: true,
-            updated: false,
-            ...summary,
-            operatorSource: input.operatorSource,
-          };
-        }
-        // New event just inserted — version check now. Throw to roll back the
-        // insert if the page is stale (no orphaned event left behind).
-        if (
-          input.expectedUpdatedAt != null &&
-          organization.updatedAt.toISOString() !== input.expectedUpdatedAt
-        ) {
-          throw new ConcurrentUpdateSignal();
-        }
-        await updateOrganizationBillingState(tx, input.organizationId, buildBillingPatch(input));
-        const summary = summarize(input, input.organizationId, telegramUserId, event.id);
-        return { ok: true, idempotent: false, updated: true, ...summary };
+      // Atomic insert-or-find: race-safe via unique partial index.
+      // Idempotency result comes BEFORE the version check so a retry of an
+      // already-applied write succeeds even when the caller's page is stale.
+      const { event, created } = await findOrCreateManualBillingEvent(
+        tx,
+        buildEventInput(input, input.organizationId, telegramUserId),
+      );
+      if (!created) {
+        const summary = summarizeEvent(event);
+        return {
+          ok: true,
+          idempotent: true,
+          updated: false,
+          ...summary,
+          operatorSource: input.operatorSource,
+        };
       }
-
-      // No paymentReference — non-idempotent path, no writes yet so no throw needed.
+      // New event just inserted — version check now. Throw to roll back the
+      // insert if the page is stale (no orphaned event left behind).
       if (
         input.expectedUpdatedAt != null &&
         organization.updatedAt.toISOString() !== input.expectedUpdatedAt
       ) {
-        return { ok: false, code: "concurrent_update" };
+        throw new ConcurrentUpdateSignal();
       }
-
-      const created = await createManualBillingEvent(
-        tx,
-        buildEventInput(input, input.organizationId, telegramUserId),
-      );
       await updateOrganizationBillingState(tx, input.organizationId, buildBillingPatch(input));
-      const summary = summarize(input, input.organizationId, telegramUserId, created.id);
+      const summary = summarize(input, input.organizationId, telegramUserId, event.id);
       return { ok: true, idempotent: false, updated: true, ...summary };
     });
   } catch (err) {
@@ -369,40 +348,24 @@ export async function grantManualUserPlan(
     const organization = await findOrganizationById(tx, resolvedOrganizationId);
     if (!organization) return { ok: false, code: "organization_not_found" };
 
-    if (input.paymentReference) {
-      const { event, created } = await findOrCreateManualBillingEvent(
-        tx,
-        buildEventInput(
-          input,
-          resolvedOrganizationId,
-          input.telegramUserId,
-        ) as ManualBillingEventInput & {
-          paymentReference: string;
-        },
-      );
-      if (!created) {
-        // Idempotent replay — stored event data, but current caller's operatorSource.
-        const summary = summarizeEvent(event);
-        return {
-          ok: true,
-          idempotent: true,
-          updated: false,
-          createdOrganization,
-          ...summary,
-          operatorSource: input.operatorSource,
-        };
-      }
-      await updateOrganizationBillingState(tx, resolvedOrganizationId, buildBillingPatch(input));
-      const summary = summarize(input, resolvedOrganizationId, input.telegramUserId, event.id);
-      return { ok: true, idempotent: false, updated: true, createdOrganization, ...summary };
-    }
-
-    const created = await createManualBillingEvent(
+    const { event, created } = await findOrCreateManualBillingEvent(
       tx,
       buildEventInput(input, resolvedOrganizationId, input.telegramUserId),
     );
+    if (!created) {
+      // Idempotent replay — stored event data, but current caller's operatorSource.
+      const summary = summarizeEvent(event);
+      return {
+        ok: true,
+        idempotent: true,
+        updated: false,
+        createdOrganization,
+        ...summary,
+        operatorSource: input.operatorSource,
+      };
+    }
     await updateOrganizationBillingState(tx, resolvedOrganizationId, buildBillingPatch(input));
-    const summary = summarize(input, resolvedOrganizationId, input.telegramUserId, created.id);
+    const summary = summarize(input, resolvedOrganizationId, input.telegramUserId, event.id);
     return { ok: true, idempotent: false, updated: true, createdOrganization, ...summary };
   });
 }

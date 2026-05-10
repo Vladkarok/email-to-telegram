@@ -94,18 +94,19 @@ describe("hostedManualBilling helpers", () => {
       manualCreateNewOrganization: true,
     });
     const input = buildManualBillingUserInput(opts);
-    expect(input).toEqual({
+    expect(input).toMatchObject({
       telegramUserId: 12345n,
       organizationId: "org-x",
       createNewOrganization: true,
       planCode: "personal",
       subscriptionStatus: "active",
       paidThroughAt: new Date("2026-05-30T00:00:00.000Z"),
-      paymentReference: null,
       note: null,
       keptStripeLink: false,
       operatorSource: "cli",
     });
+    // Auto-generated reference has the cli: prefix when none was provided
+    expect(input.paymentReference).toMatch(/^cli:\d+$/);
   });
 
   it("builds a member input from startup options", () => {

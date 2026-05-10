@@ -281,6 +281,7 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         paidThrough: paidThroughRaw,
         paymentReference: paymentReferenceRaw,
         note: noteRaw,
+        orgVersion: orgVersionRaw,
       };
 
       const renderError = async (
