@@ -1003,6 +1003,27 @@ describe("admin billing mutations", () => {
     expect(res.body).toContain("updated since this page was loaded");
   });
 
+  it("concurrent_update re-render does not preserve submitted keep_stripe_link", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const { csrf, orgVersion } = await getCsrfAndVersion(app, cookie);
+
+    mockGrantManualOrganizationPlan.mockResolvedValue({ ok: false, code: "concurrent_update" });
+    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=business&status=active&payment_reference=wise-test-001&keep_stripe_link=on`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("updated since this page was loaded");
+    // Must NOT preserve submitted checkbox — the user must reload to see current org state first.
+    expect(res.body).not.toContain('name="keep_stripe_link" checked');
+  });
+
   it("accepts POST when org version matches (no stale conflict)", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);

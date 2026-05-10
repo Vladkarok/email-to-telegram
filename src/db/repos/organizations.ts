@@ -32,6 +32,18 @@ export async function findOrganizationById(db: Db, id: string): Promise<Organiza
   return organization ?? null;
 }
 
+export async function findOrganizationByIdForUpdate(
+  db: Db,
+  id: string,
+): Promise<Organization | null> {
+  const [organization] = await db
+    .select()
+    .from(organizations)
+    .where(eq(organizations.id, id))
+    .for("update");
+  return organization ?? null;
+}
+
 export async function findOrganizationByStripeCustomerId(
   db: Db,
   stripeCustomerId: string,

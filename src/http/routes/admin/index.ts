@@ -274,12 +274,19 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
       const keptStripeLink = keepStripeLinkRaw === "on";
       const confirmDowngrade = confirmDowngradeRaw === "yes";
 
-      const renderError = async (message: string): Promise<void> => {
+      const renderError = async (message: string, preserveCheckbox = true): Promise<void> => {
         const detail = await buildOrganizationDetail(orgId);
         const flash: BillingFlash = { type: "error", message };
         await reply
           .type("text/html")
-          .send(renderOrganizationDetailPage(csrfToken, detail, flash, keptStripeLink));
+          .send(
+            renderOrganizationDetailPage(
+              csrfToken,
+              detail,
+              flash,
+              preserveCheckbox ? keptStripeLink : undefined,
+            ),
+          );
       };
 
       const allFields = [
@@ -395,7 +402,8 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
           concurrent_update:
             "Organization billing state was updated since this page was loaded. Please reload and review before resubmitting.",
         };
-        await renderError(errorMessages[result.code] ?? result.code);
+        const preserveCheckbox = result.code !== "concurrent_update";
+        await renderError(errorMessages[result.code] ?? result.code, preserveCheckbox);
         return;
       }
 

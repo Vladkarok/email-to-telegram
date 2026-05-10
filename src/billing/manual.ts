@@ -2,6 +2,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
   createOrganization,
   findOrganizationById,
+  findOrganizationByIdForUpdate,
   updateOrganizationBillingState,
 } from "../db/repos/organizations.js";
 import { findOrCreateUserById } from "../db/repos/users.js";
@@ -13,6 +14,7 @@ import {
 } from "../db/repos/organizationMembers.js";
 import {
   createManualBillingEvent,
+  findManualBillingEventByPaymentReference,
   findOrCreateManualBillingEvent,
   type ManualBillingEventInput,
 } from "../db/repos/manualBillingEvents.js";
@@ -223,31 +225,23 @@ export async function grantManualOrganizationPlan(
   if (!validation.ok) return validation;
 
   return db.transaction(async (tx) => {
-    const organization = await findOrganizationById(tx, input.organizationId);
+    // FOR UPDATE locks the row so no concurrent transaction can write to this
+    // org between the version check and the billing write.
+    const organization = await findOrganizationByIdForUpdate(tx, input.organizationId);
     if (!organization) return { ok: false, code: "organization_not_found" };
-
-    // Optimistic concurrency: check inside the transaction so the version read
-    // and the billing write are atomic — eliminates the pre-transaction TOCTOU.
-    if (
-      input.expectedUpdatedAt != null &&
-      organization.updatedAt.toISOString() !== input.expectedUpdatedAt
-    ) {
-      return { ok: false, code: "concurrent_update" };
-    }
 
     const telegramUserId = input.telegramUserId ?? null;
 
     if (input.paymentReference) {
-      // Atomic insert-or-find: race-safe via unique partial index.
-      const { event, created } = await findOrCreateManualBillingEvent(
+      // Idempotency check BEFORE version check: a retry of an already-applied
+      // write must succeed even when the caller's page version is now stale.
+      const existingEvent = await findManualBillingEventByPaymentReference(
         tx,
-        buildEventInput(input, input.organizationId, telegramUserId) as ManualBillingEventInput & {
-          paymentReference: string;
-        },
+        input.organizationId,
+        input.paymentReference,
       );
-      if (!created) {
-        // Idempotent replay — stored event data, but current caller's operatorSource.
-        const summary = summarizeEvent(event);
+      if (existingEvent) {
+        const summary = summarizeEvent(existingEvent);
         return {
           ok: true,
           idempotent: true,
@@ -256,9 +250,30 @@ export async function grantManualOrganizationPlan(
           operatorSource: input.operatorSource,
         };
       }
+
+      // Version check only for genuinely new writes.
+      if (
+        input.expectedUpdatedAt != null &&
+        organization.updatedAt.toISOString() !== input.expectedUpdatedAt
+      ) {
+        return { ok: false, code: "concurrent_update" };
+      }
+
+      const created = await createManualBillingEvent(
+        tx,
+        buildEventInput(input, input.organizationId, telegramUserId),
+      );
       await updateOrganizationBillingState(tx, input.organizationId, buildBillingPatch(input));
-      const summary = summarize(input, input.organizationId, telegramUserId, event.id);
+      const summary = summarize(input, input.organizationId, telegramUserId, created.id);
       return { ok: true, idempotent: false, updated: true, ...summary };
+    }
+
+    // No paymentReference — non-idempotent path.
+    if (
+      input.expectedUpdatedAt != null &&
+      organization.updatedAt.toISOString() !== input.expectedUpdatedAt
+    ) {
+      return { ok: false, code: "concurrent_update" };
     }
 
     const created = await createManualBillingEvent(

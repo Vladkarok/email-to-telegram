@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockFindOrganizationById = vi.fn();
+const mockFindOrganizationByIdForUpdate = vi.fn();
 const mockUpdateOrganizationBillingState = vi.fn();
 const mockCreateOrganization = vi.fn();
 const mockFindOrCreateUserById = vi.fn();
@@ -8,10 +9,13 @@ const mockListOrganizationMembershipsForUser = vi.fn();
 const mockUserHasOrganizationRole = vi.fn();
 const mockAddOrganizationMember = vi.fn();
 const mockCreateManualBillingEvent = vi.fn();
+const mockFindManualBillingEventByPaymentReference = vi.fn();
 const mockFindOrCreateManualBillingEvent = vi.fn();
 
 vi.mock("../../../src/db/repos/organizations.js", () => ({
   findOrganizationById: (...args: unknown[]): unknown => mockFindOrganizationById(...args),
+  findOrganizationByIdForUpdate: (...args: unknown[]): unknown =>
+    mockFindOrganizationByIdForUpdate(...args),
   updateOrganizationBillingState: (...args: unknown[]): unknown =>
     mockUpdateOrganizationBillingState(...args),
   createOrganization: (...args: unknown[]): unknown => mockCreateOrganization(...args),
@@ -30,6 +34,8 @@ vi.mock("../../../src/db/repos/organizationMembers.js", () => ({
 
 vi.mock("../../../src/db/repos/manualBillingEvents.js", () => ({
   createManualBillingEvent: (...args: unknown[]): unknown => mockCreateManualBillingEvent(...args),
+  findManualBillingEventByPaymentReference: (...args: unknown[]): unknown =>
+    mockFindManualBillingEventByPaymentReference(...args),
   findOrCreateManualBillingEvent: (...args: unknown[]): unknown =>
     mockFindOrCreateManualBillingEvent(...args),
 }));
@@ -47,7 +53,7 @@ const PAID_THROUGH = new Date("2026-05-30T00:00:00.000Z");
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockFindOrganizationById.mockResolvedValue({
+  const defaultOrg = {
     id: "org-1",
     name: "Org 1",
     planCode: "free",
@@ -55,7 +61,11 @@ beforeEach(() => {
     stripeCustomerId: "cus_existing",
     stripeSubscriptionId: "sub_existing",
     paidThroughAt: null,
-  });
+    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+  };
+  mockFindOrganizationById.mockResolvedValue(defaultOrg);
+  mockFindOrganizationByIdForUpdate.mockResolvedValue(defaultOrg);
+  mockFindManualBillingEventByPaymentReference.mockResolvedValue(null);
   mockUpdateOrganizationBillingState.mockResolvedValue({
     id: "org-1",
     planCode: "pro",
@@ -91,7 +101,7 @@ beforeEach(() => {
 
 describe("grantManualOrganizationPlan", () => {
   it("rejects when organization is not found", async () => {
-    mockFindOrganizationById.mockResolvedValueOnce(null);
+    mockFindOrganizationByIdForUpdate.mockResolvedValueOnce(null);
     const result = await grantManualOrganizationPlan(fakeDb, {
       organizationId: "missing",
       planCode: "pro",
@@ -223,7 +233,12 @@ describe("grantManualOrganizationPlan", () => {
         stripeSubscriptionId: null,
       }),
     );
-    expect(mockFindOrCreateManualBillingEvent).toHaveBeenCalledWith(
+    expect(mockFindManualBillingEventByPaymentReference).toHaveBeenCalledWith(
+      expect.anything(),
+      "org-1",
+      "wise-2026-04-001",
+    );
+    expect(mockCreateManualBillingEvent).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         organizationId: "org-1",
@@ -254,7 +269,7 @@ describe("grantManualOrganizationPlan", () => {
 
   it("rejects with concurrent_update when expectedUpdatedAt does not match org.updatedAt", async () => {
     const orgUpdatedAt = new Date("2026-01-15T10:00:00.000Z");
-    mockFindOrganizationById.mockResolvedValue({
+    mockFindOrganizationByIdForUpdate.mockResolvedValue({
       id: "org-1",
       name: "Org 1",
       planCode: "free",
@@ -264,6 +279,8 @@ describe("grantManualOrganizationPlan", () => {
       paidThroughAt: null,
       updatedAt: orgUpdatedAt,
     });
+    // Idempotency check runs first; no existing event for this payment reference.
+    mockFindManualBillingEventByPaymentReference.mockResolvedValueOnce(null);
 
     const result = await grantManualOrganizationPlan(fakeDb, {
       organizationId: "org-1",
@@ -283,7 +300,7 @@ describe("grantManualOrganizationPlan", () => {
 
   it("proceeds normally when expectedUpdatedAt matches org.updatedAt", async () => {
     const orgUpdatedAt = new Date("2026-01-15T10:00:00.000Z");
-    mockFindOrganizationById.mockResolvedValue({
+    mockFindOrganizationByIdForUpdate.mockResolvedValue({
       id: "org-1",
       name: "Org 1",
       planCode: "free",
@@ -352,20 +369,17 @@ describe("grantManualOrganizationPlan", () => {
   });
 
   it("idempotent: existing event for (org, payment_reference) returns idempotent: true without mutating billing state", async () => {
-    mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
-      event: {
-        id: "event-existing",
-        organizationId: "org-1",
-        telegramUserId: null,
-        planCode: "personal",
-        subscriptionStatus: "active",
-        paidThroughAt: new Date("2026-05-10T00:00:00.000Z"),
-        paymentReference: "wise-2026-04-001",
-        note: "Original grant",
-        keptStripeLink: false,
-        operatorSource: "cli",
-      },
-      created: false,
+    mockFindManualBillingEventByPaymentReference.mockResolvedValueOnce({
+      id: "event-existing",
+      organizationId: "org-1",
+      telegramUserId: null,
+      planCode: "personal",
+      subscriptionStatus: "active",
+      paidThroughAt: new Date("2026-05-10T00:00:00.000Z"),
+      paymentReference: "wise-2026-04-001",
+      note: "Original grant",
+      keptStripeLink: false,
+      operatorSource: "cli",
     });
     const result = await grantManualOrganizationPlan(fakeDb, {
       organizationId: "org-1",
@@ -392,20 +406,17 @@ describe("grantManualOrganizationPlan", () => {
   });
 
   it("idempotent replay uses the current caller's operatorSource, not the stored event's", async () => {
-    mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
-      event: {
-        id: "event-existing",
-        organizationId: "org-1",
-        telegramUserId: null,
-        planCode: "personal",
-        subscriptionStatus: "active",
-        paidThroughAt: new Date("2026-05-10T00:00:00.000Z"),
-        paymentReference: "wise-2026-04-001",
-        note: null,
-        keptStripeLink: false,
-        operatorSource: "cli",
-      },
-      created: false,
+    mockFindManualBillingEventByPaymentReference.mockResolvedValueOnce({
+      id: "event-existing",
+      organizationId: "org-1",
+      telegramUserId: null,
+      planCode: "personal",
+      subscriptionStatus: "active",
+      paidThroughAt: new Date("2026-05-10T00:00:00.000Z"),
+      paymentReference: "wise-2026-04-001",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
     });
     const result = await grantManualOrganizationPlan(fakeDb, {
       organizationId: "org-1",
