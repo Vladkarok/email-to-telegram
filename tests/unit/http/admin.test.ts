@@ -607,7 +607,7 @@ describe("admin billing mutations", () => {
       method: "POST",
       url: `/admin/organizations/${ORG_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&plan=free&status=free&_confirm_downgrade=yes`,
+      payload: `_csrf=${csrf}&plan=free&status=free&payment_reference=downgrade-ref-001&_confirm_downgrade=yes`,
     });
 
     expect(res.statusCode).toBe(302);
@@ -632,7 +632,7 @@ describe("admin billing mutations", () => {
       method: "POST",
       url: `/admin/organizations/${ORG_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&plan=pro&status=active`,
+      payload: `_csrf=${csrf}&plan=pro&status=active&payment_reference=wise-test-001`,
     });
 
     expect(res.statusCode).toBe(200);
@@ -650,7 +650,7 @@ describe("admin billing mutations", () => {
       method: "POST",
       url: `/admin/organizations/${ORG_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-12-31`,
+      payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-2026-001`,
     });
 
     const callArgs = mockGrantManualOrganizationPlan.mock.calls[0][1] as Record<string, unknown>;
@@ -671,7 +671,7 @@ describe("admin billing mutations", () => {
       method: "POST",
       url: `/admin/organizations/${ORG_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&plan=free&status=free&paid_through=2026-06-01&_confirm_downgrade=yes`,
+      payload: `_csrf=${csrf}&plan=free&status=free&paid_through=2026-06-01&payment_reference=downgrade-ref-001&_confirm_downgrade=yes`,
     });
 
     expect(mockGrantManualOrganizationPlan).toHaveBeenCalledWith(
@@ -691,7 +691,7 @@ describe("admin billing mutations", () => {
       method: "POST",
       url: `/admin/organizations/${ORG_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-02-31`,
+      payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-02-31&payment_reference=wise-test-001`,
     });
 
     expect(res.statusCode).toBe(200);
@@ -710,7 +710,7 @@ describe("admin billing mutations", () => {
       method: "POST",
       url: `/admin/organizations/${ORG_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=December+31+2026`,
+      payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=December+31+2026&payment_reference=wise-test-001`,
     });
 
     expect(res.statusCode).toBe(200);
@@ -750,11 +750,49 @@ describe("admin billing mutations", () => {
       method: "POST",
       url: `/admin/organizations/${ORG_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-12-31&note=${longNote}`,
+      payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-test-001&note=${longNote}`,
     });
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("1000 characters");
+    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+  });
+
+  it("rejects missing payment_reference", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const csrf = await getCsrfToken(app, cookie);
+
+    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-12-31`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("Payment reference is required");
+    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+  });
+
+  it("rejects duplicate form fields (array values)", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const csrf = await getCsrfToken(app, cookie);
+
+    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=ref-a&payment_reference=ref-b`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("duplicate form fields");
     expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
   });
 });

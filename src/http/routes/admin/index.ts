@@ -252,13 +252,19 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
       }
 
       const body = req.body as Record<string, unknown> | undefined;
-      const planRaw = typeof body?.["plan"] === "string" ? body["plan"].trim() : "";
-      const statusRaw = typeof body?.["status"] === "string" ? body["status"].trim() : "";
-      const paidThroughRaw =
-        typeof body?.["paid_through"] === "string" ? body["paid_through"].trim() : "";
-      const paymentReferenceRaw =
-        typeof body?.["payment_reference"] === "string" ? body["payment_reference"].trim() : "";
-      const noteRaw = typeof body?.["note"] === "string" ? body["note"].trim() : "";
+
+      // Reject array-valued fields — repeated keys would bypass length/idempotency checks.
+      const getString = (key: string): string | null => {
+        const v = body?.[key];
+        if (Array.isArray(v)) return null;
+        return typeof v === "string" ? v.trim() : "";
+      };
+
+      const planRaw = getString("plan") ?? "";
+      const statusRaw = getString("status") ?? "";
+      const paidThroughRaw = getString("paid_through") ?? "";
+      const paymentReferenceRaw = getString("payment_reference") ?? "";
+      const noteRaw = getString("note") ?? "";
       const keptStripeLink = body?.["keep_stripe_link"] === "on";
       const confirmDowngrade = body?.["_confirm_downgrade"] === "yes";
 
@@ -267,6 +273,12 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         const flash: BillingFlash = { type: "error", message };
         await reply.type("text/html").send(renderOrganizationDetailPage(csrfToken, detail, flash));
       };
+
+      const fieldsWithArrays = ["plan", "status", "paid_through", "payment_reference", "note"];
+      if (fieldsWithArrays.some((k) => Array.isArray(body?.[k]))) {
+        await renderError("Invalid request: duplicate form fields are not allowed.");
+        return;
+      }
 
       if (!VALID_PLAN_CODES.includes(planRaw)) {
         await renderError("Invalid plan selected.");
@@ -282,6 +294,10 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         );
         return;
       }
+      if (!paymentReferenceRaw) {
+        await renderError("Payment reference is required.");
+        return;
+      }
       if (paymentReferenceRaw.length > 255) {
         await renderError("Payment reference must be 255 characters or fewer.");
         return;
@@ -291,7 +307,7 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         return;
       }
 
-      const paymentReference = paymentReferenceRaw || null;
+      const paymentReference = paymentReferenceRaw;
       const note = noteRaw || null;
 
       // Free plan always clears paid-through regardless of what the form submits.

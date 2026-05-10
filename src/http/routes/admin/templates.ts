@@ -311,8 +311,8 @@ function renderBillingForm(
         <input type="text" id="bf-paid-through" name="paid_through" placeholder="2026-12-31" value="${paidThroughValue}" maxlength="10" />
       </div>
       <div style="margin-bottom:12px;">
-        <label for="bf-ref" style="display:block;margin-bottom:4px;" class="muted">Payment Reference</label>
-        <input type="text" id="bf-ref" name="payment_reference" placeholder="wise-2026-…" maxlength="255" />
+        <label for="bf-ref" style="display:block;margin-bottom:4px;" class="muted">Payment Reference <span style="color:var(--danger)">*</span></label>
+        <input type="text" id="bf-ref" name="payment_reference" placeholder="wise-2026-…" maxlength="255" required />
       </div>
       <div style="margin-bottom:12px;">
         <label for="bf-note" style="display:block;margin-bottom:4px;" class="muted">Note</label>
