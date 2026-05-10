@@ -811,6 +811,25 @@ describe("admin billing mutations", () => {
     expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
   });
 
+  it("rejects paid plan with free subscription status", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const csrf = await getCsrfToken(app, cookie);
+
+    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&plan=pro&status=free&payment_reference=wise-test-001`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("Only the free plan can have");
+    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+  });
+
   it("rejects duplicate keep_stripe_link fields instead of silently clearing Stripe link", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
