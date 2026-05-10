@@ -57,6 +57,15 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
     saveUninitialized: false,
   });
 
+  // Prevent browsers and intermediaries from caching admin HTML
+  app.addHook("onSend", async (_req, reply) => {
+    const ct = reply.getHeader("content-type");
+    if (typeof ct === "string" && ct.startsWith("text/html")) {
+      reply.header("Cache-Control", "no-store, private, max-age=0");
+      reply.header("Pragma", "no-cache");
+    }
+  });
+
   // CSRF check must be registered before route handlers
   app.addHook("preHandler", async (req, reply) => {
     if (req.url.startsWith("/admin") && req.method === "POST" && req.url !== "/admin/login") {
@@ -67,7 +76,12 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
     }
   });
 
-  const loginRateLimit = { max: 5, timeWindow: "15 minutes" };
+  // Key on socket IP to prevent X-Forwarded-For spoofing
+  const loginRateLimit = {
+    max: 5,
+    timeWindow: "15 minutes",
+    keyGenerator: (req: import("fastify").FastifyRequest) => req.socket.remoteAddress ?? req.ip,
+  };
 
   app.get("/admin/login", async (_req, reply) => {
     await reply.type("text/html").send(renderLoginPage());
