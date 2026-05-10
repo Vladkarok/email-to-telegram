@@ -39,6 +39,10 @@ const OPTIONAL_ENV = [
   "STRIPE_PRICE_TEAM_YEARLY",
   "BILLING_SUCCESS_URL",
   "BILLING_CANCEL_URL",
+  "ADMIN_ENABLED",
+  "ADMIN_SECRET",
+  "ADMIN_SESSION_SECRET",
+  "ADMIN_SESSION_TTL_MINUTES",
 ];
 
 describe("loadConfig", () => {
@@ -85,6 +89,9 @@ describe("loadConfig", () => {
     expect(config.billingProvider).toBe("none");
     expect(config.hostedMailDomain).toBeUndefined();
     expect(config.stripePriceIds).toBeUndefined();
+    expect(config.adminEnabled).toBe(false);
+    expect(config.adminSecret).toBeUndefined();
+    expect(config.adminSessionTtlMinutes).toBe(60);
   });
 
   it("parses ATTACHMENT_TTL_HOURS as number", () => {
@@ -288,5 +295,47 @@ describe("loadConfig", () => {
     });
     expect(config.billingSuccessUrl).toBe("https://tgmail.example.com/billing/success");
     expect(config.billingCancelUrl).toBe("https://tgmail.example.com/billing/cancel");
+  });
+
+  it("parses admin config when enabled", () => {
+    process.env["ADMIN_ENABLED"] = "true";
+    process.env["ADMIN_SECRET"] = "a".repeat(32);
+    process.env["ADMIN_SESSION_TTL_MINUTES"] = "30";
+
+    const config = loadConfig();
+
+    expect(config.adminEnabled).toBe(true);
+    expect(config.adminSecret).toBe("a".repeat(32));
+    expect(config.adminSessionTtlMinutes).toBe(30);
+  });
+
+  it("rejects admin without a secret", () => {
+    process.env["ADMIN_ENABLED"] = "true";
+
+    expect(() => loadConfig()).toThrow(/ADMIN_SECRET must be at least 32 characters/);
+  });
+
+  it("rejects admin with a short secret", () => {
+    process.env["ADMIN_ENABLED"] = "true";
+    process.env["ADMIN_SECRET"] = "short";
+
+    expect(() => loadConfig()).toThrow(/ADMIN_SECRET must be at least 32 characters/);
+  });
+
+  it("rejects admin with short session secret", () => {
+    process.env["ADMIN_ENABLED"] = "true";
+    process.env["ADMIN_SECRET"] = "a".repeat(32);
+    process.env["ADMIN_SESSION_SECRET"] = "short";
+
+    expect(() => loadConfig()).toThrow(/ADMIN_SESSION_SECRET must be at least 32 characters/);
+  });
+
+  it("rejects admin with non-HTTPS in production", () => {
+    process.env["NODE_ENV"] = "production";
+    process.env["PUBLIC_BASE_URL"] = "http://tgmail.example.com";
+    process.env["ADMIN_ENABLED"] = "true";
+    process.env["ADMIN_SECRET"] = "a".repeat(32);
+
+    expect(() => loadConfig()).toThrow(/HTTPS/);
   });
 });

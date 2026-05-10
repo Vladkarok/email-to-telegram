@@ -57,6 +57,8 @@ function isValidDomainName(value: string): boolean {
   });
 }
 
+const adminSessionTtlSchema = z.coerce.number().int().min(1).max(1440).default(60);
+
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   TELEGRAM_BOT_TOKEN: z.string().min(1),
@@ -118,6 +120,13 @@ const envSchema = z.object({
   STRIPE_PRICE_TEAM_YEARLY: stripePriceIdSchema,
   BILLING_SUCCESS_URL: optionalTrimmedUrlSchema,
   BILLING_CANCEL_URL: optionalTrimmedUrlSchema,
+  ADMIN_ENABLED: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
+  ADMIN_SECRET: z.string().optional(),
+  ADMIN_SESSION_SECRET: z.string().optional(),
+  ADMIN_SESSION_TTL_MINUTES: adminSessionTtlSchema,
 });
 
 export type AppMode = z.infer<typeof appModeSchema>;
@@ -165,6 +174,10 @@ export interface AppConfig {
   stripePriceIds: StripePriceIds | undefined;
   billingSuccessUrl: string | undefined;
   billingCancelUrl: string | undefined;
+  adminEnabled: boolean;
+  adminSecret: string | undefined;
+  adminSessionSecret: string | undefined;
+  adminSessionTtlMinutes: number;
 }
 
 export function loadConfig(): AppConfig {
@@ -247,6 +260,24 @@ export function loadConfig(): AppConfig {
     }
   }
 
+  if (env.ADMIN_ENABLED) {
+    if (!env.ADMIN_SECRET || env.ADMIN_SECRET.length < 32) {
+      throw new Error(
+        "Invalid configuration:\n  ADMIN_SECRET must be at least 32 characters when ADMIN_ENABLED=true",
+      );
+    }
+    if (env.ADMIN_SESSION_SECRET && env.ADMIN_SESSION_SECRET.length < 32) {
+      throw new Error(
+        "Invalid configuration:\n  ADMIN_SESSION_SECRET must be at least 32 characters when provided",
+      );
+    }
+    if (env.NODE_ENV === "production" && new URL(env.PUBLIC_BASE_URL).protocol !== "https:") {
+      throw new Error(
+        "Invalid configuration:\n  ADMIN_ENABLED=true requires HTTPS PUBLIC_BASE_URL in production",
+      );
+    }
+  }
+
   const stripePriceIds =
     env.BILLING_PROVIDER === "stripe"
       ? {
@@ -292,5 +323,9 @@ export function loadConfig(): AppConfig {
     stripePriceIds,
     billingSuccessUrl: env.BILLING_SUCCESS_URL,
     billingCancelUrl: env.BILLING_CANCEL_URL,
+    adminEnabled: env.ADMIN_ENABLED,
+    adminSecret: env.ADMIN_SECRET,
+    adminSessionSecret: env.ADMIN_SESSION_SECRET,
+    adminSessionTtlMinutes: env.ADMIN_SESSION_TTL_MINUTES,
   };
 }

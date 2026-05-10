@@ -62,6 +62,11 @@ const TEST_CONFIG = {
   rawEmailDir: "/tmp/rawemails",
   rawEmailTtlHours: 24,
   maxSizeBytes: 1024 * 1024,
+  adminEnabled: false,
+  adminSecret: undefined,
+  adminSessionSecret: undefined,
+  nodeEnv: "test",
+  adminSessionTtlMinutes: 60,
 };
 
 async function buildApp(botHealthy = true) {
@@ -79,7 +84,7 @@ async function buildApp(botHealthy = true) {
       done(null, body);
     },
   );
-  registerRoutes(app, TEST_CONFIG);
+  await registerRoutes(app, TEST_CONFIG);
   return app;
 }
 
