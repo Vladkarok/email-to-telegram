@@ -256,12 +256,9 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
       const statusRaw = typeof body?.["status"] === "string" ? body["status"].trim() : "";
       const paidThroughRaw =
         typeof body?.["paid_through"] === "string" ? body["paid_through"].trim() : "";
-      const paymentReference =
-        typeof body?.["payment_reference"] === "string" && body["payment_reference"].trim()
-          ? body["payment_reference"].trim()
-          : null;
-      const note =
-        typeof body?.["note"] === "string" && body["note"].trim() ? body["note"].trim() : null;
+      const paymentReferenceRaw =
+        typeof body?.["payment_reference"] === "string" ? body["payment_reference"].trim() : "";
+      const noteRaw = typeof body?.["note"] === "string" ? body["note"].trim() : "";
       const keptStripeLink = body?.["keep_stripe_link"] === "on";
       const confirmDowngrade = body?.["_confirm_downgrade"] === "yes";
 
@@ -285,15 +282,38 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         );
         return;
       }
+      if (paymentReferenceRaw.length > 255) {
+        await renderError("Payment reference must be 255 characters or fewer.");
+        return;
+      }
+      if (noteRaw.length > 1000) {
+        await renderError("Note must be 1000 characters or fewer.");
+        return;
+      }
 
+      const paymentReference = paymentReferenceRaw || null;
+      const note = noteRaw || null;
+
+      // Free plan always clears paid-through regardless of what the form submits.
       let paidThroughAt: Date | null = null;
-      if (paidThroughRaw) {
-        const d = new Date(paidThroughRaw);
-        if (isNaN(d.getTime())) {
+      if (planRaw !== "free" && paidThroughRaw) {
+        const dateOnlyRe = /^(\d{4})-(\d{2})-(\d{2})$/;
+        const m = dateOnlyRe.exec(paidThroughRaw);
+        if (!m) {
           await renderError("Invalid paid-through date. Use YYYY-MM-DD format.");
           return;
         }
-        paidThroughAt = d;
+        const [, y, mo, d] = m.map(Number) as [unknown, number, number, number];
+        const check = new Date(Date.UTC(y, mo - 1, d));
+        if (
+          check.getUTCFullYear() !== y ||
+          check.getUTCMonth() !== mo - 1 ||
+          check.getUTCDate() !== d
+        ) {
+          await renderError("Invalid paid-through date. Use YYYY-MM-DD format.");
+          return;
+        }
+        paidThroughAt = new Date(`${paidThroughRaw}T00:00:00.000Z`);
       }
 
       const db = getDb();
