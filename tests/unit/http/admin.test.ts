@@ -657,4 +657,104 @@ describe("admin billing mutations", () => {
     expect(typeof callArgs["operatorSource"]).toBe("string");
     expect((callArgs["operatorSource"] as string).startsWith("admin:")).toBe(true);
   });
+
+  it("clears paid_through when downgrading to free even if form submits a date", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const csrf = await getCsrfToken(app, cookie);
+
+    mockGrantManualOrganizationPlan.mockResolvedValue(
+      makeGrantSuccess({ planCode: "free", subscriptionStatus: "free", paidThroughAt: null }),
+    );
+
+    await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&plan=free&status=free&paid_through=2026-06-01&_confirm_downgrade=yes`,
+    });
+
+    expect(mockGrantManualOrganizationPlan).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ planCode: "free", paidThroughAt: null }),
+    );
+  });
+
+  it("rejects invalid calendar date like 2026-02-31", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const csrf = await getCsrfToken(app, cookie);
+
+    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-02-31`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("Invalid paid-through date");
+    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-YYYY-MM-DD paid_through format", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const csrf = await getCsrfToken(app, cookie);
+
+    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=December+31+2026`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("Invalid paid-through date");
+    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+  });
+
+  it("rejects payment_reference exceeding 255 characters", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const csrf = await getCsrfToken(app, cookie);
+
+    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    const longRef = "x".repeat(256);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=${longRef}`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("255 characters");
+    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+  });
+
+  it("rejects note exceeding 1000 characters", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const csrf = await getCsrfToken(app, cookie);
+
+    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    const longNote = "x".repeat(1001);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-12-31&note=${longNote}`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("1000 characters");
+    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+  });
 });
