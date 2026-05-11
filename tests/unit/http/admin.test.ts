@@ -994,16 +994,19 @@ describe("admin billing mutations", () => {
     expect(res.body).not.toContain('name="keep_stripe_link" checked');
   });
 
-  it("defaults keep_stripe_link checkbox to checked when org already has Stripe IDs", async () => {
+  it("defaults keep_stripe_link checkbox to checked only for business plan with Stripe IDs", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
 
-    const orgWithStripe = {
+    const bizOrgWithStripe = {
       ...MOCK_ORG,
+      planCode: "business",
+      subscriptionStatus: "active",
+      paidThroughAt: null,
       stripeCustomerId: "cus_abc123",
       stripeSubscriptionId: "sub_xyz",
     };
-    mockFindOrganizationById.mockResolvedValueOnce(orgWithStripe);
+    mockFindOrganizationById.mockResolvedValueOnce(bizOrgWithStripe);
 
     const res = await app.inject({
       method: "GET",
@@ -1013,6 +1016,28 @@ describe("admin billing mutations", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain('name="keep_stripe_link" checked');
+    expect(res.body).toContain("current: ");
+  });
+
+  it("defaults keep_stripe_link checkbox to unchecked for non-business plan with Stripe IDs", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+
+    const nonBizOrgWithStripe = {
+      ...MOCK_ORG, // planCode: "personal"
+      stripeCustomerId: "cus_abc123",
+      stripeSubscriptionId: "sub_xyz",
+    };
+    mockFindOrganizationById.mockResolvedValueOnce(nonBizOrgWithStripe);
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/admin/organizations/${ORG_ID}`,
+      headers: { cookie },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).not.toContain('name="keep_stripe_link" checked');
     expect(res.body).toContain("current: ");
   });
 

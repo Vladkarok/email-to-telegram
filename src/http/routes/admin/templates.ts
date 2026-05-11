@@ -320,9 +320,12 @@ function renderBillingForm(
   const paymentReferenceValue = escapeHtmlAttribute(submittedValues?.paymentReference ?? "");
   const noteValue = escapeHtml(submittedValues?.note ?? "");
 
-  // On error re-render, use the submitted value; on first render, default to the current
-  // Stripe-link state so a routine plan update does not accidentally clear Stripe IDs.
-  const keepStripeLinkChecked = submittedKeptStripeLink ?? org.hasStripeLink;
+  // On error re-render, use the submitted value; on first render, default to checked
+  // only if the org is currently on business plan with an active Stripe link.
+  // Non-business plans must not default to checked: the service rejects keptStripeLink
+  // for non-business plans, so pre-checking it would break the first submit.
+  const keepStripeLinkChecked =
+    submittedKeptStripeLink ?? (org.hasStripeLink && activePlan === "business");
   const stripeLinkStatus = org.hasStripeLink
     ? `<span style="color:#1a5c2a;">linked</span>`
     : `<span class="muted">none</span>`;
