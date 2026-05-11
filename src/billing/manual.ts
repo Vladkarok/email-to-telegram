@@ -275,6 +275,12 @@ function payloadMatchesEvent(
 
 // Returns true when the org's billing fields already match the stored event so
 // a re-apply write can be skipped, avoiding a spurious updatedAt bump.
+//
+// Note on keptStripeLink=true: when an event preserves Stripe IDs, the manual_billing_events
+// row does not store which IDs were present at grant time. buildBillingPatch also omits
+// Stripe fields when keptStripeLink=true, so re-apply cannot restore them even if they have
+// since been cleared. Stripe ID drift on kept-link Business orgs is therefore not detectable
+// or healable here; it requires a schema change to track the original IDs in the event row.
 function orgMatchesStoredEvent(
   org: {
     planCode: string;
