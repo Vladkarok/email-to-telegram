@@ -77,7 +77,8 @@ export type ManualGrantErrorCode =
   | "payment_reference_conflict"
   | "payment_reference_too_long"
   | "note_too_long"
-  | "paid_through_not_allowed";
+  | "paid_through_not_allowed"
+  | "canceled_not_allowed_for_business";
 
 export interface ManualGrantSummary {
   organizationId: string;
@@ -116,6 +117,15 @@ export type AddManualOrganizationMemberResult =
   | { ok: true; organizationId: string; telegramUserId: string; role: OrganizationRole }
   | { ok: false; code: ManualGrantErrorCode };
 
+// Trim paymentReference and note so all callers share the same idempotency key semantics.
+function normalizePlanInput<T extends ManualPlanGrantInput>(input: T): T {
+  return {
+    ...input,
+    paymentReference: input.paymentReference.trim(),
+    note: input.note != null ? input.note.trim() || null : null,
+  };
+}
+
 function validatePlanInput(
   input: ManualPlanGrantInput,
 ): { ok: true } | { ok: false; code: ManualGrantErrorCode } {
@@ -146,6 +156,12 @@ function validatePlanInput(
     // Storing a future paidThroughAt with canceled status would create a split-brain billing
     // state: the event records one date while plan enforcement ignores it.
     return { ok: false, code: "paid_through_not_allowed" };
+  }
+  if (input.planCode === "business" && input.subscriptionStatus === "canceled") {
+    // The entitlement path does not check subscriptionStatus for business plans, so
+    // storing business+canceled would leave business limits active despite the status.
+    // Operators must downgrade to a lower plan code instead of canceling in-place.
+    return { ok: false, code: "canceled_not_allowed_for_business" };
   }
   if (!input.paymentReference) {
     return { ok: false, code: "payment_reference_required" };
@@ -245,8 +261,9 @@ class OrgCreationRaceSignal extends Error {}
 
 export async function grantManualOrganizationPlan(
   db: Db,
-  input: GrantManualOrganizationPlanInput,
+  rawInput: GrantManualOrganizationPlanInput,
 ): Promise<GrantManualOrganizationPlanResult> {
+  const input = normalizePlanInput(rawInput);
   const validation = validatePlanInput(input);
   if (!validation.ok) return validation;
 
@@ -298,8 +315,9 @@ export async function grantManualOrganizationPlan(
 
 export async function grantManualUserPlan(
   db: Db,
-  input: GrantManualUserPlanInput,
+  rawInput: GrantManualUserPlanInput,
 ): Promise<GrantManualUserPlanResult> {
+  const input = normalizePlanInput(rawInput);
   const validation = validatePlanInput(input);
   if (!validation.ok) return validation;
 

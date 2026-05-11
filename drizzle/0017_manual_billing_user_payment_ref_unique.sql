@@ -1,3 +1,7 @@
+-- Lock the table to prevent concurrent inserts between the duplicate check and
+-- the unique index creation, making rollout safe on a live database.
+LOCK TABLE "manual_billing_events" IN EXCLUSIVE MODE;
+
 -- Refuse to apply the unique index if duplicate (telegram_user_id, payment_reference)
 -- rows already exist. Duplicates can only arise if the same user+reference was granted
 -- to two different organizations under the old schema. That state requires manual

@@ -414,6 +414,8 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
             'Paid plans cannot use "free" subscription status.',
           paid_through_required: "Paid-through date is required for active paid plans.",
           paid_through_not_allowed: "Paid-through date must be empty when status is canceled.",
+          canceled_not_allowed_for_business:
+            "Business plan cannot be set to canceled. Downgrade to a lower plan instead.",
           keep_stripe_link_not_allowed: "Keep Stripe link is only allowed for the Business plan.",
           concurrent_update:
             "Organization billing state was updated since this page was loaded. Please reload and review before resubmitting.",
