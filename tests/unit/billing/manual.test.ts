@@ -144,7 +144,7 @@ describe("grantManualOrganizationPlan", () => {
       planCode: "pro",
       subscriptionStatus: "active",
       paidThroughAt: PAID_THROUGH,
-      paymentReference: null,
+      paymentReference: "" as unknown as string,
       note: null,
       keptStripeLink: true,
       operatorSource: "cli",
@@ -158,7 +158,7 @@ describe("grantManualOrganizationPlan", () => {
       planCode: "free",
       subscriptionStatus: "free",
       paidThroughAt: null,
-      paymentReference: null,
+      paymentReference: "" as unknown as string,
       note: null,
       keptStripeLink: true,
       operatorSource: "cli",
@@ -172,7 +172,7 @@ describe("grantManualOrganizationPlan", () => {
       planCode: "free",
       subscriptionStatus: "active",
       paidThroughAt: null,
-      paymentReference: null,
+      paymentReference: "" as unknown as string,
       note: null,
       keptStripeLink: false,
       operatorSource: "cli",
@@ -186,7 +186,7 @@ describe("grantManualOrganizationPlan", () => {
       planCode: "pro",
       subscriptionStatus: "active",
       paidThroughAt: null,
-      paymentReference: null,
+      paymentReference: "" as unknown as string,
       note: null,
       keptStripeLink: false,
       operatorSource: "cli",
@@ -314,13 +314,78 @@ describe("grantManualOrganizationPlan", () => {
     expect(mockUpdateOrganizationBillingState).toHaveBeenCalled();
   });
 
+  it("rejects canceled_not_allowed_for_business when business plan is set to canceled", async () => {
+    const result = await grantManualOrganizationPlan(fakeDb, {
+      organizationId: "org-1",
+      planCode: "business",
+      subscriptionStatus: "canceled",
+      paidThroughAt: null,
+      paymentReference: "biz-cancel-ref-001",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    });
+    expect(result).toEqual({ ok: false, code: "canceled_not_allowed_for_business" });
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
+  it("trims paymentReference and uses the normalized value as idempotency key", async () => {
+    mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
+      event: {
+        id: "ev-trim",
+        organizationId: "org-1",
+        planCode: "pro",
+        subscriptionStatus: "active",
+        paidThroughAt: PAID_THROUGH,
+        paymentReference: "trimmed-ref-001",
+        note: null,
+        keptStripeLink: false,
+        operatorSource: "cli",
+        telegramUserId: null,
+      },
+      created: true,
+    });
+
+    const result = await grantManualOrganizationPlan(fakeDb, {
+      organizationId: "org-1",
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "  trimmed-ref-001  ", // leading/trailing whitespace
+      note: "  some note  ",
+      keptStripeLink: false,
+      operatorSource: "cli",
+    });
+
+    expect(result).toMatchObject({ ok: true, paymentReference: "trimmed-ref-001" });
+    // Event was stored with the trimmed reference
+    expect(mockFindOrCreateManualBillingEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ paymentReference: "trimmed-ref-001" }),
+    );
+  });
+
+  it("rejects blank paymentReference after trimming", async () => {
+    const result = await grantManualOrganizationPlan(fakeDb, {
+      organizationId: "org-1",
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "   ", // whitespace only
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    });
+    expect(result).toEqual({ ok: false, code: "payment_reference_required" });
+  });
+
   it("rejects paid plan with free subscription status at service layer", async () => {
     const result = await grantManualOrganizationPlan(fakeDb, {
       organizationId: "org-1",
       planCode: "pro",
       subscriptionStatus: "free",
       paidThroughAt: null,
-      paymentReference: null,
+      paymentReference: "" as unknown as string,
       note: null,
       keptStripeLink: false,
       operatorSource: "cli",
