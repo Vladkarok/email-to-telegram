@@ -360,7 +360,7 @@ function renderBillingForm(
         <label><input type="checkbox" name="keep_stripe_link"${keepStripeLinkChecked ? " checked" : ""} /> Keep Stripe link (business plan only) — current: ${stripeLinkStatus}</label>
       </div>
       <div style="margin-bottom:16px;">
-        <label><input type="checkbox" name="_confirm_downgrade" value="yes" /> Confirm downgrade to free plan</label>
+        <label><input type="checkbox" name="_confirm_downgrade" value="yes" /> Confirm downgrade to free plan or cancellation</label>
       </div>
       <button type="submit">Apply</button>
     </form>
