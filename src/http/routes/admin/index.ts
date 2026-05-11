@@ -432,6 +432,7 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
             "Organization billing state was updated since this page was loaded. Please reload and review before resubmitting.",
         };
         const isConcurrentUpdate = result.code === "concurrent_update";
+        logger.warn({ organizationId: orgId, failureCode: result.code }, "admin.billing.rejected");
         await renderError(
           errorMessages[result.code] ?? result.code,
           !isConcurrentUpdate,

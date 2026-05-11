@@ -536,8 +536,16 @@ export async function grantManualUserPlan(
       );
       if (!created) {
         if (createdOrganization) {
-          // A concurrent request won the event race; throw to roll back this
-          // transaction so the freshly created org is not left behind as an orphan.
+          // Only a same-user idempotent race should roll back the new org.
+          // If the conflict came from the global payment_reference index (different
+          // user/org, e.g. an admin grant with telegramUserId=null), return a
+          // structured conflict instead of throwing — the catch block would find no
+          // user-scoped canonical event and throw an unhandled error.
+          if (event.telegramUserId !== input.telegramUserId) {
+            return { ok: false, code: "payment_reference_conflict" };
+          }
+          // A concurrent request from the same user won the event race; throw to
+          // roll back this transaction so the freshly created org is not orphaned.
           throw new OrgCreationRaceSignal();
         }
         // The secondary fallback in findOrCreateManualBillingEvent may return an event

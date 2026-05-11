@@ -1450,6 +1450,61 @@ describe("grantManualUserPlan", () => {
     expect(mockUpdateOrganizationBillingState).toHaveBeenCalledOnce();
   });
 
+  it("returns payment_reference_conflict (not 500) when createNewOrg=true and global payref blocked by admin-only event", async () => {
+    // Simulate the global unique index blocking the insert because an admin already
+    // used "wise-admin-001" for an org-only grant (telegramUserId=null). Before the fix,
+    // the code threw OrgCreationRaceSignal, the catch found no user-scoped canonical event,
+    // and the function crashed with an unhandled error.
+    const adminEvent = {
+      id: "event-admin",
+      organizationId: "org-admin",
+      telegramUserId: null, // admin org grant — no user context
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "wise-admin-001",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "admin:abc",
+    };
+    // Pre-check sees no user-scoped event
+    mockFindManualBillingEventByUserAndPaymentReference.mockResolvedValueOnce(null);
+    mockCreateOrganization.mockResolvedValueOnce({ id: "org-new" });
+    mockFindOrganizationByIdForUpdate.mockResolvedValueOnce({
+      id: "org-new",
+      planCode: "free",
+      subscriptionStatus: "free",
+      stripeCustomerId: null,
+      stripeSubscriptionId: null,
+      paidThroughAt: null,
+      trialEndsAt: null,
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
+      updatedAt: new Date(),
+    });
+    // Insert blocked by global unique index; third fallback returns admin event
+    mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
+      event: adminEvent,
+      created: false,
+    });
+
+    const result = await grantManualUserPlan(fakeDb, {
+      telegramUserId: 12345n,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "wise-admin-001",
+      note: null,
+      keptStripeLink: false,
+      organizationId: null,
+      createNewOrganization: true,
+      operatorSource: "cli",
+    });
+
+    expect(result).toEqual({ ok: false, code: "payment_reference_conflict" });
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
   it("OrgCreationRaceSignal recovery returns conflict when canonical event has payload mismatch", async () => {
     const canonicalEvent = {
       id: "event-winner",
