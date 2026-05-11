@@ -73,6 +73,7 @@ export type ManualGrantErrorCode =
   | "free_status_not_allowed_for_paid_plan"
   | "concurrent_update"
   | "payment_reference_required"
+  | "payment_reference_conflict"
   | "payment_reference_too_long"
   | "note_too_long";
 
@@ -294,24 +295,27 @@ export async function grantManualUserPlan(
   return db.transaction(async (tx) => {
     await findOrCreateUserById(tx, input.telegramUserId);
 
-    // Pre-check idempotency before org creation so retries with the same
-    // paymentReference do not produce a second organization.
-    if (input.createNewOrganization || !input.organizationId) {
-      const existingEvent = await findManualBillingEventByUserAndPaymentReference(
-        tx,
-        input.telegramUserId,
-        input.paymentReference,
-      );
-      if (existingEvent) {
-        return {
-          ok: true,
-          idempotent: true,
-          updated: false,
-          createdOrganization: false,
-          ...summarizeEvent(existingEvent),
-          operatorSource: input.operatorSource,
-        };
+    // Pre-check idempotency before org resolution so that a retry with the
+    // same paymentReference never creates a second organization or billing event.
+    // If the caller explicitly provides an organizationId that differs from the
+    // existing event's org, it is a conflict — refuse rather than silently grant twice.
+    const existingEvent = await findManualBillingEventByUserAndPaymentReference(
+      tx,
+      input.telegramUserId,
+      input.paymentReference,
+    );
+    if (existingEvent) {
+      if (input.organizationId && existingEvent.organizationId !== input.organizationId) {
+        return { ok: false, code: "payment_reference_conflict" };
       }
+      return {
+        ok: true,
+        idempotent: true,
+        updated: false,
+        createdOrganization: false,
+        ...summarizeEvent(existingEvent),
+        operatorSource: input.operatorSource,
+      };
     }
 
     let resolvedOrganizationId: string | null;

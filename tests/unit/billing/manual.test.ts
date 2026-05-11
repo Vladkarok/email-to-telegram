@@ -671,6 +671,76 @@ describe("grantManualUserPlan", () => {
     expect(result).toMatchObject({ ok: false, code: "user_not_in_organization" });
   });
 
+  it("returns payment_reference_conflict when same paymentReference used for a different org", async () => {
+    const existingEvent = {
+      id: "event-existing",
+      organizationId: "org-original",
+      telegramUserId: 12345n,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "wise-ref-conflict",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    };
+    mockFindManualBillingEventByUserAndPaymentReference.mockResolvedValueOnce(existingEvent);
+
+    const result = await grantManualUserPlan(fakeDb, {
+      telegramUserId: 12345n,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "wise-ref-conflict",
+      note: null,
+      keptStripeLink: false,
+      organizationId: "org-different", // different from the existing event's org
+      createNewOrganization: false,
+      operatorSource: "cli",
+    });
+
+    expect(result).toMatchObject({ ok: false, code: "payment_reference_conflict" });
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
+  it("idempotent replay when explicit organizationId matches existing event", async () => {
+    const existingEvent = {
+      id: "event-existing",
+      organizationId: "org-1",
+      telegramUserId: 12345n,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "wise-retry-explicit-ref",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    };
+    mockFindManualBillingEventByUserAndPaymentReference.mockResolvedValueOnce(existingEvent);
+
+    const result = await grantManualUserPlan(fakeDb, {
+      telegramUserId: 12345n,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "wise-retry-explicit-ref",
+      note: null,
+      keptStripeLink: false,
+      organizationId: "org-1",
+      createNewOrganization: false,
+      operatorSource: "cli",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      idempotent: true,
+      updated: false,
+      createdOrganization: false,
+      organizationId: "org-1",
+    });
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
   it("idempotent replay when createNewOrganization=true and same paymentReference reused", async () => {
     const existingEvent = {
       id: "event-existing",
