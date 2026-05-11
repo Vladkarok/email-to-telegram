@@ -10,6 +10,7 @@ const mockUserHasOrganizationRole = vi.fn();
 const mockAddOrganizationMember = vi.fn();
 const mockCreateManualBillingEvent = vi.fn();
 const mockFindManualBillingEventByPaymentReference = vi.fn();
+const mockFindManualBillingEventByUserAndPaymentReference = vi.fn();
 const mockFindOrCreateManualBillingEvent = vi.fn();
 
 vi.mock("../../../src/db/repos/organizations.js", () => ({
@@ -36,6 +37,8 @@ vi.mock("../../../src/db/repos/manualBillingEvents.js", () => ({
   createManualBillingEvent: (...args: unknown[]): unknown => mockCreateManualBillingEvent(...args),
   findManualBillingEventByPaymentReference: (...args: unknown[]): unknown =>
     mockFindManualBillingEventByPaymentReference(...args),
+  findManualBillingEventByUserAndPaymentReference: (...args: unknown[]): unknown =>
+    mockFindManualBillingEventByUserAndPaymentReference(...args),
   findOrCreateManualBillingEvent: (...args: unknown[]): unknown =>
     mockFindOrCreateManualBillingEvent(...args),
 }));
@@ -66,6 +69,7 @@ beforeEach(() => {
   mockFindOrganizationById.mockResolvedValue(defaultOrg);
   mockFindOrganizationByIdForUpdate.mockResolvedValue(defaultOrg);
   mockFindManualBillingEventByPaymentReference.mockResolvedValue(null);
+  mockFindManualBillingEventByUserAndPaymentReference.mockResolvedValue(null);
   mockUpdateOrganizationBillingState.mockResolvedValue({
     id: "org-1",
     planCode: "pro",
@@ -663,6 +667,87 @@ describe("grantManualUserPlan", () => {
     });
 
     expect(result).toMatchObject({ ok: false, code: "user_not_in_organization" });
+  });
+
+  it("idempotent replay when createNewOrganization=true and same paymentReference reused", async () => {
+    const existingEvent = {
+      id: "event-existing",
+      organizationId: "org-original",
+      telegramUserId: 12345n,
+      planCode: "personal",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "wise-retry-ref-001",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    };
+    mockFindManualBillingEventByUserAndPaymentReference.mockResolvedValueOnce(existingEvent);
+
+    const result = await grantManualUserPlan(fakeDb, {
+      telegramUserId: 12345n,
+      planCode: "personal",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "wise-retry-ref-001",
+      note: null,
+      keptStripeLink: false,
+      organizationId: null,
+      createNewOrganization: true,
+      operatorSource: "cli",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      idempotent: true,
+      updated: false,
+      createdOrganization: false,
+      organizationId: "org-original",
+      manualBillingEventId: "event-existing",
+    });
+    // Must not create a second org
+    expect(mockCreateOrganization).not.toHaveBeenCalled();
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
+  it("idempotent replay when no memberships and same paymentReference reused", async () => {
+    mockListOrganizationMembershipsForUser.mockResolvedValue([]);
+    const existingEvent = {
+      id: "event-existing",
+      organizationId: "org-original",
+      telegramUserId: 12345n,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "wise-retry-ref-002",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    };
+    mockFindManualBillingEventByUserAndPaymentReference.mockResolvedValueOnce(existingEvent);
+
+    const result = await grantManualUserPlan(fakeDb, {
+      telegramUserId: 12345n,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "wise-retry-ref-002",
+      note: null,
+      keptStripeLink: false,
+      organizationId: null,
+      createNewOrganization: false,
+      operatorSource: "cli",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      idempotent: true,
+      updated: false,
+      createdOrganization: false,
+      organizationId: "org-original",
+    });
+    expect(mockCreateOrganization).not.toHaveBeenCalled();
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
   });
 });
 

@@ -92,21 +92,39 @@ describe("hostedManualBilling helpers", () => {
       manualPaidThroughAt: new Date("2026-05-30T00:00:00.000Z"),
       manualOrganizationId: "org-x",
       manualCreateNewOrganization: true,
+      manualPaymentReference: "wise-2026-05-001",
     });
     const input = buildManualBillingUserInput(opts);
-    expect(input).toMatchObject({
+    expect(input).toEqual({
       telegramUserId: 12345n,
       organizationId: "org-x",
       createNewOrganization: true,
       planCode: "personal",
       subscriptionStatus: "active",
       paidThroughAt: new Date("2026-05-30T00:00:00.000Z"),
+      paymentReference: "wise-2026-05-001",
       note: null,
       keptStripeLink: false,
       operatorSource: "cli",
     });
-    // Auto-generated reference has the cli: prefix when none was provided
-    expect(input.paymentReference).toMatch(/^cli:\d+$/);
+  });
+
+  it("throws when --manual-payment-reference is missing from org plan builder", () => {
+    const opts = startupOptions({
+      hostedSetOrganizationPlanId: "org-1",
+      manualPlanCode: "pro",
+      manualSubscriptionStatus: "active",
+    });
+    expect(() => buildManualBillingPlanInput(opts)).toThrow(/payment-reference/i);
+  });
+
+  it("throws when --manual-payment-reference is missing from user plan builder", () => {
+    const opts = startupOptions({
+      hostedSetUserPlanTelegramUserId: "12345",
+      manualPlanCode: "personal",
+      manualSubscriptionStatus: "active",
+    });
+    expect(() => buildManualBillingUserInput(opts)).toThrow(/payment-reference/i);
   });
 
   it("builds a member input from startup options", () => {

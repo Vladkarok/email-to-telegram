@@ -81,6 +81,25 @@ export async function findManualBillingEventByPaymentReference(
   return row ?? null;
 }
 
+export async function findManualBillingEventByUserAndPaymentReference(
+  db: Db,
+  telegramUserId: bigint,
+  paymentReference: string,
+): Promise<ManualBillingEvent | null> {
+  const [row] = await db
+    .select()
+    .from(manualBillingEvents)
+    .where(
+      and(
+        eq(manualBillingEvents.telegramUserId, telegramUserId),
+        eq(manualBillingEvents.paymentReference, paymentReference),
+      ),
+    )
+    .orderBy(desc(manualBillingEvents.createdAt))
+    .limit(1);
+  return row ?? null;
+}
+
 export async function listManualBillingEventsForOrganization(
   db: Db,
   organizationId: string,
