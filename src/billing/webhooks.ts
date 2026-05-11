@@ -5,6 +5,7 @@ import { loadConfig } from "../config.js";
 import { recordBillingWebhookEvent } from "../db/repos/billingWebhookEvents.js";
 import {
   findOrganizationById,
+  findOrganizationByIdForUpdate,
   findOrganizationByStripeCustomerId,
   findOrganizationByStripeSubscriptionId,
   updateOrganizationBillingState,
@@ -27,11 +28,13 @@ export async function processStripeWebhookEvent(
     switch (event.type) {
       case "checkout.session.completed": {
         const session = event.data.object;
-        const organization = await findOrganizationForStripeSubject(txDb, {
+        const found = await findOrganizationForStripeSubject(txDb, {
           organizationId:
             session.metadata?.["organizationId"] ?? session.client_reference_id ?? null,
           stripeCustomerId: typeof session.customer === "string" ? session.customer : null,
         });
+        if (!found) return "ignored";
+        const organization = await findOrganizationByIdForUpdate(txDb, found.id);
         if (!organization) return "ignored";
         if (
           await shouldIgnoreStripeUpdate(
@@ -74,11 +77,13 @@ async function applyStripeSubscription(
     | "customer.subscription.deleted",
   subscription: Stripe.Subscription,
 ): Promise<"processed" | "ignored"> {
-  const organization = await findOrganizationForStripeSubject(db, {
+  const found = await findOrganizationForStripeSubject(db, {
     organizationId: subscription.metadata?.["organizationId"] ?? null,
     stripeCustomerId: typeof subscription.customer === "string" ? subscription.customer : null,
     stripeSubscriptionId: subscription.id,
   });
+  if (!found) return "ignored";
+  const organization = await findOrganizationByIdForUpdate(db, found.id);
   if (!organization) return "ignored";
   if (
     await shouldIgnoreStripeUpdate(
@@ -157,11 +162,13 @@ async function applyStripeInvoicePaymentSucceeded(
   invoice: Stripe.Invoice,
 ): Promise<"processed" | "ignored"> {
   const stripeSubscriptionId = getInvoiceSubscriptionId(invoice);
-  const organization = await findOrganizationForStripeSubject(db, {
+  const found = await findOrganizationForStripeSubject(db, {
     organizationId: invoice.parent?.subscription_details?.metadata?.["organizationId"] ?? null,
     stripeCustomerId: typeof invoice.customer === "string" ? invoice.customer : null,
     stripeSubscriptionId,
   });
+  if (!found) return "ignored";
+  const organization = await findOrganizationByIdForUpdate(db, found.id);
   if (!organization) return "ignored";
   if (
     await shouldIgnoreStripeUpdate(
@@ -233,6 +240,18 @@ async function shouldIgnoreStripeUpdate(
       organization.id,
     );
     if (latestManualEvent?.planCode === "free") return true;
+  }
+  // Org has current Stripe links. If the incoming event carries Stripe IDs that do
+  // not match the current links, it was routed here only via organizationId metadata
+  // and refers to a stale customer/subscription — reject for all plan types.
+  if (organization.stripeSubscriptionId || organization.stripeCustomerId) {
+    const hasMatchingStripeId =
+      (stripeSubscriptionId != null &&
+        organization.stripeSubscriptionId === stripeSubscriptionId) ||
+      (stripeCustomerId != null && organization.stripeCustomerId === stripeCustomerId);
+    if ((stripeSubscriptionId != null || stripeCustomerId != null) && !hasMatchingStripeId) {
+      return true;
+    }
   }
   if (organization.planCode !== "business") return false;
   const hasMatchingStripeId =
