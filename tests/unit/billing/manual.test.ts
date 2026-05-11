@@ -1446,6 +1446,48 @@ describe("grantManualUserPlan", () => {
     expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
   });
 
+  it("returns payment_reference_conflict when auto-resolved post-insert replay lands in a different org", async () => {
+    const winnerEvent = {
+      id: "event-winner",
+      organizationId: "org-B",
+      telegramUserId: 12345n,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "auto-conflict-ref",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    };
+    mockListOrganizationMembershipsForUser.mockResolvedValueOnce([
+      { organizationId: "org-A", userId: 12345n, role: "owner" },
+    ]);
+    mockFindOrganizationByIdForUpdate.mockResolvedValueOnce({
+      id: "org-A",
+      updatedAt: new Date(),
+    });
+    mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
+      event: winnerEvent,
+      created: false,
+    });
+
+    const result = await grantManualUserPlan(fakeDb, {
+      telegramUserId: 12345n,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "auto-conflict-ref",
+      note: null,
+      keptStripeLink: false,
+      organizationId: null,
+      createNewOrganization: false,
+      operatorSource: "cli",
+    });
+
+    expect(result).toEqual({ ok: false, code: "payment_reference_conflict" });
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
   it("returns payment_reference_conflict when post-insert replay belongs to a different telegramUserId", async () => {
     // Same org and payref but winner's event was created by a different user (111n vs 222n).
     const winnerEvent = {
