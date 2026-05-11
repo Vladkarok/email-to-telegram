@@ -3,6 +3,7 @@ import Fastify from "fastify";
 import { registerRoutes } from "../../../src/http/routes/index.js";
 import { signWorkerRequest } from "../../../src/utils/workerAuth.js";
 import { markBotHealthy, markBotUnhealthy } from "../../../src/telegram/health.js";
+import { metricsRegistry, resetMetricsForTests } from "../../../src/observability/metrics.js";
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
@@ -580,6 +581,7 @@ describe("POST /inbound/raw", () => {
     });
     mockDeliverQueuedEmail.mockReset();
     mockDeliverQueuedEmail.mockResolvedValue({ ok: true });
+    resetMetricsForTests();
   });
 
   afterEach(() => {
@@ -630,6 +632,13 @@ describe("POST /inbound/raw", () => {
       }),
     );
     expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledOnce();
+    const metrics = await metricsRegistry.metrics();
+    expect(
+      findMetricLine(metrics, "email_to_telegram_raw_inbound_total", [
+        'result="accepted"',
+        'reason="accepted"',
+      ]),
+    ).toBeDefined();
   });
 
   it("does not acknowledge raw mail before durable persistence succeeds", async () => {
@@ -905,6 +914,17 @@ describe("POST /inbound/raw", () => {
     expect(res.statusCode).toBe(202);
     expect(mockDeletePendingRawEmailMeta).not.toHaveBeenCalled();
     expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
+
+    const metrics = await metricsRegistry.metrics();
+    expect(
+      findMetricLine(metrics, "email_to_telegram_raw_inbound_total", [
+        'result="rejected"',
+        'reason="rate_limited"',
+      ]),
+    ).toBeDefined();
+    expect(
+      findMetricLine(metrics, "email_to_telegram_raw_inbound_total", ['result="accepted"']),
+    ).toBeUndefined();
   });
 
   it("drops pending recovery metadata for terminal queue rejections", async () => {
@@ -932,6 +952,17 @@ describe("POST /inbound/raw", () => {
     expect(res.statusCode).toBe(202);
     expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledOnce();
     expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
+
+    const metrics = await metricsRegistry.metrics();
+    expect(
+      findMetricLine(metrics, "email_to_telegram_raw_inbound_total", [
+        'result="rejected"',
+        'reason="sender_not_allowed"',
+      ]),
+    ).toBeDefined();
+    expect(
+      findMetricLine(metrics, "email_to_telegram_raw_inbound_total", ['result="accepted"']),
+    ).toBeUndefined();
   });
 
   it("returns 401 for unsigned request", async () => {
@@ -956,4 +987,10 @@ function restoreEnv(key: string, value: string | undefined): void {
   } else {
     process.env[key] = value;
   }
+}
+
+function findMetricLine(metrics: string, name: string, labels: string[]): string | undefined {
+  return metrics
+    .split("\n")
+    .find((line) => line.startsWith(name) && labels.every((label) => line.includes(label)));
 }
