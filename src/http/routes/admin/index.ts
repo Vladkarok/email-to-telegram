@@ -227,6 +227,12 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
           type: "idempotent",
           message: "No change: a billing event with this payment reference already exists.",
         };
+      } else if (billingParam === "reconciled") {
+        flash = {
+          type: "success",
+          message:
+            "Billing state reconciled: payment reference already exists and org state was restored.",
+        };
       }
 
       const detail = await buildOrganizationDetail(orgId, org);
@@ -431,10 +437,16 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
 
       if (!result.idempotent) {
         logger.info(redactManualBillingForLog(result), "admin.billing.mutated");
+      } else if (result.reconciled) {
+        logger.info(redactManualBillingForLog(result), "admin.billing.reconciled");
       } else {
         logger.info({ organizationId: orgId }, "admin.billing.idempotent");
       }
-      const flashParam = result.idempotent ? "idempotent" : "granted";
+      const flashParam = !result.idempotent
+        ? "granted"
+        : result.reconciled
+          ? "reconciled"
+          : "idempotent";
       await reply.redirect(`/admin/organizations/${orgId}?billing=${flashParam}`);
     },
   );

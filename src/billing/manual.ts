@@ -95,7 +95,7 @@ export interface ManualGrantSummary {
 
 export type GrantManualOrganizationPlanResult =
   | ({ ok: true; idempotent: false; updated: true } & ManualGrantSummary)
-  | ({ ok: true; idempotent: true; updated: false } & ManualGrantSummary)
+  | ({ ok: true; idempotent: true; updated: false; reconciled: boolean } & ManualGrantSummary)
   | { ok: false; code: ManualGrantErrorCode };
 
 export type GrantManualUserPlanResult =
@@ -109,6 +109,7 @@ export type GrantManualUserPlanResult =
       ok: true;
       idempotent: true;
       updated: false;
+      reconciled: boolean;
       createdOrganization: boolean;
     } & ManualGrantSummary)
   | { ok: false; code: ManualGrantErrorCode; organizationIds?: string[] };
@@ -272,6 +273,32 @@ function payloadMatchesEvent(
   );
 }
 
+// Returns true when the org's billing fields already match the stored event so
+// a re-apply write can be skipped, avoiding a spurious updatedAt bump.
+function orgMatchesStoredEvent(
+  org: {
+    planCode: string;
+    subscriptionStatus: string;
+    paidThroughAt: Date | null;
+    stripeCustomerId: string | null;
+    stripeSubscriptionId: string | null;
+  },
+  event: {
+    planCode: string;
+    subscriptionStatus: string;
+    paidThroughAt: Date | null;
+    keptStripeLink: boolean;
+  },
+): boolean {
+  if (org.planCode !== event.planCode) return false;
+  if (org.subscriptionStatus !== event.subscriptionStatus) return false;
+  if ((org.paidThroughAt?.getTime() ?? null) !== (event.paidThroughAt?.getTime() ?? null))
+    return false;
+  if (!event.keptStripeLink && (org.stripeCustomerId !== null || org.stripeSubscriptionId !== null))
+    return false;
+  return true;
+}
+
 // Thrown inside a transaction to force rollback; caught outside to return ok:false.
 class ConcurrentUpdateSignal extends Error {}
 // Thrown when a newly created org must be rolled back because a concurrent
@@ -308,14 +335,9 @@ export async function grantManualOrganizationPlan(
         if (event.organizationId !== input.organizationId) {
           return { ok: false, code: "payment_reference_conflict" };
         }
-        // If both the stored event and the new request carry a telegramUserId, they
-        // must match — a different user re-using the same payref is a conflict.
-        const inputUserId = telegramUserId;
-        if (
-          event.telegramUserId != null &&
-          inputUserId != null &&
-          event.telegramUserId !== inputUserId
-        ) {
+        // telegramUserId must match exactly: null vs. non-null indicates a
+        // different targeting mode (org-scoped vs. user-scoped) and must conflict.
+        if (event.telegramUserId !== telegramUserId) {
           return { ok: false, code: "payment_reference_conflict" };
         }
         // A second submission with the same payment reference but different billing
@@ -323,13 +345,20 @@ export async function grantManualOrganizationPlan(
         if (!payloadMatchesEvent(event, input)) {
           return { ok: false, code: "payment_reference_conflict" };
         }
-        // Re-apply under the existing FOR UPDATE lock so the org reflects the
-        // stored event even if another path (e.g. Stripe webhook) changed it since.
-        await updateOrganizationBillingState(tx, input.organizationId, buildBillingPatch(input));
+        // Re-apply under the existing FOR UPDATE lock only when the org has drifted
+        // from the stored event (e.g. a Stripe webhook changed the plan since).
+        // Skipping unnecessary writes prevents spurious updatedAt bumps that would
+        // invalidate open admin forms and cause false concurrent_update failures.
+        let reconciled = false;
+        if (!orgMatchesStoredEvent(organization, event)) {
+          await updateOrganizationBillingState(tx, input.organizationId, buildBillingPatch(input));
+          reconciled = true;
+        }
         return {
           ok: true,
           idempotent: true,
           updated: false,
+          reconciled,
           ...summarizeEvent(event),
         };
       }
@@ -395,20 +424,22 @@ export async function grantManualUserPlan(
         if (!payloadMatchesEvent(existingEvent, input)) {
           return { ok: false, code: "payment_reference_conflict" };
         }
-        // Lock the stored event's org and re-apply so its state matches the
-        // original grant even if another path (e.g. Stripe webhook) changed it.
+        // Lock and conditionally re-apply: only write when the org has drifted.
         const replayOrg = await findOrganizationByIdForUpdate(tx, existingEvent.organizationId);
-        if (replayOrg) {
+        let reconciled = false;
+        if (replayOrg && !orgMatchesStoredEvent(replayOrg, existingEvent)) {
           await updateOrganizationBillingState(
             tx,
             existingEvent.organizationId,
             buildBillingPatch(input),
           );
+          reconciled = true;
         }
         return {
           ok: true,
           idempotent: true,
           updated: false,
+          reconciled,
           createdOrganization: false,
           ...summarizeEvent(existingEvent),
         };
@@ -485,21 +516,28 @@ export async function grantManualUserPlan(
         if (input.organizationId && event.organizationId !== input.organizationId) {
           return { ok: false, code: "payment_reference_conflict" };
         }
-        // A different user in the same org could have committed the same payref — their
-        // event would be returned by the org-scoped fallback in findOrCreateManualBillingEvent.
-        if (event.telegramUserId !== null && event.telegramUserId !== input.telegramUserId) {
+        // Exact telegramUserId equality: null vs. non-null is a targeting conflict.
+        if (event.telegramUserId !== input.telegramUserId) {
           return { ok: false, code: "payment_reference_conflict" };
         }
         if (!payloadMatchesEvent(event, input)) {
           return { ok: false, code: "payment_reference_conflict" };
         }
-        // Re-apply under the existing FOR UPDATE lock so the org reflects the
-        // stored event even if another path changed it since.
-        await updateOrganizationBillingState(tx, resolvedOrganizationId, buildBillingPatch(input));
+        // Conditionally re-apply under the existing FOR UPDATE lock.
+        let reconciled = false;
+        if (!orgMatchesStoredEvent(organization, event)) {
+          await updateOrganizationBillingState(
+            tx,
+            resolvedOrganizationId,
+            buildBillingPatch(input),
+          );
+          reconciled = true;
+        }
         return {
           ok: true,
           idempotent: true,
           updated: false,
+          reconciled,
           createdOrganization,
           ...summarizeEvent(event),
         };
@@ -521,22 +559,35 @@ export async function grantManualUserPlan(
         if (input.organizationId && canonical.organizationId !== input.organizationId) {
           return { ok: false, code: "payment_reference_conflict" };
         }
-        if (
-          canonical.telegramUserId !== null &&
-          canonical.telegramUserId !== input.telegramUserId
-        ) {
+        // Exact equality: null vs. non-null telegramUserId is a targeting conflict.
+        if (canonical.telegramUserId !== input.telegramUserId) {
           return { ok: false, code: "payment_reference_conflict" };
         }
         if (!payloadMatchesEvent(canonical, input)) {
           return { ok: false, code: "payment_reference_conflict" };
         }
-        return {
-          ok: true,
-          idempotent: true,
-          updated: false,
-          createdOrganization: false,
-          ...summarizeEvent(canonical),
-        };
+        // Re-apply in a fresh transaction: the winning tx committed the billing
+        // state, but another writer may have changed the org since then.
+        return await db.transaction(async (tx) => {
+          const canonOrg = await findOrganizationByIdForUpdate(tx, canonical.organizationId);
+          let reconciled = false;
+          if (canonOrg && !orgMatchesStoredEvent(canonOrg, canonical)) {
+            await updateOrganizationBillingState(
+              tx,
+              canonical.organizationId,
+              buildBillingPatch(input),
+            );
+            reconciled = true;
+          }
+          return {
+            ok: true,
+            idempotent: true,
+            updated: false,
+            reconciled,
+            createdOrganization: false,
+            ...summarizeEvent(canonical),
+          };
+        });
       }
       throw new Error("grantManualUserPlan: event race signal but no canonical event found", {
         cause: err,
