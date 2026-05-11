@@ -231,6 +231,9 @@ function summarizeEvent(event: {
 
 // Thrown inside a transaction to force rollback; caught outside to return ok:false.
 class ConcurrentUpdateSignal extends Error {}
+// Thrown when a newly created org must be rolled back because a concurrent
+// request won the billing-event insert race on (telegram_user_id, payment_reference).
+class OrgCreationRaceSignal extends Error {}
 
 export async function grantManualOrganizationPlan(
   db: Db,
@@ -292,58 +295,37 @@ export async function grantManualUserPlan(
   const validation = validatePlanInput(input);
   if (!validation.ok) return validation;
 
-  return db.transaction(async (tx) => {
-    await findOrCreateUserById(tx, input.telegramUserId);
+  try {
+    return await db.transaction(async (tx) => {
+      await findOrCreateUserById(tx, input.telegramUserId);
 
-    // Pre-check idempotency before org resolution so that a retry with the
-    // same paymentReference never creates a second organization or billing event.
-    // If the caller explicitly provides an organizationId that differs from the
-    // existing event's org, it is a conflict — refuse rather than silently grant twice.
-    const existingEvent = await findManualBillingEventByUserAndPaymentReference(
-      tx,
-      input.telegramUserId,
-      input.paymentReference,
-    );
-    if (existingEvent) {
-      if (input.organizationId && existingEvent.organizationId !== input.organizationId) {
-        return { ok: false, code: "payment_reference_conflict" };
-      }
-      return {
-        ok: true,
-        idempotent: true,
-        updated: false,
-        createdOrganization: false,
-        ...summarizeEvent(existingEvent),
-        operatorSource: input.operatorSource,
-      };
-    }
-
-    let resolvedOrganizationId: string | null;
-    let createdOrganization = false;
-
-    if (input.createNewOrganization) {
-      const newOrg = await createOrganization(tx, {
-        name: `Telegram ${input.telegramUserId.toString()}`,
-      });
-      await addOrganizationMember(tx, {
-        organizationId: newOrg.id,
-        userId: input.telegramUserId,
-        role: "owner",
-      });
-      resolvedOrganizationId = newOrg.id;
-      createdOrganization = true;
-    } else if (input.organizationId) {
-      const isPrivileged = await userHasOrganizationRole(
+      // Pre-check idempotency before org resolution so that a retry with the
+      // same paymentReference never creates a second organization or billing event.
+      // If the caller explicitly provides an organizationId that differs from the
+      // existing event's org, it is a conflict — refuse rather than silently grant twice.
+      const existingEvent = await findManualBillingEventByUserAndPaymentReference(
         tx,
-        input.organizationId,
         input.telegramUserId,
-        PRIVILEGED_ROLES,
+        input.paymentReference,
       );
-      if (!isPrivileged) return { ok: false, code: "user_not_in_organization" };
-      resolvedOrganizationId = input.organizationId;
-    } else {
-      const memberships = await listOrganizationMembershipsForUser(tx, input.telegramUserId);
-      if (memberships.length === 0) {
+      if (existingEvent) {
+        if (input.organizationId && existingEvent.organizationId !== input.organizationId) {
+          return { ok: false, code: "payment_reference_conflict" };
+        }
+        return {
+          ok: true,
+          idempotent: true,
+          updated: false,
+          createdOrganization: false,
+          ...summarizeEvent(existingEvent),
+          operatorSource: input.operatorSource,
+        };
+      }
+
+      let resolvedOrganizationId: string | null;
+      let createdOrganization = false;
+
+      if (input.createNewOrganization) {
         const newOrg = await createOrganization(tx, {
           name: `Telegram ${input.telegramUserId.toString()}`,
         });
@@ -354,45 +336,96 @@ export async function grantManualUserPlan(
         });
         resolvedOrganizationId = newOrg.id;
         createdOrganization = true;
+      } else if (input.organizationId) {
+        const isPrivileged = await userHasOrganizationRole(
+          tx,
+          input.organizationId,
+          input.telegramUserId,
+          PRIVILEGED_ROLES,
+        );
+        if (!isPrivileged) return { ok: false, code: "user_not_in_organization" };
+        resolvedOrganizationId = input.organizationId;
       } else {
-        const privileged = memberships.filter((m) => PRIVILEGED_ROLE_SET.has(m.role));
-        if (privileged.length === 0) {
-          return { ok: false, code: "member_only_memberships" };
+        const memberships = await listOrganizationMembershipsForUser(tx, input.telegramUserId);
+        if (memberships.length === 0) {
+          const newOrg = await createOrganization(tx, {
+            name: `Telegram ${input.telegramUserId.toString()}`,
+          });
+          await addOrganizationMember(tx, {
+            organizationId: newOrg.id,
+            userId: input.telegramUserId,
+            role: "owner",
+          });
+          resolvedOrganizationId = newOrg.id;
+          createdOrganization = true;
+        } else {
+          const privileged = memberships.filter((m) => PRIVILEGED_ROLE_SET.has(m.role));
+          if (privileged.length === 0) {
+            return { ok: false, code: "member_only_memberships" };
+          }
+          if (privileged.length > 1) {
+            return {
+              ok: false,
+              code: "ambiguous_organization",
+              organizationIds: privileged.map((m) => m.organizationId),
+            };
+          }
+          resolvedOrganizationId = privileged[0].organizationId;
         }
-        if (privileged.length > 1) {
-          return {
-            ok: false,
-            code: "ambiguous_organization",
-            organizationIds: privileged.map((m) => m.organizationId),
-          };
-        }
-        resolvedOrganizationId = privileged[0].organizationId;
       }
-    }
 
-    const organization = await findOrganizationByIdForUpdate(tx, resolvedOrganizationId);
-    if (!organization) return { ok: false, code: "organization_not_found" };
+      const organization = await findOrganizationByIdForUpdate(tx, resolvedOrganizationId);
+      if (!organization) return { ok: false, code: "organization_not_found" };
 
-    const { event, created } = await findOrCreateManualBillingEvent(
-      tx,
-      buildEventInput(input, resolvedOrganizationId, input.telegramUserId),
-    );
-    if (!created) {
-      // Idempotent replay — stored event data, but current caller's operatorSource.
-      const summary = summarizeEvent(event);
-      return {
-        ok: true,
-        idempotent: true,
-        updated: false,
-        createdOrganization,
-        ...summary,
-        operatorSource: input.operatorSource,
-      };
+      const { event, created } = await findOrCreateManualBillingEvent(
+        tx,
+        buildEventInput(input, resolvedOrganizationId, input.telegramUserId),
+      );
+      if (!created) {
+        if (createdOrganization) {
+          // A concurrent request won the event race; throw to roll back this
+          // transaction so the freshly created org is not left behind as an orphan.
+          throw new OrgCreationRaceSignal();
+        }
+        // Idempotent replay — stored event data, but current caller's operatorSource.
+        const summary = summarizeEvent(event);
+        return {
+          ok: true,
+          idempotent: true,
+          updated: false,
+          createdOrganization,
+          ...summary,
+          operatorSource: input.operatorSource,
+        };
+      }
+      await updateOrganizationBillingState(tx, resolvedOrganizationId, buildBillingPatch(input));
+      const summary = summarize(input, resolvedOrganizationId, input.telegramUserId, event.id);
+      return { ok: true, idempotent: false, updated: true, createdOrganization, ...summary };
+    });
+  } catch (err) {
+    if (err instanceof OrgCreationRaceSignal) {
+      // Transaction rolled back — read the winning event from the committed tx.
+      const canonical = await findManualBillingEventByUserAndPaymentReference(
+        db,
+        input.telegramUserId,
+        input.paymentReference,
+      );
+      if (canonical) {
+        return {
+          ok: true,
+          idempotent: true,
+          updated: false,
+          createdOrganization: false,
+          ...summarizeEvent(canonical),
+          operatorSource: input.operatorSource,
+        };
+      }
+      throw new Error("grantManualUserPlan: event race signal but no canonical event found", {
+        cause: err,
+      });
     }
-    await updateOrganizationBillingState(tx, resolvedOrganizationId, buildBillingPatch(input));
-    const summary = summarize(input, resolvedOrganizationId, input.telegramUserId, event.id);
-    return { ok: true, idempotent: false, updated: true, createdOrganization, ...summary };
-  });
+    throw err;
+  }
 }
 
 export async function addManualOrganizationMember(

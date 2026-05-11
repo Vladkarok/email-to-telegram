@@ -821,6 +821,59 @@ describe("grantManualUserPlan", () => {
     expect(mockCreateOrganization).not.toHaveBeenCalled();
     expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
   });
+
+  it("rolls back newly created org when concurrent request wins the event race", async () => {
+    const canonicalEvent = {
+      id: "event-winner",
+      organizationId: "org-winner",
+      telegramUserId: 12345n,
+      planCode: "personal",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "race-ref-001",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    };
+    // Pre-check (inside tx): no existing event yet
+    mockFindManualBillingEventByUserAndPaymentReference.mockResolvedValueOnce(null);
+    // Recovery (outside tx): winning event from the concurrent transaction
+    mockFindManualBillingEventByUserAndPaymentReference.mockResolvedValueOnce(canonicalEvent);
+    mockCreateOrganization.mockResolvedValueOnce({ id: "org-loser" });
+    mockFindOrganizationByIdForUpdate.mockResolvedValueOnce({
+      id: "org-loser",
+      updatedAt: new Date(),
+    });
+    // Concurrent winner already committed — our insert loses
+    mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
+      event: canonicalEvent,
+      created: false,
+    });
+
+    const result = await grantManualUserPlan(fakeDb, {
+      telegramUserId: 12345n,
+      planCode: "personal",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "race-ref-001",
+      note: null,
+      keptStripeLink: false,
+      organizationId: null,
+      createNewOrganization: true,
+      operatorSource: "cli",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      idempotent: true,
+      updated: false,
+      createdOrganization: false,
+      organizationId: "org-winner",
+      manualBillingEventId: "event-winner",
+    });
+    // Billing state must not have been mutated
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
 });
 
 describe("addManualOrganizationMember", () => {
