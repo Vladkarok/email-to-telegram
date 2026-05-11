@@ -499,7 +499,7 @@ describe("grantManualOrganizationPlan", () => {
     expect(call["stripeSubscriptionId"]).toBeUndefined();
   });
 
-  it("idempotent: existing event for (org, payment_reference) returns idempotent: true without mutating billing state", async () => {
+  it("idempotent: existing event for (org, payment_reference) returns idempotent: true and re-applies billing patch", async () => {
     mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
       event: {
         id: "event-existing",
@@ -533,8 +533,7 @@ describe("grantManualOrganizationPlan", () => {
       manualBillingEventId: "event-existing",
     });
     expect(mockCreateManualBillingEvent).not.toHaveBeenCalled();
-    // Idempotent path must NOT mutate billing state
-    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+    expect(mockUpdateOrganizationBillingState).toHaveBeenCalledOnce();
   });
 
   it("returns payment_reference_conflict when same reference is resubmitted with different billing fields", async () => {
@@ -693,6 +692,23 @@ describe("grantManualOrganizationPlan", () => {
 });
 
 describe("grantManualUserPlan", () => {
+  it("returns ambiguous_organization when createNewOrganization=true and organizationId is also set", async () => {
+    const result = await grantManualUserPlan(fakeDb, {
+      telegramUserId: 12345n,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "ref-conflict",
+      note: null,
+      keptStripeLink: false,
+      organizationId: "org-1",
+      createNewOrganization: true,
+      operatorSource: "cli",
+    });
+    expect(result).toEqual({ ok: false, code: "ambiguous_organization" });
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
   it("creates a new user/org/owner-membership when user has no memberships", async () => {
     mockListOrganizationMembershipsForUser.mockResolvedValue([]);
     mockCreateOrganization.mockResolvedValueOnce({
@@ -972,7 +988,7 @@ describe("grantManualUserPlan", () => {
       createdOrganization: false,
       organizationId: "org-1",
     });
-    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+    expect(mockUpdateOrganizationBillingState).toHaveBeenCalledOnce();
   });
 
   it("idempotent replay when createNewOrganization=true and same paymentReference reused", async () => {
@@ -1013,7 +1029,7 @@ describe("grantManualUserPlan", () => {
     });
     // Must not create a second org
     expect(mockCreateOrganization).not.toHaveBeenCalled();
-    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+    expect(mockUpdateOrganizationBillingState).toHaveBeenCalledOnce();
   });
 
   it("idempotent replay when no memberships and same paymentReference reused", async () => {
@@ -1053,7 +1069,7 @@ describe("grantManualUserPlan", () => {
       organizationId: "org-original",
     });
     expect(mockCreateOrganization).not.toHaveBeenCalled();
-    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+    expect(mockUpdateOrganizationBillingState).toHaveBeenCalledOnce();
   });
 
   it("rolls back newly created org when concurrent request wins the event race", async () => {
@@ -1188,6 +1204,50 @@ describe("grantManualUserPlan", () => {
 
     expect(result).toEqual({ ok: false, code: "payment_reference_conflict" });
     expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
+  it("post-insert idempotent replay re-applies billing patch to restore drifted org state", async () => {
+    const winnerEvent = {
+      id: "event-winner",
+      organizationId: "org-1",
+      telegramUserId: 12345n,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "drift-ref-001",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    };
+    mockUserHasOrganizationRole.mockResolvedValueOnce(true);
+    mockFindOrganizationByIdForUpdate.mockResolvedValueOnce({ id: "org-1", updatedAt: new Date() });
+    // Concurrent winner already committed — our insert loses
+    mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
+      event: winnerEvent,
+      created: false,
+    });
+
+    const result = await grantManualUserPlan(fakeDb, {
+      telegramUserId: 12345n,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "drift-ref-001",
+      note: null,
+      keptStripeLink: false,
+      organizationId: "org-1",
+      createNewOrganization: false,
+      operatorSource: "cli",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      idempotent: true,
+      updated: false,
+      createdOrganization: false,
+      organizationId: "org-1",
+    });
+    expect(mockUpdateOrganizationBillingState).toHaveBeenCalledOnce();
   });
 
   it("OrgCreationRaceSignal recovery returns conflict when canonical event has payload mismatch", async () => {
