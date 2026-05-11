@@ -561,6 +561,96 @@ describe("grantManualOrganizationPlan", () => {
     expect(mockUpdateOrganizationBillingState).toHaveBeenCalledOnce();
   });
 
+  it("idempotent replay with stale expectedUpdatedAt returns concurrent_update instead of reconciling", async () => {
+    // Org has drifted (stale stripe IDs), but the caller's version token is stale too.
+    // The version guard must fire to prevent rolling back newer state.
+    const orgUpdatedAt = new Date("2026-03-01T00:00:00.000Z");
+    mockFindOrganizationByIdForUpdate.mockResolvedValueOnce({
+      id: "org-1",
+      planCode: "free",
+      subscriptionStatus: "free",
+      stripeCustomerId: "cus_existing", // drift: should be null
+      stripeSubscriptionId: null,
+      paidThroughAt: null,
+      trialEndsAt: null,
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
+      updatedAt: orgUpdatedAt,
+    });
+    mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
+      event: {
+        id: "event-existing",
+        organizationId: "org-1",
+        telegramUserId: null,
+        planCode: "free",
+        subscriptionStatus: "free",
+        paidThroughAt: null,
+        paymentReference: "version-replay-ref-001",
+        note: null,
+        keptStripeLink: false,
+        operatorSource: "cli",
+      },
+      created: false,
+    });
+    const result = await grantManualOrganizationPlan(fakeDb, {
+      organizationId: "org-1",
+      planCode: "free",
+      subscriptionStatus: "free",
+      paidThroughAt: null,
+      paymentReference: "version-replay-ref-001",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+      expectedUpdatedAt: "2026-02-01T00:00:00.000Z", // stale: org.updatedAt is 2026-03-01
+    });
+    expect(result).toEqual({ ok: false, code: "concurrent_update" });
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
+  it("idempotent replay with matching expectedUpdatedAt reconciles normally", async () => {
+    const orgUpdatedAt = new Date("2026-03-01T00:00:00.000Z");
+    mockFindOrganizationByIdForUpdate.mockResolvedValueOnce({
+      id: "org-1",
+      planCode: "free",
+      subscriptionStatus: "free",
+      stripeCustomerId: "cus_existing", // drift
+      stripeSubscriptionId: null,
+      paidThroughAt: null,
+      trialEndsAt: null,
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
+      updatedAt: orgUpdatedAt,
+    });
+    mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
+      event: {
+        id: "event-existing",
+        organizationId: "org-1",
+        telegramUserId: null,
+        planCode: "free",
+        subscriptionStatus: "free",
+        paidThroughAt: null,
+        paymentReference: "version-replay-ref-002",
+        note: null,
+        keptStripeLink: false,
+        operatorSource: "cli",
+      },
+      created: false,
+    });
+    const result = await grantManualOrganizationPlan(fakeDb, {
+      organizationId: "org-1",
+      planCode: "free",
+      subscriptionStatus: "free",
+      paidThroughAt: null,
+      paymentReference: "version-replay-ref-002",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+      expectedUpdatedAt: "2026-03-01T00:00:00.000Z", // matches
+    });
+    expect(result).toMatchObject({ ok: true, idempotent: true, reconciled: true });
+    expect(mockUpdateOrganizationBillingState).toHaveBeenCalledOnce();
+  });
+
   it("idempotent replay reconciles when org has stale period fields despite matching plan/status", async () => {
     // Simulate an org that already has the right plan/status/paidThrough and cleared Stripe IDs
     // but still has a stale currentPeriodEnd from a previous Stripe subscription.

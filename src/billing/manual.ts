@@ -370,6 +370,14 @@ export async function grantManualOrganizationPlan(
         // invalidate open admin forms and cause false concurrent_update failures.
         let reconciled = false;
         if (!orgMatchesStoredEvent(organization, event)) {
+          // Honor the version guard on reconciling replays: if the caller holds a
+          // stale token and we would mutate, refuse rather than overwrite newer state.
+          if (
+            input.expectedUpdatedAt != null &&
+            organization.updatedAt.toISOString() !== input.expectedUpdatedAt
+          ) {
+            return { ok: false, code: "concurrent_update" };
+          }
           await updateOrganizationBillingState(tx, input.organizationId, buildBillingPatch(input));
           reconciled = true;
         }
