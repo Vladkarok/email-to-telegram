@@ -323,6 +323,9 @@ export async function grantManualOrganizationPlan(
         if (!payloadMatchesEvent(event, input)) {
           return { ok: false, code: "payment_reference_conflict" };
         }
+        // Re-apply under the existing FOR UPDATE lock so the org reflects the
+        // stored event even if another path (e.g. Stripe webhook) changed it since.
+        await updateOrganizationBillingState(tx, input.organizationId, buildBillingPatch(input));
         return {
           ok: true,
           idempotent: true,
@@ -358,6 +361,13 @@ export async function grantManualUserPlan(
   const validation = validatePlanInput(input);
   if (!validation.ok) return validation;
 
+  // Reject contradictory targeting: createNewOrganization and an explicit
+  // organizationId are mutually exclusive. Accepting both silently would bill
+  // a newly-created org while leaving the intended existing org unchanged.
+  if (input.createNewOrganization && input.organizationId != null) {
+    return { ok: false, code: "ambiguous_organization" };
+  }
+
   try {
     return await db.transaction(async (tx) => {
       await findOrCreateUserById(tx, input.telegramUserId);
@@ -384,6 +394,16 @@ export async function grantManualUserPlan(
         }
         if (!payloadMatchesEvent(existingEvent, input)) {
           return { ok: false, code: "payment_reference_conflict" };
+        }
+        // Lock the stored event's org and re-apply so its state matches the
+        // original grant even if another path (e.g. Stripe webhook) changed it.
+        const replayOrg = await findOrganizationByIdForUpdate(tx, existingEvent.organizationId);
+        if (replayOrg) {
+          await updateOrganizationBillingState(
+            tx,
+            existingEvent.organizationId,
+            buildBillingPatch(input),
+          );
         }
         return {
           ok: true,
@@ -473,6 +493,9 @@ export async function grantManualUserPlan(
         if (!payloadMatchesEvent(event, input)) {
           return { ok: false, code: "payment_reference_conflict" };
         }
+        // Re-apply under the existing FOR UPDATE lock so the org reflects the
+        // stored event even if another path changed it since.
+        await updateOrganizationBillingState(tx, resolvedOrganizationId, buildBillingPatch(input));
         return {
           ok: true,
           idempotent: true,
