@@ -43,8 +43,10 @@ vi.mock("../../../src/db/repos/manualBillingEvents.js", () => ({
     mockFindOrCreateManualBillingEvent(...args),
 }));
 
+const fakeTx = { execute: vi.fn().mockResolvedValue(undefined) };
 const fakeDb = {
-  transaction: vi.fn(async (work: (tx: unknown) => Promise<unknown>) => work({})),
+  transaction: vi.fn(async (work: (tx: unknown) => Promise<unknown>) => work(fakeTx)),
+  execute: vi.fn().mockResolvedValue(null), // used in OrgCreationRaceSignal recovery path
 } as unknown as Parameters<
   typeof import("../../../src/billing/manual.js").grantManualOrganizationPlan
 >[0];
@@ -264,6 +266,52 @@ describe("grantManualOrganizationPlan", () => {
         operatorSource: "cli",
       }),
     );
+  });
+
+  it("rejects paid_through_not_allowed when canceled status has a paid-through date", async () => {
+    const result = await grantManualOrganizationPlan(fakeDb, {
+      organizationId: "org-1",
+      planCode: "pro",
+      subscriptionStatus: "canceled",
+      paidThroughAt: new Date("2026-12-31T00:00:00.000Z"),
+      paymentReference: "cancel-ref-001",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    });
+    expect(result).toEqual({ ok: false, code: "paid_through_not_allowed" });
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
+  it("allows canceled status with null paid-through date", async () => {
+    mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
+      event: {
+        id: "ev-1",
+        organizationId: "org-1",
+        planCode: "pro",
+        subscriptionStatus: "canceled",
+        paidThroughAt: null,
+        paymentReference: "cancel-ref-002",
+        note: null,
+        keptStripeLink: false,
+        operatorSource: "cli",
+        telegramUserId: null,
+      },
+      created: true,
+    });
+
+    const result = await grantManualOrganizationPlan(fakeDb, {
+      organizationId: "org-1",
+      planCode: "pro",
+      subscriptionStatus: "canceled",
+      paidThroughAt: null,
+      paymentReference: "cancel-ref-002",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    });
+    expect(result).toMatchObject({ ok: true, subscriptionStatus: "canceled" });
+    expect(mockUpdateOrganizationBillingState).toHaveBeenCalled();
   });
 
   it("rejects paid plan with free subscription status at service layer", async () => {
