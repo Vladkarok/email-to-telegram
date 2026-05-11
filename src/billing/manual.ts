@@ -182,10 +182,13 @@ function buildBillingPatch(input: ManualPlanGrantInput): Record<string, unknown>
     subscriptionStatus: input.subscriptionStatus,
     paidThroughAt: input.paidThroughAt,
   };
-  // Always clear Stripe IDs unless explicitly kept (validated to business-only above).
+  // Always clear Stripe IDs and Stripe-derived period fields unless explicitly kept.
   if (!input.keptStripeLink) {
     patch.stripeCustomerId = null;
     patch.stripeSubscriptionId = null;
+    patch.trialEndsAt = null;
+    patch.currentPeriodStart = null;
+    patch.currentPeriodEnd = null;
   }
   return patch;
 }
@@ -288,6 +291,9 @@ function orgMatchesStoredEvent(
     paidThroughAt: Date | null;
     stripeCustomerId: string | null;
     stripeSubscriptionId: string | null;
+    trialEndsAt: Date | null;
+    currentPeriodStart: Date | null;
+    currentPeriodEnd: Date | null;
   },
   event: {
     planCode: string;
@@ -300,8 +306,15 @@ function orgMatchesStoredEvent(
   if (org.subscriptionStatus !== event.subscriptionStatus) return false;
   if ((org.paidThroughAt?.getTime() ?? null) !== (event.paidThroughAt?.getTime() ?? null))
     return false;
-  if (!event.keptStripeLink && (org.stripeCustomerId !== null || org.stripeSubscriptionId !== null))
-    return false;
+  if (!event.keptStripeLink) {
+    if (org.stripeCustomerId !== null || org.stripeSubscriptionId !== null) return false;
+    if (
+      org.trialEndsAt !== null ||
+      org.currentPeriodStart !== null ||
+      org.currentPeriodEnd !== null
+    )
+      return false;
+  }
   return true;
 }
 
@@ -431,6 +444,9 @@ export async function grantManualUserPlan(
           return { ok: false, code: "payment_reference_conflict" };
         }
         // Lock and conditionally re-apply: only write when the org has drifted.
+        // Org eligibility (ownership/role) is intentionally NOT re-checked here:
+        // the stored event is the authoritative record of an already-authorized grant.
+        // Reconciliation merely restores what was explicitly set by a prior operator.
         const replayOrg = await findOrganizationByIdForUpdate(tx, existingEvent.organizationId);
         let reconciled = false;
         if (replayOrg && !orgMatchesStoredEvent(replayOrg, existingEvent)) {
