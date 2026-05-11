@@ -253,6 +253,23 @@ function summarizeEvent(event: {
   };
 }
 
+function payloadMatchesEvent(
+  event: {
+    planCode: string;
+    subscriptionStatus: string;
+    paidThroughAt: Date | null;
+    keptStripeLink: boolean;
+  },
+  input: ManualPlanGrantInput,
+): boolean {
+  return (
+    event.planCode === input.planCode &&
+    event.subscriptionStatus === input.subscriptionStatus &&
+    (event.paidThroughAt?.getTime() ?? null) === (input.paidThroughAt?.getTime() ?? null) &&
+    event.keptStripeLink === input.keptStripeLink
+  );
+}
+
 // Thrown inside a transaction to force rollback; caught outside to return ok:false.
 class ConcurrentUpdateSignal extends Error {}
 // Thrown when a newly created org must be rolled back because a concurrent
@@ -287,6 +304,11 @@ export async function grantManualOrganizationPlan(
         // The secondary user+payref fallback in findOrCreateManualBillingEvent may
         // return an event from a different org. Guard against cross-org replays.
         if (event.organizationId !== input.organizationId) {
+          return { ok: false, code: "payment_reference_conflict" };
+        }
+        // A second submission with the same payment reference but different billing
+        // fields is a correction attempt — reject rather than silently drop it.
+        if (!payloadMatchesEvent(event, input)) {
           return { ok: false, code: "payment_reference_conflict" };
         }
         const summary = summarizeEvent(event);
@@ -348,6 +370,9 @@ export async function grantManualUserPlan(
       );
       if (existingEvent) {
         if (input.organizationId && existingEvent.organizationId !== input.organizationId) {
+          return { ok: false, code: "payment_reference_conflict" };
+        }
+        if (!payloadMatchesEvent(existingEvent, input)) {
           return { ok: false, code: "payment_reference_conflict" };
         }
         return {
@@ -429,6 +454,9 @@ export async function grantManualUserPlan(
         // from a different org (concurrent request on a different org won the user-scoped
         // unique index race). Mirror the pre-check conflict guard here.
         if (input.organizationId && event.organizationId !== input.organizationId) {
+          return { ok: false, code: "payment_reference_conflict" };
+        }
+        if (!payloadMatchesEvent(event, input)) {
           return { ok: false, code: "payment_reference_conflict" };
         }
         // Idempotent replay — stored event data, but current caller's operatorSource.

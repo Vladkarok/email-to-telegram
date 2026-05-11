@@ -505,11 +505,11 @@ describe("grantManualOrganizationPlan", () => {
         id: "event-existing",
         organizationId: "org-1",
         telegramUserId: null,
-        planCode: "personal",
+        planCode: "pro",
         subscriptionStatus: "active",
-        paidThroughAt: new Date("2026-05-10T00:00:00.000Z"),
+        paidThroughAt: PAID_THROUGH,
         paymentReference: "wise-2026-04-001",
-        note: "Original grant",
+        note: null,
         keptStripeLink: false,
         operatorSource: "cli",
       },
@@ -529,13 +529,41 @@ describe("grantManualOrganizationPlan", () => {
       ok: true,
       idempotent: true,
       updated: false,
-      planCode: "personal",
-      paidThroughAt: "2026-05-10T00:00:00.000Z",
-      note: "Original grant",
+      planCode: "pro",
       manualBillingEventId: "event-existing",
     });
     expect(mockCreateManualBillingEvent).not.toHaveBeenCalled();
     // Idempotent path must NOT mutate billing state
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
+  it("returns payment_reference_conflict when same reference is resubmitted with different billing fields", async () => {
+    mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
+      event: {
+        id: "event-existing",
+        organizationId: "org-1",
+        telegramUserId: null,
+        planCode: "personal",
+        subscriptionStatus: "active",
+        paidThroughAt: new Date("2026-05-10T00:00:00.000Z"),
+        paymentReference: "wise-2026-04-001",
+        note: null,
+        keptStripeLink: false,
+        operatorSource: "cli",
+      },
+      created: false,
+    });
+    const result = await grantManualOrganizationPlan(fakeDb, {
+      organizationId: "org-1",
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "wise-2026-04-001",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    });
+    expect(result).toEqual({ ok: false, code: "payment_reference_conflict" });
     expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
   });
 
@@ -545,9 +573,9 @@ describe("grantManualOrganizationPlan", () => {
         id: "event-existing",
         organizationId: "org-1",
         telegramUserId: null,
-        planCode: "personal",
+        planCode: "pro",
         subscriptionStatus: "active",
-        paidThroughAt: new Date("2026-05-10T00:00:00.000Z"),
+        paidThroughAt: PAID_THROUGH,
         paymentReference: "wise-2026-04-001",
         note: null,
         keptStripeLink: false,
@@ -813,6 +841,38 @@ describe("grantManualUserPlan", () => {
     });
 
     expect(result).toMatchObject({ ok: false, code: "payment_reference_conflict" });
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
+  it("returns payment_reference_conflict when same user reference is resubmitted with different billing fields", async () => {
+    const existingEvent = {
+      id: "event-existing",
+      organizationId: "org-1",
+      telegramUserId: 12345n,
+      planCode: "personal",
+      subscriptionStatus: "active",
+      paidThroughAt: new Date("2026-05-10T00:00:00.000Z"),
+      paymentReference: "wise-ref-mismatch",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    };
+    mockFindManualBillingEventByUserAndPaymentReference.mockResolvedValueOnce(existingEvent);
+
+    const result = await grantManualUserPlan(fakeDb, {
+      telegramUserId: 12345n,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "wise-ref-mismatch",
+      note: null,
+      keptStripeLink: false,
+      organizationId: null,
+      createNewOrganization: false,
+      operatorSource: "cli",
+    });
+
+    expect(result).toEqual({ ok: false, code: "payment_reference_conflict" });
     expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
   });
 
