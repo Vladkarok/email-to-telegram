@@ -5,6 +5,7 @@ import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import { registerRoutes } from "./routes/index.js";
 import { getLogger } from "../utils/logger.js";
+import { recordHttpRequest } from "../observability/metrics.js";
 import type { AppConfig } from "../config.js";
 
 declare module "fastify" {
@@ -35,6 +36,15 @@ export async function createHttpServer(config: AppConfig): Promise<FastifyInstan
   await app.register(helmet);
   await app.register(rateLimit, {
     global: false, // per-route limits only; apply explicitly on each route
+  });
+
+  app.addHook("onResponse", async (req, reply) => {
+    recordHttpRequest({
+      route: req.routeOptions.url ?? "unknown",
+      method: req.method,
+      statusCode: reply.statusCode,
+      durationSeconds: reply.elapsedTime / 1000,
+    });
   });
 
   // Capture raw bytes for both content types used by the Cloudflare Worker.

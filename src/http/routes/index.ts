@@ -8,6 +8,7 @@ import { downloadRoute } from "./download.js";
 import { deliveryViewRoute } from "./view.js";
 import { billingRoutes } from "./billing.js";
 import { adminRoutes } from "./admin/index.js";
+import { metricsRoute } from "./metrics.js";
 
 export type RouteConfig = Pick<
   AppConfig,
@@ -22,7 +23,8 @@ export type RouteConfig = Pick<
   | "adminSessionSecret"
   | "adminSessionTtlMinutes"
   | "nodeEnv"
->;
+> &
+  Partial<Pick<AppConfig, "metricsEnabled" | "metricsToken">>;
 
 export async function registerRoutes(app: FastifyInstance, config: RouteConfig): Promise<void> {
   healthzRoute(app);
@@ -32,6 +34,10 @@ export async function registerRoutes(app: FastifyInstance, config: RouteConfig):
   downloadRoute(app);
   deliveryViewRoute(app, config);
   billingRoutes(app);
+
+  if (config.metricsEnabled && config.metricsToken) {
+    metricsRoute(app, config.metricsToken);
+  }
 
   if (config.adminEnabled && config.adminSecret) {
     await app.register(async (instance) => {

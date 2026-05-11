@@ -58,6 +58,10 @@ function isValidDomainName(value: string): boolean {
 }
 
 const adminSessionTtlSchema = z.coerce.number().int().min(1).max(1440).default(60);
+const optionalBooleanSchema = z
+  .enum(["true", "false"])
+  .default("false")
+  .transform((v) => v === "true");
 
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
@@ -120,13 +124,12 @@ const envSchema = z.object({
   STRIPE_PRICE_TEAM_YEARLY: stripePriceIdSchema,
   BILLING_SUCCESS_URL: optionalTrimmedUrlSchema,
   BILLING_CANCEL_URL: optionalTrimmedUrlSchema,
-  ADMIN_ENABLED: z
-    .enum(["true", "false"])
-    .default("false")
-    .transform((v) => v === "true"),
+  ADMIN_ENABLED: optionalBooleanSchema,
   ADMIN_SECRET: z.string().optional(),
   ADMIN_SESSION_SECRET: z.string().optional(),
   ADMIN_SESSION_TTL_MINUTES: adminSessionTtlSchema,
+  METRICS_ENABLED: optionalBooleanSchema,
+  METRICS_TOKEN: z.string().optional(),
 });
 
 export type AppMode = z.infer<typeof appModeSchema>;
@@ -178,6 +181,8 @@ export interface AppConfig {
   adminSecret: string | undefined;
   adminSessionSecret: string | undefined;
   adminSessionTtlMinutes: number;
+  metricsEnabled: boolean;
+  metricsToken: string | undefined;
 }
 
 export function loadConfig(): AppConfig {
@@ -278,6 +283,14 @@ export function loadConfig(): AppConfig {
     }
   }
 
+  if (env.METRICS_ENABLED) {
+    if (!env.METRICS_TOKEN || env.METRICS_TOKEN.length < 32) {
+      throw new Error(
+        "Invalid configuration:\n  METRICS_TOKEN must be at least 32 characters when METRICS_ENABLED=true",
+      );
+    }
+  }
+
   const stripePriceIds =
     env.BILLING_PROVIDER === "stripe"
       ? {
@@ -327,5 +340,7 @@ export function loadConfig(): AppConfig {
     adminSecret: env.ADMIN_SECRET,
     adminSessionSecret: env.ADMIN_SESSION_SECRET,
     adminSessionTtlMinutes: env.ADMIN_SESSION_TTL_MINUTES,
+    metricsEnabled: env.METRICS_ENABLED,
+    metricsToken: env.METRICS_TOKEN,
   };
 }

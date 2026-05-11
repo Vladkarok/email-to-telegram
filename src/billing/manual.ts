@@ -21,6 +21,7 @@ import {
 import type { PlanCode } from "./plans.js";
 import type { OperatorSource } from "./audit.js";
 import type * as schema from "../db/schema.js";
+import { recordManualPlanGrant } from "../observability/metrics.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -403,6 +404,7 @@ export async function grantManualOrganizationPlan(
       }
       await updateOrganizationBillingState(tx, input.organizationId, buildBillingPatch(input));
       const summary = summarize(input, input.organizationId, telegramUserId, event.id);
+      recordManualPlanGrant(input.planCode);
       return { ok: true, idempotent: false, updated: true, ...summary };
     });
   } catch (err) {
@@ -590,6 +592,7 @@ export async function grantManualUserPlan(
       }
       await updateOrganizationBillingState(tx, resolvedOrganizationId, buildBillingPatch(input));
       const summary = summarize(input, resolvedOrganizationId, input.telegramUserId, event.id);
+      recordManualPlanGrant(input.planCode);
       return { ok: true, idempotent: false, updated: true, createdOrganization, ...summary };
     });
   } catch (err) {

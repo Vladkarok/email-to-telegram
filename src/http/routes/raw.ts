@@ -17,6 +17,7 @@ import {
 import { getLogger } from "../../utils/logger.js";
 import { pipelineTracker } from "../../utils/inFlight.js";
 import type { AppConfig } from "../../config.js";
+import { recordQuotaRejection, recordRawInbound } from "../../observability/metrics.js";
 
 function rawEmailPath(rawEmailDir: string): string {
   const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
@@ -77,6 +78,7 @@ export function rawRoute(
       const recipientDomain = req.headers["x-recipient-domain"] as string | undefined;
 
       if (!sig || !ts) {
+        recordRawInbound("rejected", "missing_signature");
         await reply.status(401).send({ error: "missing signature" });
         return;
       }
@@ -85,22 +87,26 @@ export function rawRoute(
       // fall back to req.body directly for octet-stream in tests
       const body = req.rawBody ?? (Buffer.isBuffer(req.body) ? req.body : null);
       if (!body) {
+        recordRawInbound("rejected", "empty_body");
         await reply.status(400).send({ error: "empty body" });
         return;
       }
 
       if (!verifyWorkerRequest(body, sig, ts)) {
+        recordRawInbound("rejected", "invalid_signature");
         await reply.status(401).send({ error: "invalid signature" });
         return;
       }
 
       if (!localPart) {
+        recordRawInbound("rejected", "missing_local_part");
         await reply.status(400).send({ error: "missing x-local-part header" });
         return;
       }
 
       const alias = await findAliasForInbound(getDb(), { localPart, recipientDomain });
       if (shouldUseHostedDomainRouting() && alias?.status !== "active") {
+        recordRawInbound("rejected", "alias_not_found");
         await reply.status(403).send({ error: "rejected" });
         return;
       }
@@ -120,8 +126,9 @@ export function rawRoute(
               blockType: hostedBlock.blockType,
               blockValue: hostedBlock.value,
             },
-            "raw inbound rejected by hosted blocklist",
+            "inbound.raw.rejected",
           );
+          recordRawInbound("rejected", "hosted_blocklist");
           await reply.status(403).send({ error: "rejected" });
           return;
         }
@@ -135,6 +142,8 @@ export function rawRoute(
         if (!inboundLimit.ok) {
           const rejectionStatus = statusForQueueRejection(inboundLimit.code);
           if (rejectionStatus) {
+            recordRawInbound("rejected", inboundLimit.code);
+            recordQuotaRejection(inboundLimit.code);
             await reply.status(rejectionStatus).send({ error: "rejected" });
             return;
           }
@@ -184,6 +193,8 @@ export function rawRoute(
       if (!queued.queued) {
         const rejectionStatus = statusForQueueRejection(queued.result.reason);
         if (rejectionStatus) {
+          recordRawInbound("rejected", queued.result.reason ?? "unknown");
+          recordQuotaRejection(queued.result.reason ?? "unknown");
           await deleteFile(storedPath).catch((err: unknown) => {
             getLogger().warn({ err, storedPath }, "failed to delete rejected raw email");
           });
@@ -192,6 +203,7 @@ export function rawRoute(
         }
       }
 
+      recordRawInbound("accepted", "accepted");
       await reply.status(202).send({ status: "accepted" });
 
       if (!queued.queued) {

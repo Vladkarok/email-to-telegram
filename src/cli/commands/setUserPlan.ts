@@ -25,7 +25,7 @@ export const setUserPlanCommand: OperatorCommand = {
           result: redactManualBillingForLog(result),
           createdOrganization: result.createdOrganization,
         },
-        "Manual user plan grant complete.",
+        result.idempotent ? "billing.manual_grant.idempotent" : "billing.manual_grant.created",
       );
     } else {
       logger.error(

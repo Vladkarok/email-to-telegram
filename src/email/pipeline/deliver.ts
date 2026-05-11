@@ -33,6 +33,7 @@ import { decrementOrganizationStorageUsage } from "../../db/repos/storageUsage.j
 import type { DeliveryLog } from "../../db/schema.js";
 import type { parseEmail } from "../parser.js";
 import type { Db, QueuedInboundEmail, PipelineResult } from "./types.js";
+import { recordDeliveryAttempt, recordTelegramSendFailure } from "../../observability/metrics.js";
 
 interface StoredImageAttachment extends PhotoItem {
   attachmentId: string;
@@ -179,9 +180,14 @@ export async function deliverQueuedEmail(
 
       const finalStatus = result.ok ? "delivered" : "failed";
       await updateDeliveryLogStatus(db, deliveryLog.id, finalStatus);
+      recordDeliveryAttempt(result.ok ? "succeeded" : "failed");
 
       if (!result.ok) {
-        log.error({ deliveryLogId: deliveryLog.id, error: result.error }, "delivery failed");
+        recordTelegramSendFailure(result.error);
+        log.error(
+          { deliveryLogId: deliveryLog.id, error: result.error },
+          "delivery.telegram.failed",
+        );
         return { ok: false, reason: "send_failed" };
       }
 
@@ -230,6 +236,7 @@ export async function deliverQueuedEmail(
             });
 
             if (!fallbackResult.ok) {
+              recordTelegramSendFailure(fallbackResult.error);
               log.error(
                 { deliveryLogId: deliveryLog.id, error: fallbackResult.error },
                 "image attachment fallback delivery failed",

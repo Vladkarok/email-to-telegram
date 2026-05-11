@@ -22,7 +22,7 @@ export const setOrganizationPlanCommand: OperatorCommand = {
     if (result.ok) {
       logger.info(
         { result: redactManualBillingForLog(result) },
-        "Manual organization plan grant complete.",
+        result.idempotent ? "billing.manual_grant.idempotent" : "billing.manual_grant.created",
       );
     } else {
       logger.error({ code: result.code }, "Manual organization plan grant failed.");

@@ -1,0 +1,167 @@
+import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from "prom-client";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type * as schema from "../db/schema.js";
+import { countOrganizationsByPlan } from "../db/repos/organizations.js";
+
+type Db = NodePgDatabase<typeof schema>;
+
+const buckets = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
+
+export const metricsRegistry = new Registry();
+metricsRegistry.setDefaultLabels({ service: "email_to_telegram" });
+
+collectDefaultMetrics({
+  register: metricsRegistry,
+  eventLoopMonitoringPrecision: 20,
+});
+
+const httpRequestsTotal = new Counter({
+  name: "email_to_telegram_http_requests_total",
+  help: "HTTP requests by route, method, and status class.",
+  labelNames: ["route", "method", "status_class"] as const,
+  registers: [metricsRegistry],
+});
+
+const httpRequestDurationSeconds = new Histogram({
+  name: "email_to_telegram_http_request_duration_seconds",
+  help: "HTTP request duration by route, method, and status class.",
+  labelNames: ["route", "method", "status_class"] as const,
+  buckets,
+  registers: [metricsRegistry],
+});
+
+const inboundPreflightTotal = new Counter({
+  name: "email_to_telegram_inbound_preflight_total",
+  help: "Inbound preflight decisions by result and reason.",
+  labelNames: ["result", "reason"] as const,
+  registers: [metricsRegistry],
+});
+
+const rawInboundTotal = new Counter({
+  name: "email_to_telegram_raw_inbound_total",
+  help: "Raw inbound decisions by result and reason.",
+  labelNames: ["result", "reason"] as const,
+  registers: [metricsRegistry],
+});
+
+const deliveryAttemptsTotal = new Counter({
+  name: "email_to_telegram_delivery_attempts_total",
+  help: "Initial delivery attempts by result.",
+  labelNames: ["result"] as const,
+  registers: [metricsRegistry],
+});
+
+const retryAttemptsTotal = new Counter({
+  name: "email_to_telegram_retry_attempts_total",
+  help: "Retry delivery attempts by result.",
+  labelNames: ["result"] as const,
+  registers: [metricsRegistry],
+});
+
+const telegramSendFailuresTotal = new Counter({
+  name: "email_to_telegram_telegram_send_failures_total",
+  help: "Telegram send failures by coarse error class.",
+  labelNames: ["error_class"] as const,
+  registers: [metricsRegistry],
+});
+
+const manualPlanGrantsTotal = new Counter({
+  name: "email_to_telegram_manual_plan_grants_total",
+  help: "Manual plan grant events by plan.",
+  labelNames: ["plan"] as const,
+  registers: [metricsRegistry],
+});
+
+const quotaRejectionsTotal = new Counter({
+  name: "email_to_telegram_quota_rejections_total",
+  help: "Quota rejections by reason.",
+  labelNames: ["reason"] as const,
+  registers: [metricsRegistry],
+});
+
+const activeOrganizationsByPlan = new Gauge({
+  name: "email_to_telegram_active_organizations",
+  help: "Current organizations by plan code.",
+  labelNames: ["plan"] as const,
+  registers: [metricsRegistry],
+});
+
+export function recordHttpRequest(input: {
+  route: string;
+  method: string;
+  statusCode: number;
+  durationSeconds: number;
+}): void {
+  const labels = {
+    route: normalizeRouteLabel(input.route),
+    method: input.method,
+    status_class: statusClass(input.statusCode),
+  };
+  httpRequestsTotal.inc(labels);
+  httpRequestDurationSeconds.observe(labels, input.durationSeconds);
+}
+
+export function recordInboundPreflight(result: "accepted" | "rejected", reason: string): void {
+  inboundPreflightTotal.inc({ result, reason });
+}
+
+export function recordRawInbound(result: "accepted" | "rejected", reason: string): void {
+  rawInboundTotal.inc({ result, reason });
+}
+
+export function recordDeliveryAttempt(result: "succeeded" | "failed"): void {
+  deliveryAttemptsTotal.inc({ result });
+}
+
+export function recordRetryAttempt(result: "succeeded" | "failed" | "permanently_failed"): void {
+  retryAttemptsTotal.inc({ result });
+}
+
+export function recordTelegramSendFailure(error: string | null | undefined): void {
+  telegramSendFailuresTotal.inc({ error_class: classifyTelegramError(error) });
+}
+
+export function recordManualPlanGrant(plan: string): void {
+  manualPlanGrantsTotal.inc({ plan });
+}
+
+export function recordQuotaRejection(reason: string): void {
+  quotaRejectionsTotal.inc({ reason });
+}
+
+export async function refreshActiveOrganizationsByPlan(db: Db): Promise<void> {
+  activeOrganizationsByPlan.reset();
+  const rows = await countOrganizationsByPlan(db);
+  for (const row of rows) {
+    activeOrganizationsByPlan.set({ plan: row.planCode }, row.count);
+  }
+}
+
+export function resetMetricsForTests(): void {
+  metricsRegistry.resetMetrics();
+}
+
+function statusClass(statusCode: number): string {
+  return `${Math.floor(statusCode / 100)}xx`;
+}
+
+function normalizeRouteLabel(route: string): string {
+  if (!route || route === "unknown") return "unknown";
+  return route.replace(/:[^/]+/g, ":param");
+}
+
+function classifyTelegramError(error: string | null | undefined): string {
+  const normalized = (error ?? "").toLowerCase();
+  if (!normalized) return "unknown";
+  if (normalized.includes("flood")) return "flood_wait";
+  if (normalized.includes("forbidden") || normalized.includes("blocked")) return "forbidden";
+  if (normalized.includes("bad request")) return "bad_request";
+  if (normalized.includes("timeout") || normalized.includes("timed out")) return "timeout";
+  if (
+    normalized.includes("network") ||
+    normalized.includes("econn") ||
+    normalized.includes("fetch")
+  )
+    return "network";
+  return "other";
+}

@@ -3,6 +3,7 @@ import type { Api } from "grammy";
 import type { ParseMode } from "@grammyjs/types";
 import { getLogger } from "../utils/logger.js";
 import { readAttachmentBytes } from "../storage/disk.js";
+import { recordTelegramSendFailure } from "../observability/metrics.js";
 
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
 const MEDIA_GROUP_MAX = 10;
@@ -109,6 +110,7 @@ export async function sendTelegramPhotos(
         await api.sendMediaGroup(chatId, media, other);
       }
     } catch (err: unknown) {
+      recordTelegramSendFailure(err instanceof Error ? err.message : String(err));
       log.error({ err, chatId, chunk: chunk.map((p) => p.filename) }, "sendPhotos failed");
       failedPhotos.push(...chunk);
     }
