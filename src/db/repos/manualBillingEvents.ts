@@ -94,7 +94,7 @@ export async function findAnyManualBillingEventByPaymentReference(
     .limit(2);
   if (rows.length > 1) {
     throw new Error(
-      `findAnyManualBillingEventByPaymentReference: multiple events found for paymentReference=${paymentReference} — data integrity violation`,
+      `findAnyManualBillingEventByPaymentReference: multiple events found for paymentReference=[REDACTED] — data integrity violation`,
     );
   }
   return rows[0] ?? null;
@@ -117,7 +117,7 @@ export async function findManualBillingEventByPaymentReference(
     .limit(2);
   if (rows.length > 1) {
     throw new Error(
-      `findManualBillingEventByPaymentReference: multiple events found for organizationId=${organizationId} paymentReference=${paymentReference} — data integrity violation`,
+      `findManualBillingEventByPaymentReference: multiple events found for organizationId=${organizationId} paymentReference=[REDACTED] — data integrity violation`,
     );
   }
   return rows[0] ?? null;
@@ -141,7 +141,7 @@ export async function findManualBillingEventByUserAndPaymentReference(
     .limit(2);
   if (rows.length > 1) {
     throw new Error(
-      `findManualBillingEventByUserAndPaymentReference: multiple events found for telegramUserId=${telegramUserId} paymentReference=${paymentReference} — data integrity violation`,
+      `findManualBillingEventByUserAndPaymentReference: multiple events found for telegramUserId=${telegramUserId} paymentReference=[REDACTED] — data integrity violation`,
     );
   }
   return rows[0] ?? null;
