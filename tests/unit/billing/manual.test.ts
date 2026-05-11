@@ -1090,6 +1090,86 @@ describe("grantManualUserPlan", () => {
     expect(result).toMatchObject({ ok: false, code: "payment_reference_conflict" });
     expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
   });
+
+  it("returns payment_reference_conflict when post-insert replay belongs to a different telegramUserId", async () => {
+    // Same org and payref but winner's event was created by a different user (111n vs 222n).
+    const winnerEvent = {
+      id: "event-winner",
+      organizationId: "org-1",
+      telegramUserId: 111n,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "shared-ref-001",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    };
+    mockUserHasOrganizationRole.mockResolvedValueOnce(true);
+    mockFindOrganizationByIdForUpdate.mockResolvedValueOnce({ id: "org-1", updatedAt: new Date() });
+    mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
+      event: winnerEvent,
+      created: false,
+    });
+
+    const result = await grantManualUserPlan(fakeDb, {
+      telegramUserId: 222n,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "shared-ref-001",
+      note: null,
+      keptStripeLink: false,
+      organizationId: "org-1",
+      createNewOrganization: false,
+      operatorSource: "cli",
+    });
+
+    expect(result).toEqual({ ok: false, code: "payment_reference_conflict" });
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
+  it("OrgCreationRaceSignal recovery returns conflict when canonical event has payload mismatch", async () => {
+    const canonicalEvent = {
+      id: "event-winner",
+      organizationId: "org-winner",
+      telegramUserId: 12345n,
+      planCode: "personal",
+      subscriptionStatus: "active",
+      paidThroughAt: new Date("2026-05-10T00:00:00.000Z"),
+      paymentReference: "race-mismatch-ref",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    };
+    mockFindManualBillingEventByUserAndPaymentReference.mockResolvedValueOnce(null);
+    mockFindManualBillingEventByUserAndPaymentReference.mockResolvedValueOnce(canonicalEvent);
+    mockCreateOrganization.mockResolvedValueOnce({ id: "org-loser" });
+    mockFindOrganizationByIdForUpdate.mockResolvedValueOnce({
+      id: "org-loser",
+      updatedAt: new Date(),
+    });
+    mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
+      event: canonicalEvent,
+      created: false,
+    });
+
+    const result = await grantManualUserPlan(fakeDb, {
+      telegramUserId: 12345n,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "race-mismatch-ref",
+      note: null,
+      keptStripeLink: false,
+      organizationId: null,
+      createNewOrganization: true,
+      operatorSource: "cli",
+    });
+
+    expect(result).toEqual({ ok: false, code: "payment_reference_conflict" });
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
 });
 
 describe("addManualOrganizationMember", () => {

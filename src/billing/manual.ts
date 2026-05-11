@@ -456,6 +456,11 @@ export async function grantManualUserPlan(
         if (input.organizationId && event.organizationId !== input.organizationId) {
           return { ok: false, code: "payment_reference_conflict" };
         }
+        // A different user in the same org could have committed the same payref — their
+        // event would be returned by the org-scoped fallback in findOrCreateManualBillingEvent.
+        if (event.telegramUserId !== null && event.telegramUserId !== input.telegramUserId) {
+          return { ok: false, code: "payment_reference_conflict" };
+        }
         if (!payloadMatchesEvent(event, input)) {
           return { ok: false, code: "payment_reference_conflict" };
         }
@@ -483,6 +488,19 @@ export async function grantManualUserPlan(
         input.paymentReference,
       );
       if (canonical) {
+        // Apply the same conflict guards used in the normal !created path.
+        if (input.organizationId && canonical.organizationId !== input.organizationId) {
+          return { ok: false, code: "payment_reference_conflict" };
+        }
+        if (
+          canonical.telegramUserId !== null &&
+          canonical.telegramUserId !== input.telegramUserId
+        ) {
+          return { ok: false, code: "payment_reference_conflict" };
+        }
+        if (!payloadMatchesEvent(canonical, input)) {
+          return { ok: false, code: "payment_reference_conflict" };
+        }
         return {
           ok: true,
           idempotent: true,
