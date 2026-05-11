@@ -874,6 +874,49 @@ describe("grantManualUserPlan", () => {
     // Billing state must not have been mutated
     expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
   });
+
+  it("returns payment_reference_conflict when post-insert replay lands in a different org", async () => {
+    // Pre-check sees no event (no Once override — default null).
+    // User has explicit org-A, but a concurrent tx already committed the event in org-B.
+    const winnerEvent = {
+      id: "event-winner",
+      organizationId: "org-B",
+      telegramUserId: 12345n,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "conflict-ref-002",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    };
+    mockUserHasOrganizationRole.mockResolvedValueOnce(true);
+    mockFindOrganizationByIdForUpdate.mockResolvedValueOnce({
+      id: "org-A",
+      updatedAt: new Date(),
+    });
+    // Insert blocked by user-scoped unique index; fallback returns winner's event
+    mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
+      event: winnerEvent,
+      created: false,
+    });
+
+    const result = await grantManualUserPlan(fakeDb, {
+      telegramUserId: 12345n,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "conflict-ref-002",
+      note: null,
+      keptStripeLink: false,
+      organizationId: "org-A",
+      createNewOrganization: false,
+      operatorSource: "cli",
+    });
+
+    expect(result).toMatchObject({ ok: false, code: "payment_reference_conflict" });
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
 });
 
 describe("addManualOrganizationMember", () => {
