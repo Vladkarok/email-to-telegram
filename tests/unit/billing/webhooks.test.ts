@@ -169,6 +169,50 @@ describe("processStripeWebhookEvent", () => {
     expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
   });
 
+  it("does not overwrite business org with keptStripeLink=true even when Stripe IDs match", async () => {
+    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue({
+      id: "org-linked-business",
+      planCode: "business",
+      stripeCustomerId: "cus_linked",
+      stripeSubscriptionId: "sub_linked",
+    });
+    // Latest manual event recorded keptStripeLink=true — operator wants business
+    // entitlements even though the Stripe subscription is still active.
+    mockFindLatestManualBillingEventForOrganization.mockResolvedValue({
+      id: "evt-manual",
+      organizationId: "org-linked-business",
+      planCode: "business",
+      subscriptionStatus: "active",
+      keptStripeLink: true,
+    });
+
+    await expect(
+      processStripeWebhookEvent(buildDb(), {
+        id: "evt_sub_updated",
+        type: "customer.subscription.updated",
+        data: {
+          object: {
+            id: "sub_linked",
+            customer: "cus_linked",
+            status: "active",
+            trial_end: null,
+            items: {
+              data: [
+                {
+                  price: { id: "price_pro_monthly" },
+                  current_period_start: 1_700_000_000,
+                  current_period_end: 1_700_086_400,
+                },
+              ],
+            },
+          },
+        },
+      } as never),
+    ).resolves.toBe("ignored");
+
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
   it("does not overwrite unlinked manual paid organizations resolved by metadata", async () => {
     mockFindOrganizationByStripeSubscriptionId.mockResolvedValue(null);
     mockFindOrganizationByStripeCustomerId.mockResolvedValue(null);
