@@ -501,8 +501,8 @@ describe("grantManualUserPlan", () => {
       stripeCustomerId: null,
       stripeSubscriptionId: null,
     });
-    // After create, the org lookup for the grant should succeed
-    mockFindOrganizationById.mockResolvedValueOnce({
+    // After create, the org lookup (FOR UPDATE) for the grant should succeed
+    mockFindOrganizationByIdForUpdate.mockResolvedValueOnce({
       id: "org-new",
       name: "Telegram 12345",
       planCode: "free",
@@ -510,6 +510,7 @@ describe("grantManualUserPlan", () => {
       stripeCustomerId: null,
       stripeSubscriptionId: null,
       paidThroughAt: null,
+      updatedAt: new Date(),
     });
     mockUpdateOrganizationBillingState.mockResolvedValueOnce({
       id: "org-new",
@@ -622,13 +623,14 @@ describe("grantManualUserPlan", () => {
       { organizationId: "org-1", userId: 12345n, role: "member" },
     ]);
     mockCreateOrganization.mockResolvedValueOnce({ id: "org-2", name: "Telegram 12345" });
-    mockFindOrganizationById.mockResolvedValueOnce({
+    mockFindOrganizationByIdForUpdate.mockResolvedValueOnce({
       id: "org-2",
       planCode: "free",
       subscriptionStatus: "free",
       stripeCustomerId: null,
       stripeSubscriptionId: null,
       paidThroughAt: null,
+      updatedAt: new Date(),
     });
 
     const result = await grantManualUserPlan(fakeDb, {

@@ -366,7 +366,7 @@ export async function grantManualUserPlan(
       }
     }
 
-    const organization = await findOrganizationById(tx, resolvedOrganizationId);
+    const organization = await findOrganizationByIdForUpdate(tx, resolvedOrganizationId);
     if (!organization) return { ok: false, code: "organization_not_found" };
 
     const { event, created } = await findOrCreateManualBillingEvent(
