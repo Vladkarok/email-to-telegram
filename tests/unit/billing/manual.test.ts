@@ -1117,12 +1117,12 @@ describe("grantManualUserPlan", () => {
       ok: true,
       idempotent: true,
       updated: false,
+      reconciled: true,
       createdOrganization: false,
       organizationId: "org-winner",
       manualBillingEventId: "event-winner",
     });
-    // Billing state must not have been mutated
-    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+    expect(mockUpdateOrganizationBillingState).toHaveBeenCalledOnce();
   });
 
   it("returns payment_reference_conflict when post-insert replay lands in a different org", async () => {
