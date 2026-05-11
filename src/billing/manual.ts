@@ -387,6 +387,12 @@ export async function grantManualUserPlan(
           // transaction so the freshly created org is not left behind as an orphan.
           throw new OrgCreationRaceSignal();
         }
+        // The secondary fallback in findOrCreateManualBillingEvent may return an event
+        // from a different org (concurrent request on a different org won the user-scoped
+        // unique index race). Mirror the pre-check conflict guard here.
+        if (input.organizationId && event.organizationId !== input.organizationId) {
+          return { ok: false, code: "payment_reference_conflict" };
+        }
         // Idempotent replay — stored event data, but current caller's operatorSource.
         const summary = summarizeEvent(event);
         return {
