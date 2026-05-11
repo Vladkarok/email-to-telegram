@@ -235,10 +235,15 @@ async function shouldIgnoreStripeUpdate(
     if (latestManualEvent?.planCode === "free") return true;
   }
   if (organization.planCode !== "business") return false;
-  return !(
+  const hasMatchingStripeId =
     (stripeSubscriptionId && organization.stripeSubscriptionId === stripeSubscriptionId) ||
-    (stripeCustomerId && organization.stripeCustomerId === stripeCustomerId)
-  );
+    (stripeCustomerId && organization.stripeCustomerId === stripeCustomerId);
+  if (!hasMatchingStripeId) return true;
+  // Matching Stripe ID: protect the business grant if the operator explicitly
+  // kept the Stripe link (keptStripeLink=true). The Stripe subscription is retained
+  // for invoicing but must not overwrite the manually assigned business entitlement.
+  const latestManualEvent = await findLatestManualBillingEventForOrganization(db, organization.id);
+  return latestManualEvent?.keptStripeLink === true;
 }
 
 function getInvoiceSubscriptionId(invoice: Stripe.Invoice): string | null {

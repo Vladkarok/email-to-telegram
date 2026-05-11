@@ -284,6 +284,11 @@ export async function grantManualOrganizationPlan(
         buildEventInput(input, input.organizationId, telegramUserId),
       );
       if (!created) {
+        // The secondary user+payref fallback in findOrCreateManualBillingEvent may
+        // return an event from a different org. Guard against cross-org replays.
+        if (event.organizationId !== input.organizationId) {
+          return { ok: false, code: "payment_reference_conflict" };
+        }
         const summary = summarizeEvent(event);
         return {
           ok: true,
