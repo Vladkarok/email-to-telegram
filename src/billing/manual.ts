@@ -557,8 +557,9 @@ export async function grantManualUserPlan(
         }
         // The secondary fallback in findOrCreateManualBillingEvent may return an event
         // from a different org (concurrent request on a different org won the user-scoped
-        // unique index race). Mirror the pre-check conflict guard here.
-        if (input.organizationId && event.organizationId !== input.organizationId) {
+        // unique index race). Refuse instead of mutating the org this transaction resolved
+        // while returning the other org's event summary.
+        if (event.organizationId !== resolvedOrganizationId) {
           return { ok: false, code: "payment_reference_conflict" };
         }
         // Exact telegramUserId equality: null vs. non-null is a targeting conflict.
