@@ -7,6 +7,7 @@ import { checkInboundLimit } from "../../billing/limits.js";
 import { findHostedInboundRejection } from "../../abuse/hostedInboundBlocklist.js";
 import { findAliasForInbound } from "../../email/inboundRouting.js";
 import { getLogger } from "../../utils/logger.js";
+import { recordInboundPreflight, recordQuotaRejection } from "../../observability/metrics.js";
 
 export function preflightRoute(app: FastifyInstance): void {
   app.post(
@@ -17,6 +18,7 @@ export function preflightRoute(app: FastifyInstance): void {
       const ts = req.headers["x-worker-ts"] as string | undefined;
 
       if (!sig || !ts) {
+        recordInboundPreflight("rejected", "missing_signature");
         await reply.status(401).send({ error: "missing signature" });
         return;
       }
@@ -24,6 +26,7 @@ export function preflightRoute(app: FastifyInstance): void {
       // Use rawBody if captured by the server hook; otherwise re-serialize parsed JSON
       const body = req.rawBody ?? Buffer.from(JSON.stringify(req.body));
       if (!verifyWorkerRequest(body, sig, ts)) {
+        recordInboundPreflight("rejected", "invalid_signature");
         await reply.status(401).send({ error: "invalid signature" });
         return;
       }
@@ -34,12 +37,14 @@ export function preflightRoute(app: FastifyInstance): void {
         recipientDomain?: string;
       };
       if (!localPart) {
+        recordInboundPreflight("rejected", "missing_local_part");
         await reply.status(400).send({ error: "missing localPart" });
         return;
       }
 
       const alias = await findAliasForInbound(getDb(), { localPart, recipientDomain });
       if (!alias || alias.status !== "active") {
+        recordInboundPreflight("rejected", "alias_not_found");
         await reply.send({ accept: false });
         return;
       }
@@ -59,8 +64,9 @@ export function preflightRoute(app: FastifyInstance): void {
             blockType: hostedBlock.blockType,
             blockValue: hostedBlock.value,
           },
-          "inbound preflight rejected by hosted blocklist",
+          "inbound.preflight.rejected",
         );
+        recordInboundPreflight("rejected", "hosted_blocklist");
         await reply.send({ accept: false });
         return;
       }
@@ -74,8 +80,10 @@ export function preflightRoute(app: FastifyInstance): void {
             organizationId: alias.organizationId,
             reason: inboundLimit.code,
           },
-          "inbound preflight rejected by hosted quota",
+          "inbound.preflight.rejected",
         );
+        recordInboundPreflight("rejected", inboundLimit.code);
+        recordQuotaRejection(inboundLimit.code);
         await reply.send({ accept: false });
         return;
       }
@@ -85,6 +93,7 @@ export function preflightRoute(app: FastifyInstance): void {
       if (envelopeFrom) {
         const allowed = await checkAllowRule(getDb(), alias.id, envelopeFrom);
         if (!allowed) {
+          recordInboundPreflight("rejected", "sender_not_allowed");
           await reply.send({ accept: false });
           return;
         }
@@ -96,10 +105,12 @@ export function preflightRoute(app: FastifyInstance): void {
         new Date(Date.now() - 60 * 60 * 1000),
       );
       if (recentDeliveries >= alias.maxEmailsHour) {
+        recordInboundPreflight("rejected", "rate_limited");
         await reply.send({ accept: false });
         return;
       }
 
+      recordInboundPreflight("accepted", "accepted");
       await reply.send({ accept: true });
     },
   );

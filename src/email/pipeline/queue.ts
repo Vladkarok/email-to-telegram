@@ -17,6 +17,7 @@ import { checkInboundLimit } from "../../billing/limits.js";
 import { incrementOrganizationUsageMonth, usageMonthForDate } from "../../db/repos/usage.js";
 import { incrementOrganizationStorageUsage } from "../../db/repos/storageUsage.js";
 import type { Db, PipelineInput, QueueInboundResult } from "./types.js";
+import { recordQuotaRejection } from "../../observability/metrics.js";
 
 export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<QueueInboundResult> {
   const {
@@ -152,6 +153,7 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
   }
 
   if (queueResult.kind === "inbound_limit") {
+    recordQuotaRejection(queueResult.limit.code);
     return {
       queued: false,
       result: { ok: false, reason: queueResult.limit.code },

@@ -32,6 +32,7 @@ import { generateDownloadToken } from "../utils/tokens.js";
 import { getLogger } from "../utils/logger.js";
 import { pipelineTracker } from "../utils/inFlight.js";
 import { createPrivacyViewUrl } from "./privacy.js";
+import { recordRetryAttempt, recordTelegramSendFailure } from "../observability/metrics.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -216,6 +217,7 @@ async function retryDelivery(
   const log = getLogger();
 
   if (!deliveryLog.rawEmailPath) {
+    recordRetryAttempt("permanently_failed");
     await updateDeliveryLogStatus(db, deliveryLog.id, "permanently_failed");
     return;
   }
@@ -223,6 +225,7 @@ async function retryDelivery(
   const attempts = await countAttemptsByLog(db, deliveryLog.id);
   if (attempts >= MAX_RETRIES) {
     log.warn({ deliveryLogId: deliveryLog.id, attempts }, "retry worker: max retries reached");
+    recordRetryAttempt("permanently_failed");
     await updateDeliveryLogStatus(db, deliveryLog.id, "permanently_failed");
     return;
   }
@@ -234,6 +237,7 @@ async function retryDelivery(
       { deliveryLogId: deliveryLog.id, aliasStatus: alias?.status },
       "retry worker: alias unavailable, giving up",
     );
+    recordRetryAttempt("permanently_failed");
     await updateDeliveryLogStatus(db, deliveryLog.id, "permanently_failed");
     return;
   }
@@ -248,6 +252,7 @@ async function retryDelivery(
     });
   } catch (err: unknown) {
     log.error({ err, deliveryLogId: deliveryLog.id }, "retry worker: raw email file missing");
+    recordRetryAttempt("permanently_failed");
     await updateDeliveryLogStatus(db, deliveryLog.id, "permanently_failed");
     return;
   }
@@ -314,6 +319,7 @@ async function retryDelivery(
   });
 
   if (result.ok) {
+    recordRetryAttempt("succeeded");
     log.info({ deliveryLogId: deliveryLog.id, attemptNo: newAttemptNo }, "retry worker: delivered");
     await updateDeliveryLogStatus(db, deliveryLog.id, "delivered");
 
@@ -356,6 +362,7 @@ async function retryDelivery(
           });
 
           if (!fallbackResult.ok) {
+            recordTelegramSendFailure(fallbackResult.error);
             log.error(
               { deliveryLogId: deliveryLog.id, error: fallbackResult.error },
               "retry worker: image attachment fallback delivery failed",
@@ -370,12 +377,16 @@ async function retryDelivery(
       }
     }
   } else if (newAttemptNo >= MAX_RETRIES) {
+    recordRetryAttempt("permanently_failed");
+    recordTelegramSendFailure(result.error);
     log.warn(
       { deliveryLogId: deliveryLog.id, error: result.error },
       "retry worker: permanently failed",
     );
     await updateDeliveryLogStatus(db, deliveryLog.id, "permanently_failed");
   } else {
+    recordRetryAttempt("failed");
+    recordTelegramSendFailure(result.error);
     log.warn(
       { deliveryLogId: deliveryLog.id, attemptNo: newAttemptNo, error: result.error },
       "retry worker: will retry again",

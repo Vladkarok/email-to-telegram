@@ -310,6 +310,8 @@ See [`.env.example`](./.env.example) for the authoritative template.
 | `BACKUP_ARCHIVE_ENCRYPTION`   | No       | `off` or `storage-key`; `yes` is invalid                   |
 | `HEALTHCHECKS_URL`            | No       | External heartbeat URL                                     |
 | `ALERT_CHAT_ID`               | No       | Telegram chat for critical alerts                          |
+| `METRICS_ENABLED`             | No       | Enable protected Prometheus `/metrics` endpoint            |
+| `METRICS_TOKEN`               | No       | Bearer token required when metrics are enabled             |
 | `LOG_LEVEL`                   | No       | Log verbosity                                              |
 | `NODE_ENV`                    | No       | Environment name                                           |
 
@@ -352,6 +354,13 @@ restores should reuse the same `ATTACHMENT_DIR` / `RAW_EMAIL_DIR` paths that the
 service used when those files were written. Raw-email files are also pruned on
 their own TTL, so older `delivery_logs` rows remain for audit/retry history
 without claiming that the original MIME is still restorable.
+
+Enable Prometheus scraping with `METRICS_ENABLED=true` and a random
+`METRICS_TOKEN` of at least 32 characters. Scrape `/metrics` with
+`Authorization: Bearer <token>`. The endpoint exports process/runtime metrics,
+HTTP route metrics, inbound pipeline counters, delivery/retry counters, manual
+billing grant counters, quota rejection counters, and active organizations by
+plan. Roll back by setting `METRICS_ENABLED=false` and restarting the app.
 
 ## Development
 

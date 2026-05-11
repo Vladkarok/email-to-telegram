@@ -43,6 +43,8 @@ const OPTIONAL_ENV = [
   "ADMIN_SECRET",
   "ADMIN_SESSION_SECRET",
   "ADMIN_SESSION_TTL_MINUTES",
+  "METRICS_ENABLED",
+  "METRICS_TOKEN",
 ];
 
 describe("loadConfig", () => {
@@ -92,6 +94,8 @@ describe("loadConfig", () => {
     expect(config.adminEnabled).toBe(false);
     expect(config.adminSecret).toBeUndefined();
     expect(config.adminSessionTtlMinutes).toBe(60);
+    expect(config.metricsEnabled).toBe(false);
+    expect(config.metricsToken).toBeUndefined();
   });
 
   it("parses ATTACHMENT_TTL_HOURS as number", () => {
@@ -337,5 +341,28 @@ describe("loadConfig", () => {
     process.env["ADMIN_SECRET"] = "a".repeat(32);
 
     expect(() => loadConfig()).toThrow(/HTTPS/);
+  });
+
+  it("parses metrics config when enabled", () => {
+    process.env["METRICS_ENABLED"] = "true";
+    process.env["METRICS_TOKEN"] = "m".repeat(32);
+
+    const config = loadConfig();
+
+    expect(config.metricsEnabled).toBe(true);
+    expect(config.metricsToken).toBe("m".repeat(32));
+  });
+
+  it("rejects metrics without a token", () => {
+    process.env["METRICS_ENABLED"] = "true";
+
+    expect(() => loadConfig()).toThrow(/METRICS_TOKEN must be at least 32 characters/);
+  });
+
+  it("rejects metrics with a short token", () => {
+    process.env["METRICS_ENABLED"] = "true";
+    process.env["METRICS_TOKEN"] = "short";
+
+    expect(() => loadConfig()).toThrow(/METRICS_TOKEN must be at least 32 characters/);
   });
 });

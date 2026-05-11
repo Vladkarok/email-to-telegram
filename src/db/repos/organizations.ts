@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { eq, sql } from "drizzle-orm";
+import { count, eq, sql } from "drizzle-orm";
 import { organizations, type NewOrganization, type Organization } from "../schema.js";
 import type * as schema from "../schema.js";
 
@@ -105,4 +105,15 @@ export async function updateOrganizationPaidThroughAtIfLater(
     .where(eq(organizations.id, id))
     .returning();
   return organization ?? null;
+}
+
+export async function countOrganizationsByPlan(
+  db: Db,
+): Promise<Array<{ planCode: string; count: number }>> {
+  const rows = await db
+    .select({ planCode: organizations.planCode, count: count() })
+    .from(organizations)
+    .groupBy(organizations.planCode);
+
+  return rows.map((row) => ({ planCode: row.planCode, count: Number(row.count) }));
 }
