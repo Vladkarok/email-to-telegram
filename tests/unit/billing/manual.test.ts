@@ -9,6 +9,7 @@ const mockListOrganizationMembershipsForUser = vi.fn();
 const mockUserHasOrganizationRole = vi.fn();
 const mockAddOrganizationMember = vi.fn();
 const mockCreateManualBillingEvent = vi.fn();
+const mockFindAnyManualBillingEventByPaymentReference = vi.fn();
 const mockFindManualBillingEventByPaymentReference = vi.fn();
 const mockFindManualBillingEventByUserAndPaymentReference = vi.fn();
 const mockFindOrCreateManualBillingEvent = vi.fn();
@@ -35,6 +36,8 @@ vi.mock("../../../src/db/repos/organizationMembers.js", () => ({
 
 vi.mock("../../../src/db/repos/manualBillingEvents.js", () => ({
   createManualBillingEvent: (...args: unknown[]): unknown => mockCreateManualBillingEvent(...args),
+  findAnyManualBillingEventByPaymentReference: (...args: unknown[]): unknown =>
+    mockFindAnyManualBillingEventByPaymentReference(...args),
   findManualBillingEventByPaymentReference: (...args: unknown[]): unknown =>
     mockFindManualBillingEventByPaymentReference(...args),
   findManualBillingEventByUserAndPaymentReference: (...args: unknown[]): unknown =>
@@ -73,6 +76,7 @@ beforeEach(() => {
   };
   mockFindOrganizationById.mockResolvedValue(defaultOrg);
   mockFindOrganizationByIdForUpdate.mockResolvedValue(defaultOrg);
+  mockFindAnyManualBillingEventByPaymentReference.mockResolvedValue(null);
   mockFindManualBillingEventByPaymentReference.mockResolvedValue(null);
   mockFindManualBillingEventByUserAndPaymentReference.mockResolvedValue(null);
   mockUpdateOrganizationBillingState.mockResolvedValue({
@@ -559,6 +563,38 @@ describe("grantManualOrganizationPlan", () => {
     });
     expect(mockCreateManualBillingEvent).not.toHaveBeenCalled();
     expect(mockUpdateOrganizationBillingState).toHaveBeenCalledOnce();
+  });
+
+  it("returns payment_reference_conflict when same payref already used for a different org", async () => {
+    // Simulate the global unique index blocking the insert for org-B, and the
+    // third fallback in findOrCreateManualBillingEvent returning org-A's event.
+    mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
+      event: {
+        id: "event-other-org",
+        organizationId: "org-other", // different from the submitted org
+        telegramUserId: null,
+        planCode: "pro",
+        subscriptionStatus: "active",
+        paidThroughAt: PAID_THROUGH,
+        paymentReference: "wise-cross-org-001",
+        note: null,
+        keptStripeLink: false,
+        operatorSource: "cli",
+      },
+      created: false,
+    });
+    const result = await grantManualOrganizationPlan(fakeDb, {
+      organizationId: "org-1", // different org from the stored event
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "wise-cross-org-001",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    });
+    expect(result).toEqual({ ok: false, code: "payment_reference_conflict" });
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
   });
 
   it("idempotent replay with stale expectedUpdatedAt returns concurrent_update instead of reconciling", async () => {
