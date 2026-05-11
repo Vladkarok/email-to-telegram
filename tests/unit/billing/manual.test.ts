@@ -567,6 +567,37 @@ describe("grantManualOrganizationPlan", () => {
     expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
   });
 
+  it("returns payment_reference_conflict when org-grant reuses payref with a different telegramUserId", async () => {
+    mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
+      event: {
+        id: "event-existing",
+        organizationId: "org-1",
+        telegramUserId: 111n,
+        planCode: "pro",
+        subscriptionStatus: "active",
+        paidThroughAt: PAID_THROUGH,
+        paymentReference: "wise-2026-04-002",
+        note: null,
+        keptStripeLink: false,
+        operatorSource: "cli",
+      },
+      created: false,
+    });
+    const result = await grantManualOrganizationPlan(fakeDb, {
+      organizationId: "org-1",
+      telegramUserId: 222n,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "wise-2026-04-002",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    });
+    expect(result).toEqual({ ok: false, code: "payment_reference_conflict" });
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
   it("idempotent replay uses the current caller's operatorSource, not the stored event's", async () => {
     mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
       event: {

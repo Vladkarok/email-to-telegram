@@ -306,6 +306,16 @@ export async function grantManualOrganizationPlan(
         if (event.organizationId !== input.organizationId) {
           return { ok: false, code: "payment_reference_conflict" };
         }
+        // If both the stored event and the new request carry a telegramUserId, they
+        // must match — a different user re-using the same payref is a conflict.
+        const inputUserId = telegramUserId;
+        if (
+          event.telegramUserId != null &&
+          inputUserId != null &&
+          event.telegramUserId !== inputUserId
+        ) {
+          return { ok: false, code: "payment_reference_conflict" };
+        }
         // A second submission with the same payment reference but different billing
         // fields is a correction attempt — reject rather than silently drop it.
         if (!payloadMatchesEvent(event, input)) {
@@ -351,12 +361,12 @@ export async function grantManualUserPlan(
   try {
     return await db.transaction(async (tx) => {
       await findOrCreateUserById(tx, input.telegramUserId);
-      // Serialize all grantManualUserPlan calls for the same Telegram user within
-      // this transaction. Without this lock, two concurrent calls with different
-      // payment references could both observe memberships.length === 0 and each
-      // create a separate organization, leaving the user with duplicate auto-created orgs.
+      // Serialize all grantManualUserPlan calls and normal personal-org auto-creation
+      // for the same Telegram user. Uses the same hashtext key as ensurePersonalOrganizationForUser
+      // so that concurrent normal onboarding and manual billing flows cannot both
+      // observe memberships.length === 0 and each create a separate organization.
       await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(${input.telegramUserId.toString()}::bigint)`,
+        sql`SELECT pg_advisory_xact_lock(hashtext(${input.telegramUserId.toString()}))`,
       );
 
       // Pre-check idempotency before org resolution so that a retry with the
