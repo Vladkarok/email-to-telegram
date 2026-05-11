@@ -49,6 +49,10 @@ function statusForQueueRejection(reason: string | undefined): number | null {
   }
 }
 
+function logWorkerForwardFailed(reason: string): void {
+  getLogger().warn({ route: "/inbound/raw", reason }, "worker.forward.failed");
+}
+
 export function rawRoute(
   app: FastifyInstance,
   config: Pick<
@@ -78,6 +82,7 @@ export function rawRoute(
       const recipientDomain = req.headers["x-recipient-domain"] as string | undefined;
 
       if (!sig || !ts) {
+        logWorkerForwardFailed("missing_signature");
         recordRawInbound("rejected", "missing_signature");
         await reply.status(401).send({ error: "missing signature" });
         return;
@@ -87,18 +92,21 @@ export function rawRoute(
       // fall back to req.body directly for octet-stream in tests
       const body = req.rawBody ?? (Buffer.isBuffer(req.body) ? req.body : null);
       if (!body) {
+        logWorkerForwardFailed("empty_body");
         recordRawInbound("rejected", "empty_body");
         await reply.status(400).send({ error: "empty body" });
         return;
       }
 
       if (!verifyWorkerRequest(body, sig, ts)) {
+        logWorkerForwardFailed("invalid_signature");
         recordRawInbound("rejected", "invalid_signature");
         await reply.status(401).send({ error: "invalid signature" });
         return;
       }
 
       if (!localPart) {
+        logWorkerForwardFailed("missing_local_part");
         recordRawInbound("rejected", "missing_local_part");
         await reply.status(400).send({ error: "missing x-local-part header" });
         return;
@@ -191,10 +199,10 @@ export function rawRoute(
       }
 
       if (!queued.queued) {
-        const rejectionStatus = statusForQueueRejection(queued.result.reason);
+        const reason = queued.result.reason ?? "unknown";
+        recordRawInbound("rejected", reason);
+        const rejectionStatus = statusForQueueRejection(reason);
         if (rejectionStatus) {
-          recordRawInbound("rejected", queued.result.reason ?? "unknown");
-          recordQuotaRejection(queued.result.reason ?? "unknown");
           await deleteFile(storedPath).catch((err: unknown) => {
             getLogger().warn({ err, storedPath }, "failed to delete rejected raw email");
           });
@@ -203,7 +211,9 @@ export function rawRoute(
         }
       }
 
-      recordRawInbound("accepted", "accepted");
+      if (queued.queued) {
+        recordRawInbound("accepted", "accepted");
+      }
       await reply.status(202).send({ status: "accepted" });
 
       if (!queued.queued) {

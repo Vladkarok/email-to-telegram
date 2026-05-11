@@ -9,6 +9,10 @@ import { findAliasForInbound } from "../../email/inboundRouting.js";
 import { getLogger } from "../../utils/logger.js";
 import { recordInboundPreflight, recordQuotaRejection } from "../../observability/metrics.js";
 
+function logWorkerForwardFailed(reason: string): void {
+  getLogger().warn({ route: "/inbound/preflight", reason }, "worker.forward.failed");
+}
+
 export function preflightRoute(app: FastifyInstance): void {
   app.post(
     "/inbound/preflight",
@@ -18,6 +22,7 @@ export function preflightRoute(app: FastifyInstance): void {
       const ts = req.headers["x-worker-ts"] as string | undefined;
 
       if (!sig || !ts) {
+        logWorkerForwardFailed("missing_signature");
         recordInboundPreflight("rejected", "missing_signature");
         await reply.status(401).send({ error: "missing signature" });
         return;
@@ -26,6 +31,7 @@ export function preflightRoute(app: FastifyInstance): void {
       // Use rawBody if captured by the server hook; otherwise re-serialize parsed JSON
       const body = req.rawBody ?? Buffer.from(JSON.stringify(req.body));
       if (!verifyWorkerRequest(body, sig, ts)) {
+        logWorkerForwardFailed("invalid_signature");
         recordInboundPreflight("rejected", "invalid_signature");
         await reply.status(401).send({ error: "invalid signature" });
         return;
@@ -37,6 +43,7 @@ export function preflightRoute(app: FastifyInstance): void {
         recipientDomain?: string;
       };
       if (!localPart) {
+        logWorkerForwardFailed("missing_local_part");
         recordInboundPreflight("rejected", "missing_local_part");
         await reply.status(400).send({ error: "missing localPart" });
         return;
