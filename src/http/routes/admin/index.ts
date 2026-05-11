@@ -341,9 +341,9 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         await renderError('Only the free plan can have "free" subscription status.');
         return;
       }
-      if (planRaw === "free" && !confirmDowngrade) {
+      if ((planRaw === "free" || statusRaw === "canceled") && !confirmDowngrade) {
         await renderError(
-          "Downgrade to free requires confirmation. Check the confirmation box and resubmit.",
+          "Downgrade to free or cancellation requires confirmation. Check the confirmation box and resubmit.",
         );
         return;
       }

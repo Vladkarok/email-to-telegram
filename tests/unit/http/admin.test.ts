@@ -611,6 +611,48 @@ describe("admin billing mutations", () => {
     expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
   });
 
+  it("shows error when canceling a paid plan without confirmation", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const csrf = await getCsrfToken(app, cookie);
+
+    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&plan=pro&status=canceled`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("confirmation");
+    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+  });
+
+  it("allows cancellation when confirmation checkbox is checked", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const { csrf, orgVersion } = await getCsrfAndVersion(app, cookie);
+
+    mockGrantManualOrganizationPlan.mockResolvedValue(
+      makeGrantSuccess({ planCode: "pro", subscriptionStatus: "canceled", paidThroughAt: null }),
+    );
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=canceled&payment_reference=cancel-ref-001&_confirm_downgrade=yes`,
+    });
+
+    expect(res.statusCode).toBe(302);
+    expect(mockGrantManualOrganizationPlan).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ planCode: "pro", subscriptionStatus: "canceled" }),
+    );
+  });
+
   it("allows downgrade to free when confirmation checkbox is checked", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
