@@ -86,7 +86,7 @@ export async function findManualBillingEventByUserAndPaymentReference(
   telegramUserId: bigint,
   paymentReference: string,
 ): Promise<ManualBillingEvent | null> {
-  const [row] = await db
+  const rows = await db
     .select()
     .from(manualBillingEvents)
     .where(
@@ -96,8 +96,13 @@ export async function findManualBillingEventByUserAndPaymentReference(
       ),
     )
     .orderBy(desc(manualBillingEvents.createdAt))
-    .limit(1);
-  return row ?? null;
+    .limit(2);
+  if (rows.length > 1) {
+    throw new Error(
+      `findManualBillingEventByUserAndPaymentReference: multiple events found for telegramUserId=${telegramUserId} paymentReference=${paymentReference} — data integrity violation`,
+    );
+  }
+  return rows[0] ?? null;
 }
 
 export async function listManualBillingEventsForOrganization(
