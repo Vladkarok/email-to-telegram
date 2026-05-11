@@ -66,6 +66,9 @@ beforeEach(() => {
     stripeCustomerId: "cus_existing",
     stripeSubscriptionId: "sub_existing",
     paidThroughAt: null,
+    trialEndsAt: null,
+    currentPeriodStart: null,
+    currentPeriodEnd: null,
     updatedAt: new Date("2026-01-01T00:00:00.000Z"),
   };
   mockFindOrganizationById.mockResolvedValue(defaultOrg);
@@ -483,6 +486,28 @@ describe("grantManualOrganizationPlan", () => {
     );
   });
 
+  it("clears trial and period fields when keptStripeLink is false", async () => {
+    await grantManualOrganizationPlan(fakeDb, {
+      organizationId: "org-1",
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "period-clear-ref-001",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    });
+    expect(mockUpdateOrganizationBillingState).toHaveBeenCalledWith(
+      expect.anything(),
+      "org-1",
+      expect.objectContaining({
+        trialEndsAt: null,
+        currentPeriodStart: null,
+        currentPeriodEnd: null,
+      }),
+    );
+  });
+
   it("keeps stripe ids when business + keptStripeLink", async () => {
     await grantManualOrganizationPlan(fakeDb, {
       organizationId: "org-1",
@@ -534,6 +559,55 @@ describe("grantManualOrganizationPlan", () => {
     });
     expect(mockCreateManualBillingEvent).not.toHaveBeenCalled();
     expect(mockUpdateOrganizationBillingState).toHaveBeenCalledOnce();
+  });
+
+  it("idempotent replay reconciles when org has stale period fields despite matching plan/status", async () => {
+    // Simulate an org that already has the right plan/status/paidThrough and cleared Stripe IDs
+    // but still has a stale currentPeriodEnd from a previous Stripe subscription.
+    mockFindOrganizationByIdForUpdate.mockResolvedValueOnce({
+      id: "org-1",
+      planCode: "pro",
+      subscriptionStatus: "active",
+      stripeCustomerId: null,
+      stripeSubscriptionId: null,
+      paidThroughAt: PAID_THROUGH,
+      currentPeriodEnd: new Date("2026-06-01T00:00:00.000Z"), // stale Stripe field
+      trialEndsAt: null,
+      currentPeriodStart: null,
+      updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
+      event: {
+        id: "event-existing",
+        organizationId: "org-1",
+        telegramUserId: null,
+        planCode: "pro",
+        subscriptionStatus: "active",
+        paidThroughAt: PAID_THROUGH,
+        paymentReference: "stale-period-ref-001",
+        note: null,
+        keptStripeLink: false,
+        operatorSource: "cli",
+      },
+      created: false,
+    });
+    const result = await grantManualOrganizationPlan(fakeDb, {
+      organizationId: "org-1",
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "stale-period-ref-001",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    });
+    expect(result).toMatchObject({ ok: true, idempotent: true, reconciled: true });
+    expect(mockUpdateOrganizationBillingState).toHaveBeenCalledOnce();
+    expect(mockUpdateOrganizationBillingState).toHaveBeenCalledWith(
+      expect.anything(),
+      "org-1",
+      expect.objectContaining({ currentPeriodEnd: null }),
+    );
   });
 
   it("returns payment_reference_conflict when same reference is resubmitted with different billing fields", async () => {
