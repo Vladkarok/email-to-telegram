@@ -1450,11 +1450,11 @@ describe("grantManualUserPlan", () => {
     expect(mockUpdateOrganizationBillingState).toHaveBeenCalledOnce();
   });
 
-  it("returns payment_reference_conflict (not 500) when createNewOrg=true and global payref blocked by admin-only event", async () => {
+  it("returns payment_reference_conflict and rolls back new org when createNewOrg=true and global payref blocked by admin-only event", async () => {
     // Simulate the global unique index blocking the insert because an admin already
-    // used "wise-admin-001" for an org-only grant (telegramUserId=null). Before the fix,
-    // the code threw OrgCreationRaceSignal, the catch found no user-scoped canonical event,
-    // and the function crashed with an unhandled error.
+    // used "wise-admin-001" for an org-only grant (telegramUserId=null). The fix throws
+    // PayRefConflictSignal inside the transaction so the org+member rows are rolled back
+    // before returning payment_reference_conflict to the caller.
     const adminEvent = {
       id: "event-admin",
       organizationId: "org-admin",
@@ -1502,6 +1502,8 @@ describe("grantManualUserPlan", () => {
     });
 
     expect(result).toEqual({ ok: false, code: "payment_reference_conflict" });
+    // Org was created inside the transaction but the throw ensures it rolls back in production.
+    expect(mockCreateOrganization).toHaveBeenCalled();
     expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
   });
 

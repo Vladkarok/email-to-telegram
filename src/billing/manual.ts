@@ -323,6 +323,10 @@ class ConcurrentUpdateSignal extends Error {}
 // Thrown when a newly created org must be rolled back because a concurrent
 // request won the billing-event insert race on (telegram_user_id, payment_reference).
 class OrgCreationRaceSignal extends Error {}
+// Thrown when createNewOrganization=true but the paymentReference is already owned
+// by a different user/admin grant (global unique-index conflict). Throwing forces
+// the transaction to roll back the freshly created org+member rows.
+class PayRefConflictSignal extends Error {}
 
 export async function grantManualOrganizationPlan(
   db: Db,
@@ -542,7 +546,9 @@ export async function grantManualUserPlan(
           // structured conflict instead of throwing — the catch block would find no
           // user-scoped canonical event and throw an unhandled error.
           if (event.telegramUserId !== input.telegramUserId) {
-            return { ok: false, code: "payment_reference_conflict" };
+            // Cross-user/admin conflict: throw to roll back the freshly created
+            // org+member rows. Returning normally would commit them orphaned.
+            throw new PayRefConflictSignal();
           }
           // A concurrent request from the same user won the event race; throw to
           // roll back this transaction so the freshly created org is not orphaned.
@@ -585,6 +591,9 @@ export async function grantManualUserPlan(
       return { ok: true, idempotent: false, updated: true, createdOrganization, ...summary };
     });
   } catch (err) {
+    if (err instanceof PayRefConflictSignal) {
+      return { ok: false, code: "payment_reference_conflict" };
+    }
     if (err instanceof OrgCreationRaceSignal) {
       // Transaction rolled back — read the winning event from the committed tx.
       const canonical = await findManualBillingEventByUserAndPaymentReference(
