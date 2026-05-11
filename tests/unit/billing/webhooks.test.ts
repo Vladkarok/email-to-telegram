@@ -7,12 +7,15 @@ vi.mock("../../../src/db/repos/billingWebhookEvents.js", () => ({
 }));
 
 const mockFindOrganizationById = vi.fn();
+const mockFindOrganizationByIdForUpdate = vi.fn();
 const mockFindOrganizationByStripeCustomerId = vi.fn();
 const mockFindOrganizationByStripeSubscriptionId = vi.fn();
 const mockUpdateOrganizationBillingState = vi.fn();
 const mockUpdateOrganizationPaidThroughAtIfLater = vi.fn();
 vi.mock("../../../src/db/repos/organizations.js", () => ({
   findOrganizationById: (...args: unknown[]): unknown => mockFindOrganizationById(...args),
+  findOrganizationByIdForUpdate: (...args: unknown[]): unknown =>
+    mockFindOrganizationByIdForUpdate(...args),
   findOrganizationByStripeCustomerId: (...args: unknown[]): unknown =>
     mockFindOrganizationByStripeCustomerId(...args),
   findOrganizationByStripeSubscriptionId: (...args: unknown[]): unknown =>
@@ -40,6 +43,7 @@ describe("processStripeWebhookEvent", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockRecordBillingWebhookEvent.mockResolvedValue(true);
+    mockFindOrganizationByIdForUpdate.mockResolvedValue(null);
     mockFindLatestManualBillingEventForOrganization.mockResolvedValue(null);
     mockLoadConfig.mockReturnValue({
       stripePriceIds: {
@@ -72,12 +76,14 @@ describe("processStripeWebhookEvent", () => {
   });
 
   it("updates organization billing state from a mapped subscription price", async () => {
-    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue({
+    const org = {
       id: "org-1",
       planCode: "free",
       stripeCustomerId: null,
       stripeSubscriptionId: null,
-    });
+    };
+    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue(org);
+    mockFindOrganizationByIdForUpdate.mockResolvedValue(org);
 
     await expect(
       processStripeWebhookEvent(buildDb(), {
@@ -117,12 +123,14 @@ describe("processStripeWebhookEvent", () => {
   });
 
   it("ignores subscription updates whose price id is not mapped", async () => {
-    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue({
+    const org = {
       id: "org-1",
       planCode: "free",
       stripeCustomerId: null,
       stripeSubscriptionId: null,
-    });
+    };
+    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue(org);
+    mockFindOrganizationByIdForUpdate.mockResolvedValue(org);
 
     await expect(
       processStripeWebhookEvent(buildDb(), {
@@ -145,12 +153,14 @@ describe("processStripeWebhookEvent", () => {
   });
 
   it("does not overwrite unrelated manual business organizations", async () => {
-    mockFindOrganizationById.mockResolvedValue({
+    const org = {
       id: "org-business",
       planCode: "business",
       stripeCustomerId: null,
       stripeSubscriptionId: null,
-    });
+    };
+    mockFindOrganizationById.mockResolvedValue(org);
+    mockFindOrganizationByIdForUpdate.mockResolvedValue(org);
 
     await expect(
       processStripeWebhookEvent(buildDb(), {
@@ -170,12 +180,14 @@ describe("processStripeWebhookEvent", () => {
   });
 
   it("does not overwrite business org with keptStripeLink=true even when Stripe IDs match", async () => {
-    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue({
+    const org = {
       id: "org-linked-business",
       planCode: "business",
       stripeCustomerId: "cus_linked",
       stripeSubscriptionId: "sub_linked",
-    });
+    };
+    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue(org);
+    mockFindOrganizationByIdForUpdate.mockResolvedValue(org);
     // Latest manual event recorded keptStripeLink=true — operator wants business
     // entitlements even though the Stripe subscription is still active.
     mockFindLatestManualBillingEventForOrganization.mockResolvedValue({
@@ -214,15 +226,17 @@ describe("processStripeWebhookEvent", () => {
   });
 
   it("does not overwrite unlinked manual paid organizations resolved by metadata", async () => {
-    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue(null);
-    mockFindOrganizationByStripeCustomerId.mockResolvedValue(null);
-    mockFindOrganizationById.mockResolvedValue({
+    const org = {
       id: "org-manual",
       planCode: "pro",
       subscriptionStatus: "active",
       stripeCustomerId: null,
       stripeSubscriptionId: null,
-    });
+    };
+    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue(null);
+    mockFindOrganizationByStripeCustomerId.mockResolvedValue(null);
+    mockFindOrganizationById.mockResolvedValue(org);
+    mockFindOrganizationByIdForUpdate.mockResolvedValue(org);
 
     await expect(
       processStripeWebhookEvent(buildDb(), {
@@ -253,12 +267,14 @@ describe("processStripeWebhookEvent", () => {
   });
 
   it("processes checkout completion by linking the Stripe customer", async () => {
-    mockFindOrganizationById.mockResolvedValue({
+    const org = {
       id: "org-1",
       planCode: "free",
       stripeCustomerId: null,
       stripeSubscriptionId: null,
-    });
+    };
+    mockFindOrganizationById.mockResolvedValue(org);
+    mockFindOrganizationByIdForUpdate.mockResolvedValue(org);
 
     await expect(
       processStripeWebhookEvent(buildDb(), {
@@ -280,13 +296,15 @@ describe("processStripeWebhookEvent", () => {
   });
 
   it("does not relink a manually downgraded free organization from delayed checkout metadata", async () => {
-    mockFindOrganizationById.mockResolvedValue({
+    const org = {
       id: "org-1",
       planCode: "free",
       subscriptionStatus: "free",
       stripeCustomerId: null,
       stripeSubscriptionId: null,
-    });
+    };
+    mockFindOrganizationById.mockResolvedValue(org);
+    mockFindOrganizationByIdForUpdate.mockResolvedValue(org);
     mockFindLatestManualBillingEventForOrganization.mockResolvedValue({
       id: "event-free",
       organizationId: "org-1",
@@ -311,15 +329,17 @@ describe("processStripeWebhookEvent", () => {
   });
 
   it("does not overwrite a manually downgraded free organization from delayed subscription metadata", async () => {
-    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue(null);
-    mockFindOrganizationByStripeCustomerId.mockResolvedValue(null);
-    mockFindOrganizationById.mockResolvedValue({
+    const org = {
       id: "org-1",
       planCode: "free",
       subscriptionStatus: "free",
       stripeCustomerId: null,
       stripeSubscriptionId: null,
-    });
+    };
+    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue(null);
+    mockFindOrganizationByStripeCustomerId.mockResolvedValue(null);
+    mockFindOrganizationById.mockResolvedValue(org);
+    mockFindOrganizationByIdForUpdate.mockResolvedValue(org);
     mockFindLatestManualBillingEventForOrganization.mockResolvedValue({
       id: "event-free",
       organizationId: "org-1",
@@ -375,12 +395,14 @@ describe("processStripeWebhookEvent", () => {
   });
 
   it("allows retry after a failed state update instead of treating the event as durable", async () => {
-    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue({
+    const org = {
       id: "org-1",
       planCode: "free",
       stripeCustomerId: null,
       stripeSubscriptionId: null,
-    });
+    };
+    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue(org);
+    mockFindOrganizationByIdForUpdate.mockResolvedValue(org);
     mockRecordBillingWebhookEvent.mockResolvedValue(true);
     mockUpdateOrganizationBillingState
       .mockRejectedValueOnce(new Error("write failed"))
@@ -415,13 +437,15 @@ describe("processStripeWebhookEvent", () => {
   });
 
   it("records paid-through time from successful invoice payments without clobbering plan state", async () => {
-    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue({
+    const org = {
       id: "org-1",
       planCode: "pro",
       stripeCustomerId: "cus_123",
       stripeSubscriptionId: "sub_123",
       paidThroughAt: null,
-    });
+    };
+    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue(org);
+    mockFindOrganizationByIdForUpdate.mockResolvedValue(org);
 
     await expect(
       processStripeWebhookEvent(buildDb(), {
@@ -461,13 +485,15 @@ describe("processStripeWebhookEvent", () => {
   });
 
   it("uses the latest subscription service-period line for paid-through time", async () => {
-    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue({
+    const org = {
       id: "org-1",
       planCode: "pro",
       stripeCustomerId: "cus_123",
       stripeSubscriptionId: "sub_123",
       paidThroughAt: null,
-    });
+    };
+    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue(org);
+    mockFindOrganizationByIdForUpdate.mockResolvedValue(org);
 
     await expect(
       processStripeWebhookEvent(buildDb(), {
@@ -520,13 +546,15 @@ describe("processStripeWebhookEvent", () => {
   });
 
   it("delegates paid-through monotonicity to the organization repo", async () => {
-    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue({
+    const org = {
       id: "org-1",
       planCode: "pro",
       stripeCustomerId: "cus_123",
       stripeSubscriptionId: "sub_123",
       paidThroughAt: new Date(1_700_172_800 * 1000),
-    });
+    };
+    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue(org);
+    mockFindOrganizationByIdForUpdate.mockResolvedValue(org);
 
     await expect(
       processStripeWebhookEvent(buildDb(), {
@@ -596,14 +624,16 @@ describe("processStripeWebhookEvent", () => {
   });
 
   it("ignores stale subscription updates for a different subscription on the same customer", async () => {
-    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue(null);
-    mockFindOrganizationByStripeCustomerId.mockResolvedValue({
+    const org = {
       id: "org-1",
       planCode: "pro",
       subscriptionStatus: "active",
       stripeCustomerId: "cus_123",
       stripeSubscriptionId: "sub_current",
-    });
+    };
+    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue(null);
+    mockFindOrganizationByStripeCustomerId.mockResolvedValue(org);
+    mockFindOrganizationByIdForUpdate.mockResolvedValue(org);
 
     await expect(
       processStripeWebhookEvent(buildDb(), {
@@ -634,14 +664,16 @@ describe("processStripeWebhookEvent", () => {
   });
 
   it("allows a new subscription.created event to replace a terminal prior subscription", async () => {
-    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue(null);
-    mockFindOrganizationByStripeCustomerId.mockResolvedValue({
+    const org = {
       id: "org-1",
       planCode: "pro",
       subscriptionStatus: "canceled",
       stripeCustomerId: "cus_123",
       stripeSubscriptionId: "sub_old",
-    });
+    };
+    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue(null);
+    mockFindOrganizationByStripeCustomerId.mockResolvedValue(org);
+    mockFindOrganizationByIdForUpdate.mockResolvedValue(org);
 
     await expect(
       processStripeWebhookEvent(buildDb(), {
@@ -679,13 +711,15 @@ describe("processStripeWebhookEvent", () => {
   });
 
   it("maps paused Stripe subscriptions without collapsing them to free", async () => {
-    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue({
+    const org = {
       id: "org-1",
       planCode: "pro",
       subscriptionStatus: "active",
       stripeCustomerId: "cus_123",
       stripeSubscriptionId: "sub_123",
-    });
+    };
+    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue(org);
+    mockFindOrganizationByIdForUpdate.mockResolvedValue(org);
 
     await expect(
       processStripeWebhookEvent(buildDb(), {
@@ -759,5 +793,79 @@ describe("processStripeWebhookEvent", () => {
         data: { object: {} },
       } as never),
     ).resolves.toBe("ignored");
+  });
+
+  it("ignores a stale checkout event with a mismatched Stripe customer for a non-business org", async () => {
+    // Org was re-linked to cus_new after a fresh checkout. A delayed
+    // checkout.session.completed for the old customer arrives via metadata.
+    const org = {
+      id: "org-1",
+      planCode: "pro",
+      subscriptionStatus: "active",
+      stripeCustomerId: "cus_new",
+      stripeSubscriptionId: "sub_new",
+    };
+    mockFindOrganizationByStripeCustomerId.mockResolvedValue(null);
+    mockFindOrganizationById.mockResolvedValue(org);
+    mockFindOrganizationByIdForUpdate.mockResolvedValue(org);
+
+    await expect(
+      processStripeWebhookEvent(buildDb(), {
+        id: "evt_stale_checkout_mismatch",
+        type: "checkout.session.completed",
+        data: {
+          object: {
+            customer: "cus_old",
+            metadata: { organizationId: "org-1" },
+            client_reference_id: "org-1",
+          },
+        },
+      } as never),
+    ).resolves.toBe("ignored");
+
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
+  it("ignores a stale subscription event with mismatched Stripe IDs for a non-business org routed by metadata", async () => {
+    // Org is now linked to cus_new/sub_new. A delayed subscription event for
+    // sub_old/cus_old arrives and is routed only via organizationId metadata.
+    const org = {
+      id: "org-1",
+      planCode: "pro",
+      subscriptionStatus: "active",
+      stripeCustomerId: "cus_new",
+      stripeSubscriptionId: "sub_new",
+    };
+    mockFindOrganizationByStripeSubscriptionId.mockResolvedValue(null);
+    mockFindOrganizationByStripeCustomerId.mockResolvedValue(null);
+    mockFindOrganizationById.mockResolvedValue(org);
+    mockFindOrganizationByIdForUpdate.mockResolvedValue(org);
+
+    await expect(
+      processStripeWebhookEvent(buildDb(), {
+        id: "evt_stale_sub_mismatch",
+        type: "customer.subscription.updated",
+        data: {
+          object: {
+            id: "sub_old",
+            customer: "cus_old",
+            metadata: { organizationId: "org-1" },
+            status: "active",
+            trial_end: null,
+            items: {
+              data: [
+                {
+                  price: { id: "price_pro_monthly" },
+                  current_period_start: 1_700_000_000,
+                  current_period_end: 1_700_086_400,
+                },
+              ],
+            },
+          },
+        },
+      } as never),
+    ).resolves.toBe("ignored");
+
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
   });
 });
