@@ -1,4 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import { sql } from "drizzle-orm";
 import {
   createOrganization,
   findOrganizationById,
@@ -75,7 +76,8 @@ export type ManualGrantErrorCode =
   | "payment_reference_required"
   | "payment_reference_conflict"
   | "payment_reference_too_long"
-  | "note_too_long";
+  | "note_too_long"
+  | "paid_through_not_allowed";
 
 export interface ManualGrantSummary {
   organizationId: string;
@@ -138,6 +140,12 @@ function validatePlanInput(
     input.planCode === "personal" || input.planCode === "pro" || input.planCode === "team";
   if (isPaidPlan && input.subscriptionStatus === "active" && input.paidThroughAt == null) {
     return { ok: false, code: "paid_through_required" };
+  }
+  if (input.subscriptionStatus === "canceled" && input.paidThroughAt != null) {
+    // Runtime enforcement treats canceled as free immediately regardless of paidThroughAt.
+    // Storing a future paidThroughAt with canceled status would create a split-brain billing
+    // state: the event records one date while plan enforcement ignores it.
+    return { ok: false, code: "paid_through_not_allowed" };
   }
   if (!input.paymentReference) {
     return { ok: false, code: "payment_reference_required" };
@@ -298,6 +306,13 @@ export async function grantManualUserPlan(
   try {
     return await db.transaction(async (tx) => {
       await findOrCreateUserById(tx, input.telegramUserId);
+      // Serialize all grantManualUserPlan calls for the same Telegram user within
+      // this transaction. Without this lock, two concurrent calls with different
+      // payment references could both observe memberships.length === 0 and each
+      // create a separate organization, leaving the user with duplicate auto-created orgs.
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(${input.telegramUserId.toString()}::bigint)`,
+      );
 
       // Pre-check idempotency before org resolution so that a retry with the
       // same paymentReference never creates a second organization or billing event.
