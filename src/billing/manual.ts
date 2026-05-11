@@ -259,6 +259,7 @@ function payloadMatchesEvent(
     subscriptionStatus: string;
     paidThroughAt: Date | null;
     keptStripeLink: boolean;
+    note: string | null;
   },
   input: ManualPlanGrantInput,
 ): boolean {
@@ -266,7 +267,8 @@ function payloadMatchesEvent(
     event.planCode === input.planCode &&
     event.subscriptionStatus === input.subscriptionStatus &&
     (event.paidThroughAt?.getTime() ?? null) === (input.paidThroughAt?.getTime() ?? null) &&
-    event.keptStripeLink === input.keptStripeLink
+    event.keptStripeLink === input.keptStripeLink &&
+    event.note === input.note
   );
 }
 
@@ -321,13 +323,11 @@ export async function grantManualOrganizationPlan(
         if (!payloadMatchesEvent(event, input)) {
           return { ok: false, code: "payment_reference_conflict" };
         }
-        const summary = summarizeEvent(event);
         return {
           ok: true,
           idempotent: true,
           updated: false,
-          ...summary,
-          operatorSource: input.operatorSource,
+          ...summarizeEvent(event),
         };
       }
       // New event just inserted — version check now. Throw to roll back the
@@ -391,7 +391,6 @@ export async function grantManualUserPlan(
           updated: false,
           createdOrganization: false,
           ...summarizeEvent(existingEvent),
-          operatorSource: input.operatorSource,
         };
       }
 
@@ -474,15 +473,12 @@ export async function grantManualUserPlan(
         if (!payloadMatchesEvent(event, input)) {
           return { ok: false, code: "payment_reference_conflict" };
         }
-        // Idempotent replay — stored event data, but current caller's operatorSource.
-        const summary = summarizeEvent(event);
         return {
           ok: true,
           idempotent: true,
           updated: false,
           createdOrganization,
-          ...summary,
-          operatorSource: input.operatorSource,
+          ...summarizeEvent(event),
         };
       }
       await updateOrganizationBillingState(tx, resolvedOrganizationId, buildBillingPatch(input));
@@ -517,7 +513,6 @@ export async function grantManualUserPlan(
           updated: false,
           createdOrganization: false,
           ...summarizeEvent(canonical),
-          operatorSource: input.operatorSource,
         };
       }
       throw new Error("grantManualUserPlan: event race signal but no canonical event found", {
