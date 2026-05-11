@@ -313,9 +313,9 @@ function renderBillingForm(
       (s) => `<option value="${s}"${activeStatus === s ? " selected" : ""}>${s}</option>`,
     ).join("");
 
-  const paidThroughValue =
-    submittedValues?.paidThrough ??
-    (org.paidThroughAt ? escapeHtmlAttribute(org.paidThroughAt.slice(0, 10)) : "");
+  const paidThroughValue = escapeHtmlAttribute(
+    submittedValues?.paidThrough ?? (org.paidThroughAt ? org.paidThroughAt.slice(0, 10) : ""),
+  );
 
   const paymentReferenceValue = escapeHtmlAttribute(submittedValues?.paymentReference ?? "");
   const noteValue = escapeHtml(submittedValues?.note ?? "");

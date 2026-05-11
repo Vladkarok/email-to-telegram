@@ -598,7 +598,7 @@ describe("grantManualOrganizationPlan", () => {
     expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
   });
 
-  it("idempotent replay uses the current caller's operatorSource, not the stored event's", async () => {
+  it("idempotent replay returns the stored event's operatorSource, not the caller's", async () => {
     mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
       event: {
         id: "event-existing",
@@ -627,8 +627,38 @@ describe("grantManualOrganizationPlan", () => {
     expect(result).toMatchObject({
       ok: true,
       idempotent: true,
-      operatorSource: "admin:abcdef1234567890",
+      operatorSource: "cli",
     });
+  });
+
+  it("returns payment_reference_conflict when org-grant reuses payref with a different note", async () => {
+    mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
+      event: {
+        id: "event-existing",
+        organizationId: "org-1",
+        telegramUserId: null,
+        planCode: "pro",
+        subscriptionStatus: "active",
+        paidThroughAt: PAID_THROUGH,
+        paymentReference: "wise-2026-04-001",
+        note: "original note",
+        keptStripeLink: false,
+        operatorSource: "cli",
+      },
+      created: false,
+    });
+    const result = await grantManualOrganizationPlan(fakeDb, {
+      organizationId: "org-1",
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "wise-2026-04-001",
+      note: "different note",
+      keptStripeLink: false,
+      operatorSource: "cli",
+    });
+    expect(result).toEqual({ ok: false, code: "payment_reference_conflict" });
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
   });
 
   it("rejects paymentReference longer than 255 characters at service layer", async () => {
