@@ -1153,6 +1153,39 @@ describe("grantManualUserPlan", () => {
     expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
   });
 
+  it("returns organization_not_found when an early idempotent replay targets a deleted organization", async () => {
+    const existingEvent = {
+      id: "event-existing",
+      organizationId: "org-deleted",
+      telegramUserId: 12345n,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "wise-deleted-org-replay",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    };
+    mockFindManualBillingEventByUserAndPaymentReference.mockResolvedValueOnce(existingEvent);
+    mockFindOrganizationByIdForUpdate.mockResolvedValueOnce(null);
+
+    const result = await grantManualUserPlan(fakeDb, {
+      telegramUserId: 12345n,
+      planCode: "pro",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "wise-deleted-org-replay",
+      note: null,
+      keptStripeLink: false,
+      organizationId: null,
+      createNewOrganization: false,
+      operatorSource: "cli",
+    });
+
+    expect(result).toEqual({ ok: false, code: "organization_not_found" });
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
+  });
+
   it("idempotent replay when explicit organizationId matches existing event", async () => {
     const existingEvent = {
       id: "event-existing",
@@ -1323,6 +1356,51 @@ describe("grantManualUserPlan", () => {
       manualBillingEventId: "event-winner",
     });
     expect(mockUpdateOrganizationBillingState).toHaveBeenCalledOnce();
+  });
+
+  it("OrgCreationRaceSignal recovery returns organization_not_found when the canonical org was deleted", async () => {
+    const canonicalEvent = {
+      id: "event-winner",
+      organizationId: "org-deleted",
+      telegramUserId: 12345n,
+      planCode: "personal",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "race-deleted-org-ref",
+      note: null,
+      keptStripeLink: false,
+      operatorSource: "cli",
+    };
+    // Pre-check (inside tx): no existing event yet
+    mockFindManualBillingEventByUserAndPaymentReference.mockResolvedValueOnce(null);
+    // Recovery (outside tx): winning event from the concurrent transaction
+    mockFindManualBillingEventByUserAndPaymentReference.mockResolvedValueOnce(canonicalEvent);
+    mockCreateOrganization.mockResolvedValueOnce({ id: "org-loser" });
+    mockFindOrganizationByIdForUpdate.mockResolvedValueOnce({
+      id: "org-loser",
+      updatedAt: new Date(),
+    });
+    mockFindOrganizationByIdForUpdate.mockResolvedValueOnce(null);
+    mockFindOrCreateManualBillingEvent.mockResolvedValueOnce({
+      event: canonicalEvent,
+      created: false,
+    });
+
+    const result = await grantManualUserPlan(fakeDb, {
+      telegramUserId: 12345n,
+      planCode: "personal",
+      subscriptionStatus: "active",
+      paidThroughAt: PAID_THROUGH,
+      paymentReference: "race-deleted-org-ref",
+      note: null,
+      keptStripeLink: false,
+      organizationId: null,
+      createNewOrganization: true,
+      operatorSource: "cli",
+    });
+
+    expect(result).toEqual({ ok: false, code: "organization_not_found" });
+    expect(mockUpdateOrganizationBillingState).not.toHaveBeenCalled();
   });
 
   it("returns payment_reference_conflict when post-insert replay lands in a different org", async () => {
