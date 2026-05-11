@@ -13,6 +13,7 @@ import {
   type OrganizationRole,
 } from "../db/repos/organizationMembers.js";
 import {
+  findManualBillingEventByUserAndPaymentReference,
   findOrCreateManualBillingEvent,
   type ManualBillingEventInput,
 } from "../db/repos/manualBillingEvents.js";
@@ -292,6 +293,26 @@ export async function grantManualUserPlan(
 
   return db.transaction(async (tx) => {
     await findOrCreateUserById(tx, input.telegramUserId);
+
+    // Pre-check idempotency before org creation so retries with the same
+    // paymentReference do not produce a second organization.
+    if (input.createNewOrganization || !input.organizationId) {
+      const existingEvent = await findManualBillingEventByUserAndPaymentReference(
+        tx,
+        input.telegramUserId,
+        input.paymentReference,
+      );
+      if (existingEvent) {
+        return {
+          ok: true,
+          idempotent: true,
+          updated: false,
+          createdOrganization: false,
+          ...summarizeEvent(existingEvent),
+          operatorSource: input.operatorSource,
+        };
+      }
+    }
 
     let resolvedOrganizationId: string | null;
     let createdOrganization = false;

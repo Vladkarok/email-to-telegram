@@ -36,12 +36,17 @@ export function buildManualBillingPlanInput(
   if (!startup.manualSubscriptionStatus) {
     throw new Error("buildManualBillingPlanInput: manualSubscriptionStatus is required");
   }
+  if (!startup.manualPaymentReference) {
+    throw new Error(
+      "buildManualBillingPlanInput: --manual-payment-reference is required for idempotent retries",
+    );
+  }
   return {
     organizationId: startup.hostedSetOrganizationPlanId,
     planCode: startup.manualPlanCode,
     subscriptionStatus: startup.manualSubscriptionStatus,
     paidThroughAt: startup.manualPaidThroughAt,
-    paymentReference: startup.manualPaymentReference ?? `cli:${Date.now()}`,
+    paymentReference: startup.manualPaymentReference,
     note: startup.manualNote,
     keptStripeLink: startup.manualKeepStripeLink,
     operatorSource: "cli",
@@ -58,6 +63,11 @@ export function buildManualBillingUserInput(startup: StartupOptions): GrantManua
   if (!startup.manualSubscriptionStatus) {
     throw new Error("buildManualBillingUserInput: manualSubscriptionStatus is required");
   }
+  if (!startup.manualPaymentReference) {
+    throw new Error(
+      "buildManualBillingUserInput: --manual-payment-reference is required for idempotent retries",
+    );
+  }
   return {
     telegramUserId: BigInt(startup.hostedSetUserPlanTelegramUserId),
     organizationId: startup.manualOrganizationId,
@@ -65,7 +75,7 @@ export function buildManualBillingUserInput(startup: StartupOptions): GrantManua
     planCode: startup.manualPlanCode,
     subscriptionStatus: startup.manualSubscriptionStatus,
     paidThroughAt: startup.manualPaidThroughAt,
-    paymentReference: startup.manualPaymentReference ?? `cli:${Date.now()}`,
+    paymentReference: startup.manualPaymentReference,
     note: startup.manualNote,
     keptStripeLink: startup.manualKeepStripeLink,
     operatorSource: "cli",
