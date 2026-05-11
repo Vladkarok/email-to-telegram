@@ -62,7 +62,7 @@ export async function findOrCreateManualBillingEvent(
   if (byOrg) return { event: byOrg, created: false };
 
   // Secondary conflict path: same (telegram_user_id, payment_reference) but a
-  // concurrent transaction resolved a different org. The new unique index on
+  // concurrent transaction resolved a different org. The unique index on
   // (telegram_user_id, payment_reference) blocked the duplicate insert; treat
   // the winner's event as the canonical idempotent result.
   if (data.telegramUserId != null) {
@@ -74,7 +74,25 @@ export async function findOrCreateManualBillingEvent(
     if (byUser) return { event: byUser, created: false };
   }
 
+  // Third conflict path: global payment_reference uniqueness constraint blocked
+  // the insert (different org, null telegramUserId). Return the existing event so
+  // the caller can detect the cross-org conflict via organizationId mismatch.
+  const byPayref = await findAnyManualBillingEventByPaymentReference(db, data.paymentReference);
+  if (byPayref) return { event: byPayref, created: false };
+
   throw new Error("findOrCreateManualBillingEvent: race condition lost");
+}
+
+export async function findAnyManualBillingEventByPaymentReference(
+  db: Db,
+  paymentReference: string,
+): Promise<ManualBillingEvent | null> {
+  const [row] = await db
+    .select()
+    .from(manualBillingEvents)
+    .where(eq(manualBillingEvents.paymentReference, paymentReference))
+    .limit(1);
+  return row ?? null;
 }
 
 export async function findManualBillingEventByPaymentReference(

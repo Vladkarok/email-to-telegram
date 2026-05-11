@@ -564,6 +564,27 @@ describe("admin billing mutations", () => {
     expect(res.body).toContain("payment reference already exists");
   });
 
+  it("shows error when payment reference is already used for a different organization", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const { csrf, orgVersion } = await getCsrfAndVersion(app, cookie);
+
+    mockGrantManualOrganizationPlan.mockResolvedValue({
+      ok: false,
+      code: "payment_reference_conflict",
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/organizations/${ORG_ID}/billing`,
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-cross-org-001`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("already used for a different organization");
+  });
+
   it("rejects POST without CSRF token with 403", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);

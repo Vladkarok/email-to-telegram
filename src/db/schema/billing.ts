@@ -77,6 +77,9 @@ export const manualBillingEvents = pgTable(
     uniqueIndex("idx_manual_billing_events_user_payment_ref")
       .on(t.telegramUserId, t.paymentReference)
       .where(sql`telegram_user_id is not null and payment_reference is not null`),
+    uniqueIndex("idx_manual_billing_events_payment_ref")
+      .on(t.paymentReference)
+      .where(sql`payment_reference is not null`),
     check(
       "chk_manual_billing_events_plan_code",
       sql`${t.planCode} in ('free', 'personal', 'pro', 'team', 'business')`,

@@ -423,6 +423,11 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
           canceled_not_allowed_for_business:
             "Business plan cannot be set to canceled. Downgrade to a lower plan instead.",
           keep_stripe_link_not_allowed: "Keep Stripe link is only allowed for the Business plan.",
+          payment_reference_conflict:
+            "Payment reference already used for a different organization or with different billing details.",
+          payment_reference_required: "Payment reference is required.",
+          payment_reference_too_long: "Payment reference must be 255 characters or fewer.",
+          note_too_long: "Note must be 1000 characters or fewer.",
           concurrent_update:
             "Organization billing state was updated since this page was loaded. Please reload and review before resubmitting.",
         };
