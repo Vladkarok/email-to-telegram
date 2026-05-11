@@ -460,8 +460,9 @@ export async function grantManualUserPlan(
         // the stored event is the authoritative record of an already-authorized grant.
         // Reconciliation merely restores what was explicitly set by a prior operator.
         const replayOrg = await findOrganizationByIdForUpdate(tx, existingEvent.organizationId);
+        if (!replayOrg) return { ok: false, code: "organization_not_found" };
         let reconciled = false;
-        if (replayOrg && !orgMatchesStoredEvent(replayOrg, existingEvent)) {
+        if (!orgMatchesStoredEvent(replayOrg, existingEvent)) {
           await updateOrganizationBillingState(
             tx,
             existingEvent.organizationId,
@@ -617,8 +618,9 @@ export async function grantManualUserPlan(
         // state, but another writer may have changed the org since then.
         return await db.transaction(async (tx) => {
           const canonOrg = await findOrganizationByIdForUpdate(tx, canonical.organizationId);
+          if (!canonOrg) return { ok: false, code: "organization_not_found" };
           let reconciled = false;
-          if (canonOrg && !orgMatchesStoredEvent(canonOrg, canonical)) {
+          if (!orgMatchesStoredEvent(canonOrg, canonical)) {
             await updateOrganizationBillingState(
               tx,
               canonical.organizationId,
