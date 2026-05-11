@@ -87,12 +87,17 @@ export async function findAnyManualBillingEventByPaymentReference(
   db: Db,
   paymentReference: string,
 ): Promise<ManualBillingEvent | null> {
-  const [row] = await db
+  const rows = await db
     .select()
     .from(manualBillingEvents)
     .where(eq(manualBillingEvents.paymentReference, paymentReference))
-    .limit(1);
-  return row ?? null;
+    .limit(2);
+  if (rows.length > 1) {
+    throw new Error(
+      `findAnyManualBillingEventByPaymentReference: multiple events found for paymentReference=${paymentReference} — data integrity violation`,
+    );
+  }
+  return rows[0] ?? null;
 }
 
 export async function findManualBillingEventByPaymentReference(
@@ -100,7 +105,7 @@ export async function findManualBillingEventByPaymentReference(
   organizationId: string,
   paymentReference: string,
 ): Promise<ManualBillingEvent | null> {
-  const [row] = await db
+  const rows = await db
     .select()
     .from(manualBillingEvents)
     .where(
@@ -109,8 +114,13 @@ export async function findManualBillingEventByPaymentReference(
         eq(manualBillingEvents.paymentReference, paymentReference),
       ),
     )
-    .limit(1);
-  return row ?? null;
+    .limit(2);
+  if (rows.length > 1) {
+    throw new Error(
+      `findManualBillingEventByPaymentReference: multiple events found for organizationId=${organizationId} paymentReference=${paymentReference} — data integrity violation`,
+    );
+  }
+  return rows[0] ?? null;
 }
 
 export async function findManualBillingEventByUserAndPaymentReference(
