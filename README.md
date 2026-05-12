@@ -268,6 +268,47 @@ letting a duplicate through.
 Upgraded installations keep body dedup enabled on existing aliases so behavior does
 not change unexpectedly until you choose to change that setting.
 
+### Operator admin UI
+
+Hosted deployments can enable a small internal admin Web UI for support and
+manual billing operations.
+
+Enable it in `.env`:
+
+```bash
+ADMIN_ENABLED=true
+ADMIN_SECRET=<random secret at least 32 characters>
+ADMIN_SESSION_SECRET=<optional separate random secret at least 32 characters>
+ADMIN_SESSION_TTL_MINUTES=60
+```
+
+Generate secrets with:
+
+```bash
+openssl rand -hex 32
+```
+
+Open:
+
+```text
+https://mail.example.com/admin
+```
+
+The app redirects to `/admin/login`. There is no username in the first admin
+version: paste `ADMIN_SECRET` into the login form. After login, the admin UI can
+search users, inspect organizations, and grant/renew/downgrade manual plans from
+the organization detail page.
+
+Operational notes:
+
+- Admin routes are disabled unless `ADMIN_ENABLED=true`.
+- In production, admin requires `PUBLIC_BASE_URL` to be HTTPS.
+- Change `ADMIN_SECRET` and restart the app to rotate the login secret and end
+  existing admin sessions.
+- Disable the admin UI by setting `ADMIN_ENABLED=false` and restarting the app.
+- Keep `/admin` behind your normal HTTPS reverse proxy; adding Cloudflare Access
+  or Tailscale in front of it is recommended for hosted operations.
+
 ### 12. Send a real test message
 
 Send a message from an allowed sender to the generated alias, for example:
@@ -311,6 +352,10 @@ See [`.env.example`](./.env.example) for the authoritative template.
 | `BACKUP_ARCHIVE_ENCRYPTION`   | No       | `off` or `storage-key`; `yes` is invalid                   |
 | `HEALTHCHECKS_URL`            | No       | External heartbeat URL                                     |
 | `ALERT_CHAT_ID`               | No       | Telegram chat for critical alerts                          |
+| `ADMIN_ENABLED`               | No       | Enable internal `/admin` Web UI                            |
+| `ADMIN_SECRET`                | No       | Login secret required when admin is enabled                |
+| `ADMIN_SESSION_SECRET`        | No       | Optional separate admin session cookie signing secret      |
+| `ADMIN_SESSION_TTL_MINUTES`   | No       | Admin session lifetime, default `60`                       |
 | `METRICS_ENABLED`             | No       | Enable protected Prometheus `/metrics` endpoint            |
 | `METRICS_TOKEN`               | No       | Bearer token required when metrics are enabled             |
 | `LOG_LEVEL`                   | No       | Log verbosity                                              |
