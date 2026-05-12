@@ -1,3 +1,5 @@
+import { DEFAULT_LOCALE, getMessages, type Locale } from "../i18n/index.js";
+
 export const RENDER_MODES = ["plaintext", "html", "markdown"] as const;
 
 export type TelegramRenderMode = (typeof RENDER_MODES)[number];
@@ -14,13 +16,8 @@ export function renderModeGuidance(mode: TelegramRenderMode): string {
   return "Markdown: type markdown syntax literally. Do not use the rich-text toolbar.";
 }
 
-export function renderModeHelpText(): string {
-  return [
-    "<b>Render Modes</b>",
-    "plaintext — sends literal text exactly as typed",
-    "html — use Gmail or mail-client formatting buttons, not raw <code>&lt;b&gt;</code> tags",
-    "markdown — type markdown syntax literally, not the rich-text toolbar",
-  ].join("\n");
+export function renderModeHelpText(locale: Locale = DEFAULT_LOCALE): string {
+  return getMessages(locale).renderGuidance.renderModeHelp;
 }
 
 export function bodyDedupGuidance(enabled: boolean): string {
@@ -31,14 +28,8 @@ export function bodyDedupGuidance(enabled: boolean): string {
   return "Body dedup: off. Repeated alerts with the same body still deliver. Recommended for alarm aliases. Message-ID duplicates are still blocked when that header is present.";
 }
 
-export function bodyDedupHelpText(): string {
-  return [
-    "<b>Body Dedup</b>",
-    "Message-ID duplicates are still blocked when that header is present",
-    "new aliases default to body dedup off",
-    "body dedup off — repeated alerts with the same body still deliver (recommended for alarm aliases)",
-    "body dedup on — future emails with the same body may be suppressed for that alias",
-  ].join("\n");
+export function bodyDedupHelpText(locale: Locale = DEFAULT_LOCALE): string {
+  return getMessages(locale).renderGuidance.bodyDedupHelp;
 }
 
 export function privacyModeGuidance(enabled: boolean): string {
@@ -49,24 +40,20 @@ export function privacyModeGuidance(enabled: boolean): string {
   return "Privacy mode: off. Telegram receives the rendered email body and any attachment handling allowed by the alias settings.";
 }
 
-export function privacyModeHelpText(): string {
-  return [
-    "<b>Privacy Mode</b>",
-    "privacy off — Telegram receives the rendered email body",
-    "privacy on — Telegram receives only a minimal alert and a browser view link",
-    "opening that link in the browser asks for one more confirmation before the email body is revealed",
-  ].join("\n");
+export function privacyModeHelpText(locale: Locale = DEFAULT_LOCALE): string {
+  return getMessages(locale).renderGuidance.privacyModeHelp;
 }
 
-export function safetyDisclaimerText(): string {
-  return [
-    "<b>Safety Notes</b>",
-    "Use this for operational alerts and convenience forwarding, not for secrets or regulated/confidential data.",
-    "Mail content may be visible to the VPS operator, backups, Telegram chat members, and anyone with access to the bot or destination chat.",
-    "Do not rely on Telegram forwarding as your only life-safety or paging channel.",
-  ].join("\n");
+export function safetyDisclaimerText(locale: Locale = DEFAULT_LOCALE): string {
+  return getMessages(locale).renderGuidance.safety;
 }
 
-export function settingsHelpText(): string {
-  return [renderModeHelpText(), "", bodyDedupHelpText(), "", privacyModeHelpText()].join("\n");
+export function settingsHelpText(locale: Locale = DEFAULT_LOCALE): string {
+  return [
+    renderModeHelpText(locale),
+    "",
+    bodyDedupHelpText(locale),
+    "",
+    privacyModeHelpText(locale),
+  ].join("\n");
 }

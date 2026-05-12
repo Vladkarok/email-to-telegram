@@ -11,6 +11,7 @@ export interface MockCtxOptions {
   /** Parsed command argument (everything after the command name) */
   commandMatch?: string;
   botUsername?: string;
+  languageCode?: string;
 }
 
 export type MockCtx = CommandContext<Context> & {
@@ -28,6 +29,7 @@ export function createMockCtx(opts: MockCtxOptions = {}): MockCtx {
     from: {
       id: fromId,
       username: opts.username ?? "testuser",
+      language_code: opts.languageCode,
       first_name: "Test",
       is_bot: false,
     },
@@ -46,7 +48,12 @@ export function createMockCtx(opts: MockCtxOptions = {}): MockCtx {
       message_thread_id: opts.messageThreadId ?? undefined,
       date: Math.floor(Date.now() / 1000),
       chat: { id: chatId, type: opts.chatType ?? "supergroup" },
-      from: { id: fromId, username: opts.username ?? "testuser", is_bot: false },
+      from: {
+        id: fromId,
+        username: opts.username ?? "testuser",
+        language_code: opts.languageCode,
+        is_bot: false,
+      },
       text: opts.text ?? "/cmd",
     },
     match: opts.commandMatch ?? "",

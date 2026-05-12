@@ -4,29 +4,26 @@ import { getDb } from "../../db/client.js";
 import { getEffectivePlan } from "../../billing/limits.js";
 import { buildPlanSummaryText } from "../../billing/usageSummary.js";
 import { getPrimaryOrganizationForUser } from "../../tenant/currentOrganization.js";
-
-const SELF_HOSTED_MESSAGE =
-  "ℹ️ Billing is not enabled in self-hosted mode. /plan is only available on the hosted service.";
-
-const NO_ORGANIZATION_MESSAGE =
-  "❌ No hosted workspace found for your account. Use /start to set one up.";
+import { getMessages, resolveLocale } from "../../i18n/index.js";
 
 export async function planHandler(ctx: Context): Promise<void> {
   if (!ctx.from) return;
+  const db = getDb();
+  const locale = await resolveLocale(ctx, db);
+  const messages = getMessages(locale);
 
   if (loadConfig().appMode !== "hosted") {
-    await ctx.reply(SELF_HOSTED_MESSAGE);
+    await ctx.reply(messages.billingCommands.planSelfHosted);
     return;
   }
 
-  const db = getDb();
   const organization = await getPrimaryOrganizationForUser(db, BigInt(ctx.from.id));
   if (!organization) {
-    await ctx.reply(NO_ORGANIZATION_MESSAGE);
+    await ctx.reply(messages.common.noHostedWorkspace);
     return;
   }
 
   const plan = getEffectivePlan(organization);
-  const text = buildPlanSummaryText({ plan, organization });
+  const text = buildPlanSummaryText({ plan, organization }, locale);
   await ctx.reply(text, { parse_mode: "HTML" });
 }

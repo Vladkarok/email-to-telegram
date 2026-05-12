@@ -134,6 +134,13 @@
       "when": 1747008000000,
       "tag": "0018_manual_billing_global_payment_ref_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1778582400000,
+      "tag": "0019_users_locale",
+      "breakpoints": true
     }
   ]
 }

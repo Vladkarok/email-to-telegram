@@ -10,27 +10,23 @@ import { countDeliveryLogsByOrgInMonth } from "../../db/repos/deliveryLogs.js";
 import { getOrganizationStorageUsage } from "../../db/repos/storageUsage.js";
 import { getOrganizationUsageMonth, usageMonthForDate } from "../../db/repos/usage.js";
 import { getLogger } from "../../utils/logger.js";
-
-const SELF_HOSTED_MESSAGE =
-  "ℹ️ Billing is not enabled in self-hosted mode. /usage is only available on the hosted service.";
-
-const NO_ORGANIZATION_MESSAGE =
-  "❌ No hosted workspace found for your account. Use /start to set one up.";
+import { getMessages, resolveLocale } from "../../i18n/index.js";
 
 export async function usageHandler(ctx: Context): Promise<void> {
   if (!ctx.from) return;
+  const db = getDb();
+  const locale = await resolveLocale(ctx, db);
+  const messages = getMessages(locale);
 
   if (loadConfig().appMode !== "hosted") {
-    await ctx.reply(SELF_HOSTED_MESSAGE);
+    await ctx.reply(messages.billingCommands.usageSelfHosted);
     return;
   }
-
-  const db = getDb();
 
   try {
     const organization = await getPrimaryOrganizationForUser(db, BigInt(ctx.from.id));
     if (!organization) {
-      await ctx.reply(NO_ORGANIZATION_MESSAGE);
+      await ctx.reply(messages.common.noHostedWorkspace);
       return;
     }
 
@@ -61,25 +57,28 @@ export async function usageHandler(ctx: Context): Promise<void> {
 
     const storageBytes = (storage?.rawEmailBytes ?? 0n) + (storage?.attachmentBytes ?? 0n);
 
-    const text = buildUsageSummaryText({
-      plan,
-      month,
-      counters: {
-        acceptedBillable: usage?.deliveredCount ?? 0,
-        rejected: usage?.rejectedCount ?? 0,
-        telegramDelivered,
-        telegramFailed,
-        telegramPending,
+    const text = buildUsageSummaryText(
+      {
+        plan,
+        month,
+        counters: {
+          acceptedBillable: usage?.deliveredCount ?? 0,
+          rejected: usage?.rejectedCount ?? 0,
+          telegramDelivered,
+          telegramFailed,
+          telegramPending,
+        },
+        egressBytes: usage?.egressBytes ?? 0n,
+        storageBytes,
+        aliasesUsed,
+        allowRulesUsed,
       },
-      egressBytes: usage?.egressBytes ?? 0n,
-      storageBytes,
-      aliasesUsed,
-      allowRulesUsed,
-    });
+      locale,
+    );
 
     await ctx.reply(text, { parse_mode: "HTML" });
   } catch (err: unknown) {
     getLogger().error({ err }, "usageHandler: failed to fetch usage data");
-    await ctx.reply("❌ Usage data is temporarily unavailable. Please try again shortly.");
+    await ctx.reply(messages.billingCommands.usageUnavailable);
   }
 }

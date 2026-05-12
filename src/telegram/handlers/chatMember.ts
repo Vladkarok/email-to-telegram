@@ -8,6 +8,7 @@ import {
   ensurePersonalOrganizationForUserWithOnboardingLimit,
 } from "../../abuse/hostedOnboarding.js";
 import { getLogger } from "../../utils/logger.js";
+import { localeFromTelegram } from "../../i18n/index.js";
 
 export async function chatMemberHandler(ctx: Context): Promise<void> {
   const update = ctx.myChatMember;
@@ -42,6 +43,7 @@ async function resolveHostedOrganizationId(ctx: Context): Promise<string | null>
   const user = await upsertUser(db, {
     id: BigInt(ctx.from.id),
     username: ctx.from.username ?? null,
+    locale: localeFromTelegram(ctx.from.language_code),
   });
   let organization;
   try {
