@@ -173,3 +173,9 @@ export const CB_UPGRADE_PLAN = {
   pattern: /^upg:(.+)$/,
   build: (priceKey: string): string => `upg:${priceKey}`,
 } as const;
+
+/** Set bot language — lang:{locale} */
+export const CB_LANGUAGE_SET = {
+  pattern: /^lang:(en|uk)$/,
+  build: (locale: "en" | "uk"): string => `lang:${locale}`,
+} as const;

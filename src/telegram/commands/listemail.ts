@@ -7,6 +7,7 @@ import type { EmailAddress } from "../../db/schema.js";
 import { canManageAlias, canManageChat } from "../authorization.js";
 import { escapeHtml } from "../../utils/html.js";
 import { CB_ALIAS_DETAIL } from "../callbacks.js";
+import { getMessages, resolveLocale } from "../../i18n/index.js";
 
 export async function listemailHandler(ctx: Context): Promise<void> {
   if (!ctx.from || !ctx.chat) return;
@@ -22,34 +23,38 @@ async function listForCurrentChat(ctx: Context): Promise<void> {
   if (!ctx.from) return;
   const chatId = BigInt(ctx.chat!.id);
   const db = getDb();
+  const locale = await resolveLocale(ctx, db);
+  const messages = getMessages(locale);
 
   if (!(await canManageChat(ctx.api, ctx.from.id, chatId, { fresh: true }))) {
-    await ctx.reply("⛔ Access denied.");
+    await ctx.reply(messages.common.accessDenied);
     return;
   }
 
   const aliases = await filterVisibleAliases(ctx, db, await listAliasesByChat(db, chatId));
 
   if (aliases.length === 0) {
-    await ctx.reply("📭 No aliases for this chat.\n\nCreate one with /newemail <name>");
+    await ctx.reply(messages.listemail.noAliasesForChat);
     return;
   }
 
   const lines = aliases.map((a) => displayLine(a));
   const keyboard = buildAliasButtons(aliases);
   await ctx.reply(
-    `📬 Aliases for this chat (${aliases.length}):\n\n${lines.join("\n")}\n\n<i>Tap an alias below to manage it.</i>`,
+    `${messages.listemail.aliasesForChat(aliases.length)}\n\n${lines.join("\n")}\n\n${messages.listemail.manageHint}`,
     { parse_mode: "HTML", reply_markup: keyboard },
   );
 }
 
 async function listAllChats(ctx: Context): Promise<void> {
   const db = getDb();
+  const locale = await resolveLocale(ctx, db);
+  const messages = getMessages(locale);
   const aliases = await findAliasesByCreator(db, BigInt(ctx.from!.id));
   const visibleAliases = await filterVisibleAliases(ctx, db, aliases);
 
   if (visibleAliases.length === 0) {
-    await ctx.reply("📭 No aliases yet.\n\nUse /start to create one.");
+    await ctx.reply(messages.listemail.noAliases);
     return;
   }
 
@@ -72,7 +77,7 @@ async function listAllChats(ctx: Context): Promise<void> {
 
   const keyboard = buildAliasButtons(visibleAliases);
   await ctx.reply(
-    `📬 All your aliases (${visibleAliases.length}):\n\n${sections.join("\n\n")}\n\n<i>Tap an alias below to manage it.</i>`,
+    `${messages.listemail.allAliases(visibleAliases.length)}\n\n${sections.join("\n\n")}\n\n${messages.listemail.manageHint}`,
     { parse_mode: "HTML", reply_markup: keyboard },
   );
 }

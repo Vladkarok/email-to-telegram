@@ -9,6 +9,7 @@ import { getEffectivePlan } from "../../billing/limits.js";
 import { countActiveAliasesByOrganization } from "../../db/repos/aliases.js";
 import { escapeHtml } from "../../utils/html.js";
 import { CB_CHAT_SELECTION, CB_CHAT_MENU, CB_NEW_EMAIL, CB_ALIAS_LIST } from "../callbacks.js";
+import { getMessages, resolveLocale, type Locale } from "../../i18n/index.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -21,7 +22,7 @@ function chatIcon(type: string): string {
  * e.g. "Plan: Free | 2/3 aliases used".
  * Returns null in self-hosted mode or when org info is unavailable.
  */
-async function buildPlanFooter(db: Db, userId: number): Promise<string | null> {
+async function buildPlanFooter(db: Db, userId: number, locale: Locale): Promise<string | null> {
   if (loadConfig().appMode !== "hosted") return null;
 
   try {
@@ -30,7 +31,11 @@ async function buildPlanFooter(db: Db, userId: number): Promise<string | null> {
 
     const plan = getEffectivePlan(org);
     const used = await countActiveAliasesByOrganization(db, org.id);
-    return `Plan: ${escapeHtml(plan.name)} | ${used}/${plan.limits.aliases} aliases used`;
+    return getMessages(locale).chatMenu.planFooter(
+      escapeHtml(plan.name),
+      used,
+      plan.limits.aliases,
+    );
   } catch {
     return null;
   }
@@ -42,13 +47,13 @@ export async function sendChatSelectionMenu(
   { welcome = false }: { welcome?: boolean } = {},
 ): Promise<void> {
   if (!ctx.from) return;
+  const locale = await resolveLocale(ctx, db);
+  const messages = getMessages(locale);
   const chats = await getAccessibleChats(db, ctx.api, ctx.from.id);
-  const prefix = welcome ? "👋 Welcome! All email aliases are managed here.\n\n" : "";
+  const prefix = welcome ? messages.chatMenu.welcomePrefix : "";
 
   if (chats.length === 0) {
-    await ctx.reply(
-      `${prefix}No chats registered yet.\n\nAdd me to a group to manage email aliases for it, or use me here in DM.`,
-    );
+    await ctx.reply(`${prefix}${messages.chatMenu.noChats}`);
     return;
   }
 
@@ -57,22 +62,22 @@ export async function sendChatSelectionMenu(
     keyboard.text(`${chatIcon(chat.type)} ${chat.title}`, CB_CHAT_MENU.build(chat.id)).row();
   }
 
-  const footer = await buildPlanFooter(db, ctx.from.id);
+  const footer = await buildPlanFooter(db, ctx.from.id, locale);
   const body = footer
-    ? `${prefix}Select a chat to manage:\n\n<i>${footer}</i>`
-    : `${prefix}Select a chat to manage:`;
+    ? `${prefix}${messages.chatMenu.selectChat}\n\n<i>${footer}</i>`
+    : `${prefix}${messages.chatMenu.selectChat}`;
 
   await ctx.reply(body, { parse_mode: "HTML", reply_markup: keyboard });
 }
 
 export async function editChatSelectionMenu(ctx: Context, db: Db): Promise<void> {
   if (!ctx.from) return;
+  const locale = await resolveLocale(ctx, db);
+  const messages = getMessages(locale);
   const chats = await getAccessibleChats(db, ctx.api, ctx.from.id);
 
   if (chats.length === 0) {
-    await ctx.editMessageText(
-      "No chats registered yet.\n\nAdd me to a group to manage email aliases for it.",
-    );
+    await ctx.editMessageText(messages.chatMenu.noChatsEdit);
     return;
   }
 
@@ -81,8 +86,10 @@ export async function editChatSelectionMenu(ctx: Context, db: Db): Promise<void>
     keyboard.text(`${chatIcon(chat.type)} ${chat.title}`, CB_CHAT_MENU.build(chat.id)).row();
   }
 
-  const footer = await buildPlanFooter(db, ctx.from.id);
-  const body = footer ? `Select a chat to manage:\n\n<i>${footer}</i>` : "Select a chat to manage:";
+  const footer = await buildPlanFooter(db, ctx.from.id, locale);
+  const body = footer
+    ? `${messages.chatMenu.selectChat}\n\n<i>${footer}</i>`
+    : messages.chatMenu.selectChat;
 
   await ctx.editMessageText(body, { parse_mode: "HTML", reply_markup: keyboard });
 }
@@ -92,13 +99,14 @@ export async function editChatManagementMenu(
   chatId: string,
   chatTitle: string,
 ): Promise<void> {
+  const messages = getMessages(await resolveLocale(ctx));
   const keyboard = new InlineKeyboard()
-    .text("📧 New Email", CB_NEW_EMAIL.build(chatId))
-    .text("📋 List Emails", CB_ALIAS_LIST.build(chatId))
+    .text(messages.chatMenu.newEmailButton, CB_NEW_EMAIL.build(chatId))
+    .text(messages.chatMenu.listEmailsButton, CB_ALIAS_LIST.build(chatId))
     .row()
-    .text("⬅️ Back", CB_CHAT_SELECTION);
+    .text(messages.chatMenu.backButton, CB_CHAT_SELECTION);
 
-  await ctx.editMessageText(`Managing: <b>${escapeHtml(chatTitle)}</b>`, {
+  await ctx.editMessageText(messages.chatMenu.managing(escapeHtml(chatTitle)), {
     parse_mode: "HTML",
     reply_markup: keyboard,
   });

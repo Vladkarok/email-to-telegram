@@ -29,6 +29,7 @@ import {
   HostedAliasCreateRateLimitError,
   reserveHostedAliasCreateAttempt,
 } from "../../abuse/hostedAliasCreation.js";
+import { DEFAULT_LOCALE, getMessages, resolveLocale, type Locale } from "../../i18n/index.js";
 
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 const generateSuffix = customAlphabet(ALPHABET, 6);
@@ -45,7 +46,9 @@ const QUICK_ALLOW_DOMAINS = ["gmail.com", "github.com", "stripe.com"] as const;
 export function buildQuickAllowKeyboard(
   aliasId: string,
   returnTo: "detail" | "rules" = "detail",
+  locale: Locale = DEFAULT_LOCALE,
 ): InlineKeyboard {
+  const messages = getMessages(locale);
   const keyboard = new InlineKeyboard();
   for (const domain of QUICK_ALLOW_DOMAINS) {
     const callback =
@@ -54,12 +57,18 @@ export function buildQuickAllowKeyboard(
         : CB_QUICK_ALLOW.build(aliasId, domain);
     keyboard.text(`✅ ${domain}`, callback);
   }
-  keyboard.row().text("✏️ Custom domain…", CB_ADD_RULE.build(aliasId));
+  keyboard.row().text(messages.newemail.customDomainButton, CB_ADD_RULE.build(aliasId));
   return keyboard;
 }
 
-export function appendAliasManageButton(keyboard: InlineKeyboard, aliasId: string): InlineKeyboard {
-  return keyboard.row().text("⚙️ Manage alias", CB_ALIAS_DETAIL.build(aliasId));
+export function appendAliasManageButton(
+  keyboard: InlineKeyboard,
+  aliasId: string,
+  locale: Locale = DEFAULT_LOCALE,
+): InlineKeyboard {
+  return keyboard
+    .row()
+    .text(getMessages(locale).newemail.manageAliasButton, CB_ALIAS_DETAIL.build(aliasId));
 }
 
 export async function promptForEmailAliasName(
@@ -70,17 +79,16 @@ export async function promptForEmailAliasName(
   mode: "reply" | "edit",
 ): Promise<void> {
   if (!ctx.from) return;
+  const messages = getMessages(await resolveLocale(ctx, getDb()));
 
   setPending(ctx.from.id, { action: "newemail", chatId, chatTitle, messageThreadId });
 
   const keyboard = new InlineKeyboard()
-    .text("⏭ Auto name", CB_SKIP_ALIAS.build(chatId))
+    .text(messages.newemail.autoNameButton, CB_SKIP_ALIAS.build(chatId))
     .row()
-    .text("✖ Cancel", CB_NEW_CANCEL);
+    .text(messages.newemail.cancelButton, CB_NEW_CANCEL);
 
-  const text =
-    `📧 Creating alias for <b>${escapeHtml(chatTitle)}</b>\n\n` +
-    `Send an alias name (e.g. <code>alerts</code>), or tap Auto name to use a friendly default like <code>inbox</code>.`;
+  const text = messages.newemail.prompt(escapeHtml(chatTitle));
 
   if (mode === "edit") {
     await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: keyboard });
@@ -117,13 +125,14 @@ export async function newemailHandler(ctx: CommandContext<Context>): Promise<voi
   }
 
   if (rawName.length === 0 && !pending) {
+    const messages = getMessages(await resolveLocale(ctx, db));
     if (!(await hasActiveHostedOrganization(db, targetChatOrganizationId ?? null))) {
       await replyForAliasLimitFailure(ctx, { ok: false, code: "subscription_inactive" });
       return;
     }
 
     if (!(await canManageChat(ctx.api, ctx.from.id, targetChatId, { fresh: true }))) {
-      await ctx.reply("⛔ Access denied.");
+      await ctx.reply(messages.common.accessDenied);
       return;
     }
 
@@ -145,7 +154,7 @@ export async function newemailHandler(ctx: CommandContext<Context>): Promise<voi
 
   if (!(await canManageChat(ctx.api, ctx.from.id, targetChatId, { fresh: true }))) {
     clearPending(ctx.from.id);
-    await ctx.reply("⛔ Access denied.");
+    await ctx.reply(getMessages(await resolveLocale(ctx, db)).common.accessDenied);
     return;
   }
 
@@ -213,16 +222,16 @@ export async function createEmailAlias(
 ): Promise<void> {
   if (!ctx.from) return;
   const config = loadConfig();
+  const locale = await resolveLocale(ctx, getDb());
+  const messages = getMessages(locale);
 
   if (rawName.length > 0) {
     if (rawName.length > 32) {
-      await ctx.reply("❌ Name too long. Max 32 characters.");
+      await ctx.reply(messages.newemail.nameTooLong);
       return;
     }
     if (!NAME_RE.test(rawName)) {
-      await ctx.reply(
-        "❌ Invalid name. Only lowercase letters, digits, dots, hyphens and underscores are allowed.",
-      );
+      await ctx.reply(messages.newemail.invalidName);
       return;
     }
   }
@@ -283,7 +292,7 @@ export async function createEmailAlias(
         return;
       }
       if (msg.includes("ensureSharedInboundDomain")) {
-        await ctx.reply("⛔ This hosted workspace is not ready for alias creation right now.");
+        await ctx.reply(messages.newemail.sharedDomainUnavailable);
         return;
       }
       if (isLocalPartConflict(err)) {
@@ -295,20 +304,24 @@ export async function createEmailAlias(
   }
 
   if (!alias) {
-    await ctx.reply("❌ Could not pick a unique alias name. Try a different one.");
+    await ctx.reply(messages.newemail.uniqueNameFailed);
     return;
   }
 
-  const chatNote = chatTitle ? `\nDelivering to: <b>${escapeHtml(chatTitle)}</b>` : "";
+  const chatNote = chatTitle ? messages.newemail.deliveringTo(escapeHtml(chatTitle)) : "";
   const fullAddress = alias.fullAddress;
 
   // Quick-pick keyboard: top common domains, then Custom… and Manage entries.
-  const keyboard = appendAliasManageButton(buildQuickAllowKeyboard(alias.id), alias.id);
-
-  await ctx.reply(
-    `✅ Email alias created!\n\n📧 <code>${fullAddress}</code>${chatNote}\n\n⚠️ All mail is rejected until you allow at least one sender.\nTap a quick pick or add a custom domain:`,
-    { parse_mode: "HTML", reply_markup: keyboard },
+  const keyboard = appendAliasManageButton(
+    buildQuickAllowKeyboard(alias.id, "detail", locale),
+    alias.id,
+    locale,
   );
+
+  await ctx.reply(messages.newemail.created(fullAddress, chatNote), {
+    parse_mode: "HTML",
+    reply_markup: keyboard,
+  });
 }
 
 async function replyForAliasLimitFailure(
@@ -318,18 +331,21 @@ async function replyForAliasLimitFailure(
   if (limit.ok) return;
 
   if (limit.code === "subscription_inactive") {
-    await ctx.reply("⛔ This hosted workspace is not ready for alias creation right now.");
+    await ctx.reply(getMessages(await resolveLocale(ctx, getDb())).common.hostedWorkspaceInactive);
     return;
   }
 
   if (limit.code === "alias_limit") {
-    const keyboard = new InlineKeyboard().text("⬆️ Upgrade Plan", CB_BILLING_UPGRADE);
-    await ctx.reply(
-      `📦 Plan limit reached: ${limit.used ?? limit.limit}/${limit.limit} aliases used. Upgrade to create more aliases.`,
-      { reply_markup: keyboard },
+    const messages = getMessages(await resolveLocale(ctx, getDb()));
+    const keyboard = new InlineKeyboard().text(
+      messages.newemail.upgradePlanButton,
+      CB_BILLING_UPGRADE,
     );
+    await ctx.reply(messages.newemail.aliasLimitReached(limit.used, limit.limit ?? 0), {
+      reply_markup: keyboard,
+    });
     return;
   }
 
-  await ctx.reply("❌ Alias creation is not available right now. Please try again later.");
+  await ctx.reply(getMessages(await resolveLocale(ctx, getDb())).common.aliasCreationUnavailable);
 }

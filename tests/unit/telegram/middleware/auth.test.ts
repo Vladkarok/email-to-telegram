@@ -16,6 +16,7 @@ vi.mock("../../../../src/db/repos/chats.js", () => ({
 const mockUpsertUser = vi.fn();
 vi.mock("../../../../src/db/repos/users.js", () => ({
   upsertUser: (...args: unknown[]): unknown => mockUpsertUser(...args),
+  findUserById: vi.fn().mockResolvedValue(null),
 }));
 
 const mockEnsurePersonalOrganizationForUserWithOnboardingLimit = vi.fn();
@@ -142,13 +143,13 @@ describe("authMiddleware", () => {
 
   it("upserts user with correct id and username", async () => {
     mockUpsertUser.mockResolvedValue(ALLOWED_USER);
-    const ctx = createMockCtx({ fromId: 123456789, username: "myuser" });
+    const ctx = createMockCtx({ fromId: 123456789, username: "myuser", languageCode: "uk-UA" });
 
     await authMiddleware(ctx, next);
 
     expect(mockUpsertUser).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ id: 123456789n, username: "myuser" }),
+      expect.objectContaining({ id: 123456789n, username: "myuser", locale: "uk" }),
     );
   });
 

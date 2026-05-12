@@ -74,6 +74,7 @@ can be served from `https://mail.example.com`.
 | `/allow add <name> <email_or_domain>`    | Add an allow rule                                   |
 | `/allow remove <name> <email_or_domain>` | Remove an allow rule                                |
 | `/allow list <name>`                     | List allow rules                                    |
+| `/language`                              | Choose bot language                                 |
 | `/help`                                  | Show help                                           |
 
 ## First Deployment Guide

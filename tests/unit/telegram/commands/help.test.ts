@@ -22,6 +22,7 @@ describe("/help command", () => {
     const [text] = ctx.reply.mock.calls[0] as [string];
     expect(text).toContain("/upgrade");
     expect(text).toContain("/portal");
+    expect(text).toContain("/language");
     expect(text).toMatch(/Stripe checkout|billing portal/i);
   });
 

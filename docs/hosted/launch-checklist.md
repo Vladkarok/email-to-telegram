@@ -65,8 +65,8 @@ Use this before enabling public hosted signup or live Stripe billing.
 
 ## Product Surface
 
-- Confirm `/start`, `/billing`, `/plan`, `/usage`, `/upgrade`, and `/portal`
-  work in hosted mode.
+- Confirm `/start`, `/language`, `/billing`, `/plan`, `/usage`, `/upgrade`,
+  and `/portal` work in hosted mode.
 - Confirm self-hosted mode does not require Stripe settings.
 - Confirm public pricing does not advertise member invites or custom-domain
   self-service before those flows exist.

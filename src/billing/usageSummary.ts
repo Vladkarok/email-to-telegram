@@ -1,6 +1,7 @@
 import type { Organization } from "../db/schema.js";
 import type { PlanDefinition } from "./plans.js";
 import { escapeHtml } from "../utils/html.js";
+import { DEFAULT_LOCALE, getMessages, type Locale } from "../i18n/index.js";
 
 export interface UsageCounters {
   acceptedBillable: number;
@@ -58,87 +59,114 @@ export function formatCountQuota(used: number, limit: number): string {
   return `${used} / ${limit} (${percent}%)`;
 }
 
-export function buildPlanSummaryText(input: PlanSummaryInput): string {
+export function buildPlanSummaryText(
+  input: PlanSummaryInput,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
   const { plan, organization } = input;
+  const messages = getMessages(locale).usageSummary;
   const status = organization.subscriptionStatus;
   const lines: string[] = [];
 
-  lines.push(`<b>📦 Plan</b>`);
-  lines.push(`Name: <b>${escapeHtml(plan.name)}</b>`);
-  lines.push(`Status: <code>${escapeHtml(status)}</code>`);
+  lines.push(messages.planTitle);
+  lines.push(`${messages.name}: <b>${escapeHtml(plan.name)}</b>`);
+  lines.push(`${messages.status}: <code>${escapeHtml(status)}</code>`);
 
   if (organization.currentPeriodEnd) {
-    lines.push(`Renews/ends: <code>${organization.currentPeriodEnd.toISOString()}</code>`);
+    lines.push(
+      `${messages.renewsEnds}: <code>${organization.currentPeriodEnd.toISOString()}</code>`,
+    );
   }
 
   lines.push("");
-  lines.push("<b>Limits</b>");
-  lines.push(`• Aliases: <code>${plan.limits.aliases}</code>`);
-  lines.push(`• Chats: <code>${plan.limits.chats}</code>`);
-  lines.push(`• Allow rules: <code>${plan.limits.allowRules}</code>`);
-  lines.push(`• Accepted emails / month: <code>${plan.limits.deliveredEmailsMonth}</code>`);
-  lines.push(`• Egress / month: <code>${formatBytes(BigInt(plan.limits.egressBytesMonth))}</code>`);
-  lines.push(`• Storage: <code>${formatBytes(BigInt(plan.limits.storageBytes))}</code>`);
+  lines.push(messages.limits);
+  lines.push(`• ${messages.aliases}: <code>${plan.limits.aliases}</code>`);
+  lines.push(`• ${messages.chats}: <code>${plan.limits.chats}</code>`);
+  lines.push(`• ${messages.allowRules}: <code>${plan.limits.allowRules}</code>`);
+  lines.push(`• ${messages.acceptedEmailsMonth}: <code>${plan.limits.deliveredEmailsMonth}</code>`);
   lines.push(
-    `• Max message size: <code>${formatBytes(BigInt(plan.limits.maxMessageBytes))}</code>`,
+    `• ${messages.egressMonth}: <code>${formatBytes(BigInt(plan.limits.egressBytesMonth))}</code>`,
   );
-  lines.push(`• Retention: <code>${plan.limits.retentionDays} days</code>`);
-  lines.push(`• Custom domains: <code>${plan.limits.customDomains}</code>`);
+  lines.push(
+    `• ${messages.storage}: <code>${formatBytes(BigInt(plan.limits.storageBytes))}</code>`,
+  );
+  lines.push(
+    `• ${messages.maxMessageSize}: <code>${formatBytes(BigInt(plan.limits.maxMessageBytes))}</code>`,
+  );
+  lines.push(`• ${messages.retention}: <code>${plan.limits.retentionDays} ${messages.days}</code>`);
+  lines.push(`• ${messages.customDomains}: <code>${plan.limits.customDomains}</code>`);
 
   return lines.join("\n");
 }
 
-export function buildUsageSummaryText(input: UsageSummaryInput): string {
+export function buildUsageSummaryText(
+  input: UsageSummaryInput,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
   const { plan, month, counters, egressBytes, storageBytes, aliasesUsed, allowRulesUsed } = input;
+  const messages = getMessages(locale).usageSummary;
   const lines: string[] = [];
 
-  lines.push(`<b>📊 Usage — ${escapeHtml(month)}</b>`);
-  lines.push(`Plan: <b>${escapeHtml(plan.name)}</b>`);
+  lines.push(messages.usageTitle(escapeHtml(month)));
+  lines.push(`${messages.plan}: <b>${escapeHtml(plan.name)}</b>`);
   lines.push("");
-  lines.push("<b>Inbound mail this month</b>");
-  lines.push(`• Accepted (billable): <code>${counters.acceptedBillable}</code>`);
-  lines.push(`• Rejected: <code>${counters.rejected}</code>`);
-  lines.push(`• Delivered to Telegram: <code>${counters.telegramDelivered}</code>`);
-  lines.push(`• Telegram delivery failures: <code>${counters.telegramFailed}</code>`);
-  lines.push(`• Pending / retrying: <code>${counters.telegramPending}</code>`);
+  lines.push(messages.inboundThisMonth);
+  lines.push(`• ${messages.acceptedBillable}: <code>${counters.acceptedBillable}</code>`);
+  lines.push(`• ${messages.rejected}: <code>${counters.rejected}</code>`);
+  lines.push(`• ${messages.deliveredTelegram}: <code>${counters.telegramDelivered}</code>`);
+  lines.push(`• ${messages.telegramFailures}: <code>${counters.telegramFailed}</code>`);
+  lines.push(`• ${messages.pendingRetrying}: <code>${counters.telegramPending}</code>`);
   lines.push("");
+  lines.push(messages.billableNote);
+  lines.push("");
+  lines.push(messages.bandwidthStorage);
   lines.push(
-    "<i>Note: Telegram delivery failures and pending messages are still counted toward your " +
-      "monthly billable total because the email was accepted into processing.</i>",
+    `• ${messages.egress}: ${formatBytesQuota(egressBytes, BigInt(plan.limits.egressBytesMonth))}`,
+  );
+  lines.push(
+    `• ${messages.storage}: ${formatBytesQuota(storageBytes, BigInt(plan.limits.storageBytes))}`,
   );
   lines.push("");
-  lines.push("<b>Bandwidth and storage</b>");
-  lines.push(`• Egress: ${formatBytesQuota(egressBytes, BigInt(plan.limits.egressBytesMonth))}`);
-  lines.push(`• Storage: ${formatBytesQuota(storageBytes, BigInt(plan.limits.storageBytes))}`);
-  lines.push("");
-  lines.push("<b>Workspace</b>");
-  lines.push(`• Aliases: ${formatCountQuota(aliasesUsed, plan.limits.aliases)}`);
-  lines.push(`• Allow rules: ${formatCountQuota(allowRulesUsed, plan.limits.allowRules)}`);
+  lines.push(messages.workspace);
+  lines.push(`• ${messages.aliases}: ${formatCountQuota(aliasesUsed, plan.limits.aliases)}`);
+  lines.push(
+    `• ${messages.allowRules}: ${formatCountQuota(allowRulesUsed, plan.limits.allowRules)}`,
+  );
 
   return lines.join("\n");
 }
 
-export function buildBillingStatusText(input: BillingStatusInput): string {
+export function buildBillingStatusText(
+  input: BillingStatusInput,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
   const { plan, organization, month, acceptedBillable, egressBytes, storageBytes, aliasesUsed } =
     input;
+  const messages = getMessages(locale).usageSummary;
   const lines: string[] = [];
 
-  lines.push(`<b>💳 Billing</b>`);
-  lines.push(`Workspace: <b>${escapeHtml(organization.name)}</b>`);
-  lines.push(`Plan: <b>${escapeHtml(plan.name)}</b>`);
-  lines.push(`Status: <code>${escapeHtml(organization.subscriptionStatus)}</code>`);
+  lines.push(messages.billingTitle);
+  lines.push(`${messages.workspaceName}: <b>${escapeHtml(organization.name)}</b>`);
+  lines.push(`${messages.plan}: <b>${escapeHtml(plan.name)}</b>`);
+  lines.push(`${messages.status}: <code>${escapeHtml(organization.subscriptionStatus)}</code>`);
   if (organization.currentPeriodEnd) {
-    lines.push(`Renews/ends: <code>${organization.currentPeriodEnd.toISOString()}</code>`);
+    lines.push(
+      `${messages.renewsEnds}: <code>${organization.currentPeriodEnd.toISOString()}</code>`,
+    );
   }
 
   lines.push("");
-  lines.push(`<b>This month — ${escapeHtml(month)}</b>`);
-  lines.push(`• Accepted (billable): <code>${acceptedBillable}</code>`);
-  lines.push(`• Egress: ${formatBytesQuota(egressBytes, BigInt(plan.limits.egressBytesMonth))}`);
+  lines.push(messages.thisMonth(escapeHtml(month)));
+  lines.push(`• ${messages.acceptedBillable}: <code>${acceptedBillable}</code>`);
+  lines.push(
+    `• ${messages.egress}: ${formatBytesQuota(egressBytes, BigInt(plan.limits.egressBytesMonth))}`,
+  );
   lines.push("");
-  lines.push("<b>Workspace</b>");
-  lines.push(`• Aliases: ${formatCountQuota(aliasesUsed, plan.limits.aliases)}`);
-  lines.push(`• Storage: ${formatBytesQuota(storageBytes, BigInt(plan.limits.storageBytes))}`);
+  lines.push(messages.workspace);
+  lines.push(`• ${messages.aliases}: ${formatCountQuota(aliasesUsed, plan.limits.aliases)}`);
+  lines.push(
+    `• ${messages.storage}: ${formatBytesQuota(storageBytes, BigInt(plan.limits.storageBytes))}`,
+  );
 
   return lines.join("\n");
 }

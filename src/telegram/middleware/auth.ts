@@ -9,6 +9,7 @@ import {
   ensurePersonalOrganizationForUserWithOnboardingLimit,
 } from "../../abuse/hostedOnboarding.js";
 import { RateLimiter } from "../../utils/rateLimit.js";
+import { getMessages, localeFromTelegram } from "../../i18n/index.js";
 
 // 30 commands per minute per user; sweep idle keys every 60 s to prevent memory growth
 const limiter = new RateLimiter(30, 60_000);
@@ -18,7 +19,9 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
   if (!ctx.from) return;
 
   if (!limiter.check(String(ctx.from.id))) {
-    await ctx.reply("⚠️ Too many requests. Please slow down.");
+    await ctx.reply(
+      getMessages(localeFromTelegram(ctx.from.language_code) ?? "en").common.tooManyRequests,
+    );
     return;
   }
 
@@ -26,6 +29,7 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
   const user = await upsertUser(db, {
     id: BigInt(ctx.from.id),
     username: ctx.from.username ?? null,
+    locale: localeFromTelegram(ctx.from.language_code),
   });
 
   if (loadConfig().appMode === "hosted") {

@@ -2,53 +2,33 @@ import type { Context } from "grammy";
 import { settingsHelpText, safetyDisclaimerText } from "../renderModeGuidance.js";
 import { loadConfig } from "../../config.js";
 import { isSelfServeBillingEnabled } from "../../billing/selfServe.js";
+import { getDb } from "../../db/client.js";
+import { getMessages, resolveLocale } from "../../i18n/index.js";
 
 export async function helpHandler(ctx: Context): Promise<void> {
   const config = loadConfig();
+  const locale = await resolveHelpLocale(ctx);
+  const messages = getMessages(locale);
   const billingHelp =
     config.appMode !== "hosted"
       ? ""
       : isSelfServeBillingEnabled(config)
-        ? `<b>Billing (hosted only)</b>
-/billing — workspace billing status with Upgrade and Manage Billing buttons
-/plan — show your current plan and limits
-/usage — show this month's accepted/delivered/failed/rejected counts and quotas
-/upgrade — choose a plan and get a Stripe checkout link
-/portal — open the Stripe billing portal to manage your subscription`
-        : `<b>Plan and usage</b>
-/billing — workspace plan and quota status
-/plan — show your current plan and limits
-/usage — show this month's accepted/delivered/failed/rejected counts and quotas`;
+        ? messages.help.billingStripe
+        : messages.help.billingManual;
   const billingSection = billingHelp ? `\n${billingHelp}\n` : "";
 
   await ctx.reply(
-    `<b>📖 Help</b>
-
-<b>Menu</b>
-/start — open the management menu
-
-<b>Aliases</b>
-/newemail — create a new email alias
-/newemail &lt;alias&gt; — create one immediately with a specific name
-/listemail — list all your aliases
-/pauseemail &lt;alias&gt; — pause an alias
-/resumeemail &lt;alias&gt; — resume a paused alias
-/deleteemail &lt;alias&gt; — delete an alias
-/settings &lt;alias&gt; — change render mode, body dedup, or privacy mode
-
-${settingsHelpText()}
-
-<b>Allow rules</b>
-Only senders matching an allow rule can deliver mail to an alias.
-/allow list &lt;alias&gt;
-/allow add &lt;alias&gt; &lt;email_or_domain&gt;
-/allow remove &lt;alias&gt; &lt;email_or_domain&gt;
-${billingSection}
-/help — show this message
-
-${safetyDisclaimerText()}
-
-💡 After creating an alias, add at least one allow rule — otherwise all mail is rejected.`,
-    { parse_mode: "HTML" },
+    messages.help.text(billingSection, settingsHelpText(locale), safetyDisclaimerText(locale)),
+    {
+      parse_mode: "HTML",
+    },
   );
+}
+
+async function resolveHelpLocale(ctx: Context) {
+  try {
+    return await resolveLocale(ctx, getDb());
+  } catch {
+    return resolveLocale(ctx);
+  }
 }

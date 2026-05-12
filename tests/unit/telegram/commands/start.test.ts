@@ -18,6 +18,7 @@ vi.mock("../../../../src/db/repos/chats.js", () => ({
 const mockUpsertUser = vi.fn();
 vi.mock("../../../../src/db/repos/users.js", () => ({
   upsertUser: (...args: unknown[]): unknown => mockUpsertUser(...args),
+  findUserById: vi.fn().mockResolvedValue(null),
 }));
 
 const mockEnsurePersonalOrganizationForUserWithOnboardingLimit = vi.fn();
@@ -67,13 +68,13 @@ describe("/start command", () => {
 
   it("in hosted mode: onboards user and registers DM chat under the organization", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
-    const ctx = createMockCtx({ chatType: "private", fromId: 123456789 });
+    const ctx = createMockCtx({ chatType: "private", fromId: 123456789, languageCode: "uk" });
 
     await startHandler(ctx);
 
     expect(mockUpsertUser).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ id: 123456789n }),
+      expect.objectContaining({ id: 123456789n, locale: "uk" }),
     );
     expect(mockEnsurePersonalOrganizationForUserWithOnboardingLimit).toHaveBeenCalled();
     expect(mockUpsertChat).toHaveBeenCalledWith(

@@ -25,6 +25,7 @@ import {
 } from "./commands/settings.js";
 import { addAllowRuleForAlias, allowHandler } from "./commands/allow.js";
 import { helpHandler } from "./commands/help.js";
+import { languageCallbackHandler, languageHandler } from "./commands/language.js";
 import { planHandler } from "./commands/plan.js";
 import { usageHandler } from "./commands/usage.js";
 import { billingHandler } from "./commands/billing.js";
@@ -62,6 +63,7 @@ import {
   CB_ALIAS_LABEL_EDIT,
   CB_ALIAS_LABEL_CLEAR,
   CB_ALIAS_LABEL_CANCEL,
+  CB_LANGUAGE_SET,
 } from "./callbacks.js";
 import { portalHandler, portalCallbackHandler } from "./commands/portal.js";
 import { chatMemberHandler } from "./handlers/chatMember.js";
@@ -91,6 +93,7 @@ import { getLogger } from "../utils/logger.js";
 import { InlineKeyboard } from "grammy";
 import { hasActiveHostedOrganization } from "../billing/limits.js";
 import { escapeHtml } from "../utils/html.js";
+import { getMessages, resolveLocale } from "../i18n/index.js";
 
 export {
   assertHostedChatWorkspaceReady,
@@ -128,6 +131,7 @@ export function createBot(token: string): Bot {
   bot.command("allow", allowHandler);
   bot.command("label", labelHandler);
   bot.command("help", helpHandler);
+  bot.command("language", languageHandler);
   bot.command("plan", planHandler);
   bot.command("usage", usageHandler);
   bot.command("billing", billingHandler);
@@ -140,6 +144,9 @@ export function createBot(token: string): Bot {
 
   // upg:{priceKey} — plan selection buttons from /upgrade
   bot.callbackQuery(CB_UPGRADE_PLAN.pattern, upgradePlanCallbackHandler);
+
+  // lang:{locale} — set bot language
+  bot.callbackQuery(CB_LANGUAGE_SET.pattern, languageCallbackHandler);
 
   // ── Inline keyboard callbacks ───────────────────────────────────────────────
 
@@ -370,9 +377,10 @@ export function createBot(token: string): Bot {
       aliasLocalPart: alias.localPart,
     });
 
-    const keyboard = buildQuickAllowKeyboard(alias.id, "rules")
+    const locale = await resolveLocale(ctx, getDb());
+    const keyboard = buildQuickAllowKeyboard(alias.id, "rules", locale)
       .row()
-      .text("✖ Cancel", CB_CANCEL_ADD_RULE.build(alias.id));
+      .text(getMessages(locale).newemail.cancelButton, CB_CANCEL_ADD_RULE.build(alias.id));
     await ctx.editMessageText(
       `📋 Add allow rule for <code>${escapeHtml(alias.localPart)}</code>\n\nTap a quick pick, or send a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).`,
       { parse_mode: "HTML", reply_markup: keyboard },
@@ -546,16 +554,17 @@ export async function handlePendingTextMessage(ctx: Context, next: NextFunction)
   if (!pending) return next();
 
   if (pending.action === "newemail") {
+    const messages = getMessages(await resolveLocale(ctx, getDb()));
     const pendingChat = await findChatById(getDb(), pending.chatId);
     if (!(await hasActiveHostedOrganization(getDb(), pendingChat?.organizationId ?? null))) {
       clearPending(ctx.from.id);
-      await ctx.reply("⛔ This hosted workspace is not ready for alias creation right now.");
+      await ctx.reply(messages.common.hostedWorkspaceInactive);
       return;
     }
 
     if (!(await canManageChat(ctx.api, ctx.from.id, pending.chatId, { fresh: true }))) {
       clearPending(ctx.from.id);
-      await ctx.reply("⛔ Access denied.");
+      await ctx.reply(messages.common.accessDenied);
       return;
     }
     clearPending(ctx.from.id);

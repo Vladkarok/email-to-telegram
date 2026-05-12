@@ -10,15 +10,21 @@ import {
   ensurePersonalOrganizationForUserWithOnboardingLimit,
 } from "../../abuse/hostedOnboarding.js";
 import { sendChatSelectionMenu } from "../menu/chatMenu.js";
+import { getMessages, localeFromTelegram } from "../../i18n/index.js";
 
 export async function startHandler(ctx: Context): Promise<void> {
   if (!ctx.from) return;
+  const locale = localeFromTelegram(ctx.from.language_code) ?? "en";
+  const messages = getMessages(locale);
 
   if (ctx.chat?.type !== "private") {
     // In a group — redirect to DM
     const botUsername = ctx.me.username;
-    const keyboard = new InlineKeyboard().url("💬 Open DM", `https://t.me/${botUsername}?start=hi`);
-    await ctx.reply("Manage email aliases in our private chat 👇", {
+    const keyboard = new InlineKeyboard().url(
+      messages.start.openDmButton,
+      `https://t.me/${botUsername}?start=hi`,
+    );
+    await ctx.reply(messages.start.privateChatRedirect, {
       reply_markup: keyboard,
     });
     return;
@@ -31,6 +37,7 @@ export async function startHandler(ctx: Context): Promise<void> {
     const user = await upsertUser(db, {
       id: BigInt(ctx.from.id),
       username: ctx.from.username ?? null,
+      locale,
     });
     let organization;
     try {
@@ -49,7 +56,7 @@ export async function startHandler(ctx: Context): Promise<void> {
   await upsertChat(db, {
     id: BigInt(ctx.chat.id),
     organizationId,
-    title: `🏠 ${name} (DM)`,
+    title: messages.start.dmTitle(name),
     type: "private",
   });
 
