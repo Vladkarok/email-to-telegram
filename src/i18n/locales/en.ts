@@ -8,6 +8,8 @@ export const en = {
       "Language selection is temporarily unavailable while the database migration is pending.",
     buttonEnglish: "English",
     buttonUkrainian: "Українська",
+    buttonFrench: "Français",
+    buttonItalian: "Italiano",
     closeButton: "✖ Close",
     invalidLanguage: "Invalid language.",
   },
