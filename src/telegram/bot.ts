@@ -175,7 +175,7 @@ export function createBot(token: string): Bot {
       await ctx.answerCallbackQuery(messages.common.chatNotFoundShort);
       return;
     }
-    await editChatManagementMenu(ctx, ctx.match[1], chat.title);
+    await editChatManagementMenu(ctx, getDb(), ctx.match[1], chat.title);
   });
 
   // cl:{chatId} — alias list for a chat
