@@ -13,7 +13,8 @@ services:
       - backups:/data/backups
     networks:
       - internal
-      - proxy
+    ports:
+      - "${HOST_BIND_IP:-0.0.0.0}:3000:3000"
     mem_limit: 256m
     pids_limit: 200
     read_only: true
@@ -70,5 +71,3 @@ volumes:
 networks:
   internal:
     driver: bridge
-  proxy:
-    external: true # shared with shiny-caddy-1
