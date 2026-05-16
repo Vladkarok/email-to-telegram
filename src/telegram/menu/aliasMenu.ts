@@ -7,6 +7,7 @@ import { listAliasesByChat, findAliasById } from "../../db/repos/aliases.js";
 import { listAllowRules } from "../../db/repos/allowRules.js";
 import { canManageAlias } from "../authorization.js";
 import { escapeHtml } from "../../utils/html.js";
+import { getMessages, resolveLocale } from "../../i18n/index.js";
 import {
   CB_NEW_EMAIL,
   CB_ALIAS_DETAIL,
@@ -31,17 +32,24 @@ function statusIcon(status: string): string {
   return "🗑";
 }
 
+function statusText(status: string, messages: ReturnType<typeof getMessages>): string {
+  if (status === "active") return messages.aliasMenu.statusActive;
+  if (status === "paused") return messages.aliasMenu.statusPaused;
+  return messages.aliasMenu.statusDeleted;
+}
+
 export async function editAliasListMenu(
   ctx: Context,
   db: Db,
   chatId: bigint,
   chatTitle: string,
 ): Promise<void> {
+  const messages = getMessages(await resolveLocale(ctx, db));
   const aliases = await filterVisibleAliases(ctx, db, await listAliasesByChat(db, chatId));
   const keyboard = new InlineKeyboard();
 
   if (aliases.length === 0) {
-    keyboard.text("📧 Create First Email", CB_NEW_EMAIL.build(chatId)).row();
+    keyboard.text(messages.aliasMenu.createFirstButton, CB_NEW_EMAIL.build(chatId)).row();
   } else {
     for (const alias of aliases) {
       const buttonLabel = alias.label
@@ -51,12 +59,12 @@ export async function editAliasListMenu(
     }
   }
 
-  keyboard.text("⬅️ Back", CB_CHAT_MENU.build(chatId));
+  keyboard.text(messages.aliasMenu.backButton, CB_CHAT_MENU.build(chatId));
 
   const header =
     aliases.length === 0
-      ? `📭 <b>${escapeHtml(chatTitle)}</b>\n\nNo aliases yet.`
-      : `📬 <b>${escapeHtml(chatTitle)}</b> — ${aliases.length} alias(es)\n\nTap an alias to manage it.`;
+      ? messages.aliasMenu.emptyHeader(escapeHtml(chatTitle))
+      : messages.aliasMenu.listHeader(escapeHtml(chatTitle), aliases.length);
 
   await ctx.editMessageText(header, { parse_mode: "HTML", reply_markup: keyboard });
 }
@@ -92,12 +100,13 @@ async function buildAliasDetailMenu(
   aliasId: string,
   missingMode: "callback" | "reply",
 ): Promise<{ text: string; keyboard: InlineKeyboard } | null> {
+  const messages = getMessages(await resolveLocale(ctx, db));
   const alias = await findAliasById(db, aliasId);
   if (!alias) {
     if (missingMode === "callback") {
-      await ctx.answerCallbackQuery("Alias not found.");
+      await ctx.answerCallbackQuery(messages.common.aliasNotFoundShort);
     } else {
-      await ctx.reply("❌ Alias not found.");
+      await ctx.reply(messages.common.aliasNotFound);
     }
     return null;
   }
@@ -108,40 +117,40 @@ async function buildAliasDetailMenu(
       ? rules
           .map((r) => `• ${r.matchType === "domain" ? "🌐" : "📧"} ${escapeHtml(r.matchValue)}`)
           .join("\n")
-      : "⚠️ None — all mail rejected";
+      : messages.aliasMenu.allowRulesEmpty;
 
-  const labelLine = alias.label ? `🏷️ <b>${escapeHtml(alias.label)}</b>\n` : "";
-
-  const text =
-    labelLine +
-    `📧 <code>${escapeHtml(alias.fullAddress)}</code>\n` +
-    `Status: ${statusIcon(alias.status)} ${alias.status}\n` +
-    `Render: <code>${alias.renderMode}</code>\n` +
-    `Privacy mode: <code>${alias.privacyModeEnabled ? "on" : "off"}</code>\n` +
-    `Body dedup: <code>${alias.bodyDedupEnabled ? "on" : "off"}</code>\n\n` +
-    `<b>Allow rules:</b>\n${rulesText}`;
+  const text = messages.aliasMenu.detailLines({
+    label: alias.label ? escapeHtml(alias.label) : null,
+    address: escapeHtml(alias.fullAddress),
+    statusIcon: statusIcon(alias.status),
+    statusText: statusText(alias.status, messages),
+    renderMode: alias.renderMode,
+    privacyOn: alias.privacyModeEnabled,
+    bodyDedupOn: alias.bodyDedupEnabled,
+    rulesText,
+  });
 
   const keyboard = new InlineKeyboard();
 
   if (alias.status === "active") {
-    keyboard.text("⏸ Pause", CB_ALIAS_PAUSE.build(alias.id));
+    keyboard.text(messages.aliasMenu.pauseButton, CB_ALIAS_PAUSE.build(alias.id));
   } else if (alias.status === "paused") {
-    keyboard.text("▶️ Resume", CB_ALIAS_RESUME.build(alias.id));
+    keyboard.text(messages.aliasMenu.resumeButton, CB_ALIAS_RESUME.build(alias.id));
   }
-  keyboard.text("🗑 Delete", CB_ALIAS_DELETE.build(alias.id)).row();
+  keyboard.text(messages.aliasMenu.deleteButton, CB_ALIAS_DELETE.build(alias.id)).row();
   keyboard
-    .text("📋 Allow Rules", CB_ALLOW_RULES.build(alias.id))
-    .text("⚙️ Settings", CB_ALIAS_SETTINGS.build(alias.id))
+    .text(messages.aliasMenu.allowRulesButton, CB_ALLOW_RULES.build(alias.id))
+    .text(messages.aliasMenu.settingsButton, CB_ALIAS_SETTINGS.build(alias.id))
     .row();
   if (alias.label) {
     keyboard
-      .text("✏️ Edit Label", CB_ALIAS_LABEL_EDIT.build(alias.id))
-      .text("🧹 Clear Label", CB_ALIAS_LABEL_CLEAR.build(alias.id))
+      .text(messages.aliasMenu.editLabelButton, CB_ALIAS_LABEL_EDIT.build(alias.id))
+      .text(messages.aliasMenu.clearLabelButton, CB_ALIAS_LABEL_CLEAR.build(alias.id))
       .row();
   } else {
-    keyboard.text("🏷️ Set Label", CB_ALIAS_LABEL_EDIT.build(alias.id)).row();
+    keyboard.text(messages.aliasMenu.setLabelButton, CB_ALIAS_LABEL_EDIT.build(alias.id)).row();
   }
-  keyboard.text("⬅️ Back", CB_ALIAS_LIST.build(alias.chatId));
+  keyboard.text(messages.aliasMenu.backButton, CB_ALIAS_LIST.build(alias.chatId));
 
   return { text, keyboard };
 }
@@ -151,21 +160,19 @@ export async function editAliasDeleteConfirmMenu(
   db: Db,
   aliasId: string,
 ): Promise<void> {
+  const messages = getMessages(await resolveLocale(ctx, db));
   const alias = await findAliasById(db, aliasId);
   if (!alias) {
-    await ctx.answerCallbackQuery("Alias not found.");
+    await ctx.answerCallbackQuery(messages.common.aliasNotFoundShort);
     return;
   }
 
   const keyboard = new InlineKeyboard()
-    .text("🗑 Yes, delete", CB_ALIAS_DELETE_CONFIRM.build(alias.id))
+    .text(messages.aliasMenu.deleteConfirmYes, CB_ALIAS_DELETE_CONFIRM.build(alias.id))
     .row()
-    .text("⬅️ Keep alias", CB_ALIAS_DELETE_CANCEL.build(alias.id));
+    .text(messages.aliasMenu.deleteConfirmCancel, CB_ALIAS_DELETE_CANCEL.build(alias.id));
 
-  const text =
-    `⚠️ Delete this email alias?\n\n` +
-    `📧 <code>${escapeHtml(alias.fullAddress)}</code>\n\n` +
-    `Future emails sent to this address will be rejected.`;
+  const text = messages.aliasMenu.deleteConfirmHeader(escapeHtml(alias.fullAddress));
 
   await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: keyboard });
 }

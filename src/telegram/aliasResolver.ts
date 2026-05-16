@@ -8,6 +8,7 @@ import {
   listAliasesByChat,
 } from "../db/repos/aliases.js";
 import { canManageAlias } from "./authorization.js";
+import { getMessages, type Locale, DEFAULT_LOCALE } from "../i18n/index.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -77,18 +78,20 @@ export function aliasResolutionError(
   result: Extract<ResolveResult, { ok: false }>,
   rawInput: string,
   chatType: string,
+  locale: Locale = DEFAULT_LOCALE,
 ): string {
   const escaped = escapeForCode(rawInput);
+  const messages = getMessages(locale);
   if (result.reason === "ambiguous") {
-    return `❌ Alias <code>${escaped}</code> matches more than one inbox. Use the full address (name@domain.tld) to disambiguate.`;
+    return messages.aliasResolver.ambiguous(escaped);
   }
   if (result.reason === "forbidden") {
-    return "⛔ Access denied.";
+    return messages.aliasResolver.forbidden;
   }
   if (chatType === "private") {
-    return `❌ Alias <code>${escaped}</code> not found. See /listemail for your aliases.`;
+    return messages.aliasResolver.notFoundDm(escaped);
   }
-  return `❌ Alias <code>${escaped}</code> not found in this chat. See /listemail.`;
+  return messages.aliasResolver.notFoundGroup(escaped);
 }
 
 function escapeForCode(s: string): string {

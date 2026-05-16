@@ -25,7 +25,11 @@ import {
 } from "./commands/settings.js";
 import { addAllowRuleForAlias, allowHandler } from "./commands/allow.js";
 import { helpHandler } from "./commands/help.js";
-import { languageCallbackHandler, languageHandler } from "./commands/language.js";
+import {
+  languageCallbackHandler,
+  languageCloseCallbackHandler,
+  languageHandler,
+} from "./commands/language.js";
 import { planHandler } from "./commands/plan.js";
 import { usageHandler } from "./commands/usage.js";
 import { billingHandler } from "./commands/billing.js";
@@ -64,6 +68,7 @@ import {
   CB_ALIAS_LABEL_CLEAR,
   CB_ALIAS_LABEL_CANCEL,
   CB_LANGUAGE_SET,
+  CB_LANGUAGE_CLOSE,
 } from "./callbacks.js";
 import { portalHandler, portalCallbackHandler } from "./commands/portal.js";
 import { chatMemberHandler } from "./handlers/chatMember.js";
@@ -148,6 +153,9 @@ export function createBot(token: string): Bot {
   // lang:{locale} — set bot language
   bot.callbackQuery(CB_LANGUAGE_SET.pattern, languageCallbackHandler);
 
+  // lang:close — dismiss the language menu
+  bot.callbackQuery(CB_LANGUAGE_CLOSE, languageCloseCallbackHandler);
+
   // ── Inline keyboard callbacks ───────────────────────────────────────────────
 
   // cs — back to chat selection
@@ -163,7 +171,8 @@ export function createBot(token: string): Bot {
     await ctx.answerCallbackQuery();
     const chat = await findChatById(getDb(), chatId);
     if (!chat) {
-      await ctx.answerCallbackQuery("Chat not found.");
+      const messages = getMessages(await resolveLocale(ctx, getDb()));
+      await ctx.answerCallbackQuery(messages.common.chatNotFoundShort);
       return;
     }
     await editChatManagementMenu(ctx, ctx.match[1], chat.title);
@@ -208,7 +217,8 @@ export function createBot(token: string): Bot {
 
   // nc — cancel new email
   bot.callbackQuery(CB_NEW_CANCEL, async (ctx) => {
-    await ctx.answerCallbackQuery("Cancelled.");
+    const messages = getMessages(await resolveLocale(ctx, getDb()));
+    await ctx.answerCallbackQuery(messages.newemail.cancelledToast);
     if (ctx.from) clearPending(ctx.from.id);
     await editChatSelectionMenu(ctx, getDb());
   });
@@ -223,7 +233,8 @@ export function createBot(token: string): Bot {
   // ap:{aliasId} — pause alias
   bot.callbackQuery(CB_ALIAS_PAUSE.pattern, async (ctx) => {
     if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
-    await ctx.answerCallbackQuery("Paused.");
+    const messages = getMessages(await resolveLocale(ctx, getDb()));
+    await ctx.answerCallbackQuery(messages.aliasActions.pausedToast);
     await updateAliasStatus(getDb(), ctx.match[1], "paused");
     await editAliasDetailMenu(ctx, getDb(), ctx.match[1]);
   });
@@ -231,7 +242,8 @@ export function createBot(token: string): Bot {
   // ar:{aliasId} — resume alias
   bot.callbackQuery(CB_ALIAS_RESUME.pattern, async (ctx) => {
     if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
-    await ctx.answerCallbackQuery("Resumed.");
+    const messages = getMessages(await resolveLocale(ctx, getDb()));
+    await ctx.answerCallbackQuery(messages.aliasActions.resumedToast);
     await updateAliasStatus(getDb(), ctx.match[1], "active");
     await editAliasDetailMenu(ctx, getDb(), ctx.match[1]);
   });
@@ -246,14 +258,16 @@ export function createBot(token: string): Bot {
   // adx:{aliasId} — cancel delete confirmation
   bot.callbackQuery(CB_ALIAS_DELETE_CANCEL.pattern, async (ctx) => {
     if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
-    await ctx.answerCallbackQuery("Kept.");
+    const messages = getMessages(await resolveLocale(ctx, getDb()));
+    await ctx.answerCallbackQuery(messages.aliasActions.keptToast);
     await editAliasDetailMenu(ctx, getDb(), ctx.match[1]);
   });
 
   // adc:{aliasId} — confirmed delete alias
   bot.callbackQuery(CB_ALIAS_DELETE_CONFIRM.pattern, async (ctx) => {
     if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
-    await ctx.answerCallbackQuery("Deleted.");
+    const messages = getMessages(await resolveLocale(ctx, getDb()));
+    await ctx.answerCallbackQuery(messages.aliasActions.deletedToast);
     const alias = await findAliasById(getDb(), ctx.match[1]);
     if (alias) {
       await updateAliasStatus(getDb(), alias.id, "deleted");
@@ -269,9 +283,10 @@ export function createBot(token: string): Bot {
     await ctx.answerCallbackQuery();
     const alias = await findAliasById(getDb(), ctx.match[1]);
     if (!alias) return;
-    await ctx.editMessageText(buildAliasSettingsText(alias), {
+    const locale = await resolveLocale(ctx, getDb());
+    await ctx.editMessageText(buildAliasSettingsText(alias, locale), {
       parse_mode: "HTML",
-      reply_markup: buildAliasSettingsKeyboard(alias, true),
+      reply_markup: buildAliasSettingsKeyboard(alias, true, locale),
     });
   });
 
@@ -279,18 +294,20 @@ export function createBot(token: string): Bot {
   bot.callbackQuery(CB_SET_MODE.pattern, async (ctx) => {
     const [, aliasId, mode] = ctx.match;
     if (!(await assertAliasAccess(ctx, aliasId))) return;
+    const messages = getMessages(await resolveLocale(ctx, getDb()));
     const validModes = ["plaintext", "html", "markdown"];
     if (!validModes.includes(mode)) {
-      await ctx.answerCallbackQuery("Invalid mode");
+      await ctx.answerCallbackQuery(messages.settingsCommand.invalidModeToast);
       return;
     }
     await updateAliasRenderMode(getDb(), aliasId, mode as "plaintext" | "html" | "markdown");
-    await ctx.answerCallbackQuery(`✅ Mode set to ${mode}`);
+    await ctx.answerCallbackQuery(messages.settingsCommand.modeSetToast(mode));
     const alias = await findAliasById(getDb(), aliasId);
     if (!alias) return;
-    await ctx.editMessageText(buildAliasSettingsText(alias), {
+    const locale = await resolveLocale(ctx, getDb());
+    await ctx.editMessageText(buildAliasSettingsText(alias, locale), {
       parse_mode: "HTML",
-      reply_markup: buildAliasSettingsKeyboard(alias, true),
+      reply_markup: buildAliasSettingsKeyboard(alias, true, locale),
     });
   });
 
@@ -298,21 +315,23 @@ export function createBot(token: string): Bot {
   bot.callbackQuery(CB_TOGGLE_BODY_DEDUP.pattern, async (ctx) => {
     const aliasId = ctx.match[1];
     if (!(await assertAliasAccess(ctx, aliasId))) return;
+    const messages = getMessages(await resolveLocale(ctx, getDb()));
     const alias = await findAliasById(getDb(), aliasId);
     if (!alias) {
-      await ctx.answerCallbackQuery("Alias not found");
+      await ctx.answerCallbackQuery(messages.common.aliasNotFoundShort);
       return;
     }
 
     const nextValue = !alias.bodyDedupEnabled;
     await updateAliasBodyDedup(getDb(), aliasId, nextValue);
-    await ctx.answerCallbackQuery(`Body dedup ${nextValue ? "enabled" : "disabled"}`);
+    await ctx.answerCallbackQuery(messages.settingsCommand.bodyDedupToast(nextValue));
 
     const updatedAlias = await findAliasById(getDb(), aliasId);
     if (!updatedAlias) return;
-    await ctx.editMessageText(buildAliasSettingsText(updatedAlias), {
+    const locale = await resolveLocale(ctx, getDb());
+    await ctx.editMessageText(buildAliasSettingsText(updatedAlias, locale), {
       parse_mode: "HTML",
-      reply_markup: buildAliasSettingsKeyboard(updatedAlias, true),
+      reply_markup: buildAliasSettingsKeyboard(updatedAlias, true, locale),
     });
   });
 
@@ -320,21 +339,23 @@ export function createBot(token: string): Bot {
   bot.callbackQuery(CB_TOGGLE_PRIVACY_MODE.pattern, async (ctx) => {
     const aliasId = ctx.match[1];
     if (!(await assertAliasAccess(ctx, aliasId))) return;
+    const messages = getMessages(await resolveLocale(ctx, getDb()));
     const alias = await findAliasById(getDb(), aliasId);
     if (!alias) {
-      await ctx.answerCallbackQuery("Alias not found");
+      await ctx.answerCallbackQuery(messages.common.aliasNotFoundShort);
       return;
     }
 
     const nextValue = !alias.privacyModeEnabled;
     await updateAliasPrivacyMode(getDb(), aliasId, nextValue);
-    await ctx.answerCallbackQuery(`Privacy mode ${nextValue ? "enabled" : "disabled"}`);
+    await ctx.answerCallbackQuery(messages.settingsCommand.privacyToast(nextValue));
 
     const updatedAlias = await findAliasById(getDb(), aliasId);
     if (!updatedAlias) return;
-    await ctx.editMessageText(buildAliasSettingsText(updatedAlias), {
+    const locale = await resolveLocale(ctx, getDb());
+    await ctx.editMessageText(buildAliasSettingsText(updatedAlias, locale), {
       parse_mode: "HTML",
-      reply_markup: buildAliasSettingsKeyboard(updatedAlias, true),
+      reply_markup: buildAliasSettingsKeyboard(updatedAlias, true, locale),
     });
   });
 
@@ -347,13 +368,14 @@ export function createBot(token: string): Bot {
 
   // dr:{ruleId} — delete allow rule
   bot.callbackQuery(CB_DELETE_RULE.pattern, async (ctx) => {
+    const messages = getMessages(await resolveLocale(ctx, getDb()));
     const rule = await findAllowRuleById(getDb(), ctx.match[1]);
     if (!rule) {
-      await ctx.answerCallbackQuery("Rule not found.");
+      await ctx.answerCallbackQuery(messages.common.ruleNotFoundShort);
       return;
     }
     // Answer Telegram promptly before the async access check (Telegram requires ≤10s)
-    await ctx.answerCallbackQuery("Rule removed.");
+    await ctx.answerCallbackQuery(messages.allowCommand.removedToast);
     if (!(await assertAliasAccess(ctx, rule.emailAddressId))) return;
     await removeAllowRule(getDb(), {
       emailAddressId: rule.emailAddressId,
@@ -378,19 +400,21 @@ export function createBot(token: string): Bot {
     });
 
     const locale = await resolveLocale(ctx, getDb());
+    const messages = getMessages(locale);
     const keyboard = buildQuickAllowKeyboard(alias.id, "rules", locale)
       .row()
-      .text(getMessages(locale).newemail.cancelButton, CB_CANCEL_ADD_RULE.build(alias.id));
-    await ctx.editMessageText(
-      `📋 Add allow rule for <code>${escapeHtml(alias.localPart)}</code>\n\nTap a quick pick, or send a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).`,
-      { parse_mode: "HTML", reply_markup: keyboard },
-    );
+      .text(messages.newemail.cancelButton, CB_CANCEL_ADD_RULE.build(alias.id));
+    await ctx.editMessageText(messages.allowCommand.addRulePrompt(escapeHtml(alias.localPart)), {
+      parse_mode: "HTML",
+      reply_markup: keyboard,
+    });
   });
 
   // na:{aliasId} — cancel add allow rule
   bot.callbackQuery(CB_CANCEL_ADD_RULE.pattern, async (ctx) => {
     if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
-    await ctx.answerCallbackQuery("Cancelled.");
+    const messages = getMessages(await resolveLocale(ctx, getDb()));
+    await ctx.answerCallbackQuery(messages.aliasActions.cancelledToast);
     if (ctx.from) clearPending(ctx.from.id);
     await editAllowRulesMenu(ctx, getDb(), ctx.match[1]);
   });
@@ -401,12 +425,13 @@ export function createBot(token: string): Bot {
     const domain = ctx.match[2];
     if (!(await assertHostedAliasWorkspaceReady(ctx, aliasId))) return;
     if (!(await assertAliasAccess(ctx, aliasId))) return;
+    const messages = getMessages(await resolveLocale(ctx, getDb()));
     const alias = await findAliasById(getDb(), aliasId);
     if (!alias) {
-      await ctx.answerCallbackQuery("Alias not found.");
+      await ctx.answerCallbackQuery(messages.common.aliasNotFoundShort);
       return;
     }
-    await ctx.answerCallbackQuery("Adding…");
+    await ctx.answerCallbackQuery(messages.allowCommand.addingToast);
     const added = await addAllowRuleForAlias(ctx, getDb(), alias, domain);
     if (added) {
       // Show the alias detail menu so the user sees the new state and next steps.
@@ -420,12 +445,13 @@ export function createBot(token: string): Bot {
     const domain = ctx.match[2];
     if (!(await assertHostedAliasWorkspaceReady(ctx, aliasId))) return;
     if (!(await assertAliasAccess(ctx, aliasId))) return;
+    const messages = getMessages(await resolveLocale(ctx, getDb()));
     const alias = await findAliasById(getDb(), aliasId);
     if (!alias) {
-      await ctx.answerCallbackQuery("Alias not found.");
+      await ctx.answerCallbackQuery(messages.common.aliasNotFoundShort);
       return;
     }
-    await ctx.answerCallbackQuery("Adding…");
+    await ctx.answerCallbackQuery(messages.allowCommand.addingToast);
     const added = await addAllowRuleForAlias(ctx, getDb(), alias, domain);
     if (added) {
       await editAllowRulesMenu(ctx, getDb(), aliasId).catch(() => {});
@@ -448,10 +474,16 @@ export function createBot(token: string): Bot {
       promptMessageId: ctx.callbackQuery.message?.message_id,
     });
 
-    const keyboard = new InlineKeyboard().text("✖ Cancel", CB_ALIAS_LABEL_CANCEL.build(aliasId));
-    const current = alias.label ? `\n\nCurrent label: <b>${escapeHtml(alias.label)}</b>` : "";
+    const messages = getMessages(await resolveLocale(ctx, getDb()));
+    const keyboard = new InlineKeyboard().text(
+      messages.label.cancelButton,
+      CB_ALIAS_LABEL_CANCEL.build(aliasId),
+    );
     await ctx.editMessageText(
-      `🏷️ Set label for <code>${escapeHtml(alias.fullAddress)}</code>${current}\n\nSend the new label (max 64 characters), or tap Cancel.`,
+      messages.label.prompt(
+        escapeHtml(alias.fullAddress),
+        alias.label ? escapeHtml(alias.label) : null,
+      ),
       { parse_mode: "HTML", reply_markup: keyboard },
     );
   });
@@ -460,8 +492,9 @@ export function createBot(token: string): Bot {
   bot.callbackQuery(CB_ALIAS_LABEL_CLEAR.pattern, async (ctx) => {
     const aliasId = ctx.match[1];
     if (!(await assertAliasAccess(ctx, aliasId))) return;
+    const messages = getMessages(await resolveLocale(ctx, getDb()));
     await updateAliasLabel(getDb(), aliasId, null);
-    await ctx.answerCallbackQuery("Label cleared.");
+    await ctx.answerCallbackQuery(messages.label.clearedToast);
     await editAliasDetailMenu(ctx, getDb(), aliasId);
   });
 
@@ -470,7 +503,8 @@ export function createBot(token: string): Bot {
     const aliasId = ctx.match[1];
     if (!(await assertAliasAccess(ctx, aliasId))) return;
     if (ctx.from) clearPending(ctx.from.id);
-    await ctx.answerCallbackQuery("Cancelled.");
+    const messages = getMessages(await resolveLocale(ctx, getDb()));
+    await ctx.answerCallbackQuery(messages.label.cancelledToast);
     await editAliasDetailMenu(ctx, getDb(), aliasId);
   });
 
@@ -486,12 +520,12 @@ export function createBot(token: string): Bot {
  */
 async function labelHandler(ctx: Context): Promise<void> {
   if (!ctx.from) return;
+  const locale = await resolveLocale(ctx, getDb());
+  const messages = getMessages(locale);
   const raw = (ctx as Context & { match?: string }).match ?? "";
   const trimmed = String(raw).trim();
   if (!trimmed) {
-    await ctx.reply("Usage: /label <alias-name> <text>\n• To clear: /label <alias-name> --clear", {
-      parse_mode: "HTML",
-    });
+    await ctx.reply(messages.label.usage, { parse_mode: "HTML" });
     return;
   }
   const firstSpace = trimmed.indexOf(" ");
@@ -500,9 +534,7 @@ async function labelHandler(ctx: Context): Promise<void> {
 
   // No label text → show usage rather than silently clearing the label.
   if (!labelInput) {
-    await ctx.reply("Usage: /label <alias-name> <text>\n• To clear: /label <alias-name> --clear", {
-      parse_mode: "HTML",
-    });
+    await ctx.reply(messages.label.usage, { parse_mode: "HTML" });
     return;
   }
 
@@ -515,7 +547,7 @@ async function labelHandler(ctx: Context): Promise<void> {
     ctx.chat!.type,
   );
   if (!result.ok) {
-    await ctx.reply(aliasResolutionError(result, aliasName, ctx.chat!.type), {
+    await ctx.reply(aliasResolutionError(result, aliasName, ctx.chat!.type, locale), {
       parse_mode: "HTML",
     });
     return;
@@ -524,18 +556,18 @@ async function labelHandler(ctx: Context): Promise<void> {
   const alias = result.alias;
   if (labelInput === "--clear") {
     await updateAliasLabel(getDb(), alias.id, null);
-    await ctx.reply(`🧹 Label cleared for <code>${escapeHtml(alias.fullAddress)}</code>.`, {
+    await ctx.reply(messages.label.cleared(escapeHtml(alias.fullAddress)), {
       parse_mode: "HTML",
     });
     return;
   }
   if (labelInput.length > 64) {
-    await ctx.reply("❌ Label too long. Max 64 characters.");
+    await ctx.reply(messages.label.tooLong);
     return;
   }
   await updateAliasLabel(getDb(), alias.id, labelInput);
   await ctx.reply(
-    `🏷️ Label set: <b>${escapeHtml(labelInput)}</b> · <code>${escapeHtml(alias.fullAddress)}</code>`,
+    messages.label.setSuccess(escapeHtml(labelInput), escapeHtml(alias.fullAddress)),
     { parse_mode: "HTML" },
   );
 }
@@ -579,24 +611,25 @@ export async function handlePendingTextMessage(ctx: Context, next: NextFunction)
   }
 
   if (pending.action === "alias_label") {
+    const messages = getMessages(await resolveLocale(ctx, getDb()));
     const alias = await findAliasById(getDb(), pending.aliasId);
     if (!alias) {
       clearPending(ctx.from.id);
-      await ctx.reply("❌ Alias not found.");
+      await ctx.reply(messages.common.aliasNotFound);
       return;
     }
     if (!(await canManageAlias(getDb(), ctx.api, ctx.from.id, pending.aliasId, { fresh: true }))) {
       clearPending(ctx.from.id);
-      await ctx.reply("⛔ Access denied.");
+      await ctx.reply(messages.common.accessDenied);
       return;
     }
     const labelInput = text.trim();
     if (!labelInput) {
-      await ctx.reply("❌ Label cannot be empty. Try again or tap Cancel.");
+      await ctx.reply(messages.label.emptyInput);
       return;
     }
     if (labelInput.length > 64) {
-      await ctx.reply("❌ Label too long. Max 64 characters.");
+      await ctx.reply(messages.label.tooLong);
       return;
     }
     clearPending(ctx.from.id);
@@ -608,32 +641,29 @@ export async function handlePendingTextMessage(ctx: Context, next: NextFunction)
 
   if (pending.action !== "allowrule") return;
 
+  const messages = getMessages(await resolveLocale(ctx, getDb()));
   const alias = await findAliasById(getDb(), pending.aliasId);
   if (!alias) {
     clearPending(ctx.from.id);
-    await ctx.reply("❌ Alias not found.");
+    await ctx.reply(messages.common.aliasNotFound);
     return;
   }
   if (!(await hasActiveHostedOrganization(getDb(), alias.organizationId ?? null))) {
     clearPending(ctx.from.id);
-    await ctx.reply(
-      `⛔ <code>${escapeHtml(alias.localPart)}</code> is not attached to an active hosted workspace.`,
-      { parse_mode: "HTML" },
-    );
+    await ctx.reply(messages.allowCommand.subscriptionInactive(escapeHtml(alias.localPart)), {
+      parse_mode: "HTML",
+    });
     return;
   }
   if (!(await canManageAlias(getDb(), ctx.api, ctx.from.id, pending.aliasId, { fresh: true }))) {
     clearPending(ctx.from.id);
-    await ctx.reply("⛔ Access denied.");
+    await ctx.reply(messages.common.accessDenied);
     return;
   }
   clearPending(ctx.from.id);
   const parsedValue = parseAllowValue(text);
   if (!parsedValue) {
-    await ctx.reply(
-      "❌ Invalid format. Use a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).",
-      { parse_mode: "HTML" },
-    );
+    await ctx.reply(messages.allowCommand.invalidFormat, { parse_mode: "HTML" });
     return;
   }
   if (!(await addAllowRuleForAlias(ctx, getDb(), alias, text))) {
