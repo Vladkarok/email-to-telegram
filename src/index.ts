@@ -10,7 +10,7 @@ import { createLogger, setLogger, stderrLoggerDestination } from "./utils/logger
 import { initDb, closeDb, getDb } from "./db/client.js";
 import { runMigrations } from "./db/migrate.js";
 import { createHttpServer, startHttpServer } from "./http/server.js";
-import { createBot } from "./telegram/bot.js";
+import { createBot, syncBotCommands } from "./telegram/bot.js";
 import { setApi, getApi } from "./telegram/api.js";
 import { markBotHealthy, markBotUnhealthy } from "./telegram/health.js";
 import { upsertAllowedUser } from "./db/repos/users.js";
@@ -106,6 +106,9 @@ async function main() {
 
     try {
       await bot.api.getMe();
+      await syncBotCommands(bot).catch((err) => {
+        logger.warn({ err }, "Failed to sync bot commands; will retry on next start");
+      });
       markBotHealthy();
       await bot.start({ drop_pending_updates: pollingStart.dropPendingUpdates });
     } catch (err: unknown) {
