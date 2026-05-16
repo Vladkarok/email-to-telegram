@@ -14,7 +14,7 @@ services:
     networks:
       - internal
     ports:
-      - "${HOST_BIND_IP:-0.0.0.0}:3000:3000"
+      - "${HOST_BIND_IP:?HOST_BIND_IP must be set to the private interface for the reverse proxy}:3000:3000"
     mem_limit: 256m
     pids_limit: 200
     read_only: true

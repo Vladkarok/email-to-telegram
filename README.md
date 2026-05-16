@@ -154,20 +154,21 @@ Optional but useful on a real deployment:
 
 ### 6. Choose the deployment shape
 
-The checked-in [`docker-compose.yml`](./docker-compose.yml) reflects an existing
-deployment that joins an external reverse-proxy network.
+The checked-in [`docker-compose.yml`](./docker-compose.yml) publishes the app
+on `${HOST_BIND_IP}:3000`, expecting a separate reverse proxy (Caddy, nginx,
+Cloudflare Tunnel, etc.) on another host or the same host to terminate TLS and
+forward to that interface. `HOST_BIND_IP` is required — compose refuses to start
+without it — and should be set to the private interface the reverse proxy reaches,
+never `0.0.0.0`.
 
-For a clean first install, use the standalone examples instead:
+For a clean first install where you want everything in one compose file, use the
+standalone examples instead:
 
 - [`docs/examples/docker-compose.standalone.yml`](./docs/examples/docker-compose.standalone.yml)
 - [`docs/examples/Caddyfile`](./docs/examples/Caddyfile)
 
 Edit the example Caddyfile and replace `mail.example.com` with your real public
 hostname.
-
-If you already have your own reverse proxy and external Docker networks, keep the
-real repo compose file and adapt the guide to your environment instead of using
-the standalone example.
 
 ### 7. Start the stack
 
