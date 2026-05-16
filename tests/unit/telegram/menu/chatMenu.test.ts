@@ -147,7 +147,7 @@ describe("editChatSelectionMenu", () => {
 describe("editChatManagementMenu", () => {
   it("shows New Email and List Emails buttons", async () => {
     const ctx = createMockCtx({ chatType: "private" });
-    await editChatManagementMenu(ctx, "-1001234567890", "Test Group");
+    await editChatManagementMenu(ctx, fakeDb, "-1001234567890", "Test Group");
     expect(ctx.editMessageText).toHaveBeenCalledOnce();
     const [text, opts] = (ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0] as [
       string,
@@ -159,7 +159,7 @@ describe("editChatManagementMenu", () => {
 
   it("escapes HTML in chat title", async () => {
     const ctx = createMockCtx({ chatType: "private" });
-    await editChatManagementMenu(ctx, "-100", "<script>alert(1)</script>");
+    await editChatManagementMenu(ctx, fakeDb, "-100", "<script>alert(1)</script>");
     const [text] = (ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
     expect(text).not.toContain("<script>");
     expect(text).toContain("&lt;script&gt;");

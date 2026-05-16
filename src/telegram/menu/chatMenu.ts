@@ -96,10 +96,11 @@ export async function editChatSelectionMenu(ctx: Context, db: Db): Promise<void>
 
 export async function editChatManagementMenu(
   ctx: Context,
+  db: Db,
   chatId: string,
   chatTitle: string,
 ): Promise<void> {
-  const messages = getMessages(await resolveLocale(ctx));
+  const messages = getMessages(await resolveLocale(ctx, db));
   const keyboard = new InlineKeyboard()
     .text(messages.chatMenu.newEmailButton, CB_NEW_EMAIL.build(chatId))
     .text(messages.chatMenu.listEmailsButton, CB_ALIAS_LIST.build(chatId))
