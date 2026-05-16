@@ -3,13 +3,16 @@ import { getDb } from "../../db/client.js";
 import { updateAliasStatus } from "../../db/repos/aliases.js";
 import { aliasResolutionError, resolveManageableAlias } from "../aliasResolver.js";
 import { escapeHtml } from "../../utils/html.js";
+import { getMessages, resolveLocale } from "../../i18n/index.js";
 
 export async function resumeemailHandler(ctx: CommandContext<Context>): Promise<void> {
   if (!ctx.from) return;
   const aliasName = ctx.match.trim();
+  const locale = await resolveLocale(ctx, getDb());
+  const messages = getMessages(locale);
 
   if (!aliasName) {
-    await ctx.reply("Usage: /resumeemail <alias-name>");
+    await ctx.reply(messages.aliasActions.resumeUsage);
     return;
   }
 
@@ -23,7 +26,7 @@ export async function resumeemailHandler(ctx: CommandContext<Context>): Promise<
   );
 
   if (!result.ok) {
-    await ctx.reply(aliasResolutionError(result, aliasName, ctx.chat.type), {
+    await ctx.reply(aliasResolutionError(result, aliasName, ctx.chat.type, locale), {
       parse_mode: "HTML",
     });
     return;
@@ -32,15 +35,14 @@ export async function resumeemailHandler(ctx: CommandContext<Context>): Promise<
   const alias = result.alias;
 
   if (alias.status === "active") {
-    await ctx.reply(`✅ Alias <code>${escapeHtml(alias.fullAddress)}</code> is already active.`, {
+    await ctx.reply(messages.aliasActions.alreadyActive(escapeHtml(alias.fullAddress)), {
       parse_mode: "HTML",
     });
     return;
   }
 
   await updateAliasStatus(getDb(), alias.id, "active");
-  await ctx.reply(
-    `▶️ Alias <code>${escapeHtml(alias.fullAddress)}</code> resumed. Emails will be delivered again.`,
-    { parse_mode: "HTML" },
-  );
+  await ctx.reply(messages.aliasActions.resumed(escapeHtml(alias.fullAddress)), {
+    parse_mode: "HTML",
+  });
 }

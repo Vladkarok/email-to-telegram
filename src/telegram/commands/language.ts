@@ -12,7 +12,7 @@ import {
   resolveLocale,
   type Locale,
 } from "../../i18n/index.js";
-import { CB_LANGUAGE_SET } from "../callbacks.js";
+import { CB_LANGUAGE_CLOSE, CB_LANGUAGE_SET } from "../callbacks.js";
 
 export async function languageHandler(ctx: Context): Promise<void> {
   if (!ctx.from) return;
@@ -30,7 +30,8 @@ export async function languageCallbackHandler(ctx: CallbackQueryContext<Context>
 
   const locale = String(ctx.match[1]);
   if (!isLocale(locale)) {
-    await ctx.answerCallbackQuery("Invalid language.");
+    const fallback = getMessages(DEFAULT_LOCALE);
+    await ctx.answerCallbackQuery(fallback.language.invalidLanguage);
     return;
   }
 
@@ -53,6 +54,13 @@ export async function languageCallbackHandler(ctx: CallbackQueryContext<Context>
   });
 }
 
+export async function languageCloseCallbackHandler(
+  ctx: CallbackQueryContext<Context>,
+): Promise<void> {
+  await ctx.answerCallbackQuery();
+  await ctx.deleteMessage().catch(() => {});
+}
+
 function buildLanguageText(locale: Locale): string {
   const messages = getMessages(locale);
   return `${messages.language.choose}\n\n${messages.language.current(messages.localeName)}`;
@@ -65,7 +73,9 @@ function buildLanguageKeyboard(
   return new InlineKeyboard()
     .text(label(locale, "en", messages.language.buttonEnglish), CB_LANGUAGE_SET.build("en"))
     .row()
-    .text(label(locale, "uk", messages.language.buttonUkrainian), CB_LANGUAGE_SET.build("uk"));
+    .text(label(locale, "uk", messages.language.buttonUkrainian), CB_LANGUAGE_SET.build("uk"))
+    .row()
+    .text(messages.language.closeButton, CB_LANGUAGE_CLOSE);
 }
 
 function label(current: Locale, candidate: Locale, text: string): string {

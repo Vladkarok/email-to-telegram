@@ -6,25 +6,17 @@ import { createCustomerPortalSession } from "../../billing/customerPortal.js";
 import { buildUpgradePlanKeyboard } from "./upgrade.js";
 import { getLogger } from "../../utils/logger.js";
 import { canUseSelfServeBilling, MANUAL_BILLING_MESSAGE } from "../../billing/selfServe.js";
-
-const SELF_HOSTED_MESSAGE =
-  "ℹ️ Billing is not enabled in self-hosted mode. /portal is only available on the hosted service.";
-
-const BILLING_FORBIDDEN_MESSAGE = "❌ Billing management requires workspace owner or admin access.";
-
-const NO_CUSTOMER_TEXT =
-  "ℹ️ You don't have an active billing account yet.\n\nUse /upgrade to choose a plan and start a subscription.\n\n<b>Choose a plan:</b>";
-
-const PORTAL_TEXT =
-  "<b>🧾 Billing Portal</b>\n\nTap below to manage your subscription, view invoices, or update payment details. This link expires in 5 minutes.";
+import { getMessages, resolveLocale } from "../../i18n/index.js";
 
 /** /portal command handler — opens Stripe Customer Portal or shows upgrade options. */
 export async function portalHandler(ctx: Context): Promise<void> {
   if (!ctx.from) return;
+  const locale = await resolveLocale(ctx, getDb());
+  const messages = getMessages(locale);
 
   const config = loadConfig();
   if (config.appMode !== "hosted") {
-    await ctx.reply(SELF_HOSTED_MESSAGE);
+    await ctx.reply(messages.portal.selfHosted);
     return;
   }
 
@@ -32,7 +24,7 @@ export async function portalHandler(ctx: Context): Promise<void> {
     const db = getDb();
     const organization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
     if (!organization) {
-      await ctx.reply(BILLING_FORBIDDEN_MESSAGE);
+      await ctx.reply(messages.portal.forbidden);
       return;
     }
 
@@ -43,18 +35,18 @@ export async function portalHandler(ctx: Context): Promise<void> {
 
     const url = await createCustomerPortalSession(db, organization.id);
     if (!url) {
-      await ctx.reply(NO_CUSTOMER_TEXT, {
+      await ctx.reply(messages.portal.noCustomer, {
         parse_mode: "HTML",
-        reply_markup: buildUpgradePlanKeyboard(),
+        reply_markup: buildUpgradePlanKeyboard(locale),
       });
       return;
     }
 
-    const keyboard = new InlineKeyboard().url("Open Billing Portal →", url);
-    await ctx.reply(PORTAL_TEXT, { parse_mode: "HTML", reply_markup: keyboard });
+    const keyboard = new InlineKeyboard().url(messages.portal.openButton, url);
+    await ctx.reply(messages.portal.text, { parse_mode: "HTML", reply_markup: keyboard });
   } catch (err: unknown) {
     getLogger().error({ err }, "portalHandler: failed");
-    await ctx.reply("❌ Unable to open the billing portal. Please try again shortly.");
+    await ctx.reply(messages.portal.unavailable);
   }
 }
 
@@ -64,10 +56,12 @@ export async function portalHandler(ctx: Context): Promise<void> {
  */
 export async function portalCallbackHandler(ctx: CallbackQueryContext<Context>): Promise<void> {
   if (!ctx.from) return;
+  const locale = await resolveLocale(ctx, getDb());
+  const messages = getMessages(locale);
 
   const config = loadConfig();
   if (config.appMode !== "hosted") {
-    await ctx.answerCallbackQuery({ text: SELF_HOSTED_MESSAGE, show_alert: true });
+    await ctx.answerCallbackQuery({ text: messages.portal.selfHosted, show_alert: true });
     return;
   }
 
@@ -75,7 +69,7 @@ export async function portalCallbackHandler(ctx: CallbackQueryContext<Context>):
     const db = getDb();
     const organization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
     if (!organization) {
-      await ctx.answerCallbackQuery({ text: BILLING_FORBIDDEN_MESSAGE, show_alert: true });
+      await ctx.answerCallbackQuery({ text: messages.portal.forbidden, show_alert: true });
       return;
     }
 
@@ -88,20 +82,20 @@ export async function portalCallbackHandler(ctx: CallbackQueryContext<Context>):
     const url = await createCustomerPortalSession(db, organization.id);
     if (!url) {
       await ctx.answerCallbackQuery();
-      await ctx.reply(NO_CUSTOMER_TEXT, {
+      await ctx.reply(messages.portal.noCustomer, {
         parse_mode: "HTML",
-        reply_markup: buildUpgradePlanKeyboard(),
+        reply_markup: buildUpgradePlanKeyboard(locale),
       });
       return;
     }
 
     await ctx.answerCallbackQuery();
-    const keyboard = new InlineKeyboard().url("Open Billing Portal →", url);
-    await ctx.reply(PORTAL_TEXT, { parse_mode: "HTML", reply_markup: keyboard });
+    const keyboard = new InlineKeyboard().url(messages.portal.openButton, url);
+    await ctx.reply(messages.portal.text, { parse_mode: "HTML", reply_markup: keyboard });
   } catch (err: unknown) {
     getLogger().error({ err }, "portalCallbackHandler: failed");
     await ctx.answerCallbackQuery({
-      text: "❌ Unable to open the billing portal. Please try again shortly.",
+      text: messages.portal.unavailable,
       show_alert: true,
     });
   }

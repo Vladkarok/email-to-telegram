@@ -8,6 +8,8 @@ export const en = {
       "Language selection is temporarily unavailable while the database migration is pending.",
     buttonEnglish: "English",
     buttonUkrainian: "Українська",
+    closeButton: "✖ Close",
+    invalidLanguage: "Invalid language.",
   },
   common: {
     accessDenied: "⛔ Access denied.",
@@ -16,6 +18,10 @@ export const en = {
     aliasCreationUnavailable:
       "❌ Alias creation is not available right now. Please try again later.",
     noHostedWorkspace: "❌ No hosted workspace found for your account. Use /start to set one up.",
+    aliasNotFound: "❌ Alias not found.",
+    aliasNotFoundShort: "Alias not found.",
+    chatNotFoundShort: "Chat not found.",
+    ruleNotFoundShort: "Rule not found.",
   },
   start: {
     openDmButton: "💬 Open DM",
@@ -76,6 +82,17 @@ ${safetyNotes}
 💡 After creating an alias, add at least one allow rule — otherwise all mail is rejected.`,
   },
   renderGuidance: {
+    plaintextGuidance: "Plaintext: send literal text exactly as typed.",
+    htmlGuidance: "HTML: use your mail client's rich-text toolbar. Do not type raw HTML tags.",
+    markdownGuidance: "Markdown: type markdown syntax literally. Do not use the rich-text toolbar.",
+    bodyDedupOn:
+      "Body dedup: on. Future emails with the same body may be suppressed for this alias. Message-ID duplicates are still blocked when that header is present.",
+    bodyDedupOff:
+      "Body dedup: off. Repeated alerts with the same body still deliver. Recommended for alarm aliases. Message-ID duplicates are still blocked when that header is present.",
+    privacyOn:
+      "Privacy mode: on. Telegram gets a minimal alert and a browser view link. The email body stays out of Telegram, and attachment downloads are generated only after the browser view is opened.",
+    privacyOff:
+      "Privacy mode: off. Telegram receives the rendered email body and any attachment handling allowed by the alias settings.",
     renderModeHelp: [
       "<b>Render Modes</b>",
       "plaintext — sends literal text exactly as typed",
@@ -121,6 +138,9 @@ ${safetyNotes}
     aliasLimitReached: (used: number | undefined, limit: number) =>
       `📦 Plan limit reached: ${used ?? limit}/${limit} aliases used. Upgrade to create more aliases.`,
     upgradePlanButton: "⬆️ Upgrade Plan",
+    cancelledToast: "Cancelled.",
+    invalidAllowFormat:
+      "❌ Invalid format. Use a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).",
   },
   listemail: {
     noAliasesForChat: "📭 No aliases for this chat.\n\nCreate one with /newemail <name>",
@@ -128,6 +148,191 @@ ${safetyNotes}
     aliasesForChat: (count: number) => `📬 Aliases for this chat (${count}):`,
     allAliases: (count: number) => `📬 All your aliases (${count}):`,
     manageHint: "<i>Tap an alias below to manage it.</i>",
+  },
+  aliasMenu: {
+    createFirstButton: "📧 Create First Email",
+    emptyHeader: (chatTitle: string) => `📭 <b>${chatTitle}</b>\n\nNo aliases yet.`,
+    listHeader: (chatTitle: string, count: number) =>
+      `📬 <b>${chatTitle}</b> — ${count} alias(es)\n\nTap an alias to manage it.`,
+    statusActive: "active",
+    statusPaused: "paused",
+    statusDeleted: "deleted",
+    allowRulesHeader: "<b>Allow rules:</b>",
+    allowRulesEmpty: "⚠️ None — all mail rejected",
+    detailLines: (params: {
+      label: string | null;
+      address: string;
+      statusIcon: string;
+      statusText: string;
+      renderMode: string;
+      privacyOn: boolean;
+      bodyDedupOn: boolean;
+      rulesText: string;
+    }) => {
+      const labelLine = params.label ? `🏷️ <b>${params.label}</b>\n` : "";
+      return (
+        labelLine +
+        `📧 <code>${params.address}</code>\n` +
+        `Status: ${params.statusIcon} ${params.statusText}\n` +
+        `Render: <code>${params.renderMode}</code>\n` +
+        `Privacy mode: <code>${params.privacyOn ? "on" : "off"}</code>\n` +
+        `Body dedup: <code>${params.bodyDedupOn ? "on" : "off"}</code>\n\n` +
+        `<b>Allow rules:</b>\n${params.rulesText}`
+      );
+    },
+    pauseButton: "⏸ Pause",
+    resumeButton: "▶️ Resume",
+    deleteButton: "🗑 Delete",
+    allowRulesButton: "📋 Allow Rules",
+    settingsButton: "⚙️ Settings",
+    editLabelButton: "✏️ Edit Label",
+    clearLabelButton: "🧹 Clear Label",
+    setLabelButton: "🏷️ Set Label",
+    backButton: "⬅️ Back",
+    deleteConfirmHeader: (address: string) =>
+      `⚠️ Delete this email alias?\n\n📧 <code>${address}</code>\n\nFuture emails sent to this address will be rejected.`,
+    deleteConfirmYes: "🗑 Yes, delete",
+    deleteConfirmCancel: "⬅️ Keep alias",
+  },
+  allowRulesMenu: {
+    addRuleButton: "➕ Add Rule",
+    backButton: "⬅️ Back",
+    headerEmpty: (localPart: string) =>
+      `📋 <b>${localPart}</b> — Allow Rules\n\n⚠️ No rules — all mail is rejected.\n\nAdd at least one domain or email to start receiving mail.`,
+    headerWithRules: (localPart: string, count: number) =>
+      `📋 <b>${localPart}</b> — ${count} allow rule(s)\n\nTap ❌ to remove a rule.`,
+  },
+  aliasResolver: {
+    ambiguous: (input: string) =>
+      `❌ Alias <code>${input}</code> matches more than one inbox. Use the full address (name@domain.tld) to disambiguate.`,
+    forbidden: "⛔ Access denied.",
+    notFoundDm: (input: string) =>
+      `❌ Alias <code>${input}</code> not found. See /listemail for your aliases.`,
+    notFoundGroup: (input: string) =>
+      `❌ Alias <code>${input}</code> not found in this chat. See /listemail.`,
+  },
+  aliasActions: {
+    deleteUsage: "Usage: /deleteemail <alias-name>",
+    deleted: (address: string) =>
+      `🗑 Alias <code>${address}</code> deleted. Future emails will be rejected.`,
+    pauseUsage: "Usage: /pauseemail <alias-name>",
+    alreadyPaused: (address: string) => `⏸ Alias <code>${address}</code> is already paused.`,
+    paused: (address: string) =>
+      `⏸ Alias <code>${address}</code> paused. Emails will be rejected until resumed.`,
+    resumeUsage: "Usage: /resumeemail <alias-name>",
+    alreadyActive: (address: string) => `✅ Alias <code>${address}</code> is already active.`,
+    resumed: (address: string) =>
+      `▶️ Alias <code>${address}</code> resumed. Emails will be delivered again.`,
+    pausedToast: "Paused.",
+    resumedToast: "Resumed.",
+    deletedToast: "Deleted.",
+    keptToast: "Kept.",
+    cancelledToast: "Cancelled.",
+  },
+  settingsCommand: {
+    usage: [
+      "Usage: /settings <alias-name> [plaintext|html|markdown]",
+      "Usage: /settings <alias-name> dedup <on|off>",
+      "Usage: /settings <alias-name> privacy <on|off>",
+    ].join("\n"),
+    renderModeSet: (address: string, mode: string, guidance: string) =>
+      `✅ Render mode for <code>${address}</code> set to <b>${mode}</b>.\n${guidance}`,
+    bodyDedupSet: (address: string, on: boolean, guidance: string) =>
+      `✅ Body dedup for <code>${address}</code> set to <b>${on ? "on" : "off"}</b>.\n${guidance}`,
+    privacySet: (address: string, on: boolean, guidance: string) =>
+      `✅ Privacy mode for <code>${address}</code> set to <b>${on ? "on" : "off"}</b>.\n${guidance}`,
+    header: (address: string) => `⚙️ Settings for <code>${address}</code>`,
+    renderModeLine: (mode: string) => `Render mode: <b>${mode}</b>`,
+    privacyLine: (on: boolean) => `Privacy mode: <b>${on ? "on" : "off"}</b>`,
+    bodyDedupLine: (on: boolean) => `Body dedup: <b>${on ? "on" : "off"}</b>`,
+    privacyButton: "Privacy",
+    bodyDedupButton: "Body Dedup",
+    backButton: "⬅️ Back",
+    invalidModeToast: "Invalid mode",
+    modeSetToast: (mode: string) => `✅ Mode set to ${mode}`,
+    bodyDedupToast: (on: boolean) => `Body dedup ${on ? "enabled" : "disabled"}`,
+    privacyToast: (on: boolean) => `Privacy mode ${on ? "enabled" : "disabled"}`,
+  },
+  allowCommand: {
+    usage: `Usage:
+  /allow add <alias_or_address> <email_or_domain>
+  /allow remove <alias_or_address> <email_or_domain>
+  /allow list <alias_or_address>
+
+Examples:
+  /allow add alerts-ab12cd@example.com github.com
+  /allow add alerts-ab12cd user@example.com
+  /allow list alerts-ab12cd`,
+    aliasNotFound: (alias: string) => `❌ Alias <code>${alias}</code> not found.`,
+    listEmpty: (alias: string) =>
+      `📋 No allow rules for <code>${alias}</code>.\n\nAll mail is currently rejected.`,
+    listHeader: (alias: string, lines: string) =>
+      `📋 Allow rules for <code>${alias}</code>:\n\n${lines}`,
+    removed: (alias: string, value: string) =>
+      `✅ Removed allow rule for <code>${alias}</code>: ${value}`,
+    invalidFormat:
+      "❌ Invalid format. Use a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).",
+    alreadyExists: (localPart: string, icon: string, value: string) =>
+      `ℹ️ Allow rule already exists for <code>${localPart}</code>: ${icon} ${value}`,
+    added: (localPart: string, icon: string, value: string) =>
+      `✅ Added allow rule for <code>${localPart}</code>: ${icon} ${value}`,
+    subscriptionInactive: (localPart: string) =>
+      `⛔ <code>${localPart}</code> is not attached to an active hosted workspace.`,
+    limitReached: (localPart: string, used: number | undefined, limit: number) =>
+      `📦 Plan limit reached for <code>${localPart}</code>: ${used ?? limit}/${limit} allow rules used. Upgrade to add more.`,
+    createUnavailable: "❌ Allow rule creation is not available right now. Please try again later.",
+    upgradePlanButton: "⬆️ Upgrade Plan",
+    addRulePrompt: (localPart: string) =>
+      `📋 Add allow rule for <code>${localPart}</code>\n\nTap a quick pick, or send a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).`,
+    addingToast: "Adding…",
+    removedToast: "Rule removed.",
+  },
+  label: {
+    usage: "Usage: /label <alias-name> <text>\n• To clear: /label <alias-name> --clear",
+    cleared: (address: string) => `🧹 Label cleared for <code>${address}</code>.`,
+    tooLong: "❌ Label too long. Max 64 characters.",
+    setSuccess: (label: string, address: string) =>
+      `🏷️ Label set: <b>${label}</b> · <code>${address}</code>`,
+    prompt: (address: string, currentLabel: string | null) => {
+      const current = currentLabel ? `\n\nCurrent label: <b>${currentLabel}</b>` : "";
+      return `🏷️ Set label for <code>${address}</code>${current}\n\nSend the new label (max 64 characters), or tap Cancel.`;
+    },
+    cancelButton: "✖ Cancel",
+    clearedToast: "Label cleared.",
+    cancelledToast: "Cancelled.",
+    emptyInput: "❌ Label cannot be empty. Try again or tap Cancel.",
+  },
+  portal: {
+    selfHosted:
+      "ℹ️ Billing is not enabled in self-hosted mode. /portal is only available on the hosted service.",
+    forbidden: "❌ Billing management requires workspace owner or admin access.",
+    noCustomer:
+      "ℹ️ You don't have an active billing account yet.\n\nUse /upgrade to choose a plan and start a subscription.\n\n<b>Choose a plan:</b>",
+    text: "<b>🧾 Billing Portal</b>\n\nTap below to manage your subscription, view invoices, or update payment details. This link expires in 5 minutes.",
+    openButton: "Open Billing Portal →",
+    unavailable: "❌ Unable to open the billing portal. Please try again shortly.",
+  },
+  upgrade: {
+    selfHosted:
+      "ℹ️ Billing is not enabled in self-hosted mode. /upgrade is only available on the hosted service.",
+    forbidden: "❌ Billing changes require workspace owner or admin access.",
+    header: "<b>⬆️ Upgrade your plan</b>\n\nSelect a plan to start your upgrade:",
+    invalidPlan: "❌ Invalid plan selection.",
+    loadFailed: "❌ Unable to load upgrade options. Please try again shortly.",
+    checkoutFailed: "❌ Unable to create checkout session. Please try again shortly.",
+    activeSubscriptionConflict:
+      "You already have an active subscription. Use /portal to manage it.",
+    checkoutText: (label: string) =>
+      `<b>⬆️ ${label}</b>\n\nTap the button below to complete your upgrade. This link expires in 30 minutes.`,
+    completeButton: "Complete Checkout →",
+    planLabels: {
+      personal_monthly: "Personal — Monthly",
+      personal_yearly: "Personal — Yearly",
+      pro_monthly: "Pro — Monthly",
+      pro_yearly: "Pro — Yearly",
+      team_monthly: "Team — Monthly",
+      team_yearly: "Team — Yearly",
+    },
   },
   billingCommands: {
     planSelfHosted:
