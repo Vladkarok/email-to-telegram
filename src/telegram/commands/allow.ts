@@ -18,37 +18,30 @@ import {
 import { canManageAlias } from "../authorization.js";
 import { parseAllowValue } from "../allowValue.js";
 import { escapeHtml } from "../../utils/html.js";
-
-const USAGE = `Usage:
-  /allow add <alias_or_address> <email_or_domain>
-  /allow remove <alias_or_address> <email_or_domain>
-  /allow list <alias_or_address>
-
-Examples:
-  /allow add alerts-ab12cd@example.com github.com
-  /allow add alerts-ab12cd user@example.com
-  /allow list alerts-ab12cd`;
+import { getMessages, resolveLocale } from "../../i18n/index.js";
 
 export async function allowHandler(ctx: CommandContext<Context>): Promise<void> {
   const parts = ctx.match.trim().split(/\s+/).filter(Boolean);
-
   const [subcommand, aliasName, value] = parts;
 
+  const db = getDb();
+  const locale = await resolveLocale(ctx, db);
+  const messages = getMessages(locale);
+
   if (!subcommand || !["add", "remove", "list"].includes(subcommand)) {
-    await ctx.reply(USAGE);
+    await ctx.reply(messages.allowCommand.usage);
     return;
   }
 
   if (!aliasName) {
-    await ctx.reply(USAGE);
+    await ctx.reply(messages.allowCommand.usage);
     return;
   }
 
-  const db = getDb();
   const alias = await findAliasForAllowCommand(db, aliasName);
 
   if (!alias) {
-    await ctx.reply(`❌ Alias <code>${escapeHtml(aliasName)}</code> not found.`, {
+    await ctx.reply(messages.allowCommand.aliasNotFound(escapeHtml(aliasName)), {
       parse_mode: "HTML",
     });
     return;
@@ -63,33 +56,29 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
   }
 
   if (!ctx.from || !(await canManageAlias(db, ctx.api, ctx.from.id, alias.id, { fresh: true }))) {
-    await ctx.reply("⛔ Access denied.");
+    await ctx.reply(messages.common.accessDenied);
     return;
   }
 
   if (subcommand === "list") {
     const rules = await listAllowRules(db, alias.id);
     if (rules.length === 0) {
-      await ctx.reply(
-        `📋 No allow rules for <code>${escapeHtml(aliasName)}</code>.\n\nAll mail is currently rejected.`,
-        { parse_mode: "HTML" },
-      );
+      await ctx.reply(messages.allowCommand.listEmpty(escapeHtml(aliasName)), {
+        parse_mode: "HTML",
+      });
       return;
     }
-    const lines = rules.map(
-      (r) => `• ${r.matchType === "domain" ? "🌐" : "📧"} ${escapeHtml(r.matchValue)}`,
-    );
-    await ctx.reply(
-      `📋 Allow rules for <code>${escapeHtml(aliasName)}</code>:\n\n${lines.join("\n")}`,
-      {
-        parse_mode: "HTML",
-      },
-    );
+    const lines = rules
+      .map((r) => `• ${r.matchType === "domain" ? "🌐" : "📧"} ${escapeHtml(r.matchValue)}`)
+      .join("\n");
+    await ctx.reply(messages.allowCommand.listHeader(escapeHtml(aliasName), lines), {
+      parse_mode: "HTML",
+    });
     return;
   }
 
   if (!value) {
-    await ctx.reply(USAGE);
+    await ctx.reply(messages.allowCommand.usage);
     return;
   }
 
@@ -105,12 +94,9 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
       emailAddressId: alias.id,
       matchValue: value.toLowerCase(),
     });
-    await ctx.reply(
-      `✅ Removed allow rule for <code>${escapeHtml(aliasName)}</code>: ${escapeHtml(value)}`,
-      {
-        parse_mode: "HTML",
-      },
-    );
+    await ctx.reply(messages.allowCommand.removed(escapeHtml(aliasName), escapeHtml(value)), {
+      parse_mode: "HTML",
+    });
   }
 }
 
@@ -130,12 +116,11 @@ export async function addAllowRuleForAlias(
   alias: Pick<EmailAddress, "id" | "localPart" | "organizationId">,
   value: string,
 ): Promise<boolean> {
+  const locale = await resolveLocale(ctx, db);
+  const messages = getMessages(locale);
   const parsedValue = parseAllowValue(value);
   if (!parsedValue) {
-    await ctx.reply(
-      "❌ Invalid format. Use a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).",
-      { parse_mode: "HTML" },
-    );
+    await ctx.reply(messages.allowCommand.invalidFormat, { parse_mode: "HTML" });
     return false;
   }
   let blockedLimit: Awaited<ReturnType<typeof checkAllowRuleCreateLimit>> | null = null;
@@ -174,18 +159,20 @@ export async function addAllowRuleForAlias(
     throw err;
   }
 
+  const icon = parsedValue.matchType === "domain" ? "🌐" : "📧";
+  const value_escaped = escapeHtml(parsedValue.normalized);
+  const localPart_escaped = escapeHtml(alias.localPart);
+
   if (duplicateRule) {
-    await ctx.reply(
-      `ℹ️ Allow rule already exists for <code>${escapeHtml(alias.localPart)}</code>: ${parsedValue.matchType === "domain" ? "🌐" : "📧"} ${escapeHtml(parsedValue.normalized)}`,
-      { parse_mode: "HTML" },
-    );
+    await ctx.reply(messages.allowCommand.alreadyExists(localPart_escaped, icon, value_escaped), {
+      parse_mode: "HTML",
+    });
     return true;
   }
 
-  await ctx.reply(
-    `✅ Added allow rule for <code>${escapeHtml(alias.localPart)}</code>: ${parsedValue.matchType === "domain" ? "🌐" : "📧"} ${escapeHtml(parsedValue.normalized)}`,
-    { parse_mode: "HTML" },
-  );
+  await ctx.reply(messages.allowCommand.added(localPart_escaped, icon, value_escaped), {
+    parse_mode: "HTML",
+  });
   return true;
 }
 
@@ -196,22 +183,31 @@ async function replyForAllowRuleLimitFailure(
 ): Promise<void> {
   if (limit.ok) return;
 
+  const messages = getMessages(await resolveLocale(ctx, getDb()));
+
   if (limit.code === "subscription_inactive") {
-    await ctx.reply(
-      `⛔ <code>${escapeHtml(localPart)}</code> is not attached to an active hosted workspace.`,
-      { parse_mode: "HTML" },
-    );
+    await ctx.reply(messages.allowCommand.subscriptionInactive(escapeHtml(localPart)), {
+      parse_mode: "HTML",
+    });
     return;
   }
 
   if (limit.code === "allow_rule_limit") {
-    const keyboard = new InlineKeyboard().text("⬆️ Upgrade Plan", CB_BILLING_UPGRADE);
+    const keyboard = new InlineKeyboard().text(
+      messages.allowCommand.upgradePlanButton,
+      CB_BILLING_UPGRADE,
+    );
+    const limitValue = limit.limit ?? 0;
     await ctx.reply(
-      `📦 Plan limit reached for <code>${escapeHtml(localPart)}</code>: ${limit.used ?? limit.limit}/${limit.limit} allow rules used. Upgrade to add more.`,
+      messages.allowCommand.limitReached(
+        escapeHtml(localPart),
+        limit.used ?? limitValue,
+        limitValue,
+      ),
       { parse_mode: "HTML", reply_markup: keyboard },
     );
     return;
   }
 
-  await ctx.reply("❌ Allow rule creation is not available right now. Please try again later.");
+  await ctx.reply(messages.allowCommand.createUnavailable);
 }

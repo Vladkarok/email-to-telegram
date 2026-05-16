@@ -23,14 +23,17 @@ import {
   CB_TOGGLE_BODY_DEDUP,
   CB_ALIAS_DETAIL,
 } from "../callbacks.js";
+import { DEFAULT_LOCALE, getMessages, resolveLocale, type Locale } from "../../i18n/index.js";
 
 export async function settingsHandler(ctx: CommandContext<Context>): Promise<void> {
   if (!ctx.from) return;
   const parts = ctx.match.trim().split(/\s+/);
   const [aliasName, setting, value] = parts;
+  const locale = await resolveLocale(ctx, getDb());
+  const messages = getMessages(locale);
 
   if (!aliasName) {
-    await ctx.reply(settingsUsageText(), { parse_mode: "HTML" });
+    await ctx.reply(settingsUsageText(locale), { parse_mode: "HTML" });
     return;
   }
 
@@ -44,7 +47,7 @@ export async function settingsHandler(ctx: CommandContext<Context>): Promise<voi
   );
 
   if (!result.ok) {
-    await ctx.reply(aliasResolutionError(result, aliasName, ctx.chat.type), {
+    await ctx.reply(aliasResolutionError(result, aliasName, ctx.chat.type, locale), {
       parse_mode: "HTML",
     });
     return;
@@ -55,7 +58,11 @@ export async function settingsHandler(ctx: CommandContext<Context>): Promise<voi
   if (setting && RENDER_MODES.includes(setting as TelegramRenderMode) && !value) {
     await updateAliasRenderMode(getDb(), alias.id, setting as TelegramRenderMode);
     await ctx.reply(
-      `✅ Render mode for <code>${escapeHtml(alias.fullAddress)}</code> set to <b>${setting}</b>.\n${renderModeGuidance(setting as TelegramRenderMode)}`,
+      messages.settingsCommand.renderModeSet(
+        escapeHtml(alias.fullAddress),
+        setting,
+        renderModeGuidance(setting as TelegramRenderMode, locale),
+      ),
       { parse_mode: "HTML" },
     );
     return;
@@ -63,13 +70,17 @@ export async function settingsHandler(ctx: CommandContext<Context>): Promise<voi
 
   if (setting === "dedup") {
     if (value !== "on" && value !== "off") {
-      await ctx.reply(settingsUsageText(), { parse_mode: "HTML" });
+      await ctx.reply(settingsUsageText(locale), { parse_mode: "HTML" });
       return;
     }
     const bodyDedupEnabled = value === "on";
     await updateAliasBodyDedup(getDb(), alias.id, bodyDedupEnabled);
     await ctx.reply(
-      `✅ Body dedup for <code>${escapeHtml(alias.fullAddress)}</code> set to <b>${bodyDedupEnabled ? "on" : "off"}</b>.\n${bodyDedupGuidance(bodyDedupEnabled)}`,
+      messages.settingsCommand.bodyDedupSet(
+        escapeHtml(alias.fullAddress),
+        bodyDedupEnabled,
+        bodyDedupGuidance(bodyDedupEnabled, locale),
+      ),
       { parse_mode: "HTML" },
     );
     return;
@@ -77,26 +88,30 @@ export async function settingsHandler(ctx: CommandContext<Context>): Promise<voi
 
   if (setting === "privacy") {
     if (value !== "on" && value !== "off") {
-      await ctx.reply(settingsUsageText(), { parse_mode: "HTML" });
+      await ctx.reply(settingsUsageText(locale), { parse_mode: "HTML" });
       return;
     }
     const privacyModeEnabled = value === "on";
     await updateAliasPrivacyMode(getDb(), alias.id, privacyModeEnabled);
     await ctx.reply(
-      `✅ Privacy mode for <code>${escapeHtml(alias.fullAddress)}</code> set to <b>${privacyModeEnabled ? "on" : "off"}</b>.\n${privacyModeGuidance(privacyModeEnabled)}`,
+      messages.settingsCommand.privacySet(
+        escapeHtml(alias.fullAddress),
+        privacyModeEnabled,
+        privacyModeGuidance(privacyModeEnabled, locale),
+      ),
       { parse_mode: "HTML" },
     );
     return;
   }
 
   if (setting) {
-    await ctx.reply(settingsUsageText(), { parse_mode: "HTML" });
+    await ctx.reply(settingsUsageText(locale), { parse_mode: "HTML" });
     return;
   }
 
-  await ctx.reply(buildAliasSettingsText(alias), {
+  await ctx.reply(buildAliasSettingsText(alias, locale), {
     parse_mode: "HTML",
-    reply_markup: buildAliasSettingsKeyboard(alias),
+    reply_markup: buildAliasSettingsKeyboard(alias, false, locale),
   });
 }
 
@@ -105,24 +120,28 @@ export function buildAliasSettingsText(
     EmailAddress,
     "fullAddress" | "renderMode" | "bodyDedupEnabled" | "privacyModeEnabled"
   >,
+  locale: Locale = DEFAULT_LOCALE,
 ): string {
+  const messages = getMessages(locale);
   return [
-    `⚙️ Settings for <code>${escapeHtml(alias.fullAddress)}</code>`,
-    `Render mode: <b>${alias.renderMode}</b>`,
-    renderModeGuidance(alias.renderMode as TelegramRenderMode),
+    messages.settingsCommand.header(escapeHtml(alias.fullAddress)),
+    messages.settingsCommand.renderModeLine(alias.renderMode),
+    renderModeGuidance(alias.renderMode as TelegramRenderMode, locale),
     "",
-    `Privacy mode: <b>${alias.privacyModeEnabled ? "on" : "off"}</b>`,
-    privacyModeGuidance(alias.privacyModeEnabled),
+    messages.settingsCommand.privacyLine(alias.privacyModeEnabled),
+    privacyModeGuidance(alias.privacyModeEnabled, locale),
     "",
-    `Body dedup: <b>${alias.bodyDedupEnabled ? "on" : "off"}</b>`,
-    bodyDedupGuidance(alias.bodyDedupEnabled),
+    messages.settingsCommand.bodyDedupLine(alias.bodyDedupEnabled),
+    bodyDedupGuidance(alias.bodyDedupEnabled, locale),
   ].join("\n");
 }
 
 export function buildAliasSettingsKeyboard(
   alias: Pick<EmailAddress, "id" | "renderMode" | "bodyDedupEnabled" | "privacyModeEnabled">,
   includeBack = false,
+  locale: Locale = DEFAULT_LOCALE,
 ): InlineKeyboard {
+  const messages = getMessages(locale);
   const keyboard = new InlineKeyboard();
 
   for (const mode of RENDER_MODES) {
@@ -132,22 +151,23 @@ export function buildAliasSettingsKeyboard(
 
   keyboard
     .row()
-    .text(`${alias.privacyModeEnabled ? "✓" : "○"} Privacy`, CB_TOGGLE_PRIVACY_MODE.build(alias.id))
-    .text(`${alias.bodyDedupEnabled ? "✓" : "○"} Body Dedup`, CB_TOGGLE_BODY_DEDUP.build(alias.id));
+    .text(
+      `${alias.privacyModeEnabled ? "✓" : "○"} ${messages.settingsCommand.privacyButton}`,
+      CB_TOGGLE_PRIVACY_MODE.build(alias.id),
+    )
+    .text(
+      `${alias.bodyDedupEnabled ? "✓" : "○"} ${messages.settingsCommand.bodyDedupButton}`,
+      CB_TOGGLE_BODY_DEDUP.build(alias.id),
+    );
 
   if (includeBack) {
-    keyboard.row().text("⬅️ Back", CB_ALIAS_DETAIL.build(alias.id));
+    keyboard.row().text(messages.settingsCommand.backButton, CB_ALIAS_DETAIL.build(alias.id));
   }
 
   return keyboard;
 }
 
-function settingsUsageText(): string {
-  return [
-    "Usage: /settings <alias-name> [plaintext|html|markdown]",
-    "Usage: /settings <alias-name> dedup <on|off>",
-    "Usage: /settings <alias-name> privacy <on|off>",
-    "",
-    settingsHelpText(),
-  ].join("\n");
+function settingsUsageText(locale: Locale = DEFAULT_LOCALE): string {
+  const messages = getMessages(locale);
+  return [messages.settingsCommand.usage, "", settingsHelpText(locale)].join("\n");
 }

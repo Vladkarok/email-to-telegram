@@ -3,7 +3,7 @@ import { loadConfig } from "../../config.js";
 import { getDb } from "../../db/client.js";
 import { getBillingOrganizationForUser } from "../../tenant/currentOrganization.js";
 import { createCheckoutSession, BillingCheckoutConflictError } from "../../billing/checkout.js";
-import { isStripePriceKey, type StripePriceKey } from "../../billing/stripe.js";
+import { isStripePriceKey } from "../../billing/stripe.js";
 import { getLogger } from "../../utils/logger.js";
 import { escapeHtml } from "../../utils/html.js";
 import { CB_UPGRADE_PLAN } from "../callbacks.js";
@@ -13,41 +13,31 @@ import {
   MANUAL_BILLING_ALERT,
   MANUAL_BILLING_MESSAGE,
 } from "../../billing/selfServe.js";
-
-const SELF_HOSTED_MESSAGE =
-  "ℹ️ Billing is not enabled in self-hosted mode. /upgrade is only available on the hosted service.";
-
-const BILLING_FORBIDDEN_MESSAGE = "❌ Billing changes require workspace owner or admin access.";
-
-const PLAN_LABELS: Record<StripePriceKey, string> = {
-  personal_monthly: "Personal — Monthly",
-  personal_yearly: "Personal — Yearly",
-  pro_monthly: "Pro — Monthly",
-  pro_yearly: "Pro — Yearly",
-  team_monthly: "Team — Monthly",
-  team_yearly: "Team — Yearly",
-};
+import { DEFAULT_LOCALE, getMessages, resolveLocale, type Locale } from "../../i18n/index.js";
 
 /** Builds the plan selection inline keyboard shown by /upgrade and bill:upgrade. */
-export function buildUpgradePlanKeyboard(): InlineKeyboard {
+export function buildUpgradePlanKeyboard(locale: Locale = DEFAULT_LOCALE): InlineKeyboard {
+  const labels = getMessages(locale).upgrade.planLabels;
   return new InlineKeyboard()
-    .text("Personal — Monthly", CB_UPGRADE_PLAN.build("personal_monthly"))
-    .text("Personal — Yearly", CB_UPGRADE_PLAN.build("personal_yearly"))
+    .text(labels.personal_monthly, CB_UPGRADE_PLAN.build("personal_monthly"))
+    .text(labels.personal_yearly, CB_UPGRADE_PLAN.build("personal_yearly"))
     .row()
-    .text("Pro — Monthly", CB_UPGRADE_PLAN.build("pro_monthly"))
-    .text("Pro — Yearly", CB_UPGRADE_PLAN.build("pro_yearly"))
+    .text(labels.pro_monthly, CB_UPGRADE_PLAN.build("pro_monthly"))
+    .text(labels.pro_yearly, CB_UPGRADE_PLAN.build("pro_yearly"))
     .row()
-    .text("Team — Monthly", CB_UPGRADE_PLAN.build("team_monthly"))
-    .text("Team — Yearly", CB_UPGRADE_PLAN.build("team_yearly"));
+    .text(labels.team_monthly, CB_UPGRADE_PLAN.build("team_monthly"))
+    .text(labels.team_yearly, CB_UPGRADE_PLAN.build("team_yearly"));
 }
 
 /** /upgrade command handler — shows plan selection keyboard. */
 export async function upgradeHandler(ctx: Context): Promise<void> {
   if (!ctx.from) return;
+  const locale = await resolveLocale(ctx, getDb());
+  const messages = getMessages(locale);
 
   const config = loadConfig();
   if (config.appMode !== "hosted") {
-    await ctx.reply(SELF_HOSTED_MESSAGE);
+    await ctx.reply(messages.upgrade.selfHosted);
     return;
   }
   if (!isSelfServeBillingEnabled(config)) {
@@ -59,7 +49,7 @@ export async function upgradeHandler(ctx: Context): Promise<void> {
     const db = getDb();
     const organization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
     if (!organization) {
-      await ctx.reply(BILLING_FORBIDDEN_MESSAGE);
+      await ctx.reply(messages.upgrade.forbidden);
       return;
     }
     if (isManualBillingOrganization(organization)) {
@@ -67,13 +57,13 @@ export async function upgradeHandler(ctx: Context): Promise<void> {
       return;
     }
 
-    await ctx.reply("<b>⬆️ Upgrade your plan</b>\n\nSelect a plan to start your upgrade:", {
+    await ctx.reply(messages.upgrade.header, {
       parse_mode: "HTML",
-      reply_markup: buildUpgradePlanKeyboard(),
+      reply_markup: buildUpgradePlanKeyboard(locale),
     });
   } catch (err: unknown) {
     getLogger().error({ err }, "upgradeHandler: failed");
-    await ctx.reply("❌ Unable to load upgrade options. Please try again shortly.");
+    await ctx.reply(messages.upgrade.loadFailed);
   }
 }
 
@@ -83,10 +73,12 @@ export async function upgradeHandler(ctx: Context): Promise<void> {
  */
 export async function upgradeCallbackHandler(ctx: CallbackQueryContext<Context>): Promise<void> {
   if (!ctx.from) return;
+  const locale = await resolveLocale(ctx, getDb());
+  const messages = getMessages(locale);
 
   const config = loadConfig();
   if (config.appMode !== "hosted") {
-    await ctx.answerCallbackQuery({ text: SELF_HOSTED_MESSAGE, show_alert: true });
+    await ctx.answerCallbackQuery({ text: messages.upgrade.selfHosted, show_alert: true });
     return;
   }
   if (!isSelfServeBillingEnabled(config)) {
@@ -99,7 +91,7 @@ export async function upgradeCallbackHandler(ctx: CallbackQueryContext<Context>)
     const db = getDb();
     const organization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
     if (!organization) {
-      await ctx.answerCallbackQuery({ text: BILLING_FORBIDDEN_MESSAGE, show_alert: true });
+      await ctx.answerCallbackQuery({ text: messages.upgrade.forbidden, show_alert: true });
       return;
     }
     if (isManualBillingOrganization(organization)) {
@@ -109,14 +101,14 @@ export async function upgradeCallbackHandler(ctx: CallbackQueryContext<Context>)
     }
 
     await ctx.answerCallbackQuery();
-    await ctx.reply("<b>⬆️ Upgrade your plan</b>\n\nSelect a plan to start your upgrade:", {
+    await ctx.reply(messages.upgrade.header, {
       parse_mode: "HTML",
-      reply_markup: buildUpgradePlanKeyboard(),
+      reply_markup: buildUpgradePlanKeyboard(locale),
     });
   } catch (err: unknown) {
     getLogger().error({ err }, "upgradeCallbackHandler: failed");
     await ctx.answerCallbackQuery({
-      text: "❌ Unable to load upgrade options. Please try again shortly.",
+      text: messages.upgrade.loadFailed,
       show_alert: true,
     });
   }
@@ -130,10 +122,11 @@ export async function upgradePlanCallbackHandler(
   ctx: CallbackQueryContext<Context>,
 ): Promise<void> {
   if (!ctx.from) return;
+  const messages = getMessages(await resolveLocale(ctx, getDb()));
 
   const config = loadConfig();
   if (config.appMode !== "hosted") {
-    await ctx.answerCallbackQuery({ text: SELF_HOSTED_MESSAGE, show_alert: true });
+    await ctx.answerCallbackQuery({ text: messages.upgrade.selfHosted, show_alert: true });
     return;
   }
   if (!isSelfServeBillingEnabled(config)) {
@@ -146,7 +139,7 @@ export async function upgradePlanCallbackHandler(
 
   const priceKey = (ctx.match as RegExpMatchArray | null)?.[1];
   if (!priceKey || !isStripePriceKey(priceKey)) {
-    await ctx.answerCallbackQuery({ text: "❌ Invalid plan selection.", show_alert: true });
+    await ctx.answerCallbackQuery({ text: messages.upgrade.invalidPlan, show_alert: true });
     return;
   }
 
@@ -154,7 +147,7 @@ export async function upgradePlanCallbackHandler(
     const db = getDb();
     const organization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
     if (!organization) {
-      await ctx.answerCallbackQuery({ text: BILLING_FORBIDDEN_MESSAGE, show_alert: true });
+      await ctx.answerCallbackQuery({ text: messages.upgrade.forbidden, show_alert: true });
       return;
     }
     if (isManualBillingOrganization(organization)) {
@@ -166,25 +159,25 @@ export async function upgradePlanCallbackHandler(
     }
 
     const url = await createCheckoutSession(db, organization.id, priceKey);
-    const label = PLAN_LABELS[priceKey];
+    const label = messages.upgrade.planLabels[priceKey];
 
     await ctx.answerCallbackQuery();
-    const keyboard = new InlineKeyboard().url("Complete Checkout →", url);
-    await ctx.reply(
-      `<b>⬆️ ${escapeHtml(label)}</b>\n\nTap the button below to complete your upgrade. This link expires in 30 minutes.`,
-      { parse_mode: "HTML", reply_markup: keyboard },
-    );
+    const keyboard = new InlineKeyboard().url(messages.upgrade.completeButton, url);
+    await ctx.reply(messages.upgrade.checkoutText(escapeHtml(label)), {
+      parse_mode: "HTML",
+      reply_markup: keyboard,
+    });
   } catch (err: unknown) {
     if (err instanceof BillingCheckoutConflictError) {
       await ctx.answerCallbackQuery({
-        text: "You already have an active subscription. Use /portal to manage it.",
+        text: messages.upgrade.activeSubscriptionConflict,
         show_alert: true,
       });
       return;
     }
     getLogger().error({ err }, "upgradePlanCallbackHandler: failed to create checkout session");
     await ctx.answerCallbackQuery({
-      text: "❌ Unable to create checkout session. Please try again shortly.",
+      text: messages.upgrade.checkoutFailed,
       show_alert: true,
     });
   }

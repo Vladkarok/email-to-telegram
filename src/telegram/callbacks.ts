@@ -179,3 +179,6 @@ export const CB_LANGUAGE_SET = {
   pattern: /^lang:(en|uk)$/,
   build: (locale: "en" | "uk"): string => `lang:${locale}`,
 } as const;
+
+/** Close (dismiss) the language menu */
+export const CB_LANGUAGE_CLOSE = "lang:close";
