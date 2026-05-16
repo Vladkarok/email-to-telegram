@@ -25,6 +25,10 @@ export default defineConfig({
         "src/telegram/bot.ts",
         // Pure type declarations (no executable code)
         "src/email/types.ts",
+        // i18n message catalogs — data files with template functions per locale.
+        // Coverage of these would require exercising every string under every
+        // language, which is not a meaningful test signal.
+        "src/i18n/locales/**",
       ],
       thresholds: {
         lines: 80,
