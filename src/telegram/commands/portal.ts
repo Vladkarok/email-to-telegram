@@ -11,7 +11,8 @@ import { getMessages, resolveLocale } from "../../i18n/index.js";
 /** /portal command handler — opens Stripe Customer Portal or shows upgrade options. */
 export async function portalHandler(ctx: Context): Promise<void> {
   if (!ctx.from) return;
-  const messages = getMessages(await resolveLocale(ctx, getDb()));
+  const locale = await resolveLocale(ctx, getDb());
+  const messages = getMessages(locale);
 
   const config = loadConfig();
   if (config.appMode !== "hosted") {
@@ -36,7 +37,7 @@ export async function portalHandler(ctx: Context): Promise<void> {
     if (!url) {
       await ctx.reply(messages.portal.noCustomer, {
         parse_mode: "HTML",
-        reply_markup: buildUpgradePlanKeyboard(),
+        reply_markup: buildUpgradePlanKeyboard(locale),
       });
       return;
     }
@@ -55,7 +56,8 @@ export async function portalHandler(ctx: Context): Promise<void> {
  */
 export async function portalCallbackHandler(ctx: CallbackQueryContext<Context>): Promise<void> {
   if (!ctx.from) return;
-  const messages = getMessages(await resolveLocale(ctx, getDb()));
+  const locale = await resolveLocale(ctx, getDb());
+  const messages = getMessages(locale);
 
   const config = loadConfig();
   if (config.appMode !== "hosted") {
@@ -82,7 +84,7 @@ export async function portalCallbackHandler(ctx: CallbackQueryContext<Context>):
       await ctx.answerCallbackQuery();
       await ctx.reply(messages.portal.noCustomer, {
         parse_mode: "HTML",
-        reply_markup: buildUpgradePlanKeyboard(),
+        reply_markup: buildUpgradePlanKeyboard(locale),
       });
       return;
     }

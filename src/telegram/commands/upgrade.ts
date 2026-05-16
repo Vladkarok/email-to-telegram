@@ -13,25 +13,27 @@ import {
   MANUAL_BILLING_ALERT,
   MANUAL_BILLING_MESSAGE,
 } from "../../billing/selfServe.js";
-import { getMessages, resolveLocale } from "../../i18n/index.js";
+import { DEFAULT_LOCALE, getMessages, resolveLocale, type Locale } from "../../i18n/index.js";
 
 /** Builds the plan selection inline keyboard shown by /upgrade and bill:upgrade. */
-export function buildUpgradePlanKeyboard(): InlineKeyboard {
+export function buildUpgradePlanKeyboard(locale: Locale = DEFAULT_LOCALE): InlineKeyboard {
+  const labels = getMessages(locale).upgrade.planLabels;
   return new InlineKeyboard()
-    .text("Personal — Monthly", CB_UPGRADE_PLAN.build("personal_monthly"))
-    .text("Personal — Yearly", CB_UPGRADE_PLAN.build("personal_yearly"))
+    .text(labels.personal_monthly, CB_UPGRADE_PLAN.build("personal_monthly"))
+    .text(labels.personal_yearly, CB_UPGRADE_PLAN.build("personal_yearly"))
     .row()
-    .text("Pro — Monthly", CB_UPGRADE_PLAN.build("pro_monthly"))
-    .text("Pro — Yearly", CB_UPGRADE_PLAN.build("pro_yearly"))
+    .text(labels.pro_monthly, CB_UPGRADE_PLAN.build("pro_monthly"))
+    .text(labels.pro_yearly, CB_UPGRADE_PLAN.build("pro_yearly"))
     .row()
-    .text("Team — Monthly", CB_UPGRADE_PLAN.build("team_monthly"))
-    .text("Team — Yearly", CB_UPGRADE_PLAN.build("team_yearly"));
+    .text(labels.team_monthly, CB_UPGRADE_PLAN.build("team_monthly"))
+    .text(labels.team_yearly, CB_UPGRADE_PLAN.build("team_yearly"));
 }
 
 /** /upgrade command handler — shows plan selection keyboard. */
 export async function upgradeHandler(ctx: Context): Promise<void> {
   if (!ctx.from) return;
-  const messages = getMessages(await resolveLocale(ctx, getDb()));
+  const locale = await resolveLocale(ctx, getDb());
+  const messages = getMessages(locale);
 
   const config = loadConfig();
   if (config.appMode !== "hosted") {
@@ -57,7 +59,7 @@ export async function upgradeHandler(ctx: Context): Promise<void> {
 
     await ctx.reply(messages.upgrade.header, {
       parse_mode: "HTML",
-      reply_markup: buildUpgradePlanKeyboard(),
+      reply_markup: buildUpgradePlanKeyboard(locale),
     });
   } catch (err: unknown) {
     getLogger().error({ err }, "upgradeHandler: failed");
@@ -71,7 +73,8 @@ export async function upgradeHandler(ctx: Context): Promise<void> {
  */
 export async function upgradeCallbackHandler(ctx: CallbackQueryContext<Context>): Promise<void> {
   if (!ctx.from) return;
-  const messages = getMessages(await resolveLocale(ctx, getDb()));
+  const locale = await resolveLocale(ctx, getDb());
+  const messages = getMessages(locale);
 
   const config = loadConfig();
   if (config.appMode !== "hosted") {
@@ -100,7 +103,7 @@ export async function upgradeCallbackHandler(ctx: CallbackQueryContext<Context>)
     await ctx.answerCallbackQuery();
     await ctx.reply(messages.upgrade.header, {
       parse_mode: "HTML",
-      reply_markup: buildUpgradePlanKeyboard(),
+      reply_markup: buildUpgradePlanKeyboard(locale),
     });
   } catch (err: unknown) {
     getLogger().error({ err }, "upgradeCallbackHandler: failed");
