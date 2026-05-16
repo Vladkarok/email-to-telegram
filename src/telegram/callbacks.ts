@@ -176,8 +176,8 @@ export const CB_UPGRADE_PLAN = {
 
 /** Set bot language — lang:{locale} */
 export const CB_LANGUAGE_SET = {
-  pattern: /^lang:(en|uk)$/,
-  build: (locale: "en" | "uk"): string => `lang:${locale}`,
+  pattern: /^lang:(en|uk|fr|it)$/,
+  build: (locale: "en" | "uk" | "fr" | "it"): string => `lang:${locale}`,
 } as const;
 
 /** Close (dismiss) the language menu */

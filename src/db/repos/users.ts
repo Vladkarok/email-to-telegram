@@ -90,7 +90,11 @@ export async function upsertAllowedUser(db: Db, id: bigint): Promise<void> {
     });
 }
 
-export async function updateUserLocale(db: Db, id: bigint, locale: "en" | "uk"): Promise<void> {
+export async function updateUserLocale(
+  db: Db,
+  id: bigint,
+  locale: "en" | "uk" | "fr" | "it",
+): Promise<void> {
   try {
     await db.update(users).set({ locale, updatedAt: new Date() }).where(eq(users.id, id));
   } catch (err: unknown) {
