@@ -72,8 +72,10 @@ function buildLanguageKeyboard(
 ): InlineKeyboard {
   return new InlineKeyboard()
     .text(label(locale, "en", messages.language.buttonEnglish), CB_LANGUAGE_SET.build("en"))
-    .row()
     .text(label(locale, "uk", messages.language.buttonUkrainian), CB_LANGUAGE_SET.build("uk"))
+    .row()
+    .text(label(locale, "fr", messages.language.buttonFrench), CB_LANGUAGE_SET.build("fr"))
+    .text(label(locale, "it", messages.language.buttonItalian), CB_LANGUAGE_SET.build("it"))
     .row()
     .text(messages.language.closeButton, CB_LANGUAGE_CLOSE);
 }

@@ -7,6 +7,8 @@ export const uk = {
     unavailable: "Вибір мови тимчасово недоступний, поки очікується міграція бази даних.",
     buttonEnglish: "English",
     buttonUkrainian: "Українська",
+    buttonFrench: "Français",
+    buttonItalian: "Italiano",
     closeButton: "✖ Закрити",
     invalidLanguage: "Невідома мова.",
   },

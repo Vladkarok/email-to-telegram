@@ -4,8 +4,10 @@ import type * as schema from "../db/schema.js";
 import { findUserById } from "../db/repos/users.js";
 import { en } from "./locales/en.js";
 import { uk } from "./locales/uk.js";
+import { fr } from "./locales/fr.js";
+import { it } from "./locales/it.js";
 
-export const SUPPORTED_LOCALES = ["en", "uk"] as const;
+export const SUPPORTED_LOCALES = ["en", "uk", "fr", "it"] as const;
 export type Locale = (typeof SUPPORTED_LOCALES)[number];
 type Widen<T> = T extends string
   ? string
@@ -18,7 +20,7 @@ export type Messages = Widen<typeof en>;
 
 export const DEFAULT_LOCALE: Locale = "en";
 
-const catalogs: Record<Locale, Messages> = { en, uk };
+const catalogs: Record<Locale, Messages> = { en, uk, fr, it };
 
 export function getMessages(locale: Locale): Messages {
   return catalogs[locale];
@@ -34,6 +36,8 @@ export function normalizeLocale(value: string | null | undefined): Locale | null
   const [language] = normalized.split("-");
   if (language === "uk" || language === "ua") return "uk";
   if (language === "en") return "en";
+  if (language === "fr") return "fr";
+  if (language === "it") return "it";
   return null;
 }
 
