@@ -98,7 +98,7 @@ import { getLogger } from "../utils/logger.js";
 import { InlineKeyboard } from "grammy";
 import { hasActiveHostedOrganization } from "../billing/limits.js";
 import { escapeHtml } from "../utils/html.js";
-import { getMessages, resolveLocale } from "../i18n/index.js";
+import { DEFAULT_LOCALE, SUPPORTED_LOCALES, getMessages, resolveLocale } from "../i18n/index.js";
 
 export {
   assertHostedChatWorkspaceReady,
@@ -509,6 +509,26 @@ export function createBot(token: string): Bot {
   });
 
   return bot;
+}
+
+/**
+ * Pushes the localized bot-command menu (the autocomplete shown on `/` in
+ * Telegram) to the Bot API for every supported locale, plus a default that
+ * Telegram falls back to for unknown languages.
+ *
+ * Idempotent — Telegram stores the last value per `language_code`. Call once
+ * at startup after `getMe` so the bot is initialized.
+ */
+export async function syncBotCommands(bot: Bot): Promise<void> {
+  // Default (no language_code) — used by Telegram when the user's interface
+  // language doesn't match any explicit variant. Set to the project's default.
+  await bot.api.setMyCommands(getMessages(DEFAULT_LOCALE).botCommands);
+  for (const locale of SUPPORTED_LOCALES) {
+    if (locale === DEFAULT_LOCALE) continue;
+    await bot.api.setMyCommands(getMessages(locale).botCommands, {
+      language_code: locale,
+    });
+  }
 }
 
 /**
