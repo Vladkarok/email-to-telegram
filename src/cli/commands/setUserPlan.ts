@@ -21,17 +21,11 @@ export const setUserPlanCommand: OperatorCommand = {
 
     if (result.ok) {
       logger.info(
-        {
-          result: redactManualBillingForLog(result),
-          createdOrganization: result.createdOrganization,
-        },
+        { result: redactManualBillingForLog(result) },
         result.idempotent ? "billing.manual_grant.idempotent" : "billing.manual_grant.created",
       );
     } else {
-      logger.error(
-        { code: result.code, organizationIds: result.organizationIds },
-        "Manual user plan grant failed.",
-      );
+      logger.error({ code: result.code }, "Manual user plan grant failed.");
     }
 
     process.stdout.write(

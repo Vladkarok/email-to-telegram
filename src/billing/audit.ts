@@ -26,8 +26,7 @@ export function adminOperatorSource(adminSecret: string): OperatorSource {
 }
 
 export interface RedactedBillingLog {
-  organizationId: string;
-  telegramUserId: string | null;
+  telegramUserId: string;
   planCode: string;
   subscriptionStatus: string;
   paidThroughAt: string | null;
@@ -48,7 +47,6 @@ export function redactManualBillingForLog(
   summary: ManualGrantSummary & { operatorSource?: string },
 ): RedactedBillingLog {
   return {
-    organizationId: summary.organizationId,
     telegramUserId: summary.telegramUserId,
     planCode: summary.planCode,
     subscriptionStatus: summary.subscriptionStatus,
