@@ -187,6 +187,32 @@ describe("GET /metrics", () => {
     expect(res.body).toContain("email_to_telegram_http_requests_total");
   });
 
+  it("preserves last-known business gauge values when a refresh fails", async () => {
+    const app = await createHttpServer({
+      ...BASE_CONFIG,
+      metricsEnabled: true,
+      metricsToken: METRICS_TOKEN,
+    });
+
+    const primed = await app.inject({
+      method: "GET",
+      url: "/metrics",
+      headers: { authorization: `Bearer ${METRICS_TOKEN}` },
+    });
+    expect(primed.statusCode).toBe(200);
+    expect(primed.body).toMatch(/email_to_telegram_aliases\{[^}]*status="active"[^}]*\} 7/);
+
+    mockCountAliasesByStatus.mockRejectedValueOnce(new Error("db hiccup"));
+
+    const stale = await app.inject({
+      method: "GET",
+      url: "/metrics",
+      headers: { authorization: `Bearer ${METRICS_TOKEN}` },
+    });
+    expect(stale.statusCode).toBe(200);
+    expect(stale.body).toMatch(/email_to_telegram_aliases\{[^}]*status="active"[^}]*\} 7/);
+  });
+
   it("rate limits metrics scrapes", async () => {
     const app = await createHttpServer({
       ...BASE_CONFIG,

@@ -61,7 +61,7 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
-      GF_SERVER_ROOT_URL: "http://localhost:3001/"
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:?GRAFANA_ROOT_URL must be set to the VPN URL operators use to reach Grafana, e.g. http://10.0.88.3:3001/}
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - grafana_data:/var/lib/grafana
@@ -127,19 +127,73 @@ services:
         max-size: "50m"
         max-file: "3"
 
+  # Restricted Docker API proxy. Promtail needs container metadata for
+  # service discovery, but mounting the raw docker.sock into Promtail would
+  # grant root-equivalent host access on container compromise. The proxy
+  # exposes only the read-only endpoints Promtail needs (containers, info,
+  # ping, version) and disables every write verb.
+  docker_socket_proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      INFO: 1
+      PING: 1
+      VERSION: 1
+      EVENTS: 1
+      POST: 0
+      DELETE: 0
+      AUTH: 0
+      BUILD: 0
+      COMMIT: 0
+      CONFIGS: 0
+      DISTRIBUTION: 0
+      EXEC: 0
+      GRPC: 0
+      IMAGES: 0
+      NETWORKS: 0
+      NODES: 0
+      PLUGINS: 0
+      SECRETS: 0
+      SERVICES: 0
+      SESSION: 0
+      SWARM: 0
+      SYSTEM: 0
+      TASKS: 0
+      VOLUMES: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - monitoring_internal
+    mem_limit: 64m
+    pids_limit: 50
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2375/_ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   promtail:
     image: grafana/promtail:2.9.10
     restart: unless-stopped
     depends_on:
       loki:
         condition: service_healthy
+      docker_socket_proxy:
+        condition: service_healthy
     command: -config.file=/etc/promtail/promtail-config.yml
     volumes:
       - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
-      # Read-only mounts for log discovery; root FS cannot be read_only:true
-      # because promtail writes positions to /tmp (handled via tmpfs below).
+      # Read-only container log directory for filesystem tailing of JSON logs.
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - monitoring_internal
     tmpfs:

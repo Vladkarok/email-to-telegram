@@ -56,15 +56,16 @@ cp monitoring/.env.example ~/monitoring/.env
 openssl rand -hex 16   # use as GRAFANA_ADMIN_PASSWORD
 ```
 
-Required variables in `~/monitoring/.env`:
+Required variables in `~/monitoring/.env` (read by docker compose at boot):
 
-- `GRAFANA_ADMIN_PASSWORD`
-- `METRICS_BEARER_TOKEN_STAGING`
-- `METRICS_BEARER_TOKEN_PROD` (placeholder if prod scraping is off)
+- `MONITORING_BIND_IP` — private interface IP for Grafana publish (e.g. the VPN IP). Compose refuses to start if unset.
+- `GRAFANA_ADMIN_PASSWORD` — initial Grafana admin password. Required.
+- `GRAFANA_ROOT_URL` — full URL operators use to reach Grafana, including trailing slash (e.g. `http://10.0.88.3:3001/`). Required; Grafana uses this for redirects and shared links.
+- `GRAFANA_ADMIN_USER` — optional, defaults to `admin`.
 
-`METRICS_BEARER_TOKEN_STAGING` and `METRICS_BEARER_TOKEN_PROD` must exactly match `METRICS_TOKEN` in the corresponding app deployment's `.env`. If they drift, Prometheus targets go red with `401 Unauthorized`.
+**Bearer tokens are not in `~/monitoring/.env`.** Scrape auth comes from the GitHub repository secrets `METRICS_BEARER_TOKEN_STAGING` / `METRICS_BEARER_TOKEN_PROD`. The deploy workflow writes them into `~/monitoring/prometheus/secrets/{staging_token,prod_token}` on the host. Each secret must exactly match `METRICS_TOKEN` in the corresponding app deployment's `.env`; if they drift, Prometheus targets go red with `401 Unauthorized`. Rotate via the GitHub secret UI and re-run the workflow.
 
-Trigger the `Deploy Monitoring` GitHub Action from the Actions tab. It writes the bearer token files into `~/monitoring/prometheus/secrets/`, renders the compose file, and brings the stack up.
+Trigger the `Deploy Monitoring` GitHub Action from the Actions tab to bring the stack up.
 
 ## Accessing Grafana
 
@@ -143,32 +144,31 @@ Add the bearer token to the `Deploy Monitoring` workflow so it lands at `~/monit
 ## Retention and disk
 
 - Loki: 7 days (configured in `monitoring/loki/loki-config.yml`).
-- Prometheus: 15 days (default `--storage.tsdb.retention.time`).
-- Data volumes: `~/monitoring/data/prometheus`, `~/monitoring/data/loki`, `~/monitoring/data/grafana`.
+- Prometheus: 15 days (`--storage.tsdb.retention.time=15d` in the compose command).
+- Storage lives in named Docker volumes (`prometheus_data`, `grafana_data`, `loki_data`), not in `~/monitoring/`. Compose-managed; do not edit the volume contents directly.
 
-Check disk usage:
+Inspect volume disk usage:
 
 ```sh
-ssh kc-vprojects 'docker system df && du -sh ~/monitoring/data/*'
+ssh kc-vprojects 'docker system df -v | grep -E "^(VOLUME|monitoring_)"'
 ```
 
-Prune unused images/volumes when low on space:
+Prune unused images when low on space:
 
 ```sh
-docker system prune -f
+docker image prune -f
 ```
 
 Do not `docker volume prune` blindly — it can wipe Grafana dashboards if the volume is detached.
 
 ## Troubleshooting
 
-- **Grafana shows "no data"**: check Prometheus targets. Port 9090 is not published, so tunnel it:
+- **Grafana shows "no data"**: inspect the Prometheus targets endpoint from inside the container (port 9090 is not published on the host):
   ```sh
-  ssh -L 9090:prometheus:9090 kc-vprojects
+  ssh kc-vprojects 'cd ~/monitoring && docker compose -f docker-compose.monitoring.yml --env-file .env exec prometheus wget -qO- http://127.0.0.1:9090/api/v1/targets' | jq
   ```
-  Then open `http://localhost:9090/targets`.
-- **Promtail not shipping logs**: confirm the container is on `monitoring_internal` and that `/var/run/docker.sock` and `/var/lib/docker/containers` are mounted read-only.
-- **`bearer token authentication failed`**: the token file in `~/monitoring/prometheus/secrets/` does not match `METRICS_TOKEN` in the scraped app's `.env`. Rotate both sides via GitHub secrets and redeploy.
+- **Promtail not shipping logs**: confirm the `docker_socket_proxy` container is healthy (`docker compose ... ps`) and that `/var/lib/docker/containers` is mounted read-only into promtail. Promtail talks to the proxy at `tcp://docker_socket_proxy:2375`, not the host docker socket directly.
+- **`bearer token authentication failed`**: the token file in `~/monitoring/prometheus/secrets/` does not match `METRICS_TOKEN` in the scraped app's `.env`. Rotate both sides via GitHub secrets and re-run `Deploy Monitoring`.
 - **Grafana login fails after rotating password**: restart the Grafana container; the admin password env var is only read at startup.
 
 ## Out of scope
@@ -176,3 +176,7 @@ Do not `docker volume prune` blindly — it can wipe Grafana dashboards if the v
 - Alertmanager. The app already pushes operator alerts to Telegram via `ALERT_CHAT_ID`; Prometheus-side alerting is not wired up.
 - Public Grafana exposure. Access stays VPN-only.
 - Multi-region scraping. Single staging-VM scraper only; HA Prometheus is not in scope.
+
+## Known tech debt
+
+- **Promtail is past Grafana's LTS window.** Grafana's recommended replacement is [Alloy](https://grafana.com/docs/alloy/latest/) with the `loki.source.docker` component. The 2.9.10 image still functions; migration to Alloy is tracked as a follow-up and will replace `monitoring/promtail/` plus the `promtail` compose service.

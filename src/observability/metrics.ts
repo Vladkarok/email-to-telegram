@@ -173,8 +173,8 @@ export function recordQuotaRejection(reason: string): void {
 }
 
 export async function refreshActiveOrganizationsByPlan(db: Db): Promise<void> {
-  activeOrganizationsByPlan.reset();
   const rows = await countOrganizationsByPlan(db);
+  activeOrganizationsByPlan.reset();
   let total = 0;
   for (const row of rows) {
     activeOrganizationsByPlan.set({ plan: row.planCode }, row.count);
@@ -206,8 +206,8 @@ async function refreshChatsGauge(db: Db): Promise<void> {
 }
 
 async function refreshAliasesGauge(db: Db): Promise<void> {
-  aliasesGauge.reset();
   const rows = await countAliasesByStatus(db);
+  aliasesGauge.reset();
   for (const row of rows) {
     aliasesGauge.set({ status: row.status }, row.count);
   }

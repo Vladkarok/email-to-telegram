@@ -65,6 +65,7 @@ jobs:
           MONITORING_BIND_IP: 127.0.0.1
           GRAFANA_ADMIN_PASSWORD: x
           GRAFANA_ADMIN_USER: admin
+          GRAFANA_ROOT_URL: http://127.0.0.1:3001/
         run: |
           docker compose -f monitoring/docker-compose.monitoring.yml config -q
 
@@ -97,11 +98,12 @@ jobs:
         run: |
           ssh staging "umask 077 && cat > ~/monitoring/prometheus/secrets/staging_token" <<< "${TOKEN}"
 
-      - name: Write prod bearer token (optional)
+      - name: Write prod bearer token
+        if: ${{ secrets.METRICS_BEARER_TOKEN_PROD != '' }}
         env:
           TOKEN: ${{ secrets.METRICS_BEARER_TOKEN_PROD }}
         run: |
-          ssh staging "umask 077 && cat > ~/monitoring/prometheus/secrets/prod_token" <<< "${TOKEN}" || true
+          ssh staging "umask 077 && cat > ~/monitoring/prometheus/secrets/prod_token" <<< "${TOKEN}"
 
       - name: Bring up monitoring stack
         run: |

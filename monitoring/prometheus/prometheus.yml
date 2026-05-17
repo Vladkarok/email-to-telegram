@@ -24,10 +24,12 @@ scrape_configs:
     scrape_interval: 30s
     bearer_token_file: /etc/prometheus/secrets/staging_token
     static_configs:
+      # `service` is set on the exporter side via prom-client default
+      # labels; do not duplicate it here or Prometheus will rename it to
+      # `exported_service` and keep the target label as `service`.
       - targets: ["app:3000"]
         labels:
           env: staging
-          service: email_to_telegram
 
   # Uncomment after confirming the staging VM can reach the prod private IP
   # over the VPN / private network. The prod_token secret file must also be
@@ -42,4 +44,3 @@ scrape_configs:
   #     - targets: ["10.0.88.2:3000"]
   #       labels:
   #         env: prod
-  #         service: email_to_telegram

@@ -1,33 +1,80 @@
 {
   "uid": "e2t-runtime",
-  "title": "Email to Telegram – Runtime",
+  "title": "Email to Telegram \u2013 Runtime",
   "tags": ["email-to-telegram", "runtime", "nodejs"],
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
   "refresh": "30s",
-  "time": { "from": "now-6h", "to": "now" },
-  "templating": { "list": [] },
-  "annotations": { "list": [] },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "env",
+        "type": "query",
+        "label": "Env",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(up, env)",
+          "refId": "Prometheus-env-Variable-Query"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "multi": false,
+        "includeAll": false,
+        "current": {
+          "text": "staging",
+          "value": "staging",
+          "selected": true
+        }
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
   "panels": [
     {
       "id": 1,
       "type": "timeseries",
       "title": "Process CPU (cores)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
       "fieldConfig": {
-        "defaults": { "unit": "none", "decimals": 3 },
+        "defaults": {
+          "unit": "none",
+          "decimals": 3
+        },
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "single", "sort": "none" }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "rate(process_cpu_seconds_total[5m])",
+          "expr": "rate(process_cpu_seconds_total{env=~\"$env\",job=~\"email_to_telegram_(staging|prod)\"}[5m])",
           "legendFormat": "cpu cores"
         }
       ]
@@ -36,20 +83,36 @@
       "id": 2,
       "type": "timeseries",
       "title": "Process RSS",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
       "fieldConfig": {
-        "defaults": { "unit": "bytes" },
+        "defaults": {
+          "unit": "bytes"
+        },
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "single", "sort": "none" }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "process_resident_memory_bytes",
+          "expr": "process_resident_memory_bytes{env=~\"$env\",job=~\"email_to_telegram_(staging|prod)\"}",
           "legendFormat": "rss"
         }
       ]
@@ -58,25 +121,41 @@
       "id": 3,
       "type": "timeseries",
       "title": "Node.js heap used",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
       "fieldConfig": {
-        "defaults": { "unit": "bytes" },
+        "defaults": {
+          "unit": "bytes"
+        },
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "single", "sort": "none" }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "nodejs_heap_size_used_bytes",
+          "expr": "nodejs_heap_size_used_bytes{env=~\"$env\",job=~\"email_to_telegram_(staging|prod)\"}",
           "legendFormat": "heap used"
         },
         {
           "refId": "B",
-          "expr": "nodejs_heap_size_total_bytes",
+          "expr": "nodejs_heap_size_total_bytes{env=~\"$env\",job=~\"email_to_telegram_(staging|prod)\"}",
           "legendFormat": "heap total"
         }
       ]
@@ -85,25 +164,42 @@
       "id": 4,
       "type": "timeseries",
       "title": "Event loop lag",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
       "fieldConfig": {
-        "defaults": { "unit": "s", "decimals": 4 },
+        "defaults": {
+          "unit": "s",
+          "decimals": 4
+        },
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "single", "sort": "none" }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "nodejs_eventloop_lag_seconds",
+          "expr": "nodejs_eventloop_lag_seconds{env=~\"$env\",job=~\"email_to_telegram_(staging|prod)\"}",
           "legendFormat": "lag (instant)"
         },
         {
           "refId": "B",
-          "expr": "nodejs_eventloop_lag_p99_seconds",
+          "expr": "nodejs_eventloop_lag_p99_seconds{env=~\"$env\",job=~\"email_to_telegram_(staging|prod)\"}",
           "legendFormat": "lag p99"
         }
       ]
@@ -112,20 +208,37 @@
       "id": 5,
       "type": "timeseries",
       "title": "GC duration",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
       "fieldConfig": {
-        "defaults": { "unit": "s" },
+        "defaults": {
+          "unit": "s"
+        },
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["mean", "max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (kind) (rate(nodejs_gc_duration_seconds_sum[5m]))",
+          "expr": "sum by (kind) (rate(nodejs_gc_duration_seconds_sum{env=~\"$env\",job=~\"email_to_telegram_(staging|prod)\"}[5m]))",
           "legendFormat": "{{kind}}"
         }
       ]
