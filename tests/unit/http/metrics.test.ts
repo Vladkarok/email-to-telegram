@@ -4,6 +4,10 @@ import { resetMetricsForTests } from "../../../src/observability/metrics.js";
 import type { AppConfig } from "../../../src/config.js";
 
 const mockCountOrganizationsByPlan = vi.fn();
+const mockCountUsers = vi.fn();
+const mockCountChats = vi.fn();
+const mockCountAliasesByStatus = vi.fn();
+const mockCountAttachmentStorage = vi.fn();
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 vi.mock("../../../src/db/repos/organizations.js", async () => {
@@ -14,6 +18,36 @@ vi.mock("../../../src/db/repos/organizations.js", async () => {
     ...actual,
     countOrganizationsByPlan: (...args: unknown[]): unknown =>
       mockCountOrganizationsByPlan(...args),
+  };
+});
+vi.mock("../../../src/db/repos/users.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/db/repos/users.js")>(
+    "../../../src/db/repos/users.js",
+  );
+  return { ...actual, countUsers: (...args: unknown[]): unknown => mockCountUsers(...args) };
+});
+vi.mock("../../../src/db/repos/chats.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/db/repos/chats.js")>(
+    "../../../src/db/repos/chats.js",
+  );
+  return { ...actual, countChats: (...args: unknown[]): unknown => mockCountChats(...args) };
+});
+vi.mock("../../../src/db/repos/aliases.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/db/repos/aliases.js")>(
+    "../../../src/db/repos/aliases.js",
+  );
+  return {
+    ...actual,
+    countAliasesByStatus: (...args: unknown[]): unknown => mockCountAliasesByStatus(...args),
+  };
+});
+vi.mock("../../../src/db/repos/attachments.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/db/repos/attachments.js")>(
+    "../../../src/db/repos/attachments.js",
+  );
+  return {
+    ...actual,
+    countAttachmentStorage: (...args: unknown[]): unknown => mockCountAttachmentStorage(...args),
   };
 });
 
@@ -68,6 +102,13 @@ describe("GET /metrics", () => {
       { planCode: "free", count: 2 },
       { planCode: "pro", count: 1 },
     ]);
+    mockCountUsers.mockResolvedValue({ total: 5, allowed: 3 });
+    mockCountChats.mockResolvedValue({ total: 4, active: 4 });
+    mockCountAliasesByStatus.mockResolvedValue([
+      { status: "active", count: 7 },
+      { status: "paused", count: 1 },
+    ]);
+    mockCountAttachmentStorage.mockResolvedValue({ count: 12, bytes: 34567 });
   });
 
   it("returns 404 when metrics are disabled", async () => {
@@ -114,7 +155,36 @@ describe("GET /metrics", () => {
     expect(res.body).toContain('route="/healthz"');
     expect(res.body).toContain("email_to_telegram_active_organizations");
     expect(res.body).toContain('plan="free"');
+    expect(res.body).toMatch(/email_to_telegram_organizations_total\{[^}]*\} 3/);
+    expect(res.body).toMatch(/email_to_telegram_users\{[^}]*state="total"[^}]*\} 5/);
+    expect(res.body).toMatch(/email_to_telegram_users\{[^}]*state="allowed"[^}]*\} 3/);
+    expect(res.body).toMatch(/email_to_telegram_chats\{[^}]*state="active"[^}]*\} 4/);
+    expect(res.body).toMatch(/email_to_telegram_aliases\{[^}]*status="active"[^}]*\} 7/);
+    expect(res.body).toMatch(/email_to_telegram_attachments_stored\{[^}]*\} 12/);
+    expect(res.body).toMatch(/email_to_telegram_attachments_stored_bytes\{[^}]*\} 34567/);
     expect(mockCountOrganizationsByPlan).toHaveBeenCalledOnce();
+    expect(mockCountUsers).toHaveBeenCalledOnce();
+    expect(mockCountChats).toHaveBeenCalledOnce();
+    expect(mockCountAliasesByStatus).toHaveBeenCalledOnce();
+    expect(mockCountAttachmentStorage).toHaveBeenCalledOnce();
+  });
+
+  it("still serves metrics when business gauge refresh fails", async () => {
+    mockCountUsers.mockRejectedValueOnce(new Error("db down"));
+    const app = await createHttpServer({
+      ...BASE_CONFIG,
+      metricsEnabled: true,
+      metricsToken: METRICS_TOKEN,
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/metrics",
+      headers: { authorization: `Bearer ${METRICS_TOKEN}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("email_to_telegram_http_requests_total");
   });
 
   it("rate limits metrics scrapes", async () => {

@@ -2,6 +2,10 @@ import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from "prom
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema.js";
 import { countOrganizationsByPlan } from "../db/repos/organizations.js";
+import { countUsers } from "../db/repos/users.js";
+import { countChats } from "../db/repos/chats.js";
+import { countAliasesByStatus } from "../db/repos/aliases.js";
+import { countAttachmentStorage } from "../db/repos/attachments.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -86,6 +90,45 @@ const activeOrganizationsByPlan = new Gauge({
   registers: [metricsRegistry],
 });
 
+const usersGauge = new Gauge({
+  name: "email_to_telegram_users",
+  help: "Telegram users known to the bot, partitioned by allow status.",
+  labelNames: ["state"] as const,
+  registers: [metricsRegistry],
+});
+
+const chatsGauge = new Gauge({
+  name: "email_to_telegram_chats",
+  help: "Telegram chats known to the bot, partitioned by activity.",
+  labelNames: ["state"] as const,
+  registers: [metricsRegistry],
+});
+
+const aliasesGauge = new Gauge({
+  name: "email_to_telegram_aliases",
+  help: "Email aliases by status.",
+  labelNames: ["status"] as const,
+  registers: [metricsRegistry],
+});
+
+const organizationsTotalGauge = new Gauge({
+  name: "email_to_telegram_organizations_total",
+  help: "Total organizations across all plans.",
+  registers: [metricsRegistry],
+});
+
+const attachmentsStoredGauge = new Gauge({
+  name: "email_to_telegram_attachments_stored",
+  help: "Attachment rows currently stored in the database.",
+  registers: [metricsRegistry],
+});
+
+const attachmentsStoredBytesGauge = new Gauge({
+  name: "email_to_telegram_attachments_stored_bytes",
+  help: "Sum of stored attachment sizes in bytes.",
+  registers: [metricsRegistry],
+});
+
 export function recordHttpRequest(input: {
   route: string;
   method: string;
@@ -132,9 +175,48 @@ export function recordQuotaRejection(reason: string): void {
 export async function refreshActiveOrganizationsByPlan(db: Db): Promise<void> {
   activeOrganizationsByPlan.reset();
   const rows = await countOrganizationsByPlan(db);
+  let total = 0;
   for (const row of rows) {
     activeOrganizationsByPlan.set({ plan: row.planCode }, row.count);
+    total += row.count;
   }
+  organizationsTotalGauge.set(total);
+}
+
+export async function refreshBusinessGauges(db: Db): Promise<void> {
+  await Promise.all([
+    refreshActiveOrganizationsByPlan(db),
+    refreshUsersGauge(db),
+    refreshChatsGauge(db),
+    refreshAliasesGauge(db),
+    refreshAttachmentsGauge(db),
+  ]);
+}
+
+async function refreshUsersGauge(db: Db): Promise<void> {
+  const { total, allowed } = await countUsers(db);
+  usersGauge.set({ state: "total" }, total);
+  usersGauge.set({ state: "allowed" }, allowed);
+}
+
+async function refreshChatsGauge(db: Db): Promise<void> {
+  const { total, active } = await countChats(db);
+  chatsGauge.set({ state: "total" }, total);
+  chatsGauge.set({ state: "active" }, active);
+}
+
+async function refreshAliasesGauge(db: Db): Promise<void> {
+  aliasesGauge.reset();
+  const rows = await countAliasesByStatus(db);
+  for (const row of rows) {
+    aliasesGauge.set({ status: row.status }, row.count);
+  }
+}
+
+async function refreshAttachmentsGauge(db: Db): Promise<void> {
+  const { count: rowCount, bytes } = await countAttachmentStorage(db);
+  attachmentsStoredGauge.set(rowCount);
+  attachmentsStoredBytesGauge.set(bytes);
 }
 
 export function resetMetricsForTests(): void {

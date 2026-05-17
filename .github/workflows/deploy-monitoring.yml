@@ -1,0 +1,163 @@
+# Deploy the self-hosted monitoring stack (Prometheus, Grafana, Loki, Promtail)
+# to the staging VM.
+#
+# Required repository secrets:
+#   METRICS_BEARER_TOKEN_STAGING - bearer token Prometheus uses to scrape the
+#                                  staging app /metrics endpoint.
+#   METRICS_BEARER_TOKEN_PROD    - bearer token for prod scrape (optional;
+#                                  may be unset until prod scrape is enabled).
+name: Deploy Monitoring
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "monitoring/**"
+      - ".github/workflows/deploy-monitoring.yml"
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: deploy-monitoring
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate monitoring config
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install promtool
+        run: |
+          set -e
+          curl -sSL -o /tmp/prom.tar.gz \
+            https://github.com/prometheus/prometheus/releases/download/v2.55.1/prometheus-2.55.1.linux-amd64.tar.gz
+          tar -xzf /tmp/prom.tar.gz -C /tmp
+          sudo mv /tmp/prometheus-2.55.1.linux-amd64/promtool /usr/local/bin/promtool
+          promtool --version
+
+      # promtool check config opens any bearer_token_file paths referenced in
+      # the config, so we create the dummy secret files at the exact path the
+      # production config references (/etc/prometheus/secrets/...). This is
+      # the cleanest approach since it does not mutate the config under test.
+      - name: Stage dummy bearer token files
+        run: |
+          sudo mkdir -p /etc/prometheus/secrets
+          echo "dummy" | sudo tee /etc/prometheus/secrets/staging_token >/dev/null
+          echo "dummy" | sudo tee /etc/prometheus/secrets/prod_token >/dev/null
+
+      - name: promtool check config
+        run: promtool check config monitoring/prometheus/prometheus.yml
+
+      - name: Install yamllint
+        run: pip install --user yamllint
+
+      - name: yamllint monitoring/
+        run: |
+          yamllint -d "{extends: relaxed, rules: {line-length: disable}}" monitoring/
+
+      - name: Validate monitoring compose syntax
+        env:
+          MONITORING_BIND_IP: 127.0.0.1
+          GRAFANA_ADMIN_PASSWORD: x
+          GRAFANA_ADMIN_USER: admin
+        run: |
+          docker compose -f monitoring/docker-compose.monitoring.yml config -q
+
+  deploy:
+    name: Deploy monitoring stack to staging VPS
+    runs-on: [self-hosted, linux, x64, email-tg-staging]
+    needs: validate
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure monitoring_scrape network exists
+        run: |
+          ssh staging "docker network inspect monitoring_scrape >/dev/null 2>&1 || docker network create monitoring_scrape"
+
+      - name: Ensure monitoring directories exist
+        run: |
+          ssh staging "mkdir -p ~/monitoring/prometheus/secrets"
+
+      - name: Sync monitoring/ to staging
+        run: |
+          rsync -av --delete \
+            --exclude='prometheus/secrets/' \
+            --exclude='.env.example' \
+            monitoring/ staging:~/monitoring/
+
+      - name: Write staging bearer token
+        env:
+          TOKEN: ${{ secrets.METRICS_BEARER_TOKEN_STAGING }}
+        run: |
+          ssh staging "umask 077 && cat > ~/monitoring/prometheus/secrets/staging_token" <<< "${TOKEN}"
+
+      - name: Write prod bearer token (optional)
+        env:
+          TOKEN: ${{ secrets.METRICS_BEARER_TOKEN_PROD }}
+        run: |
+          ssh staging "umask 077 && cat > ~/monitoring/prometheus/secrets/prod_token" <<< "${TOKEN}" || true
+
+      - name: Bring up monitoring stack
+        run: |
+          ssh staging bash << 'EOF'
+          set -e
+          cd ~/monitoring
+          docker compose -f docker-compose.monitoring.yml --env-file .env pull
+          docker compose -f docker-compose.monitoring.yml --env-file .env up -d --remove-orphans
+          EOF
+
+      - name: Wait for all monitoring containers to be healthy
+        run: |
+          ssh staging bash << 'EOF'
+          set -e
+          cd ~/monitoring
+          services="prometheus grafana loki promtail"
+          attempts=0
+          while true; do
+            attempts=$((attempts + 1))
+            all_healthy=true
+            for svc in $services; do
+              cid=$(docker compose -f docker-compose.monitoring.yml --env-file .env ps -q "$svc" || true)
+              if [ -z "$cid" ]; then
+                all_healthy=false
+                echo "$svc: no container yet"
+                continue
+              fi
+              health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cid")
+              echo "$svc: $health"
+              if [ "$health" = "unhealthy" ] || [ "$health" = "exited" ] || [ "$health" = "dead" ]; then
+                docker logs "$cid" --tail 100
+                exit 1
+              fi
+              if [ "$health" != "healthy" ] && [ "$health" != "running" ]; then
+                all_healthy=false
+              fi
+            done
+            if [ "$all_healthy" = "true" ]; then
+              break
+            fi
+            if [ "$attempts" -ge 30 ]; then
+              echo "Timed out waiting for monitoring stack to become healthy"
+              for svc in $services; do
+                cid=$(docker compose -f docker-compose.monitoring.yml --env-file .env ps -q "$svc" || true)
+                if [ -n "$cid" ]; then
+                  echo "=== logs for $svc ==="
+                  docker logs "$cid" --tail 100 || true
+                fi
+              done
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "Monitoring stack healthy at $(date)"
+          EOF
+
+      - name: Show monitoring compose ps
+        run: |
+          ssh staging "cd ~/monitoring && docker compose -f docker-compose.monitoring.yml --env-file .env ps"
