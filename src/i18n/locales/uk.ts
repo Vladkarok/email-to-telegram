@@ -77,6 +77,7 @@ ${settingsHelp}
 /allow add &lt;alias&gt; &lt;email_or_domain&gt;
 /allow remove &lt;alias&gt; &lt;email_or_domain&gt;
 ${billingSection}
+/donate — підтримати проєкт
 /help — показати це повідомлення
 
 ${safetyNotes}
@@ -352,6 +353,13 @@ ${safetyNotes}
     manualBilling:
       "ℹ️ Self-serve платежі тимчасово недоступні.\n\nHosted-оновлення зараз обробляються вручну. Зверніться до підтримки, щоб оновити, продовжити, скасувати план або поставити питання щодо білінгу.",
   },
+  donate: {
+    title: "☕ Підтримати проєкт",
+    body: "Цей бот безкоштовний і підтримується як особистий проєкт.\nЯкщо він вам корисний — невелика донація допомагає тримати його живим.\n\nДонати — це подарунок, а не оплата сервісу. Жодних перків за донат немає.",
+    button: "💛 Підтримати",
+    unavailable: "ℹ️ Донати не налаштовані на цьому інстансі.",
+    quotaHint: (url: string) => `\n\n💛 Потрібно більше ліміту? Підтримайте проєкт: ${url}`,
+  },
   botCommands: [
     { command: "start", description: "Розпочати" },
     { command: "newemail", description: "Створити новий email-аліас" },
@@ -368,6 +376,7 @@ ${safetyNotes}
     { command: "billing", description: "Керування білінгом" },
     { command: "upgrade", description: "Оновити план" },
     { command: "portal", description: "Відкрити Stripe billing portal" },
+    { command: "donate", description: "Підтримати проєкт" },
     { command: "help", description: "Показати довідку" },
   ],
   usageSummary: {

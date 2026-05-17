@@ -80,6 +80,7 @@ Solo i mittenti corrispondenti a un'allow rule possono consegnare posta a un ali
 /allow add &lt;alias&gt; &lt;email_or_domain&gt;
 /allow remove &lt;alias&gt; &lt;email_or_domain&gt;
 ${billingSection}
+/donate — supporta il progetto
 /help — mostra questo messaggio
 
 ${safetyNotes}
@@ -360,6 +361,13 @@ Esempi:
     manualBilling:
       "ℹ️ I pagamenti self-serve sono temporaneamente non disponibili.\n\nGli upgrade hosted sono gestiti manualmente per il momento. Contatta il supporto per fare upgrade, rinnovare, annullare o per domande sulla fatturazione.",
   },
+  donate: {
+    title: "☕ Supporta il progetto",
+    body: "Questo bot è gratuito ed è mantenuto come progetto personale.\nSe ti è utile, una piccola donazione aiuta a tenerlo in vita.\n\nLe donazioni sono regali, non un pagamento per il servizio — non sono legati vantaggi alla donazione.",
+    button: "💛 Dona",
+    unavailable: "ℹ️ Le donazioni non sono configurate su questa istanza.",
+    quotaHint: (url: string) => `\n\n💛 Vuoi più margine? Supporta il progetto: ${url}`,
+  },
   botCommands: [
     { command: "start", description: "Inizia" },
     { command: "newemail", description: "Crea un nuovo alias email" },
@@ -376,6 +384,7 @@ Esempi:
     { command: "billing", description: "Gestisci la fatturazione" },
     { command: "upgrade", description: "Aggiorna il piano" },
     { command: "portal", description: "Apri il portale Stripe" },
+    { command: "donate", description: "Supporta il progetto" },
     { command: "help", description: "Mostra aiuto" },
   ],
   usageSummary: {
