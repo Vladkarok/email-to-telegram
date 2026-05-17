@@ -137,6 +137,22 @@ jobs:
           docker compose -f docker-compose.monitoring.yml --env-file .env up -d --remove-orphans
           EOF
 
+      # `compose up -d` only recreates containers whose Docker config changed.
+      # When only the bind-mounted prometheus.yml or loki/promtail config files
+      # change, the existing prometheus/loki/promtail containers keep the old
+      # inode of the mounted file and never see the update. Explicitly POST to
+      # Prometheus's reload endpoint (enabled via --web.enable-lifecycle in the
+      # compose command) so scrape-job edits take effect on the next scrape.
+      - name: Reload Prometheus config
+        run: |
+          ssh staging bash << 'EOF'
+          set -e
+          cd ~/monitoring
+          docker compose -f docker-compose.monitoring.yml --env-file .env exec -T prometheus \
+            wget -qO- --post-data= http://127.0.0.1:9090/-/reload >/dev/null
+          echo "Prometheus config reloaded."
+          EOF
+
       - name: Wait for all monitoring containers to be healthy
         run: |
           ssh staging bash << 'EOF'
