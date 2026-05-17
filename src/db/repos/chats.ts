@@ -1,7 +1,17 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { eq, sql } from "drizzle-orm";
+import { count, eq, sql } from "drizzle-orm";
 import { chats, type Chat } from "../schema.js";
 import type * as schema from "../schema.js";
+
+export async function countChats(db: Db): Promise<{ total: number; active: number }> {
+  const [row] = await db
+    .select({
+      total: count(),
+      active: sql<number>`count(*) filter (where ${chats.isActive} = true)`,
+    })
+    .from(chats);
+  return { total: Number(row?.total ?? 0), active: Number(row?.active ?? 0) };
+}
 
 type Db = NodePgDatabase<typeof schema>;
 

@@ -1,7 +1,17 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { attachments, type Attachment, type NewAttachment } from "../schema.js";
-import { eq } from "drizzle-orm";
+import { count, eq, sql } from "drizzle-orm";
 import type * as schema from "../schema.js";
+
+export async function countAttachmentStorage(db: Db): Promise<{ count: number; bytes: number }> {
+  const [row] = await db
+    .select({
+      count: count(),
+      bytes: sql<number>`coalesce(sum(${attachments.sizeBytes}), 0)`,
+    })
+    .from(attachments);
+  return { count: Number(row?.count ?? 0), bytes: Number(row?.bytes ?? 0) };
+}
 
 type Db = NodePgDatabase<typeof schema>;
 

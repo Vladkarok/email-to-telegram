@@ -1,0 +1,238 @@
+# Monitoring stack for the email-to-telegram staging VM.
+# Grafana is the only service published to the host, and only on the private
+# bind IP. All other services live on the internal docker network.
+#
+# Required environment variables (see .env.example):
+#   MONITORING_BIND_IP          - private interface IP for Grafana publish
+#   GRAFANA_ADMIN_PASSWORD      - initial Grafana admin password
+#   METRICS_BEARER_TOKEN_STAGING - token to scrape the staging app /metrics
+#   METRICS_BEARER_TOKEN_PROD    - token to scrape the prod app /metrics
+#
+# Secret files for Prometheus bearer auth are written by the deploy workflow
+# into ./prometheus/secrets/{staging_token,prod_token} on the host.
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.listen-address=0.0.0.0:9090
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/secrets:/etc/prometheus/secrets:ro
+      - prometheus_data:/prometheus
+    networks:
+      - monitoring_internal
+      - monitoring_scrape
+    mem_limit: 512m
+    pids_limit: 200
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  grafana:
+    image: grafana/grafana-oss:11.3.0
+    restart: unless-stopped
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:?GRAFANA_ROOT_URL must be set to the VPN URL operators use to reach Grafana, e.g. http://10.0.88.3:3001/}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    networks:
+      - monitoring_internal
+    ports:
+      - "${MONITORING_BIND_IP:?MONITORING_BIND_IP must be set to the private interface for VPN access}:3001:3000"
+    mem_limit: 384m
+    pids_limit: 200
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test:
+        ["CMD-SHELL", 'wget -qO- http://127.0.0.1:3000/api/health | grep -q ''"database": "ok"''']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  loki_init:
+    image: busybox:1.37
+    restart: "no"
+    command: ["sh", "-c", "mkdir -p /loki && chown -R 10001:10001 /loki"]
+    volumes:
+      - loki_data:/loki
+    user: "0:0"
+
+  loki:
+    image: grafana/loki:2.9.10
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yml
+    user: "10001:10001"
+    depends_on:
+      loki_init:
+        condition: service_completed_successfully
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+    networks:
+      - monitoring_internal
+    mem_limit: 384m
+    pids_limit: 200
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3100/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # Restricted Docker API proxy. Promtail needs container metadata for
+  # service discovery, but mounting the raw docker.sock into Promtail would
+  # grant root-equivalent host access on container compromise. The proxy
+  # exposes only the read-only endpoints Promtail needs (containers, info,
+  # ping, version) and disables every write verb.
+  docker_socket_proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    restart: unless-stopped
+    environment:
+      # Read-only endpoints Promtail's Docker SD needs. NETWORKS is required
+      # because docker_sd_configs resolves container network metadata during
+      # refresh; with NETWORKS=0 the proxy returns 403 and SD silently
+      # produces no targets. All write verbs (POST/DELETE/BUILD/COMMIT/etc.)
+      # remain disabled so a Promtail compromise cannot mutate the daemon.
+      CONTAINERS: 1
+      INFO: 1
+      PING: 1
+      VERSION: 1
+      EVENTS: 1
+      NETWORKS: 1
+      POST: 0
+      DELETE: 0
+      AUTH: 0
+      BUILD: 0
+      COMMIT: 0
+      CONFIGS: 0
+      DISTRIBUTION: 0
+      EXEC: 0
+      GRPC: 0
+      IMAGES: 0
+      NODES: 0
+      PLUGINS: 0
+      SECRETS: 0
+      SERVICES: 0
+      SESSION: 0
+      SWARM: 0
+      SYSTEM: 0
+      TASKS: 0
+      VOLUMES: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - monitoring_internal
+    mem_limit: 64m
+    pids_limit: 50
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2375/_ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  promtail:
+    image: grafana/promtail:2.9.10
+    restart: unless-stopped
+    depends_on:
+      loki:
+        condition: service_healthy
+      docker_socket_proxy:
+        condition: service_healthy
+    command: -config.file=/etc/promtail/promtail-config.yml
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      # Read-only container log directory for filesystem tailing of JSON logs.
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Persistent positions file so Promtail resumes tailing from the
+      # right offset across restarts instead of replaying or skipping logs.
+      - promtail_positions:/positions
+    networks:
+      - monitoring_internal
+    mem_limit: 192m
+    pids_limit: 200
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # No healthcheck: the grafana/promtail:2.9.10 image ships without
+    # wget or curl, so an HTTP probe is not possible without a custom
+    # image. The deploy workflow's wait loop already treats containers
+    # without a healthcheck as healthy when their Docker State is
+    # `running`.
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  loki_data:
+  promtail_positions:
+
+networks:
+  # Internal-only network for grafana <-> prometheus <-> loki traffic.
+  monitoring_internal:
+    driver: bridge
+  # Shared external network for scraping app containers. Created out-of-band
+  # via: docker network create monitoring_scrape
+  # The app compose joins this same network so prometheus can resolve "app".
+  monitoring_scrape:
+    external: true

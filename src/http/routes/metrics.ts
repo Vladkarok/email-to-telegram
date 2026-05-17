@@ -1,7 +1,8 @@
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 import type { FastifyInstance } from "fastify";
 import { getDb } from "../../db/client.js";
-import { metricsRegistry, refreshActiveOrganizationsByPlan } from "../../observability/metrics.js";
+import { metricsRegistry, refreshBusinessGauges } from "../../observability/metrics.js";
+import { getLogger } from "../../utils/logger.js";
 
 const HMAC_CANARY = randomBytes(32);
 
@@ -16,7 +17,11 @@ export function metricsRoute(app: FastifyInstance, token: string): void {
         return;
       }
 
-      await refreshActiveOrganizationsByPlan(getDb());
+      try {
+        await refreshBusinessGauges(getDb());
+      } catch (err) {
+        getLogger().warn({ err }, "failed to refresh business gauges; serving last known values");
+      }
       await reply.type(metricsRegistry.contentType).send(await metricsRegistry.metrics());
     },
   );
