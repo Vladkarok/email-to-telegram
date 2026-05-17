@@ -12,16 +12,16 @@ import {
   check,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
-import { organizations } from "./org.js";
+import { users } from "./users.js";
 
-// ─── organization_usage_months ───────────────────────────────────────────────
+// ─── user_usage_months ───────────────────────────────────────────────────────
 
-export const organizationUsageMonths = pgTable(
-  "organization_usage_months",
+export const userUsageMonths = pgTable(
+  "user_usage_months",
   {
-    organizationId: uuid("organization_id")
+    userId: bigint("user_id", { mode: "bigint" })
       .notNull()
-      .references(() => organizations.id, { onDelete: "cascade" }),
+      .references(() => users.id, { onDelete: "cascade" }),
     month: varchar("month", { length: 7 }).notNull(),
     deliveredCount: integer("delivered_count").notNull().default(0),
     rejectedCount: integer("rejected_count").notNull().default(0),
@@ -32,11 +32,11 @@ export const organizationUsageMonths = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    primaryKey({ columns: [t.organizationId, t.month] }),
-    check("chk_org_usage_month", sql`${t.month} ~ '^[0-9]{4}-[0-9]{2}$'`),
-    check("chk_org_usage_delivered_nonnegative", sql`${t.deliveredCount} >= 0`),
-    check("chk_org_usage_rejected_nonnegative", sql`${t.rejectedCount} >= 0`),
-    check("chk_org_usage_egress_nonnegative", sql`${t.egressBytes} >= 0`),
+    primaryKey({ columns: [t.userId, t.month] }),
+    check("chk_user_usage_month", sql`${t.month} ~ '^[0-9]{4}-[0-9]{2}$'`),
+    check("chk_user_usage_delivered_nonnegative", sql`${t.deliveredCount} >= 0`),
+    check("chk_user_usage_rejected_nonnegative", sql`${t.rejectedCount} >= 0`),
+    check("chk_user_usage_egress_nonnegative", sql`${t.egressBytes} >= 0`),
   ],
 );
 
@@ -56,10 +56,9 @@ export const manualBillingEvents = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
-    organizationId: uuid("organization_id")
+    telegramUserId: bigint("telegram_user_id", { mode: "bigint" })
       .notNull()
-      .references(() => organizations.id, { onDelete: "cascade" }),
-    telegramUserId: bigint("telegram_user_id", { mode: "bigint" }),
+      .references(() => users.id, { onDelete: "cascade" }),
     planCode: varchar("plan_code", { length: 32 }).notNull(),
     subscriptionStatus: varchar("subscription_status", { length: 32 }).notNull(),
     paidThroughAt: timestamp("paid_through_at", { withTimezone: true }),
@@ -70,13 +69,10 @@ export const manualBillingEvents = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    index("idx_manual_billing_events_org_created").on(t.organizationId, t.createdAt),
-    uniqueIndex("idx_manual_billing_events_org_payment_ref")
-      .on(t.organizationId, t.paymentReference)
-      .where(sql`payment_reference is not null`),
+    index("idx_manual_billing_events_user_created").on(t.telegramUserId, t.createdAt),
     uniqueIndex("idx_manual_billing_events_user_payment_ref")
       .on(t.telegramUserId, t.paymentReference)
-      .where(sql`telegram_user_id is not null and payment_reference is not null`),
+      .where(sql`payment_reference is not null`),
     uniqueIndex("idx_manual_billing_events_payment_ref")
       .on(t.paymentReference)
       .where(sql`payment_reference is not null`),
@@ -93,8 +89,8 @@ export const manualBillingEvents = pgTable(
 
 // ─── Type exports ─────────────────────────────────────────────────────────────
 
-export type OrganizationUsageMonth = typeof organizationUsageMonths.$inferSelect;
-export type NewOrganizationUsageMonth = typeof organizationUsageMonths.$inferInsert;
+export type UserUsageMonth = typeof userUsageMonths.$inferSelect;
+export type NewUserUsageMonth = typeof userUsageMonths.$inferInsert;
 export type BillingWebhookEvent = typeof billingWebhookEvents.$inferSelect;
 export type NewBillingWebhookEvent = typeof billingWebhookEvents.$inferInsert;
 export type ManualBillingEvent = typeof manualBillingEvents.$inferSelect;
