@@ -113,11 +113,14 @@ jobs:
           # the on-host file must contain only the raw token.
           printf '%s' "${TOKEN}" | ssh staging "umask 077 && cat > ~/monitoring/prometheus/secrets/staging_token"
 
-      - name: Write prod bearer token
-        if: ${{ secrets.METRICS_BEARER_TOKEN_PROD != '' }}
+      - name: Write prod bearer token (skipped when secret is unset)
         env:
           TOKEN: ${{ secrets.METRICS_BEARER_TOKEN_PROD }}
         run: |
+          if [ -z "${TOKEN}" ]; then
+            echo "METRICS_BEARER_TOKEN_PROD is not configured; skipping prod token write."
+            exit 0
+          fi
           printf '%s' "${TOKEN}" | ssh staging "umask 077 && cat > ~/monitoring/prometheus/secrets/prod_token"
 
       - name: Bring up monitoring stack
