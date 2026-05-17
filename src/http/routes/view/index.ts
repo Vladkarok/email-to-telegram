@@ -1,6 +1,10 @@
 import { Readable, Transform } from "node:stream";
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { checkEgressLimit, withOrganizationQuotaLock } from "../../../billing/limits.js";
+import { checkEgressLimit, withUserQuotaLock } from "../../../billing/limits.js";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type * as schema from "../../../db/schema.js";
+
+type Db = NodePgDatabase<typeof schema>;
 import { getDb } from "../../../db/client.js";
 import {
   type DeliveryViewLinkWithLog,
@@ -10,8 +14,8 @@ import {
 import { listAttachmentsByDeliveryLogId } from "../../../db/repos/attachments.js";
 import { createAttachmentLink } from "../../../db/repos/attachmentLinks.js";
 import {
-  decrementOrganizationUsageMonth,
-  incrementOrganizationUsageMonth,
+  decrementUserUsageMonth,
+  incrementUserUsageMonth,
   usageMonthForDate,
 } from "../../../db/repos/usage.js";
 import { parseEmail } from "../../../email/parser.js";
@@ -162,11 +166,12 @@ export function deliveryViewRoute(
       const bodyHtml = renderEmailBodyHtml(parsed);
       const quotaExceededError = new Error("privacy_view_egress_limit_exceeded");
       const alreadyClaimedError = new Error("privacy_view_already_claimed");
-      const viewResult = await withOrganizationQuotaLock(
+      const ownerUserId = link.deliveryLog.userId;
+      const viewResult = await withUserQuotaLock(
         getDb(),
-        link.deliveryLog.organizationId,
+        ownerUserId,
         async (
-          tx,
+          tx: Db,
         ): Promise<
           | { status: "already_claimed" }
           | { status: "quota_exceeded" }
@@ -204,7 +209,7 @@ export function deliveryViewRoute(
           const htmlBytes = Buffer.byteLength(html);
           const egressLimit = await checkEgressLimit(
             tx,
-            link.deliveryLog.organizationId,
+            ownerUserId,
             BigInt(htmlBytes),
             quotaMonth,
           );
@@ -217,9 +222,9 @@ export function deliveryViewRoute(
             throw alreadyClaimedError;
           }
 
-          if (link.deliveryLog.organizationId && htmlBytes > 0) {
-            await incrementOrganizationUsageMonth(tx, {
-              organizationId: link.deliveryLog.organizationId,
+          if (ownerUserId != null && htmlBytes > 0) {
+            await incrementUserUsageMonth(tx, {
+              userId: ownerUserId,
               month: quotaMonth,
               egressBytes: BigInt(htmlBytes),
             });
@@ -258,12 +263,7 @@ export function deliveryViewRoute(
       }
 
       const htmlBuffer = Buffer.from(viewResult.html, "utf8");
-      const trackedStream = trackReservedEgressUsage(
-        htmlBuffer,
-        reply,
-        link.deliveryLog.organizationId,
-        quotaMonth,
-      );
+      const trackedStream = trackReservedEgressUsage(htmlBuffer, reply, ownerUserId, quotaMonth);
       await reply
         .status(200)
         .type("text/html; charset=utf-8")
@@ -295,7 +295,7 @@ export function deliveryViewRoute(
 function trackReservedEgressUsage(
   body: Buffer,
   reply: FastifyReply,
-  organizationId: string | null,
+  userId: bigint | null,
   month: string,
 ): NodeJS.ReadableStream {
   const egressBytes = BigInt(body.length);
@@ -303,7 +303,7 @@ function trackReservedEgressUsage(
     return Readable.from([]);
   }
   const source = Readable.from(splitBuffer(body, 16 * 1024));
-  if (!organizationId) return source;
+  if (userId == null) return source;
 
   let completed = false;
   let observedBytes = 0n;
@@ -325,13 +325,20 @@ function trackReservedEgressUsage(
     if (completed) return;
     const rollbackBytes = egressBytes > observedBytes ? egressBytes - observedBytes : 0n;
     if (rollbackBytes <= 0n) return;
-    void decrementOrganizationUsageMonth(getDb(), {
-      organizationId,
+    void decrementUserUsageMonth(getDb(), {
+      userId,
       month,
       egressBytes: rollbackBytes,
     }).catch((err: unknown) => {
       getLogger().error(
-        { err, organizationId, month, egressBytes, observedBytes, rollbackBytes },
+        {
+          err,
+          userId: userId.toString(),
+          month,
+          egressBytes,
+          observedBytes,
+          rollbackBytes,
+        },
         "failed to release reserved egress usage",
       );
     });

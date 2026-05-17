@@ -1,19 +1,21 @@
 import { Transform } from "node:stream";
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { checkEgressLimit, withOrganizationQuotaLock } from "../../billing/limits.js";
+import { checkEgressLimit, withUserQuotaLock } from "../../billing/limits.js";
 import { getDb } from "../../db/client.js";
 import { findAttachmentLinkByToken, markLinkDownloaded } from "../../db/repos/attachmentLinks.js";
 import {
-  decrementOrganizationUsageMonth,
-  incrementOrganizationUsageMonth,
+  decrementUserUsageMonth,
+  incrementUserUsageMonth,
   usageMonthForDate,
 } from "../../db/repos/usage.js";
 import { openAttachmentStream } from "../../storage/disk.js";
 import { getLogger } from "../../utils/logger.js";
 import { verifyDownloadToken } from "../../utils/tokens.js";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type * as schema from "../../db/schema.js";
 
-// SVG excluded: can execute JS when opened directly as a document despite attachment disposition.
-// Text types use prefix matching (isSafeMime) to allow any stored charset variant.
+type Db = NodePgDatabase<typeof schema>;
+
 const SAFE_MIME_TYPES = new Set([
   "image/jpeg",
   "image/png",
@@ -24,11 +26,8 @@ const SAFE_MIME_TYPES = new Set([
   "application/pdf",
 ]);
 
-/** Return true for any MIME type safe to serve with its original charset. */
 function isSafeMime(mime: string): boolean {
   if (SAFE_MIME_TYPES.has(mime)) return true;
-  // Allow text/plain and text/csv with any (or no) charset parameter.
-  // Do NOT rewrite the stored charset — the raw bytes may not be UTF-8.
   if (mime === "text/plain" || mime.startsWith("text/plain;")) return true;
   if (mime === "text/csv" || mime.startsWith("text/csv;")) return true;
   return false;
@@ -47,14 +46,12 @@ export function downloadRoute(app: FastifyInstance): void {
         return;
       }
 
-      // Check expiry and one-time use (fast path before hitting DB again)
       const now = new Date();
       if (link.expiresAt <= now || link.downloadedAt) {
         await reply.status(410).send({ error: "link expired or already used" });
         return;
       }
 
-      // Verify HMAC integrity
       if (!verifyDownloadToken(token, link.attachmentId, link.expiresAt)) {
         await reply.status(403).send({ error: "invalid token" });
         return;
@@ -69,39 +66,29 @@ export function downloadRoute(app: FastifyInstance): void {
       }
       const { stream, size } = opened;
       const quotaMonth = usageMonthForDate();
+      const ownerUserId = link.attachment.userId;
 
-      const claimResult = await withOrganizationQuotaLock(
-        getDb(),
-        link.attachment.organizationId,
-        async (tx) => {
-          const egressLimit = await checkEgressLimit(
-            tx,
-            link.attachment.organizationId,
-            BigInt(size),
-            quotaMonth,
-          );
-          if (!egressLimit.ok) {
-            return { status: "quota_exceeded" as const };
-          }
+      const claimResult = await withUserQuotaLock(getDb(), ownerUserId, async (tx: Db) => {
+        const egressLimit = await checkEgressLimit(tx, ownerUserId, BigInt(size), quotaMonth);
+        if (!egressLimit.ok) {
+          return { status: "quota_exceeded" as const };
+        }
 
-          // Atomically claim the link only after the file was opened successfully.
-          // This avoids burning one-time URLs on transient decryption/open failures.
-          const claimed = await markLinkDownloaded(tx, link.id);
-          if (!claimed) {
-            return { status: "already_claimed" as const };
-          }
+        const claimed = await markLinkDownloaded(tx, link.id);
+        if (!claimed) {
+          return { status: "already_claimed" as const };
+        }
 
-          if (link.attachment.organizationId && size > 0) {
-            await incrementOrganizationUsageMonth(tx, {
-              organizationId: link.attachment.organizationId,
-              month: quotaMonth,
-              egressBytes: BigInt(size),
-            });
-          }
+        if (ownerUserId != null && size > 0) {
+          await incrementUserUsageMonth(tx, {
+            userId: ownerUserId,
+            month: quotaMonth,
+            egressBytes: BigInt(size),
+          });
+        }
 
-          return { status: "ok" as const };
-        },
-      );
+        return { status: "ok" as const };
+      });
       if (claimResult.status === "quota_exceeded") {
         await opened.dispose?.();
         await reply.status(403).send({ error: "download quota exceeded" });
@@ -113,21 +100,17 @@ export function downloadRoute(app: FastifyInstance): void {
         return;
       }
 
-      // Strip characters that would break the quoted-string in Content-Disposition (RFC 6266)
       const safeFilename = (link.attachment.originalFilename ?? "attachment").replace(
         /["\\\r\n]/g,
         "_",
       );
 
-      // Serve the stored MIME type if it is in the allowlist; fall back to
-      // application/octet-stream for anything else.  Do not override the stored
-      // charset — the raw bytes may not be UTF-8.
       const rawMime = (link.attachment.contentType ?? "").toLowerCase().trim();
       const contentType = isSafeMime(rawMime) ? rawMime : "application/octet-stream";
       const trackedStream = trackReservedEgressUsage(
         stream,
         reply,
-        link.attachment.organizationId,
+        ownerUserId,
         quotaMonth,
         BigInt(size),
       );
@@ -145,11 +128,11 @@ export function downloadRoute(app: FastifyInstance): void {
 function trackReservedEgressUsage(
   stream: NodeJS.ReadableStream,
   reply: FastifyReply,
-  organizationId: string | null,
+  userId: bigint | null,
   month: string,
   egressBytes: bigint,
 ): NodeJS.ReadableStream {
-  if (!organizationId || egressBytes <= 0n) return stream;
+  if (userId == null || egressBytes <= 0n) return stream;
 
   let completed = false;
   let observedBytes = 0n;
@@ -171,13 +154,20 @@ function trackReservedEgressUsage(
     if (completed) return;
     const rollbackBytes = egressBytes > observedBytes ? egressBytes - observedBytes : 0n;
     if (rollbackBytes <= 0n) return;
-    void decrementOrganizationUsageMonth(getDb(), {
-      organizationId,
+    void decrementUserUsageMonth(getDb(), {
+      userId,
       month,
       egressBytes: rollbackBytes,
     }).catch((err: unknown) => {
       getLogger().error(
-        { err, organizationId, month, egressBytes, observedBytes, rollbackBytes },
+        {
+          err,
+          userId: userId.toString(),
+          month,
+          egressBytes,
+          observedBytes,
+          rollbackBytes,
+        },
         "failed to release reserved egress usage",
       );
     });

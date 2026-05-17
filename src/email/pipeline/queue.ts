@@ -14,8 +14,8 @@ import { findAliasForInbound } from "../inboundRouting.js";
 import { countRecentDeliveriesByAlias, createDeliveryLog } from "../../db/repos/deliveryLogs.js";
 import { prepareDeliveryLogMetadataWrite } from "../../security/deliveryLogMetadata.js";
 import { checkInboundLimit } from "../../billing/limits.js";
-import { incrementOrganizationUsageMonth, usageMonthForDate } from "../../db/repos/usage.js";
-import { incrementOrganizationStorageUsage } from "../../db/repos/storageUsage.js";
+import { incrementUserUsageMonth, usageMonthForDate } from "../../db/repos/usage.js";
+import { incrementUserStorageUsage } from "../../db/repos/storageUsage.js";
 import type { Db, PipelineInput, QueueInboundResult } from "./types.js";
 import { recordQuotaRejection } from "../../observability/metrics.js";
 
@@ -58,9 +58,7 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
     0n,
   );
   const queueResult = await db.transaction(async (tx) => {
-    if (alias.organizationId) {
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${alias.organizationId}))`);
-    }
+    await tx.execute(sql`select pg_advisory_xact_lock(${alias.createdBy})`);
 
     // Serialize per-alias queue decisions so the hourly cap cannot be exceeded
     // by concurrent requests racing between COUNT(*) and INSERT.
@@ -68,7 +66,7 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
 
     const inboundLimit = await checkInboundLimit(
       tx as Db,
-      alias.organizationId,
+      alias.createdBy,
       rawEmail.length,
       BigInt(rawEmail.length) + reservedAttachmentBytes,
     );
@@ -102,7 +100,7 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
     const deliveryLog = await createDeliveryLog(tx as Db, {
       id: deliveryLogId,
       emailAddressId: alias.id,
-      organizationId: alias.organizationId,
+      userId: alias.createdBy,
       messageIdHeader: parsed.messageId,
       bodySha256: parsed.bodySha256,
       bodyDedupApplied: alias.bodyDedupEnabled ?? false,
@@ -129,17 +127,15 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
 
     // Hosted monthly usage is charged once the email is accepted into durable processing.
     // This intentionally counts later Telegram send failures because infrastructure was used.
-    if (alias.organizationId) {
-      await incrementOrganizationUsageMonth(tx as Db, {
-        organizationId: alias.organizationId,
-        month: usageMonthForDate(),
-        deliveredCount: 1,
-      });
-      await incrementOrganizationStorageUsage(tx as Db, alias.organizationId, {
-        rawEmailBytes: BigInt(rawEmail.length),
-        attachmentBytes: reservedAttachmentBytes,
-      });
-    }
+    await incrementUserUsageMonth(tx as Db, {
+      userId: alias.createdBy,
+      month: usageMonthForDate(),
+      deliveredCount: 1,
+    });
+    await incrementUserStorageUsage(tx as Db, alias.createdBy, {
+      rawEmailBytes: BigInt(rawEmail.length),
+      attachmentBytes: reservedAttachmentBytes,
+    });
 
     return { kind: "queued" as const, deliveryLog };
   });
