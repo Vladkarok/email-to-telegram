@@ -8,7 +8,7 @@ export async function donateHandler(ctx: Context): Promise<void> {
   const locale = await resolveDonateLocale(ctx);
   const messages = getMessages(locale);
 
-  if (!config.donationUrl) {
+  if (config.billingProvider !== "donation" || !config.donationUrl) {
     await ctx.reply(messages.donate.unavailable);
     return;
   }

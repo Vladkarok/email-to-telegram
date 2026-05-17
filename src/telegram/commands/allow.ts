@@ -205,7 +205,7 @@ async function replyForAllowRuleLimitFailure(
         escapeHtml(localPart),
         limit.used ?? limitValue,
         limitValue,
-      ) + donateHintSuffix(loadConfig(), messages);
+      ) + donateHintSuffix(loadConfig(), messages, "html");
     await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
     return;
   }

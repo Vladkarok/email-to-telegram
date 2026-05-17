@@ -345,7 +345,7 @@ async function replyForAliasLimitFailure(
     );
     const text =
       messages.newemail.aliasLimitReached(limit.used, limit.limit ?? 0) +
-      donateHintSuffix(config, messages);
+      donateHintSuffix(config, messages, "plain");
     await ctx.reply(text, { reply_markup: keyboard });
     return;
   }

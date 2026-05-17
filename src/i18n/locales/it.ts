@@ -366,7 +366,8 @@ Esempi:
     body: "Questo bot è gratuito ed è mantenuto come progetto personale.\nSe ti è utile, una piccola donazione aiuta a tenerlo in vita.\n\nLe donazioni sono regali, non un pagamento per il servizio — non sono legati vantaggi alla donazione.",
     button: "💛 Dona",
     unavailable: "ℹ️ Le donazioni non sono configurate su questa istanza.",
-    quotaHint: (url: string) => `\n\n💛 Vuoi più margine? Supporta il progetto: ${url}`,
+    quotaHint: (url: string) =>
+      `\n\n💛 Se questo bot ti è utile, puoi supportare il progetto: ${url}`,
   },
   botCommands: [
     { command: "start", description: "Inizia" },

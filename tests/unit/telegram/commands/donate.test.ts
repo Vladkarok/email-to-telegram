@@ -30,7 +30,7 @@ describe("/donate command", () => {
   });
 
   it("replies with title, body, and inline button linking to DONATION_URL", async () => {
-    mockLoadConfig.mockReturnValue({ donationUrl: DONATION_URL });
+    mockLoadConfig.mockReturnValue({ billingProvider: "donation", donationUrl: DONATION_URL });
     const ctx = createMockCtx({ chatType: "private" });
 
     await donateHandler(ctx);
@@ -48,12 +48,23 @@ describe("/donate command", () => {
   });
 
   it("replies with unavailable message when donationUrl is not set", async () => {
-    mockLoadConfig.mockReturnValue({ donationUrl: undefined });
+    mockLoadConfig.mockReturnValue({ billingProvider: "donation", donationUrl: undefined });
     const ctx = createMockCtx({ chatType: "private" });
 
     await donateHandler(ctx);
 
     expect(ctx.reply).toHaveBeenCalledTimes(1);
+    const [text, options] = ctx.reply.mock.calls[0] as [string, unknown];
+    expect(text).toContain("not configured");
+    expect(options).toBeUndefined();
+  });
+
+  it("replies with unavailable when DONATION_URL is set but provider is not donation", async () => {
+    mockLoadConfig.mockReturnValue({ billingProvider: "stripe", donationUrl: DONATION_URL });
+    const ctx = createMockCtx({ chatType: "private" });
+
+    await donateHandler(ctx);
+
     const [text, options] = ctx.reply.mock.calls[0] as [string, unknown];
     expect(text).toContain("not configured");
     expect(options).toBeUndefined();

@@ -356,7 +356,8 @@ Examples:
     body: "This bot is free to use and maintained as a personal project.\nIf it's useful to you, a small donation keeps the lights on.\n\nDonations are gifts, not payment for service — there are no perks tied to a donation.",
     button: "💛 Donate",
     unavailable: "ℹ️ Donations are not configured on this instance.",
-    quotaHint: (url: string) => `\n\n💛 Want more headroom? Support the project: ${url}`,
+    quotaHint: (url: string) =>
+      `\n\n💛 If this bot is useful to you, you can support the project: ${url}`,
   },
   botCommands: [
     { command: "start", description: "Get started" },
