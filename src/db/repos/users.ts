@@ -1,7 +1,17 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { eq, sql } from "drizzle-orm";
+import { count, eq, sql } from "drizzle-orm";
 import { users, type User, type NewUser } from "../schema.js";
 import type * as schema from "../schema.js";
+
+export async function countUsers(db: Db): Promise<{ total: number; allowed: number }> {
+  const [row] = await db
+    .select({
+      total: count(),
+      allowed: sql<number>`count(*) filter (where ${users.isAllowed} = true)`,
+    })
+    .from(users);
+  return { total: Number(row?.total ?? 0), allowed: Number(row?.allowed ?? 0) };
+}
 
 type Db = NodePgDatabase<typeof schema>;
 

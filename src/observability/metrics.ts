@@ -2,6 +2,10 @@ import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from "prom
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema.js";
 import { countOrganizationsByPlan } from "../db/repos/organizations.js";
+import { countUsers } from "../db/repos/users.js";
+import { countChats } from "../db/repos/chats.js";
+import { countAliasesByStatus } from "../db/repos/aliases.js";
+import { countAttachmentStorage } from "../db/repos/attachments.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -86,6 +90,45 @@ const activeOrganizationsByPlan = new Gauge({
   registers: [metricsRegistry],
 });
 
+const usersGauge = new Gauge({
+  name: "email_to_telegram_users",
+  help: "Telegram users known to the bot, partitioned by allow status.",
+  labelNames: ["state"] as const,
+  registers: [metricsRegistry],
+});
+
+const chatsGauge = new Gauge({
+  name: "email_to_telegram_chats",
+  help: "Telegram chats known to the bot, partitioned by activity.",
+  labelNames: ["state"] as const,
+  registers: [metricsRegistry],
+});
+
+const aliasesGauge = new Gauge({
+  name: "email_to_telegram_aliases",
+  help: "Email aliases by status.",
+  labelNames: ["status"] as const,
+  registers: [metricsRegistry],
+});
+
+const organizationsTotalGauge = new Gauge({
+  name: "email_to_telegram_organizations_total",
+  help: "Total organizations across all plans.",
+  registers: [metricsRegistry],
+});
+
+const attachmentsStoredGauge = new Gauge({
+  name: "email_to_telegram_attachments_stored",
+  help: "Attachment rows currently stored in the database.",
+  registers: [metricsRegistry],
+});
+
+const attachmentsStoredBytesGauge = new Gauge({
+  name: "email_to_telegram_attachments_stored_bytes",
+  help: "Sum of stored attachment sizes in bytes.",
+  registers: [metricsRegistry],
+});
+
 export function recordHttpRequest(input: {
   route: string;
   method: string;
@@ -129,12 +172,56 @@ export function recordQuotaRejection(reason: string): void {
   quotaRejectionsTotal.inc({ reason });
 }
 
-export async function refreshActiveOrganizationsByPlan(db: Db): Promise<void> {
+// All five business reads happen first; gauge mutations only execute once
+// every read has succeeded. This makes `/metrics` either fully refresh to
+// a consistent snapshot or fully retain its previous values on failure,
+// matching the route's "serving last known values" promise.
+export async function refreshBusinessGauges(db: Db): Promise<void> {
+  const [orgRows, userCounts, chatCounts, aliasRows, attachmentStats] = await Promise.all([
+    countOrganizationsByPlan(db),
+    countUsers(db),
+    countChats(db),
+    countAliasesByStatus(db),
+    countAttachmentStorage(db),
+  ]);
+
+  applyOrganizationsGauges(orgRows);
+  applyUsersGauge(userCounts);
+  applyChatsGauge(chatCounts);
+  applyAliasesGauge(aliasRows);
+  applyAttachmentsGauge(attachmentStats);
+}
+
+function applyOrganizationsGauges(rows: Array<{ planCode: string; count: number }>): void {
   activeOrganizationsByPlan.reset();
-  const rows = await countOrganizationsByPlan(db);
+  let total = 0;
   for (const row of rows) {
     activeOrganizationsByPlan.set({ plan: row.planCode }, row.count);
+    total += row.count;
   }
+  organizationsTotalGauge.set(total);
+}
+
+function applyUsersGauge(counts: { total: number; allowed: number }): void {
+  usersGauge.set({ state: "total" }, counts.total);
+  usersGauge.set({ state: "allowed" }, counts.allowed);
+}
+
+function applyChatsGauge(counts: { total: number; active: number }): void {
+  chatsGauge.set({ state: "total" }, counts.total);
+  chatsGauge.set({ state: "active" }, counts.active);
+}
+
+function applyAliasesGauge(rows: Array<{ status: string; count: number }>): void {
+  aliasesGauge.reset();
+  for (const row of rows) {
+    aliasesGauge.set({ status: row.status }, row.count);
+  }
+}
+
+function applyAttachmentsGauge(stats: { count: number; bytes: number }): void {
+  attachmentsStoredGauge.set(stats.count);
+  attachmentsStoredBytesGauge.set(stats.bytes);
 }
 
 export function resetMetricsForTests(): void {

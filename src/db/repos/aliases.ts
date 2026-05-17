@@ -126,6 +126,16 @@ export async function countActiveAliasesByOrganization(
   return row?.count ?? 0;
 }
 
+export async function countAliasesByStatus(
+  db: Db,
+): Promise<Array<{ status: string; count: number }>> {
+  const rows = await db
+    .select({ status: emailAddresses.status, count: count() })
+    .from(emailAddresses)
+    .groupBy(emailAddresses.status);
+  return rows.map((row) => ({ status: row.status, count: Number(row.count) }));
+}
+
 export async function updateAliasStatus(
   db: Db,
   id: string,

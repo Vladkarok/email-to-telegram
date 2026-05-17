@@ -1,3 +1,6 @@
+# The monitoring_scrape external network must exist before compose up:
+# docker network create monitoring_scrape || true
+# It is created automatically by the deploy-monitoring workflow on the staging VM.
 services:
   app:
     image: ghcr.io/vladkarok/email-to-telegram:${IMAGE_TAG:-latest}
@@ -13,6 +16,7 @@ services:
       - backups:/data/backups
     networks:
       - internal
+      - monitoring_scrape
     ports:
       - "${HOST_BIND_IP:?HOST_BIND_IP must be set to the private interface for the reverse proxy}:3000:3000"
     mem_limit: 256m
@@ -71,3 +75,5 @@ volumes:
 networks:
   internal:
     driver: bridge
+  monitoring_scrape:
+    external: true
