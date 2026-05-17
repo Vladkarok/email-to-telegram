@@ -31,16 +31,12 @@ scrape_configs:
         labels:
           env: staging
 
-  # Uncomment after confirming the staging VM can reach the prod private IP
-  # over the VPN / private network. The prod_token secret file must also be
-  # populated on the host before enabling this job.
-  #
-  # - job_name: email_to_telegram_prod
-  #   metrics_path: /metrics
-  #   scheme: http
-  #   scrape_interval: 30s
-  #   bearer_token_file: /etc/prometheus/secrets/prod_token
-  #   static_configs:
-  #     - targets: ["10.0.88.2:3000"]
-  #       labels:
-  #         env: prod
+  - job_name: email_to_telegram_prod
+    metrics_path: /metrics
+    scheme: http
+    scrape_interval: 30s
+    bearer_token_file: /etc/prometheus/secrets/prod_token
+    static_configs:
+      - targets: ["10.0.88.2:3000"]
+        labels:
+          env: prod
