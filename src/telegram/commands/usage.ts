@@ -3,12 +3,12 @@ import { loadConfig } from "../../config.js";
 import { getDb } from "../../db/client.js";
 import { getEffectivePlan } from "../../billing/limits.js";
 import { buildUsageSummaryText } from "../../billing/usageSummary.js";
-import { getPrimaryOrganizationForUser } from "../../tenant/currentOrganization.js";
-import { countActiveAliasesByOrganization } from "../../db/repos/aliases.js";
-import { countAllowRulesByOrganization } from "../../db/repos/allowRules.js";
-import { countDeliveryLogsByOrgInMonth } from "../../db/repos/deliveryLogs.js";
-import { getOrganizationStorageUsage } from "../../db/repos/storageUsage.js";
-import { getOrganizationUsageMonth, usageMonthForDate } from "../../db/repos/usage.js";
+import { findUserById } from "../../db/repos/users.js";
+import { countActiveAliasesByUser } from "../../db/repos/aliases.js";
+import { countAllowRulesByUser } from "../../db/repos/allowRules.js";
+import { countDeliveryLogsByUserInMonth } from "../../db/repos/deliveryLogs.js";
+import { getUserStorageUsage } from "../../db/repos/storageUsage.js";
+import { getUserUsageMonth, usageMonthForDate } from "../../db/repos/usage.js";
 import { getLogger } from "../../utils/logger.js";
 import { getMessages, resolveLocale } from "../../i18n/index.js";
 
@@ -24,13 +24,14 @@ export async function usageHandler(ctx: Context): Promise<void> {
   }
 
   try {
-    const organization = await getPrimaryOrganizationForUser(db, BigInt(ctx.from.id));
-    if (!organization) {
+    const userId = BigInt(ctx.from.id);
+    const user = await findUserById(db, userId);
+    if (!user) {
       await ctx.reply(messages.common.noHostedWorkspace);
       return;
     }
 
-    const plan = getEffectivePlan(organization);
+    const plan = getEffectivePlan(user);
     const month = usageMonthForDate();
 
     const [
@@ -42,17 +43,13 @@ export async function usageHandler(ctx: Context): Promise<void> {
       telegramFailed,
       telegramPending,
     ] = await Promise.all([
-      getOrganizationUsageMonth(db, organization.id, month),
-      getOrganizationStorageUsage(db, organization.id),
-      countActiveAliasesByOrganization(db, organization.id),
-      countAllowRulesByOrganization(db, organization.id),
-      countDeliveryLogsByOrgInMonth(db, organization.id, month, ["delivered"]),
-      countDeliveryLogsByOrgInMonth(db, organization.id, month, ["failed"]),
-      countDeliveryLogsByOrgInMonth(db, organization.id, month, [
-        "received",
-        "processing",
-        "retrying",
-      ]),
+      getUserUsageMonth(db, userId, month),
+      getUserStorageUsage(db, userId),
+      countActiveAliasesByUser(db, userId),
+      countAllowRulesByUser(db, userId),
+      countDeliveryLogsByUserInMonth(db, userId, month, ["delivered"]),
+      countDeliveryLogsByUserInMonth(db, userId, month, ["failed"]),
+      countDeliveryLogsByUserInMonth(db, userId, month, ["received", "processing", "retrying"]),
     ]);
 
     const storageBytes = (storage?.rawEmailBytes ?? 0n) + (storage?.attachmentBytes ?? 0n);

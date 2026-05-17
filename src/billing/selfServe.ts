@@ -11,16 +11,16 @@ export function isSelfServeBillingEnabled(
   return config.appMode === "hosted" && config.billingProvider === "stripe";
 }
 
-export function isManualBillingOrganization(organization: {
+export function isManualBillingUser(user: {
   planCode: string;
   stripeCustomerId?: string | null;
 }): boolean {
-  return organization.planCode !== "free" && !organization.stripeCustomerId;
+  return user.planCode !== "free" && !user.stripeCustomerId;
 }
 
 export function canUseSelfServeBilling(
   config: Pick<AppConfig, "appMode" | "billingProvider">,
-  organization: { planCode: string; stripeCustomerId?: string | null },
+  user: { planCode: string; stripeCustomerId?: string | null },
 ): boolean {
-  return isSelfServeBillingEnabled(config) && !isManualBillingOrganization(organization);
+  return isSelfServeBillingEnabled(config) && !isManualBillingUser(user);
 }

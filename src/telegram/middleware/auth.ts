@@ -6,7 +6,7 @@ import { upsertUser } from "../../db/repos/users.js";
 import {
   HOSTED_ONBOARDING_RATE_LIMIT_MESSAGE,
   HostedOnboardingRateLimitError,
-  ensurePersonalOrganizationForUserWithOnboardingLimit,
+  ensureUserWithOnboardingLimit,
 } from "../../abuse/hostedOnboarding.js";
 import { RateLimiter } from "../../utils/rateLimit.js";
 import { getMessages, localeFromTelegram } from "../../i18n/index.js";
@@ -33,9 +33,8 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
   });
 
   if (loadConfig().appMode === "hosted") {
-    let organization;
     try {
-      organization = await ensurePersonalOrganizationForUserWithOnboardingLimit(db, user);
+      await ensureUserWithOnboardingLimit(db, user);
     } catch (err: unknown) {
       if (err instanceof HostedOnboardingRateLimitError) {
         await ctx.reply(HOSTED_ONBOARDING_RATE_LIMIT_MESSAGE);
@@ -46,7 +45,6 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
     if (ctx.chat?.type === "private") {
       await upsertChat(db, {
         id: BigInt(ctx.chat.id),
-        organizationId: organization.id,
         title: privateChatTitle(ctx),
         type: "private",
       });

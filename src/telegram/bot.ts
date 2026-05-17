@@ -97,7 +97,7 @@ import { aliasResolutionError, resolveManageableAlias } from "./aliasResolver.js
 import { parseAllowValue } from "./allowValue.js";
 import { getLogger } from "../utils/logger.js";
 import { InlineKeyboard } from "grammy";
-import { hasActiveHostedOrganization } from "../billing/limits.js";
+import { hasActiveHostedUser } from "../billing/limits.js";
 import { escapeHtml } from "../utils/html.js";
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES, getMessages, resolveLocale } from "../i18n/index.js";
 
@@ -609,8 +609,7 @@ export async function handlePendingTextMessage(ctx: Context, next: NextFunction)
 
   if (pending.action === "newemail") {
     const messages = getMessages(await resolveLocale(ctx, getDb()));
-    const pendingChat = await findChatById(getDb(), pending.chatId);
-    if (!(await hasActiveHostedOrganization(getDb(), pendingChat?.organizationId ?? null))) {
+    if (!(await hasActiveHostedUser(getDb(), BigInt(ctx.from.id)))) {
       clearPending(ctx.from.id);
       await ctx.reply(messages.common.hostedWorkspaceInactive);
       return;
@@ -670,7 +669,7 @@ export async function handlePendingTextMessage(ctx: Context, next: NextFunction)
     await ctx.reply(messages.common.aliasNotFound);
     return;
   }
-  if (!(await hasActiveHostedOrganization(getDb(), alias.organizationId ?? null))) {
+  if (!(await hasActiveHostedUser(getDb(), alias.createdBy))) {
     clearPending(ctx.from.id);
     await ctx.reply(messages.allowCommand.subscriptionInactive(escapeHtml(alias.localPart)), {
       parse_mode: "HTML",
