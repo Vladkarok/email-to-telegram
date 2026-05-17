@@ -172,8 +172,32 @@ export function recordQuotaRejection(reason: string): void {
   quotaRejectionsTotal.inc({ reason });
 }
 
+// All five business reads happen first; gauge mutations only execute once
+// every read has succeeded. This makes `/metrics` either fully refresh to
+// a consistent snapshot or fully retain its previous values on failure,
+// matching the route's "serving last known values" promise.
+export async function refreshBusinessGauges(db: Db): Promise<void> {
+  const [orgRows, userCounts, chatCounts, aliasRows, attachmentStats] = await Promise.all([
+    countOrganizationsByPlan(db),
+    countUsers(db),
+    countChats(db),
+    countAliasesByStatus(db),
+    countAttachmentStorage(db),
+  ]);
+
+  applyOrganizationsGauges(orgRows);
+  applyUsersGauge(userCounts);
+  applyChatsGauge(chatCounts);
+  applyAliasesGauge(aliasRows);
+  applyAttachmentsGauge(attachmentStats);
+}
+
+// Kept exported for callers/tests that previously refreshed only this set.
 export async function refreshActiveOrganizationsByPlan(db: Db): Promise<void> {
-  const rows = await countOrganizationsByPlan(db);
+  applyOrganizationsGauges(await countOrganizationsByPlan(db));
+}
+
+function applyOrganizationsGauges(rows: Array<{ planCode: string; count: number }>): void {
   activeOrganizationsByPlan.reset();
   let total = 0;
   for (const row of rows) {
@@ -183,40 +207,26 @@ export async function refreshActiveOrganizationsByPlan(db: Db): Promise<void> {
   organizationsTotalGauge.set(total);
 }
 
-export async function refreshBusinessGauges(db: Db): Promise<void> {
-  await Promise.all([
-    refreshActiveOrganizationsByPlan(db),
-    refreshUsersGauge(db),
-    refreshChatsGauge(db),
-    refreshAliasesGauge(db),
-    refreshAttachmentsGauge(db),
-  ]);
+function applyUsersGauge(counts: { total: number; allowed: number }): void {
+  usersGauge.set({ state: "total" }, counts.total);
+  usersGauge.set({ state: "allowed" }, counts.allowed);
 }
 
-async function refreshUsersGauge(db: Db): Promise<void> {
-  const { total, allowed } = await countUsers(db);
-  usersGauge.set({ state: "total" }, total);
-  usersGauge.set({ state: "allowed" }, allowed);
+function applyChatsGauge(counts: { total: number; active: number }): void {
+  chatsGauge.set({ state: "total" }, counts.total);
+  chatsGauge.set({ state: "active" }, counts.active);
 }
 
-async function refreshChatsGauge(db: Db): Promise<void> {
-  const { total, active } = await countChats(db);
-  chatsGauge.set({ state: "total" }, total);
-  chatsGauge.set({ state: "active" }, active);
-}
-
-async function refreshAliasesGauge(db: Db): Promise<void> {
-  const rows = await countAliasesByStatus(db);
+function applyAliasesGauge(rows: Array<{ status: string; count: number }>): void {
   aliasesGauge.reset();
   for (const row of rows) {
     aliasesGauge.set({ status: row.status }, row.count);
   }
 }
 
-async function refreshAttachmentsGauge(db: Db): Promise<void> {
-  const { count: rowCount, bytes } = await countAttachmentStorage(db);
-  attachmentsStoredGauge.set(rowCount);
-  attachmentsStoredBytesGauge.set(bytes);
+function applyAttachmentsGauge(stats: { count: number; bytes: number }): void {
+  attachmentsStoredGauge.set(stats.count);
+  attachmentsStoredBytesGauge.set(stats.bytes);
 }
 
 export function resetMetricsForTests(): void {

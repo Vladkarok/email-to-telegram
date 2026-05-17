@@ -136,11 +136,17 @@ services:
     image: tecnativa/docker-socket-proxy:0.3.0
     restart: unless-stopped
     environment:
+      # Read-only endpoints Promtail's Docker SD needs. NETWORKS is required
+      # because docker_sd_configs resolves container network metadata during
+      # refresh; with NETWORKS=0 the proxy returns 403 and SD silently
+      # produces no targets. All write verbs (POST/DELETE/BUILD/COMMIT/etc.)
+      # remain disabled so a Promtail compromise cannot mutate the daemon.
       CONTAINERS: 1
       INFO: 1
       PING: 1
       VERSION: 1
       EVENTS: 1
+      NETWORKS: 1
       POST: 0
       DELETE: 0
       AUTH: 0
@@ -151,7 +157,6 @@ services:
       EXEC: 0
       GRPC: 0
       IMAGES: 0
-      NETWORKS: 0
       NODES: 0
       PLUGINS: 0
       SECRETS: 0

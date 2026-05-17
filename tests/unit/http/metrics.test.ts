@@ -203,6 +203,8 @@ describe("GET /metrics", () => {
     expect(primed.body).toMatch(/email_to_telegram_aliases\{[^}]*status="active"[^}]*\} 7/);
 
     mockCountAliasesByStatus.mockRejectedValueOnce(new Error("db hiccup"));
+    mockCountUsers.mockResolvedValueOnce({ total: 999, allowed: 999 });
+    mockCountChats.mockResolvedValueOnce({ total: 999, active: 999 });
 
     const stale = await app.inject({
       method: "GET",
@@ -210,7 +212,13 @@ describe("GET /metrics", () => {
       headers: { authorization: `Bearer ${METRICS_TOKEN}` },
     });
     expect(stale.statusCode).toBe(200);
+    // All-or-nothing: aliases AND every other business gauge must retain
+    // the primed values, not the new mocked ones that would have applied
+    // had the refresh succeeded.
     expect(stale.body).toMatch(/email_to_telegram_aliases\{[^}]*status="active"[^}]*\} 7/);
+    expect(stale.body).toMatch(/email_to_telegram_users\{[^}]*state="total"[^}]*\} 5/);
+    expect(stale.body).toMatch(/email_to_telegram_chats\{[^}]*state="active"[^}]*\} 4/);
+    expect(stale.body).not.toMatch(/email_to_telegram_users\{[^}]*state="total"[^}]*\} 999/);
   });
 
   it("rate limits metrics scrapes", async () => {
