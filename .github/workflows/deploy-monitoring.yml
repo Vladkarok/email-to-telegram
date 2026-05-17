@@ -101,6 +101,11 @@ jobs:
             --exclude='.env.example' \
             monitoring/ staging:~/monitoring/
 
+      # Bearer-token files are written with mode 0644 (umask 022 below) because
+      # Prometheus runs as `nobody` inside its container while the SSH user owns
+      # the file. The host directory itself is restricted to the deploy user;
+      # confidentiality relies on host filesystem perms one level up plus the
+      # read-only bind mount into Prometheus only.
       - name: Write staging bearer token
         env:
           TOKEN: ${{ secrets.METRICS_BEARER_TOKEN_STAGING }}
@@ -111,7 +116,7 @@ jobs:
           fi
           # printf '%s' avoids the trailing newline that `<<<` would append;
           # the on-host file must contain only the raw token.
-          printf '%s' "${TOKEN}" | ssh staging "umask 077 && cat > ~/monitoring/prometheus/secrets/staging_token"
+          printf '%s' "${TOKEN}" | ssh staging "umask 022 && cat > ~/monitoring/prometheus/secrets/staging_token"
 
       - name: Write prod bearer token (skipped when secret is unset)
         env:
@@ -121,7 +126,7 @@ jobs:
             echo "METRICS_BEARER_TOKEN_PROD is not configured; skipping prod token write."
             exit 0
           fi
-          printf '%s' "${TOKEN}" | ssh staging "umask 077 && cat > ~/monitoring/prometheus/secrets/prod_token"
+          printf '%s' "${TOKEN}" | ssh staging "umask 022 && cat > ~/monitoring/prometheus/secrets/prod_token"
 
       - name: Bring up monitoring stack
         run: |
