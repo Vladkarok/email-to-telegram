@@ -11,9 +11,7 @@ export type InboundDomainStatus = "active" | "pending" | "disabled";
 export async function createInboundDomain(
   db: Db,
   data: Pick<NewInboundDomain, "domain" | "kind"> &
-    Partial<
-      Pick<NewInboundDomain, "organizationId" | "status" | "verificationToken" | "verifiedAt">
-    >,
+    Partial<Pick<NewInboundDomain, "userId" | "status" | "verificationToken" | "verifiedAt">>,
 ): Promise<InboundDomain> {
   const [domain] = await db
     .insert(inboundDomains)
@@ -72,11 +70,8 @@ export async function findActiveInboundDomainByDomain(
   return row ?? null;
 }
 
-export async function listInboundDomainsByOrganization(
-  db: Db,
-  organizationId: string,
-): Promise<InboundDomain[]> {
-  return db.select().from(inboundDomains).where(eq(inboundDomains.organizationId, organizationId));
+export async function listInboundDomainsByUser(db: Db, userId: bigint): Promise<InboundDomain[]> {
+  return db.select().from(inboundDomains).where(eq(inboundDomains.userId, userId));
 }
 
 export async function updateInboundDomainStatus(

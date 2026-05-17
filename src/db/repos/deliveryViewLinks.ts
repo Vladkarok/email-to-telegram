@@ -14,7 +14,7 @@ export interface DeliveryViewLinkWithLog {
   deliveryLog: {
     id: string;
     emailAddressId: string;
-    organizationId: string | null;
+    userId: bigint | null;
     rawEmailPath: string | null;
     envelopeFrom: string | null;
     headerFrom: string | null;
@@ -64,7 +64,7 @@ export async function findDeliveryViewLinkByTokenHash(
       deliveryLogId: deliveryViewLinks.deliveryLogId,
       logId: deliveryLogs.id,
       emailAddressId: deliveryLogs.emailAddressId,
-      organizationId: deliveryLogs.organizationId,
+      userId: deliveryLogs.userId,
       rawEmailPath: deliveryLogs.rawEmailPath,
       envelopeFrom: deliveryLogs.envelopeFrom,
       headerFrom: deliveryLogs.headerFrom,
@@ -94,7 +94,7 @@ export async function findDeliveryViewLinkByTokenHash(
     deliveryLog: {
       id: row.logId,
       emailAddressId: row.emailAddressId,
-      organizationId: row.organizationId,
+      userId: row.userId,
       rawEmailPath: row.rawEmailPath,
       envelopeFrom: row.envelopeFrom,
       headerFrom: row.headerFrom,

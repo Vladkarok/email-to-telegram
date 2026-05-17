@@ -1,65 +1,65 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { eq, sql } from "drizzle-orm";
-import { organizationStorageUsage, type OrganizationStorageUsage } from "../schema.js";
+import { userStorageUsage, type UserStorageUsage } from "../schema.js";
 import type * as schema from "../schema.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
-export async function getOrganizationStorageUsage(
+export async function getUserStorageUsage(
   db: Db,
-  organizationId: string,
-): Promise<OrganizationStorageUsage | null> {
+  userId: bigint,
+): Promise<UserStorageUsage | null> {
   const [usage] = await db
     .select()
-    .from(organizationStorageUsage)
-    .where(eq(organizationStorageUsage.organizationId, organizationId));
+    .from(userStorageUsage)
+    .where(eq(userStorageUsage.userId, userId));
   return usage ?? null;
 }
 
-export async function incrementOrganizationStorageUsage(
+export async function incrementUserStorageUsage(
   db: Db,
-  organizationId: string,
+  userId: bigint,
   data: { rawEmailBytes?: bigint; attachmentBytes?: bigint },
-): Promise<OrganizationStorageUsage> {
+): Promise<UserStorageUsage> {
   const rawEmailBytes = data.rawEmailBytes ?? 0n;
   const attachmentBytes = data.attachmentBytes ?? 0n;
   assertNonNegativeStorageDelta(rawEmailBytes, attachmentBytes);
 
   const [usage] = await db
-    .insert(organizationStorageUsage)
-    .values({ organizationId, rawEmailBytes, attachmentBytes })
+    .insert(userStorageUsage)
+    .values({ userId, rawEmailBytes, attachmentBytes })
     .onConflictDoUpdate({
-      target: organizationStorageUsage.organizationId,
+      target: userStorageUsage.userId,
       set: {
-        rawEmailBytes: sql`${organizationStorageUsage.rawEmailBytes} + ${rawEmailBytes}`,
-        attachmentBytes: sql`${organizationStorageUsage.attachmentBytes} + ${attachmentBytes}`,
+        rawEmailBytes: sql`${userStorageUsage.rawEmailBytes} + ${rawEmailBytes}`,
+        attachmentBytes: sql`${userStorageUsage.attachmentBytes} + ${attachmentBytes}`,
         updatedAt: new Date(),
       },
     })
     .returning();
-  if (!usage) throw new Error("incrementOrganizationStorageUsage: no row returned");
+  if (!usage) throw new Error("incrementUserStorageUsage: no row returned");
   return usage;
 }
 
-export async function decrementOrganizationStorageUsage(
+export async function decrementUserStorageUsage(
   db: Db,
-  organizationId: string,
+  userId: bigint,
   data: { rawEmailBytes?: bigint; attachmentBytes?: bigint },
-): Promise<OrganizationStorageUsage> {
+): Promise<UserStorageUsage> {
   const rawEmailBytes = data.rawEmailBytes ?? 0n;
   const attachmentBytes = data.attachmentBytes ?? 0n;
   assertNonNegativeStorageDelta(rawEmailBytes, attachmentBytes);
 
   const [usage] = await db
-    .update(organizationStorageUsage)
+    .update(userStorageUsage)
     .set({
-      rawEmailBytes: sql`greatest(${organizationStorageUsage.rawEmailBytes} - ${rawEmailBytes}, 0)`,
-      attachmentBytes: sql`greatest(${organizationStorageUsage.attachmentBytes} - ${attachmentBytes}, 0)`,
+      rawEmailBytes: sql`greatest(${userStorageUsage.rawEmailBytes} - ${rawEmailBytes}, 0)`,
+      attachmentBytes: sql`greatest(${userStorageUsage.attachmentBytes} - ${attachmentBytes}, 0)`,
       updatedAt: new Date(),
     })
-    .where(eq(organizationStorageUsage.organizationId, organizationId))
+    .where(eq(userStorageUsage.userId, userId))
     .returning();
-  if (!usage) throw new Error("decrementOrganizationStorageUsage: no row returned");
+  if (!usage) throw new Error("decrementUserStorageUsage: no row returned");
   return usage;
 }
 

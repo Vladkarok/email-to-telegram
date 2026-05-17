@@ -3,6 +3,8 @@ import { count, eq, sql } from "drizzle-orm";
 import { users, type User, type NewUser } from "../schema.js";
 import type * as schema from "../schema.js";
 
+type Db = NodePgDatabase<typeof schema>;
+
 export async function countUsers(db: Db): Promise<{ total: number; allowed: number }> {
   const [row] = await db
     .select({
@@ -13,24 +15,15 @@ export async function countUsers(db: Db): Promise<{ total: number; allowed: numb
   return { total: Number(row?.total ?? 0), allowed: Number(row?.allowed ?? 0) };
 }
 
-type Db = NodePgDatabase<typeof schema>;
-
-const userReturning = {
-  id: users.id,
-  username: users.username,
-  locale: users.locale,
-  isAllowed: users.isAllowed,
-  createdAt: users.createdAt,
-  updatedAt: users.updatedAt,
-};
-
-const legacyUserReturning = {
-  id: users.id,
-  username: users.username,
-  isAllowed: users.isAllowed,
-  createdAt: users.createdAt,
-  updatedAt: users.updatedAt,
-};
+export async function countUsersByPlan(
+  db: Db,
+): Promise<Array<{ planCode: string; count: number }>> {
+  const rows = await db
+    .select({ planCode: users.planCode, count: count() })
+    .from(users)
+    .groupBy(users.planCode);
+  return rows.map((row) => ({ planCode: row.planCode, count: Number(row.count) }));
+}
 
 export class LocaleColumnUnavailableError extends Error {
   constructor() {
@@ -66,7 +59,7 @@ export async function upsertUser(
           updatedAt: new Date(),
         },
       })
-      .returning(userReturning);
+      .returning();
     if (!user) throw new Error(`upsertUser: no row returned for id=${data.id}`);
     return user;
   } catch (err: unknown) {
@@ -77,13 +70,80 @@ export async function upsertUser(
 
 export async function findUserById(db: Db, id: bigint): Promise<User | null> {
   try {
-    const [user] = await db.select(userReturning).from(users).where(eq(users.id, id));
+    const [user] = await db.select().from(users).where(eq(users.id, id));
     return user ?? null;
   } catch (err: unknown) {
     if (!isLocaleColumnUnavailableError(err)) throw err;
-    const [user] = await db.select(legacyUserReturning).from(users).where(eq(users.id, id));
-    return user ? withNullLocale(user) : null;
+    return findUserByIdWithoutLocaleColumn(db, id);
   }
+}
+
+export async function findUserByIdForUpdate(db: Db, id: bigint): Promise<User | null> {
+  const [user] = await db.select().from(users).where(eq(users.id, id)).for("update");
+  return user ?? null;
+}
+
+export async function findUserByStripeCustomerId(
+  db: Db,
+  stripeCustomerId: string,
+): Promise<User | null> {
+  const [user] = await db
+    .select()
+    .from(users)
+    .where(eq(users.stripeCustomerId, stripeCustomerId));
+  return user ?? null;
+}
+
+export async function findUserByStripeSubscriptionId(
+  db: Db,
+  stripeSubscriptionId: string,
+): Promise<User | null> {
+  const [user] = await db
+    .select()
+    .from(users)
+    .where(eq(users.stripeSubscriptionId, stripeSubscriptionId));
+  return user ?? null;
+}
+
+export async function updateUserBillingState(
+  db: Db,
+  id: bigint,
+  data: Partial<
+    Pick<
+      NewUser,
+      | "planCode"
+      | "subscriptionStatus"
+      | "stripeCustomerId"
+      | "stripeSubscriptionId"
+      | "trialEndsAt"
+      | "currentPeriodStart"
+      | "currentPeriodEnd"
+      | "paidThroughAt"
+    >
+  >,
+): Promise<User | null> {
+  const [user] = await db
+    .update(users)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(users.id, id))
+    .returning();
+  return user ?? null;
+}
+
+export async function updateUserPaidThroughAtIfLater(
+  db: Db,
+  id: bigint,
+  paidThroughAt: Date,
+): Promise<User | null> {
+  const [user] = await db
+    .update(users)
+    .set({
+      paidThroughAt: sql`case when ${users.paidThroughAt} is null or ${users.paidThroughAt} < ${paidThroughAt} then ${paidThroughAt} else ${users.paidThroughAt} end`,
+      updatedAt: new Date(),
+    })
+    .where(eq(users.id, id))
+    .returning();
+  return user ?? null;
 }
 
 export async function allowUser(db: Db, id: bigint): Promise<void> {
@@ -131,15 +191,10 @@ export async function findOrCreateUserById(db: Db, id: bigint): Promise<User> {
       .insert(users)
       .values({ id, username: null, isAllowed: false })
       .onConflictDoNothing({ target: users.id })
-      .returning(userReturning);
+      .returning();
   } catch (err: unknown) {
     if (!isLocaleColumnUnavailableError(err)) throw err;
-    const [legacyCreated] = await db
-      .insert(users)
-      .values({ id, username: null, isAllowed: false })
-      .onConflictDoNothing({ target: users.id })
-      .returning(legacyUserReturning);
-    created = legacyCreated ? withNullLocale(legacyCreated) : undefined;
+    created = undefined;
   }
   if (created) return created;
 
@@ -159,13 +214,14 @@ async function upsertUserWithoutLocaleColumn(
       target: users.id,
       set: { username: data.username, updatedAt: new Date() },
     })
-    .returning(legacyUserReturning);
+    .returning();
   if (!user) throw new Error(`upsertUser: no row returned for id=${data.id}`);
-  return withNullLocale(user);
+  return user;
 }
 
-function withNullLocale(user: Omit<User, "locale">): User {
-  return { ...user, locale: null };
+async function findUserByIdWithoutLocaleColumn(db: Db, id: bigint): Promise<User | null> {
+  const [user] = await db.select().from(users).where(eq(users.id, id));
+  return user ?? null;
 }
 
 function normalizeSupportedLocale(locale: string | null | undefined): "en" | "uk" | null {

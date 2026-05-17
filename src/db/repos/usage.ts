@@ -1,9 +1,9 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { and, eq, sql } from "drizzle-orm";
 import {
-  organizationUsageMonths,
-  type NewOrganizationUsageMonth,
-  type OrganizationUsageMonth,
+  userUsageMonths,
+  type NewUserUsageMonth,
+  type UserUsageMonth,
 } from "../schema.js";
 import type * as schema from "../schema.js";
 
@@ -13,31 +13,26 @@ export function usageMonthForDate(date = new Date()): string {
   return date.toISOString().slice(0, 7);
 }
 
-export async function getOrganizationUsageMonth(
+export async function getUserUsageMonth(
   db: Db,
-  organizationId: string,
+  userId: bigint,
   month: string,
-): Promise<OrganizationUsageMonth | null> {
+): Promise<UserUsageMonth | null> {
   const [usage] = await db
     .select()
-    .from(organizationUsageMonths)
-    .where(
-      and(
-        eq(organizationUsageMonths.organizationId, organizationId),
-        eq(organizationUsageMonths.month, month),
-      ),
-    );
+    .from(userUsageMonths)
+    .where(and(eq(userUsageMonths.userId, userId), eq(userUsageMonths.month, month)));
   return usage ?? null;
 }
 
-export async function incrementOrganizationUsageMonth(
+export async function incrementUserUsageMonth(
   db: Db,
-  data: Pick<NewOrganizationUsageMonth, "organizationId" | "month"> & {
+  data: Pick<NewUserUsageMonth, "userId" | "month"> & {
     deliveredCount?: number;
     rejectedCount?: number;
     egressBytes?: bigint;
   },
-): Promise<OrganizationUsageMonth> {
+): Promise<UserUsageMonth> {
   const deliveredCount = data.deliveredCount ?? 0;
   const rejectedCount = data.rejectedCount ?? 0;
   const egressBytes = data.egressBytes ?? 0n;
@@ -46,36 +41,36 @@ export async function incrementOrganizationUsageMonth(
   }
 
   const [usage] = await db
-    .insert(organizationUsageMonths)
+    .insert(userUsageMonths)
     .values({
-      organizationId: data.organizationId,
+      userId: data.userId,
       month: data.month,
       deliveredCount,
       rejectedCount,
       egressBytes,
     })
     .onConflictDoUpdate({
-      target: [organizationUsageMonths.organizationId, organizationUsageMonths.month],
+      target: [userUsageMonths.userId, userUsageMonths.month],
       set: {
-        deliveredCount: sql`${organizationUsageMonths.deliveredCount} + ${deliveredCount}`,
-        rejectedCount: sql`${organizationUsageMonths.rejectedCount} + ${rejectedCount}`,
-        egressBytes: sql`${organizationUsageMonths.egressBytes} + ${egressBytes}`,
+        deliveredCount: sql`${userUsageMonths.deliveredCount} + ${deliveredCount}`,
+        rejectedCount: sql`${userUsageMonths.rejectedCount} + ${rejectedCount}`,
+        egressBytes: sql`${userUsageMonths.egressBytes} + ${egressBytes}`,
         updatedAt: new Date(),
       },
     })
     .returning();
-  if (!usage) throw new Error("incrementOrganizationUsageMonth: no row returned");
+  if (!usage) throw new Error("incrementUserUsageMonth: no row returned");
   return usage;
 }
 
-export async function decrementOrganizationUsageMonth(
+export async function decrementUserUsageMonth(
   db: Db,
-  data: Pick<NewOrganizationUsageMonth, "organizationId" | "month"> & {
+  data: Pick<NewUserUsageMonth, "userId" | "month"> & {
     deliveredCount?: number;
     rejectedCount?: number;
     egressBytes?: bigint;
   },
-): Promise<OrganizationUsageMonth> {
+): Promise<UserUsageMonth> {
   const deliveredCount = data.deliveredCount ?? 0;
   const rejectedCount = data.rejectedCount ?? 0;
   const egressBytes = data.egressBytes ?? 0n;
@@ -84,20 +79,15 @@ export async function decrementOrganizationUsageMonth(
   }
 
   const [usage] = await db
-    .update(organizationUsageMonths)
+    .update(userUsageMonths)
     .set({
-      deliveredCount: sql`greatest(${organizationUsageMonths.deliveredCount} - ${deliveredCount}, 0)`,
-      rejectedCount: sql`greatest(${organizationUsageMonths.rejectedCount} - ${rejectedCount}, 0)`,
-      egressBytes: sql`greatest(${organizationUsageMonths.egressBytes} - ${egressBytes}, 0)`,
+      deliveredCount: sql`greatest(${userUsageMonths.deliveredCount} - ${deliveredCount}, 0)`,
+      rejectedCount: sql`greatest(${userUsageMonths.rejectedCount} - ${rejectedCount}, 0)`,
+      egressBytes: sql`greatest(${userUsageMonths.egressBytes} - ${egressBytes}, 0)`,
       updatedAt: new Date(),
     })
-    .where(
-      and(
-        eq(organizationUsageMonths.organizationId, data.organizationId),
-        eq(organizationUsageMonths.month, data.month),
-      ),
-    )
+    .where(and(eq(userUsageMonths.userId, data.userId), eq(userUsageMonths.month, data.month)))
     .returning();
-  if (!usage) throw new Error("decrementOrganizationUsageMonth: no row returned");
+  if (!usage) throw new Error("decrementUserUsageMonth: no row returned");
   return usage;
 }

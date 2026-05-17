@@ -148,14 +148,14 @@ export async function countRecentDeliveriesByAlias(
 }
 
 /**
- * Counts delivery_logs rows for an organization in a given calendar month (UTC),
+ * Counts delivery_logs rows for a user in a given calendar month (UTC),
  * filtered by finalStatus values. Used to expose Telegram delivery success/failure
  * counts in /usage independently from the billable accepted/rejected counters in
- * `organization_usage_months`.
+ * `user_usage_months`.
  */
-export async function countDeliveryLogsByOrgInMonth(
+export async function countDeliveryLogsByUserInMonth(
   db: Db,
-  organizationId: string,
+  userId: bigint,
   month: string,
   statuses: readonly string[],
 ): Promise<number> {
@@ -167,7 +167,7 @@ export async function countDeliveryLogsByOrgInMonth(
     .from(deliveryLogs)
     .where(
       and(
-        eq(deliveryLogs.organizationId, organizationId),
+        eq(deliveryLogs.userId, userId),
         gte(deliveryLogs.receivedAt, start),
         lt(deliveryLogs.receivedAt, end),
         inArray(deliveryLogs.finalStatus, [...statuses]),

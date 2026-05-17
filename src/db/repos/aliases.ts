@@ -23,7 +23,6 @@ export async function createAlias(
     NewEmailAddress,
     | "localPart"
     | "fullAddress"
-    | "organizationId"
     | "domainId"
     | "chatId"
     | "messageThreadId"
@@ -89,10 +88,10 @@ export async function findAliasByLocalPartAndDomainId(
   return alias ?? null;
 }
 
-export async function findAliasesByLocalPartForOrganization(
+export async function findAliasesByLocalPartForUser(
   db: Db,
   localPart: string,
-  organizationId: string,
+  userId: bigint,
 ): Promise<EmailAddress[]> {
   return db
     .select()
@@ -100,7 +99,7 @@ export async function findAliasesByLocalPartForOrganization(
     .where(
       and(
         eq(emailAddresses.localPart, localPart),
-        eq(emailAddresses.organizationId, organizationId),
+        eq(emailAddresses.createdBy, userId),
         ne(emailAddresses.status, "deleted"),
       ),
     );
@@ -113,16 +112,11 @@ export async function listAliasesByChat(db: Db, chatId: bigint): Promise<EmailAd
     .where(and(eq(emailAddresses.chatId, chatId), ne(emailAddresses.status, "deleted")));
 }
 
-export async function countActiveAliasesByOrganization(
-  db: Db,
-  organizationId: string,
-): Promise<number> {
+export async function countActiveAliasesByUser(db: Db, userId: bigint): Promise<number> {
   const [row] = await db
     .select({ count: count() })
     .from(emailAddresses)
-    .where(
-      and(eq(emailAddresses.organizationId, organizationId), ne(emailAddresses.status, "deleted")),
-    );
+    .where(and(eq(emailAddresses.createdBy, userId), ne(emailAddresses.status, "deleted")));
   return row?.count ?? 0;
 }
 

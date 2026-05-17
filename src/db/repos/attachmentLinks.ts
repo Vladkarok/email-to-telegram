@@ -13,7 +13,7 @@ export interface AttachmentLinkWithAttachment {
   attachmentId: string;
   attachment: {
     id: string;
-    organizationId: string | null;
+    userId: bigint | null;
     storagePath: string;
     originalFilename: string | null;
     contentType: string | null;
@@ -36,7 +36,7 @@ export async function findAttachmentLinkByToken(
       downloadedAt: attachmentLinks.downloadedAt,
       attachmentId: attachmentLinks.attachmentId,
       attachedId: attachments.id,
-      organizationId: deliveryLogs.organizationId,
+      userId: deliveryLogs.userId,
       storagePath: attachments.storagePath,
       originalFilename: attachments.originalFilename,
       contentType: attachments.contentType,
@@ -60,7 +60,7 @@ export async function findAttachmentLinkByToken(
     attachmentId: row.attachmentId,
     attachment: {
       id: row.attachedId,
-      organizationId: row.organizationId,
+      userId: row.userId,
       storagePath: row.storagePath,
       originalFilename: row.originalFilename,
       contentType: row.contentType,
