@@ -1,4 +1,4 @@
-import type { Organization } from "../db/schema.js";
+import type { User } from "../db/schema.js";
 import type { PlanDefinition } from "./plans.js";
 import { escapeHtml } from "../utils/html.js";
 import { DEFAULT_LOCALE, getMessages, type Locale } from "../i18n/index.js";
@@ -13,7 +13,7 @@ export interface UsageCounters {
 
 export interface PlanSummaryInput {
   plan: PlanDefinition;
-  organization: Pick<Organization, "planCode" | "subscriptionStatus" | "currentPeriodEnd">;
+  user: Pick<User, "planCode" | "subscriptionStatus" | "currentPeriodEnd">;
 }
 
 export interface UsageSummaryInput {
@@ -28,7 +28,10 @@ export interface UsageSummaryInput {
 
 export interface BillingStatusInput {
   plan: PlanDefinition;
-  organization: Pick<Organization, "name" | "planCode" | "subscriptionStatus" | "currentPeriodEnd">;
+  user: Pick<User, "planCode" | "subscriptionStatus" | "currentPeriodEnd"> & {
+    /** Display name for the user (e.g. "@username" or "Telegram <id>"). */
+    displayName: string;
+  };
   month: string;
   acceptedBillable: number;
   egressBytes: bigint;
@@ -63,19 +66,17 @@ export function buildPlanSummaryText(
   input: PlanSummaryInput,
   locale: Locale = DEFAULT_LOCALE,
 ): string {
-  const { plan, organization } = input;
+  const { plan, user } = input;
   const messages = getMessages(locale).usageSummary;
-  const status = organization.subscriptionStatus;
+  const status = user.subscriptionStatus;
   const lines: string[] = [];
 
   lines.push(messages.planTitle);
   lines.push(`${messages.name}: <b>${escapeHtml(plan.name)}</b>`);
   lines.push(`${messages.status}: <code>${escapeHtml(status)}</code>`);
 
-  if (organization.currentPeriodEnd) {
-    lines.push(
-      `${messages.renewsEnds}: <code>${organization.currentPeriodEnd.toISOString()}</code>`,
-    );
+  if (user.currentPeriodEnd) {
+    lines.push(`${messages.renewsEnds}: <code>${user.currentPeriodEnd.toISOString()}</code>`);
   }
 
   lines.push("");
@@ -140,19 +141,16 @@ export function buildBillingStatusText(
   input: BillingStatusInput,
   locale: Locale = DEFAULT_LOCALE,
 ): string {
-  const { plan, organization, month, acceptedBillable, egressBytes, storageBytes, aliasesUsed } =
-    input;
+  const { plan, user, month, acceptedBillable, egressBytes, storageBytes, aliasesUsed } = input;
   const messages = getMessages(locale).usageSummary;
   const lines: string[] = [];
 
   lines.push(messages.billingTitle);
-  lines.push(`${messages.workspaceName}: <b>${escapeHtml(organization.name)}</b>`);
+  lines.push(`${messages.workspaceName}: <b>${escapeHtml(user.displayName)}</b>`);
   lines.push(`${messages.plan}: <b>${escapeHtml(plan.name)}</b>`);
-  lines.push(`${messages.status}: <code>${escapeHtml(organization.subscriptionStatus)}</code>`);
-  if (organization.currentPeriodEnd) {
-    lines.push(
-      `${messages.renewsEnds}: <code>${organization.currentPeriodEnd.toISOString()}</code>`,
-    );
+  lines.push(`${messages.status}: <code>${escapeHtml(user.subscriptionStatus)}</code>`);
+  if (user.currentPeriodEnd) {
+    lines.push(`${messages.renewsEnds}: <code>${user.currentPeriodEnd.toISOString()}</code>`);
   }
 
   lines.push("");
