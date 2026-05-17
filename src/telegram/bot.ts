@@ -33,6 +33,7 @@ import {
 import { planHandler } from "./commands/plan.js";
 import { usageHandler } from "./commands/usage.js";
 import { billingHandler } from "./commands/billing.js";
+import { donateHandler } from "./commands/donate.js";
 import {
   upgradeHandler,
   upgradeCallbackHandler,
@@ -142,6 +143,7 @@ export function createBot(token: string): Bot {
   bot.command("billing", billingHandler);
   bot.command("upgrade", upgradeHandler);
   bot.command("portal", portalHandler);
+  bot.command("donate", donateHandler);
 
   // bill:upgrade / bill:portal — inline keyboard buttons from /billing
   bot.callbackQuery(CB_BILLING_UPGRADE, upgradeCallbackHandler);

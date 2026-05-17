@@ -3,6 +3,10 @@ import { createMockCtx } from "../../../helpers/mockContext.js";
 
 vi.mock("../../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
+vi.mock("../../../../src/config.js", () => ({
+  loadConfig: () => ({ billingProvider: "none", donationUrl: undefined }),
+}));
+
 const mockFindAliasByLocalPartAnyDomain = vi.fn();
 const mockFindAliasByFullAddress = vi.fn();
 const mockAddAllowRule = vi.fn();

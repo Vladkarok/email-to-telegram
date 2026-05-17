@@ -77,6 +77,7 @@ Only senders matching an allow rule can deliver mail to an alias.
 /allow add &lt;alias&gt; &lt;email_or_domain&gt;
 /allow remove &lt;alias&gt; &lt;email_or_domain&gt;
 ${billingSection}
+/donate — support the project
 /help — show this message
 
 ${safetyNotes}
@@ -350,6 +351,14 @@ Examples:
     manualBilling:
       "ℹ️ Self-serve payments are temporarily unavailable.\n\nHosted upgrades are handled manually for now. Contact support to upgrade, renew, cancel, or ask billing questions.",
   },
+  donate: {
+    title: "☕ Support the project",
+    body: "This bot is free to use and maintained as a personal project.\nIf it's useful to you, a small donation keeps the lights on.\n\nDonations are gifts, not payment for service — there are no perks tied to a donation.",
+    button: "💛 Donate",
+    unavailable: "ℹ️ Donations are not configured on this instance.",
+    quotaHint: (url: string) =>
+      `\n\n💛 If this bot is useful to you, you can support the project: ${url}`,
+  },
   botCommands: [
     { command: "start", description: "Get started" },
     { command: "newemail", description: "Create a new email alias" },
@@ -366,6 +375,7 @@ Examples:
     { command: "billing", description: "Manage billing" },
     { command: "upgrade", description: "Upgrade plan" },
     { command: "portal", description: "Open Stripe billing portal" },
+    { command: "donate", description: "Support the project" },
     { command: "help", description: "Show help" },
   ],
   usageSummary: {
