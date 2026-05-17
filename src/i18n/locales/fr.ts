@@ -80,6 +80,7 @@ Seuls les expéditeurs correspondant à une allow rule peuvent envoyer du courri
 /allow add &lt;alias&gt; &lt;email_or_domain&gt;
 /allow remove &lt;alias&gt; &lt;email_or_domain&gt;
 ${billingSection}
+/donate — soutenir le projet
 /help — afficher ce message
 
 ${safetyNotes}
@@ -361,6 +362,14 @@ Exemples :
     manualBilling:
       "ℹ️ Les paiements self-serve sont temporairement indisponibles.\n\nLes mises à niveau hosted sont traitées manuellement pour le moment. Contactez le support pour mettre à niveau, renouveler, annuler ou pour toute question de facturation.",
   },
+  donate: {
+    title: "☕ Soutenir le projet",
+    body: "Ce bot est gratuit et maintenu comme un projet personnel.\nS'il vous est utile, un petit don aide à garder les lumières allumées.\n\nLes dons sont des cadeaux, pas un paiement pour un service — aucun avantage n'est lié à un don.",
+    button: "💛 Faire un don",
+    unavailable: "ℹ️ Les dons ne sont pas configurés sur cette instance.",
+    quotaHint: (url: string) =>
+      `\n\n💛 Si ce bot vous est utile, vous pouvez soutenir le projet : ${url}`,
+  },
   botCommands: [
     { command: "start", description: "Démarrer" },
     { command: "newemail", description: "Créer un nouvel alias e-mail" },
@@ -377,6 +386,7 @@ Exemples :
     { command: "billing", description: "Gérer la facturation" },
     { command: "upgrade", description: "Mettre à niveau le plan" },
     { command: "portal", description: "Ouvrir le portail Stripe" },
+    { command: "donate", description: "Soutenir le projet" },
     { command: "help", description: "Afficher l'aide" },
   ],
   usageSummary: {

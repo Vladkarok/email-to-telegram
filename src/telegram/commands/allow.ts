@@ -18,6 +18,8 @@ import {
 import { canManageAlias } from "../authorization.js";
 import { parseAllowValue } from "../allowValue.js";
 import { escapeHtml } from "../../utils/html.js";
+import { loadConfig } from "../../config.js";
+import { donateHintSuffix } from "../donateHint.js";
 import { getMessages, resolveLocale } from "../../i18n/index.js";
 
 export async function allowHandler(ctx: CommandContext<Context>): Promise<void> {
@@ -198,14 +200,13 @@ async function replyForAllowRuleLimitFailure(
       CB_BILLING_UPGRADE,
     );
     const limitValue = limit.limit ?? 0;
-    await ctx.reply(
+    const text =
       messages.allowCommand.limitReached(
         escapeHtml(localPart),
         limit.used ?? limitValue,
         limitValue,
-      ),
-      { parse_mode: "HTML", reply_markup: keyboard },
-    );
+      ) + donateHintSuffix(loadConfig(), messages, "html");
+    await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
     return;
   }
 

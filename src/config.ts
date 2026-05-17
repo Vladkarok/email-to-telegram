@@ -40,7 +40,7 @@ const stripePriceIdSchema = z
 const optionalTrimmedUrlSchema = z.string().trim().url().optional();
 
 const appModeSchema = z.enum(["self-hosted", "hosted"]).default("self-hosted");
-const billingProviderSchema = z.enum(["none", "stripe"]).default("none");
+const billingProviderSchema = z.enum(["none", "stripe", "donation"]).default("none");
 
 function isValidDomainName(value: string): boolean {
   if (value.length < 1 || value.length > 253) return false;
@@ -124,6 +124,7 @@ const envSchema = z.object({
   STRIPE_PRICE_TEAM_YEARLY: stripePriceIdSchema,
   BILLING_SUCCESS_URL: optionalTrimmedUrlSchema,
   BILLING_CANCEL_URL: optionalTrimmedUrlSchema,
+  DONATION_URL: optionalTrimmedUrlSchema,
   ADMIN_ENABLED: optionalBooleanSchema,
   ADMIN_SECRET: z.string().optional(),
   ADMIN_SESSION_SECRET: z.string().optional(),
@@ -177,6 +178,7 @@ export interface AppConfig {
   stripePriceIds: StripePriceIds | undefined;
   billingSuccessUrl: string | undefined;
   billingCancelUrl: string | undefined;
+  donationUrl: string | undefined;
   adminEnabled: boolean;
   adminSecret: string | undefined;
   adminSessionSecret: string | undefined;
@@ -265,6 +267,10 @@ export function loadConfig(): AppConfig {
     }
   }
 
+  if (env.BILLING_PROVIDER === "donation" && !env.DONATION_URL) {
+    throw new Error("Invalid configuration:\n  BILLING_PROVIDER=donation requires DONATION_URL");
+  }
+
   if (env.ADMIN_ENABLED) {
     if (!env.ADMIN_SECRET || env.ADMIN_SECRET.length < 32) {
       throw new Error(
@@ -336,6 +342,7 @@ export function loadConfig(): AppConfig {
     stripePriceIds,
     billingSuccessUrl: env.BILLING_SUCCESS_URL,
     billingCancelUrl: env.BILLING_CANCEL_URL,
+    donationUrl: env.DONATION_URL,
     adminEnabled: env.ADMIN_ENABLED,
     adminSecret: env.ADMIN_SECRET,
     adminSessionSecret: env.ADMIN_SESSION_SECRET,

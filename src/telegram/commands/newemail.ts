@@ -16,6 +16,7 @@ import type { EmailAddress } from "../../db/schema.js";
 import { findChatById } from "../../db/repos/chats.js";
 import { ensureSharedInboundDomain } from "../../db/repos/inboundDomains.js";
 import { loadConfig } from "../../config.js";
+import { donateHintSuffix } from "../donateHint.js";
 import {
   checkAliasCreateLimit,
   hasActiveHostedOrganization,
@@ -337,13 +338,15 @@ async function replyForAliasLimitFailure(
 
   if (limit.code === "alias_limit") {
     const messages = getMessages(await resolveLocale(ctx, getDb()));
+    const config = loadConfig();
     const keyboard = new InlineKeyboard().text(
       messages.newemail.upgradePlanButton,
       CB_BILLING_UPGRADE,
     );
-    await ctx.reply(messages.newemail.aliasLimitReached(limit.used, limit.limit ?? 0), {
-      reply_markup: keyboard,
-    });
+    const text =
+      messages.newemail.aliasLimitReached(limit.used, limit.limit ?? 0) +
+      donateHintSuffix(config, messages, "plain");
+    await ctx.reply(text, { reply_markup: keyboard });
     return;
   }
 
