@@ -192,11 +192,6 @@ export async function refreshBusinessGauges(db: Db): Promise<void> {
   applyAttachmentsGauge(attachmentStats);
 }
 
-// Kept exported for callers/tests that previously refreshed only this set.
-export async function refreshActiveOrganizationsByPlan(db: Db): Promise<void> {
-  applyOrganizationsGauges(await countOrganizationsByPlan(db));
-}
-
 function applyOrganizationsGauges(rows: Array<{ planCode: string; count: number }>): void {
   activeOrganizationsByPlan.reset();
   let total = 0;

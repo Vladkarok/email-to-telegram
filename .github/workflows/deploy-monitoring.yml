@@ -85,10 +85,19 @@ jobs:
         run: |
           ssh staging "mkdir -p ~/monitoring/prometheus/secrets"
 
+      - name: Verify operator-managed .env exists on the host
+        run: |
+          ssh staging 'test -f ~/monitoring/.env || { echo "ERROR: ~/monitoring/.env is missing on the host. Create it from monitoring/.env.example (see docs/operations/monitoring.md)." >&2; exit 1; }'
+
       - name: Sync monitoring/ to staging
+        # --exclude='.env' protects the operator-maintained env file that
+        # lives only on the host (never in the repo). Without this exclude,
+        # rsync --delete would wipe it on every deploy because the repo's
+        # monitoring/ tree has no .env (only .env.example).
         run: |
           rsync -av --delete \
             --exclude='prometheus/secrets/' \
+            --exclude='.env' \
             --exclude='.env.example' \
             monitoring/ staging:~/monitoring/
 
@@ -96,14 +105,20 @@ jobs:
         env:
           TOKEN: ${{ secrets.METRICS_BEARER_TOKEN_STAGING }}
         run: |
-          ssh staging "umask 077 && cat > ~/monitoring/prometheus/secrets/staging_token" <<< "${TOKEN}"
+          if [ -z "${TOKEN}" ]; then
+            echo "ERROR: secret METRICS_BEARER_TOKEN_STAGING is not configured at the repo level." >&2
+            exit 1
+          fi
+          # printf '%s' avoids the trailing newline that `<<<` would append;
+          # the on-host file must contain only the raw token.
+          printf '%s' "${TOKEN}" | ssh staging "umask 077 && cat > ~/monitoring/prometheus/secrets/staging_token"
 
       - name: Write prod bearer token
         if: ${{ secrets.METRICS_BEARER_TOKEN_PROD != '' }}
         env:
           TOKEN: ${{ secrets.METRICS_BEARER_TOKEN_PROD }}
         run: |
-          ssh staging "umask 077 && cat > ~/monitoring/prometheus/secrets/prod_token" <<< "${TOKEN}"
+          printf '%s' "${TOKEN}" | ssh staging "umask 077 && cat > ~/monitoring/prometheus/secrets/prod_token"
 
       - name: Bring up monitoring stack
         run: |

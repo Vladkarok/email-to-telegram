@@ -99,6 +99,13 @@ jobs:
         with:
           ref: ${{ needs.resolve-release.outputs.release_sha }}
 
+      - name: Ensure monitoring_scrape network exists
+        # docker-compose.yml declares monitoring_scrape as external. Create
+        # it idempotently so deploys do not fail on a fresh prod host that
+        # has never had the monitoring stack provisioned.
+        run: |
+          ssh prod "docker network inspect monitoring_scrape >/dev/null 2>&1 || docker network create monitoring_scrape"
+
       - name: Copy compose file to prod
         run: scp docker-compose.yml prod:~/email-to-telegram/docker-compose.yml
 
@@ -146,6 +153,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve-release.outputs.release_sha }}
+
+      - name: Ensure monitoring_scrape network exists
+        # docker-compose.yml declares monitoring_scrape as external. Create
+        # it idempotently so deploys do not fail on a fresh prod host that
+        # has never had the monitoring stack provisioned.
+        run: |
+          ssh prod "docker network inspect monitoring_scrape >/dev/null 2>&1 || docker network create monitoring_scrape"
 
       - name: Copy compose file to prod
         run: scp docker-compose.yml prod:~/email-to-telegram/docker-compose.yml

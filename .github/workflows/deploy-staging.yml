@@ -44,6 +44,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Ensure monitoring_scrape network exists
+        # docker-compose.yml declares monitoring_scrape as external so
+        # Prometheus (running in the sibling monitoring compose) can
+        # resolve `app`. Compose refuses to start if it's missing. Create
+        # it idempotently here in case this workflow races ahead of the
+        # monitoring deploy workflow on a fresh host.
+        run: |
+          ssh staging "docker network inspect monitoring_scrape >/dev/null 2>&1 || docker network create monitoring_scrape"
+
       - name: Copy compose file to staging
         run: scp docker-compose.yml staging:~/email-to-telegram/docker-compose.yml
 
