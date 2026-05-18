@@ -227,6 +227,27 @@ export async function deliverQueuedEmail(
         return { ok: false, reason: "user_deleted" };
       }
 
+      // Final non-transactional recheck right before the irreversible Telegram
+      // send. Narrows the /delete_me race window from "Telegram API latency" to
+      // "one DB roundtrip". Cannot fully close it without holding a tx across
+      // the network call.
+      const preSendAlias = await findAliasById(db, alias.id);
+      if (
+        !preSendAlias ||
+        preSendAlias.status !== "active" ||
+        preSendAlias.createdBy !== alias.createdBy
+      ) {
+        log.info(
+          {
+            deliveryLogId: deliveryLog.id,
+            aliasId: alias.id,
+            userId: alias.createdBy.toString(),
+          },
+          "delivery.aborted_after_user_deletion",
+        );
+        return { ok: false, reason: "user_deleted" };
+      }
+
       const result = await sendTelegramMessage(api, {
         chatId: alias.chatId,
         threadId: alias.messageThreadId ?? null,
@@ -234,21 +255,37 @@ export async function deliverQueuedEmail(
         parseMode: prepared.parseMode,
       });
 
-      await db.transaction(async (tx) => {
-        const workDb = tx as Db;
-        await insertDeliveryAttempt(workDb, {
-          deliveryLogId: deliveryLog.id,
-          attemptNo: 1,
-          targetChatId: alias.chatId,
-          targetThreadId: alias.messageThreadId ?? null,
-          telegramMessageId: result.telegramMessageId ? BigInt(result.telegramMessageId) : null,
-          status: result.ok ? "succeeded" : "failed",
-          errorText: result.error ?? null,
-        });
+      try {
+        await db.transaction(async (tx) => {
+          const workDb = tx as Db;
+          await insertDeliveryAttempt(workDb, {
+            deliveryLogId: deliveryLog.id,
+            attemptNo: 1,
+            targetChatId: alias.chatId,
+            targetThreadId: alias.messageThreadId ?? null,
+            telegramMessageId: result.telegramMessageId ? BigInt(result.telegramMessageId) : null,
+            status: result.ok ? "succeeded" : "failed",
+            errorText: result.error ?? null,
+          });
 
-        const finalStatus = result.ok ? "delivered" : "failed";
-        await updateDeliveryLogStatus(workDb, deliveryLog.id, finalStatus);
-      });
+          const finalStatus = result.ok ? "delivered" : "failed";
+          await updateDeliveryLogStatus(workDb, deliveryLog.id, finalStatus);
+        });
+      } catch (logErr: unknown) {
+        // The Telegram send already happened. If we can't persist the outcome,
+        // the retry worker will redeliver and the user sees a duplicate. Log
+        // loudly so this is alertable.
+        log.error(
+          {
+            err: logErr,
+            deliveryLogId: deliveryLog.id,
+            telegramSent: result.ok,
+            telegramMessageId: result.telegramMessageId ?? null,
+          },
+          "delivery.attempt_log_persist_failed",
+        );
+        throw logErr;
+      }
       recordDeliveryAttempt(result.ok ? "succeeded" : "failed");
 
       if (!result.ok) {
