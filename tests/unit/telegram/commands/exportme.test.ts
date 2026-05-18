@@ -101,6 +101,36 @@ describe("/export_me command", () => {
     expect(mockExportHostedUserData).toHaveBeenCalledTimes(1);
   });
 
+  it("does not lock the cooldown when the user has no data", async () => {
+    mockExportHostedUserData.mockResolvedValue(null);
+    const ctx1 = createMockCtx({ chatType: "private", fromId: 555 });
+    await exportMeHandler(ctx1);
+
+    const ctx2 = createMockCtx({ chatType: "private", fromId: 555 });
+    await exportMeHandler(ctx2);
+
+    expect(mockExportHostedUserData).toHaveBeenCalledTimes(2);
+    const replies = ctx2.reply.mock.calls.map((c) => c[0] as string);
+    expect(replies.some((r) => r.includes("Nothing to export"))).toBe(true);
+    expect(replies.some((r) => r.startsWith("⏳ Please wait"))).toBe(false);
+  });
+
+  it("does not lock the cooldown when the export throws", async () => {
+    mockExportHostedUserData.mockRejectedValueOnce(new Error("transient")).mockResolvedValueOnce({
+      schemaVersion: 2,
+      exportedAt: "2026-05-18T10:00:00.000Z",
+      user: { id: "777" },
+    });
+    const ctx1 = createMockCtx({ chatType: "private", fromId: 777 });
+    await exportMeHandler(ctx1);
+
+    const ctx2 = createMockCtx({ chatType: "private", fromId: 777 });
+    await exportMeHandler(ctx2);
+
+    expect(mockExportHostedUserData).toHaveBeenCalledTimes(2);
+    expect(ctx2.replyWithDocument).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects exports larger than the Telegram upload cap", async () => {
     // 50 MiB+ payload. JSON.stringify on a long string will exceed MAX_EXPORT_BYTES.
     const huge = "x".repeat(50 * 1024 * 1024 + 1024);
