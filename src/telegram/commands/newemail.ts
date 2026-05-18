@@ -303,7 +303,7 @@ async function replyForAliasLimitFailure(
   if (limit.ok) return;
 
   if (limit.code === "subscription_inactive") {
-    await ctx.reply(getMessages(await resolveLocale(ctx, getDb())).common.hostedWorkspaceInactive);
+    await ctx.reply(getMessages(await resolveLocale(ctx, getDb())).common.hostedAccountInactive);
     return;
   }
 

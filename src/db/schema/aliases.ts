@@ -10,7 +10,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
-import { inboundDomains } from "./org.js";
+import { inboundDomains } from "./inboundDomains.js";
 import { users } from "./users.js";
 
 // ─── email_addresses ─────────────────────────────────────────────────────────

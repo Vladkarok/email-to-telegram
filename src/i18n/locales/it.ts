@@ -16,12 +16,11 @@ export const it = {
   common: {
     accessDenied: "⛔ Accesso negato.",
     tooManyRequests: "⚠️ Troppe richieste. Per favore, rallenta.",
-    hostedWorkspaceInactive:
-      "⛔ Questo workspace hosted non è pronto per la creazione di alias al momento.",
+    hostedAccountInactive:
+      "⛔ Il tuo account hosted non è pronto per la creazione di alias al momento.",
     aliasCreationUnavailable:
       "❌ La creazione di alias non è disponibile al momento. Riprova più tardi.",
-    noHostedWorkspace:
-      "❌ Nessun workspace hosted trovato per il tuo account. Usa /start per crearne uno.",
+    noHostedAccount: "❌ Nessun account hosted trovato. Usa /start per crearne uno.",
     aliasNotFound: "❌ Alias non trovato.",
     aliasNotFoundShort: "Alias non trovato.",
     chatNotFoundShort: "Chat non trovata.",
@@ -48,13 +47,13 @@ export const it = {
   },
   help: {
     billingStripe: `<b>Fatturazione (solo hosted)</b>
-/billing — stato fatturazione del workspace con pulsanti Upgrade e Manage Billing
+/billing — stato fatturazione dell'account con pulsanti Upgrade e Manage Billing
 /plan — mostra il piano attuale e i limiti
 /usage — mostra i contatori accettati/consegnati/falliti/rifiutati del mese e le quote
 /upgrade — scegli un piano e ottieni un link Stripe Checkout
 /portal — apri lo Stripe billing portal per gestire l'abbonamento`,
     billingManual: `<b>Piano e utilizzo</b>
-/billing — piano e stato delle quote del workspace
+/billing — piano e stato delle quote dell'account
 /plan — mostra il piano attuale e i limiti
 /usage — mostra i contatori accettati/consegnati/falliti/rifiutati del mese e le quote`,
     text: (billingSection: string, settingsHelp: string, safetyNotes: string) => `<b>📖 Aiuto</b>
@@ -139,7 +138,7 @@ ${safetyNotes}
     invalidName:
       "❌ Nome non valido. Sono ammessi solo lettere minuscole, cifre, punti, trattini e underscore.",
     sharedDomainUnavailable:
-      "⛔ Questo workspace hosted non è pronto per la creazione di alias al momento.",
+      "⛔ Il tuo account hosted non è pronto per la creazione di alias al momento.",
     uniqueNameFailed: "❌ Impossibile generare un nome alias univoco. Provane uno diverso.",
     created: (fullAddress: string, chatNote: string) =>
       `✅ Alias email creato!\n\n📧 <code>${fullAddress}</code>${chatNote}\n\n⚠️ Tutta la posta viene rifiutata finché non autorizzi almeno un mittente.\nTocca una scelta rapida o aggiungi un dominio personalizzato:`,
@@ -286,7 +285,7 @@ Esempi:
     added: (localPart: string, icon: string, value: string) =>
       `✅ Allow rule aggiunta per <code>${localPart}</code>: ${icon} ${value}`,
     subscriptionInactive: (localPart: string) =>
-      `⛔ <code>${localPart}</code> non è collegato a un workspace hosted attivo.`,
+      `⛔ <code>${localPart}</code> non è collegato a un account hosted attivo.`,
     limitReached: (localPart: string, used: number | undefined, limit: number) =>
       `📦 Limite del piano raggiunto per <code>${localPart}</code>: ${used ?? limit}/${limit} allow rule usate. Effettua l'upgrade per aggiungerne altre.`,
     createUnavailable:
@@ -315,8 +314,7 @@ Esempi:
   portal: {
     selfHosted:
       "ℹ️ La fatturazione non è abilitata in modalità self-hosted. /portal è disponibile solo sul servizio hosted.",
-    forbidden:
-      "❌ La gestione della fatturazione richiede i permessi di proprietario o amministratore del workspace.",
+    forbidden: "❌ La gestione della fatturazione richiede un account hosted attivo.",
     noCustomer:
       "ℹ️ Non hai ancora un account di fatturazione attivo.\n\nUsa /upgrade per scegliere un piano e iniziare un abbonamento.\n\n<b>Scegli un piano:</b>",
     text: "<b>🧾 Portale di fatturazione</b>\n\nTocca qui sotto per gestire l'abbonamento, vedere le fatture o aggiornare i dati di pagamento. Questo link scade tra 5 minuti.",
@@ -416,9 +414,9 @@ Esempi:
       "<i>Nota: errori di consegna Telegram e messaggi in attesa contano comunque nel totale fatturabile mensile perché l'email è stata accettata in elaborazione.</i>",
     bandwidthStorage: "<b>Banda e storage</b>",
     egress: "Egress",
-    workspace: "<b>Workspace</b>",
+    account: "<b>Account</b>",
     billingTitle: "<b>💳 Fatturazione</b>",
-    workspaceName: "Workspace",
+    accountName: "Account",
     thisMonth: (month: string) => `<b>Questo mese — ${month}</b>`,
   },
 } as const;

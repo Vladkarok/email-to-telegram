@@ -4,8 +4,8 @@ import { authMiddleware } from "./middleware/auth.js";
 import {
   assertChatAccess,
   assertAliasAccess,
-  assertHostedChatWorkspaceReady,
-  assertHostedAliasWorkspaceReady,
+  assertHostedChatReady,
+  assertHostedAliasReady,
 } from "./middleware/authorization.js";
 import { startHandler } from "./commands/start.js";
 import {
@@ -101,10 +101,7 @@ import { hasActiveHostedUser } from "../billing/limits.js";
 import { escapeHtml } from "../utils/html.js";
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES, getMessages, resolveLocale } from "../i18n/index.js";
 
-export {
-  assertHostedChatWorkspaceReady,
-  assertHostedAliasWorkspaceReady,
-} from "./middleware/authorization.js";
+export { assertHostedChatReady, assertHostedAliasReady } from "./middleware/authorization.js";
 
 export function createBot(token: string): Bot {
   const bot = new Bot(token);
@@ -193,7 +190,7 @@ export function createBot(token: string): Bot {
   // cn:{chatId} — start new email flow
   bot.callbackQuery(CB_NEW_EMAIL.pattern, async (ctx) => {
     const chatId = BigInt(ctx.match[1]);
-    if (!(await assertHostedChatWorkspaceReady(ctx, chatId))) return;
+    if (!(await assertHostedChatReady(ctx, chatId))) return;
     if (!(await assertChatAccess(ctx, chatId))) return;
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;
@@ -206,7 +203,7 @@ export function createBot(token: string): Bot {
   // ns:{chatId} — skip (random alias)
   bot.callbackQuery(CB_SKIP_ALIAS.pattern, async (ctx) => {
     const chatId = BigInt(ctx.match[1]);
-    if (!(await assertHostedChatWorkspaceReady(ctx, chatId))) return;
+    if (!(await assertHostedChatReady(ctx, chatId))) return;
     if (!(await assertChatAccess(ctx, chatId))) return;
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;
@@ -388,7 +385,7 @@ export function createBot(token: string): Bot {
 
   // aa:{aliasId} — start add allow rule flow
   bot.callbackQuery(CB_ADD_RULE.pattern, async (ctx) => {
-    if (!(await assertHostedAliasWorkspaceReady(ctx, ctx.match[1]))) return;
+    if (!(await assertHostedAliasReady(ctx, ctx.match[1]))) return;
     if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;
@@ -425,7 +422,7 @@ export function createBot(token: string): Bot {
   bot.callbackQuery(CB_QUICK_ALLOW.pattern, async (ctx) => {
     const aliasId = ctx.match[1];
     const domain = ctx.match[2];
-    if (!(await assertHostedAliasWorkspaceReady(ctx, aliasId))) return;
+    if (!(await assertHostedAliasReady(ctx, aliasId))) return;
     if (!(await assertAliasAccess(ctx, aliasId))) return;
     const messages = getMessages(await resolveLocale(ctx, getDb()));
     const alias = await findAliasById(getDb(), aliasId);
@@ -445,7 +442,7 @@ export function createBot(token: string): Bot {
   bot.callbackQuery(CB_QUICK_ALLOW_RULES.pattern, async (ctx) => {
     const aliasId = ctx.match[1];
     const domain = ctx.match[2];
-    if (!(await assertHostedAliasWorkspaceReady(ctx, aliasId))) return;
+    if (!(await assertHostedAliasReady(ctx, aliasId))) return;
     if (!(await assertAliasAccess(ctx, aliasId))) return;
     const messages = getMessages(await resolveLocale(ctx, getDb()));
     const alias = await findAliasById(getDb(), aliasId);
@@ -611,7 +608,7 @@ export async function handlePendingTextMessage(ctx: Context, next: NextFunction)
     const messages = getMessages(await resolveLocale(ctx, getDb()));
     if (!(await hasActiveHostedUser(getDb(), BigInt(ctx.from.id)))) {
       clearPending(ctx.from.id);
-      await ctx.reply(messages.common.hostedWorkspaceInactive);
+      await ctx.reply(messages.common.hostedAccountInactive);
       return;
     }
 

@@ -16,12 +16,11 @@ export const fr = {
   common: {
     accessDenied: "⛔ Accès refusé.",
     tooManyRequests: "⚠️ Trop de requêtes. Veuillez ralentir.",
-    hostedWorkspaceInactive:
-      "⛔ Cet espace de travail hosted n'est pas prêt pour la création d'alias pour le moment.",
+    hostedAccountInactive:
+      "⛔ Votre compte hosted n'est pas prêt pour la création d'alias pour le moment.",
     aliasCreationUnavailable:
       "❌ La création d'alias n'est pas disponible pour le moment. Réessayez plus tard.",
-    noHostedWorkspace:
-      "❌ Aucun espace de travail hosted trouvé pour votre compte. Utilisez /start pour le créer.",
+    noHostedAccount: "❌ Aucun compte hosted trouvé. Utilisez /start pour le créer.",
     aliasNotFound: "❌ Alias introuvable.",
     aliasNotFoundShort: "Alias introuvable.",
     chatNotFoundShort: "Chat introuvable.",
@@ -54,7 +53,7 @@ export const fr = {
 /upgrade — choisir un plan et obtenir un lien Stripe Checkout
 /portal — ouvrir le portail Stripe pour gérer votre abonnement`,
     billingManual: `<b>Plan et usage</b>
-/billing — plan et statut des quotas de l'espace de travail
+/billing — plan et statut des quotas du compte
 /plan — afficher votre plan actuel et ses limites
 /usage — afficher les compteurs acceptés/livrés/échoués/rejetés du mois et les quotas`,
     text: (billingSection: string, settingsHelp: string, safetyNotes: string) => `<b>📖 Aide</b>
@@ -139,7 +138,7 @@ ${safetyNotes}
     invalidName:
       "❌ Nom invalide. Seuls les lettres minuscules, chiffres, points, tirets et soulignés sont autorisés.",
     sharedDomainUnavailable:
-      "⛔ Cet espace de travail hosted n'est pas prêt pour la création d'alias pour le moment.",
+      "⛔ Votre compte hosted n'est pas prêt pour la création d'alias pour le moment.",
     uniqueNameFailed: "❌ Impossible de trouver un nom d'alias unique. Essayez-en un autre.",
     created: (fullAddress: string, chatNote: string) =>
       `✅ Alias e-mail créé !\n\n📧 <code>${fullAddress}</code>${chatNote}\n\n⚠️ Tout le courrier est rejeté tant que vous n'avez pas autorisé au moins un expéditeur.\nTapez un choix rapide ou ajoutez un domaine personnalisé :`,
@@ -286,7 +285,7 @@ Exemples :
     added: (localPart: string, icon: string, value: string) =>
       `✅ Allow rule ajoutée pour <code>${localPart}</code> : ${icon} ${value}`,
     subscriptionInactive: (localPart: string) =>
-      `⛔ <code>${localPart}</code> n'est pas attaché à un espace de travail hosted actif.`,
+      `⛔ <code>${localPart}</code> n'est pas attaché à un compte hosted actif.`,
     limitReached: (localPart: string, used: number | undefined, limit: number) =>
       `📦 Limite du plan atteinte pour <code>${localPart}</code> : ${used ?? limit}/${limit} allow rules utilisées. Mettez à niveau pour en ajouter davantage.`,
     createUnavailable:
@@ -315,8 +314,7 @@ Exemples :
   portal: {
     selfHosted:
       "ℹ️ La facturation n'est pas activée en mode self-hosted. /portal n'est disponible que sur le service hosted.",
-    forbidden:
-      "❌ La gestion de la facturation requiert les droits propriétaire ou administrateur de l'espace de travail.",
+    forbidden: "❌ La gestion de la facturation requiert un compte hosted actif.",
     noCustomer:
       "ℹ️ Vous n'avez pas encore de compte de facturation actif.\n\nUtilisez /upgrade pour choisir un plan et démarrer un abonnement.\n\n<b>Choisissez un plan :</b>",
     text: "<b>🧾 Portail de facturation</b>\n\nTapez ci-dessous pour gérer votre abonnement, voir les factures ou mettre à jour vos moyens de paiement. Ce lien expire dans 5 minutes.",
@@ -417,9 +415,9 @@ Exemples :
       "<i>Note : les échecs de livraison Telegram et les messages en attente comptent dans votre total facturable mensuel car l'e-mail a été accepté en traitement.</i>",
     bandwidthStorage: "<b>Bande passante et stockage</b>",
     egress: "Egress",
-    workspace: "<b>Espace de travail</b>",
+    account: "<b>Compte</b>",
     billingTitle: "<b>💳 Facturation</b>",
-    workspaceName: "Espace de travail",
+    accountName: "Compte",
     thisMonth: (month: string) => `<b>Ce mois-ci — ${month}</b>`,
   },
 } as const;

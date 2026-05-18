@@ -19,7 +19,7 @@ export async function planHandler(ctx: Context): Promise<void> {
 
   const user = await findUserById(db, BigInt(ctx.from.id));
   if (!user) {
-    await ctx.reply(messages.common.noHostedWorkspace);
+    await ctx.reply(messages.common.noHostedAccount);
     return;
   }
 

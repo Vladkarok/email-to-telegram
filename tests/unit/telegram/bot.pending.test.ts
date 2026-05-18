@@ -96,12 +96,8 @@ vi.mock("../../../src/telegram/middleware/auth.js", () => ({
   authMiddleware: (...args: unknown[]): unknown => mockAuthMiddleware(...args),
 }));
 
-const {
-  createBot,
-  handlePendingTextMessage,
-  assertHostedAliasWorkspaceReady,
-  assertHostedChatWorkspaceReady,
-} = await import("../../../src/telegram/bot.js");
+const { createBot, handlePendingTextMessage, assertHostedAliasReady, assertHostedChatReady } =
+  await import("../../../src/telegram/bot.js");
 
 const mockAnswerCallbackQuery = vi
   .spyOn(Context.prototype, "answerCallbackQuery")
@@ -180,7 +176,7 @@ describe("pending text flow", () => {
     mockEditMessageText.mockRestore();
   });
 
-  it("creates a pending alias when the hosted workspace is active", async () => {
+  it("creates a pending alias when the hosted account is active", async () => {
     mockGetPending.mockReturnValue({
       action: "newemail",
       chatId: -1001234567890n,
@@ -200,7 +196,7 @@ describe("pending text flow", () => {
     );
   });
 
-  it("shows the hosted workspace message before chat auth when pending alias creation has no active org", async () => {
+  it("shows the hosted account message before chat auth when pending alias creation has no active org", async () => {
     mockGetPending.mockReturnValue({
       action: "newemail",
       chatId: -1001234567890n,
@@ -214,26 +210,24 @@ describe("pending text flow", () => {
     expect(mockCanManageChat).not.toHaveBeenCalled();
     expect(mockCreateEmailAlias).not.toHaveBeenCalled();
     expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
-      /workspace|not ready|active/i,
+      /account|not ready|active/i,
     );
   });
 
-  it("blocks the callback newemail entrypoint when the hosted workspace is inactive", async () => {
+  it("blocks the callback newemail entrypoint when the hosted account is inactive", async () => {
     mockHasActiveHostedOrganization.mockResolvedValueOnce(false);
     const ctx = {
       answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
     };
 
-    await expect(assertHostedChatWorkspaceReady(ctx as never, -1001234567890n)).resolves.toBe(
-      false,
-    );
+    await expect(assertHostedChatReady(ctx as never, -1001234567890n)).resolves.toBe(false);
 
     expect(ctx.answerCallbackQuery).toHaveBeenCalledWith(
-      expect.stringMatching(/hosted workspace inactive/i),
+      expect.stringMatching(/hosted account inactive/i),
     );
   });
 
-  it("wires the cn callback through the hosted workspace guard before chat auth", async () => {
+  it("wires the cn callback through the hosted account guard before chat auth", async () => {
     mockHasActiveHostedOrganization.mockResolvedValueOnce(false);
     const bot = createInitializedBot();
 
@@ -241,11 +235,11 @@ describe("pending text flow", () => {
 
     expect(mockCanManageChat).not.toHaveBeenCalled();
     expect(mockAnswerCallbackQuery).toHaveBeenCalledWith(
-      expect.stringMatching(/hosted workspace inactive/i),
+      expect.stringMatching(/hosted account inactive/i),
     );
   });
 
-  it("wires the ns callback through the hosted workspace guard before chat auth", async () => {
+  it("wires the ns callback through the hosted account guard before chat auth", async () => {
     mockHasActiveHostedOrganization.mockResolvedValueOnce(false);
     const bot = createInitializedBot();
 
@@ -253,7 +247,7 @@ describe("pending text flow", () => {
 
     expect(mockCanManageChat).not.toHaveBeenCalled();
     expect(mockAnswerCallbackQuery).toHaveBeenCalledWith(
-      expect.stringMatching(/hosted workspace inactive/i),
+      expect.stringMatching(/hosted account inactive/i),
     );
   });
 
@@ -327,7 +321,7 @@ describe("pending text flow", () => {
   it("does not reopen the menu when quota/inactive-org helper rejects the rule", async () => {
     mockAddAllowRuleForAlias.mockImplementation(
       async (ctx: { reply: (text: string) => Promise<void> }) => {
-        await ctx.reply("⛔ alias is not attached to an active hosted workspace.");
+        await ctx.reply("⛔ alias is not attached to an active hosted account.");
         return false;
       },
     );
@@ -337,11 +331,11 @@ describe("pending text flow", () => {
 
     expect(mockSendAllowRulesMenu).not.toHaveBeenCalled();
     expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
-      /active hosted workspace/i,
+      /active hosted account/i,
     );
   });
 
-  it("shows the hosted workspace message before alias auth when the alias org is inactive", async () => {
+  it("shows the hosted account message before alias auth when the alias org is inactive", async () => {
     mockHasActiveHostedOrganization.mockResolvedValueOnce(false);
     const ctx = createMockCtx({ text: "github.com" });
 
@@ -350,24 +344,24 @@ describe("pending text flow", () => {
     expect(mockCanManageAlias).not.toHaveBeenCalled();
     expect(mockAddAllowRuleForAlias).not.toHaveBeenCalled();
     expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
-      /active hosted workspace/i,
+      /active hosted account/i,
     );
   });
 
-  it("blocks the callback allow-rule entrypoint when the hosted workspace is inactive", async () => {
+  it("blocks the callback allow-rule entrypoint when the hosted account is inactive", async () => {
     mockHasActiveHostedOrganization.mockResolvedValueOnce(false);
     const ctx = {
       answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
     };
 
-    await expect(assertHostedAliasWorkspaceReady(ctx as never, "alias-1")).resolves.toBe(false);
+    await expect(assertHostedAliasReady(ctx as never, "alias-1")).resolves.toBe(false);
 
     expect(ctx.answerCallbackQuery).toHaveBeenCalledWith(
-      expect.stringMatching(/hosted workspace inactive/i),
+      expect.stringMatching(/hosted account inactive/i),
     );
   });
 
-  it("wires the aa callback through the hosted workspace guard before alias auth", async () => {
+  it("wires the aa callback through the hosted account guard before alias auth", async () => {
     mockHasActiveHostedOrganization.mockResolvedValueOnce(false);
     const bot = createInitializedBot();
 
@@ -375,7 +369,7 @@ describe("pending text flow", () => {
 
     expect(mockCanManageAlias).not.toHaveBeenCalled();
     expect(mockAnswerCallbackQuery).toHaveBeenCalledWith(
-      expect.stringMatching(/hosted workspace inactive/i),
+      expect.stringMatching(/hosted account inactive/i),
     );
   });
 

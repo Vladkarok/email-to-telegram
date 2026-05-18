@@ -329,9 +329,7 @@ describe("/newemail command", () => {
     await newemailHandler(ctx);
 
     expect(mockCreateAlias).not.toHaveBeenCalled();
-    expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
-      /workspace|not ready/i,
-    );
+    expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/account|not ready/i);
   });
 
   it("rejects alias creation when hosted alias creation is throttled", async () => {
@@ -405,7 +403,7 @@ describe("/newemail command", () => {
     expect(buttons.some((b) => b.callback_data === "bill:upgrade")).toBe(false);
   });
 
-  it("shows a hosted workspace error when alias creation has no active organization", async () => {
+  it("shows a hosted account error when alias creation has no active organization", async () => {
     mockFindChatById.mockResolvedValueOnce({
       title: "Hosted DM",
       type: "private",
@@ -419,7 +417,7 @@ describe("/newemail command", () => {
     expect(mockCreateAlias).not.toHaveBeenCalled();
     expect(mockCanManageChat).not.toHaveBeenCalled();
     expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
-      /workspace|not ready|active/i,
+      /account|not ready|active/i,
     );
   });
 
