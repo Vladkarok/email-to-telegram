@@ -19,7 +19,7 @@ body {
   font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 main {
-  max-width: 920px;
+  max-width: 1180px;
   margin: 0 auto;
   padding: 24px 18px 56px;
 }
@@ -29,6 +29,7 @@ main {
   border-radius: 12px;
   padding: 20px;
   margin-bottom: 16px;
+  overflow-x: auto;
 }
 h1 { font-size: 1.5rem; margin: 0 0 16px; }
 h2 { font-size: 1.15rem; margin: 20px 0 10px; }
@@ -78,6 +79,7 @@ dd { margin: 2px 0 0; }
 }
 .dashboard-grid .panel { margin-bottom: 0; }
 .compact-table th, .compact-table td { padding: 7px 8px; font-size: 0.92rem; }
+.compact-table { min-width: 420px; }
 .status-danger { color: var(--danger); font-weight: 600; }
 .status-warn { color: #8b5e34; font-weight: 600; }
 `;
@@ -318,6 +320,7 @@ export interface UserSearchResult {
   username: string | null;
   isAllowed: boolean;
   planCode: string;
+  createdAt: string;
 }
 
 export function renderUsersPage(
@@ -326,9 +329,10 @@ export function renderUsersPage(
   results: UserSearchResult[] | null,
 ): string {
   let resultsHtml = "";
+  const isSearch = query.length > 0;
   if (results !== null) {
     if (results.length === 0) {
-      resultsHtml = `<p class="muted">No users found.</p>`;
+      resultsHtml = `<p class="muted">${isSearch ? "No users found." : "No users yet."}</p>`;
     } else {
       const rows = results
         .map(
@@ -338,10 +342,11 @@ export function renderUsersPage(
               <td>${u.username ? escapeHtml(u.username) : '<span class="muted">-</span>'}</td>
               <td>${u.isAllowed ? "Yes" : "No"}</td>
               <td>${escapeHtml(u.planCode)}</td>
+              <td>${renderDateCell(u.createdAt)}</td>
             </tr>`,
         )
         .join("");
-      resultsHtml = `<table><thead><tr><th>Telegram ID</th><th>Username</th><th>Allowed</th><th>Plan</th></tr></thead><tbody>${rows}</tbody></table>`;
+      resultsHtml = `<h2>${isSearch ? "Search Results" : "Recent Users"}</h2><table><thead><tr><th>Telegram ID</th><th>Username</th><th>Allowed</th><th>Plan</th><th>Created</th></tr></thead><tbody>${rows}</tbody></table>`;
     }
   }
 
@@ -353,6 +358,7 @@ export function renderUsersPage(
         <input type="text" name="q" value="${escapeHtmlAttribute(query)}" placeholder="Telegram ID or username" />
         <button type="submit" style="margin-left:8px;">Search</button>
       </form>
+      ${isSearch ? '<p><a href="/admin/users">Show recent users</a></p>' : ""}
       ${resultsHtml}
     </div>`,
     csrfToken,
