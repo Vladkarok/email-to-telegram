@@ -414,8 +414,14 @@ L'azione <b>non è reversibile</b>. Conferma per procedere.`,
       "⚠️ L'account e i record nel database sono stati rimossi, ma alcuni file email memorizzati non sono stati eliminati. Contatta l'operatore per completare l'eliminazione.",
   },
   exportMe: {
-    caption: "Esportazione dei tuoi dati (JSON). Corpi delle email e allegati non sono inclusi.",
+    preparing: "⏳ Sto preparando la tua esportazione… un momento.",
+    caption:
+      "Esportazione dei tuoi dati (JSON). I corpi delle email e il contenuto degli allegati non sono inclusi — richiedili all'operatore se ti servono.",
     noData: "ℹ️ Niente da esportare — non ci sono record per il tuo account.",
+    rateLimited: (retryAfterSeconds: number) =>
+      `⏳ Attendi ${retryAfterSeconds} s prima di richiedere una nuova esportazione.`,
+    tooLarge:
+      "⚠️ La tua esportazione è troppo grande per essere inviata via Telegram. Contatta l'operatore per riceverla in altro modo.",
     failed: "❌ Esportazione non riuscita. Riprova o contatta l'operatore.",
   },
   botCommands: [

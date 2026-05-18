@@ -415,9 +415,14 @@ Cette action est <b>irréversible</b>. Confirmez pour continuer.`,
       "⚠️ Votre compte et vos enregistrements en base ont été supprimés, mais certains fichiers d'e-mail stockés n'ont pas pu être supprimés. Veuillez contacter l'opérateur pour terminer l'effacement.",
   },
   exportMe: {
+    preparing: "⏳ Préparation de votre export… un instant.",
     caption:
-      "Export de vos données (JSON). Les corps d'e-mails et pièces jointes ne sont pas inclus.",
+      "Export de vos données (JSON). Les corps d'e-mails et le contenu des pièces jointes ne sont pas inclus — demandez-les à l'opérateur si besoin.",
     noData: "ℹ️ Rien à exporter — aucun enregistrement n'existe pour votre compte.",
+    rateLimited: (retryAfterSeconds: number) =>
+      `⏳ Veuillez patienter ${retryAfterSeconds} s avant de demander un nouvel export.`,
+    tooLarge:
+      "⚠️ Votre export est trop volumineux pour être envoyé via Telegram. Veuillez contacter l'opérateur pour le recevoir autrement.",
     failed: "❌ Échec de l'export. Veuillez réessayer ou contacter l'opérateur.",
   },
   botCommands: [

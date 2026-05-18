@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { exportHostedUserData } = await import("../../../src/dataLifecycle/exportUser.js");
+const { exportHostedUserData, EXPORT_SCHEMA_VERSION } =
+  await import("../../../src/dataLifecycle/exportUser.js");
 
 function thenable(rows: unknown[]) {
   const obj: Record<string, unknown> = {
@@ -23,32 +24,43 @@ function selectChainResolvingTo(rows: unknown[]) {
   };
 }
 
-function makeDb(
-  userRow: Record<string, unknown> | null,
-  rows: {
-    aliases?: unknown[];
-    usageMonths?: unknown[];
-    storageUsage?: unknown[];
-    deliverySummary?: unknown[];
-    manualBillingEvents?: unknown[];
-  } = {},
-) {
-  let call = 0;
+interface MockRows {
+  aliases?: unknown[];
+  allowRules?: unknown[];
+  inboundDomains?: unknown[];
+  chats?: unknown[];
+  usageMonths?: unknown[];
+  storageUsage?: unknown[];
+  deliveryLogs?: unknown[];
+  deliveryAttempts?: unknown[];
+  attachments?: unknown[];
+  manualBillingEvents?: unknown[];
+}
+
+function makeDb(userRow: Record<string, unknown> | null, rows: MockRows = {}) {
   // Order matches exportHostedUserData internals:
-  // 1: user lookup (.from().where().limit())
-  // 2-N: aliases / usage months / storage usage / delivery summary / manual events
+  // 1: user lookup
+  // 2: aliases (awaited before the parallel batch)
+  // 3-11: allowRules, inboundDomains, chats, usageMonths, storageUsage,
+  //       deliveryLogs, deliveryAttempts, attachments, manualBillingEvents
   const selectResponses: unknown[][] = [
-    userRow ? [userRow] : [], // user
+    userRow ? [userRow] : [],
     rows.aliases ?? [],
+    rows.allowRules ?? [],
+    rows.inboundDomains ?? [],
+    rows.chats ?? [],
     rows.usageMonths ?? [],
     rows.storageUsage ?? [],
-    rows.deliverySummary ?? [],
+    rows.deliveryLogs ?? [],
+    rows.deliveryAttempts ?? [],
+    rows.attachments ?? [],
     rows.manualBillingEvents ?? [],
   ];
+  let call = 0;
   const select = vi.fn(() => {
-    const rows = selectResponses[call] ?? [];
+    const next = selectResponses[call] ?? [];
     call += 1;
-    return selectChainResolvingTo(rows);
+    return selectChainResolvingTo(next);
   });
   return { select } as never;
 }
@@ -63,7 +75,7 @@ describe("exportHostedUserData", () => {
     await expect(exportHostedUserData(db, 1n)).resolves.toBeNull();
   });
 
-  it("returns an export envelope keyed by the user", async () => {
+  it("returns an export envelope with the v2 schema and full per-row data", async () => {
     const userRow = {
       id: 1n,
       username: "alice",
@@ -81,10 +93,39 @@ describe("exportHostedUserData", () => {
           status: "active",
           chatId: -100n,
           messageThreadId: 42n,
+          label: "Ops alerts",
           renderMode: "plaintext",
           privacyModeEnabled: true,
           bodyDedupEnabled: false,
           createdAt: new Date("2025-01-03T00:00:00.000Z"),
+        },
+      ],
+      allowRules: [
+        {
+          id: "rule-1",
+          emailAddressId: "alias-1",
+          matchType: "domain",
+          matchValue: "example.com",
+          createdAt: new Date("2025-01-04T00:00:00.000Z"),
+        },
+      ],
+      inboundDomains: [
+        {
+          id: "dom-1",
+          domain: "custom.example.com",
+          kind: "custom",
+          status: "active",
+          verifiedAt: new Date("2025-01-05T00:00:00.000Z"),
+          createdAt: new Date("2025-01-04T00:00:00.000Z"),
+        },
+      ],
+      chats: [
+        {
+          id: -100n,
+          title: "Ops chat",
+          type: "supergroup",
+          isActive: true,
+          createdAt: new Date("2025-01-02T00:00:00.000Z"),
         },
       ],
       usageMonths: [
@@ -96,13 +137,44 @@ describe("exportHostedUserData", () => {
         },
       ],
       storageUsage: [{ rawEmailBytes: 100n, attachmentBytes: 200n }],
-      deliverySummary: [
+      deliveryLogs: [
         {
+          id: "log-1",
+          emailAddressId: "alias-1",
+          messageIdHeader: "<abc@example.com>",
+          envelopeFrom: "sender@example.com",
+          headerFrom: "Sender <sender@example.com>",
+          subject: "Hello",
+          receivedAt: new Date("2026-05-10T00:00:00.000Z"),
+          rawSizeBytes: 512,
+          hasAttachments: true,
+          bodyDedupApplied: false,
           finalStatus: "delivered",
           billable: true,
-          hasAttachments: true,
-          rawSizeBytes: 512,
-          receivedAt: new Date("2026-05-10T00:00:00.000Z"),
+        },
+      ],
+      deliveryAttempts: [
+        {
+          id: "att-1",
+          deliveryLogId: "log-1",
+          attemptNo: 1,
+          targetChatId: -100n,
+          targetThreadId: 42n,
+          telegramMessageId: 999n,
+          status: "succeeded",
+          errorText: null,
+          createdAt: new Date("2026-05-10T00:00:01.000Z"),
+        },
+      ],
+      attachments: [
+        {
+          id: "file-1",
+          deliveryLogId: "log-1",
+          originalFilename: "report.pdf",
+          contentType: "application/pdf",
+          sizeBytes: 1024,
+          sha256: "deadbeef",
+          createdAt: new Date("2026-05-10T00:00:00.500Z"),
         },
       ],
       manualBillingEvents: [
@@ -122,23 +194,41 @@ describe("exportHostedUserData", () => {
     const result = await exportHostedUserData(db, 1n, new Date("2026-05-18T00:00:00.000Z"));
 
     expect(result).toMatchObject({
+      schemaVersion: EXPORT_SCHEMA_VERSION,
       exportedAt: "2026-05-18T00:00:00.000Z",
-      user: {
-        id: "1",
-        username: "alice",
-        planCode: "free",
-        subscriptionStatus: "free",
-      },
-      aliases: [
-        {
-          id: "alias-1",
-          chatId: "-100",
-          messageThreadId: "42",
-          privacyModeEnabled: true,
-        },
-      ],
+      user: { id: "1", username: "alice" },
+      chats: [{ id: "-100", title: "Ops chat", type: "supergroup" }],
+      aliases: [{ id: "alias-1", chatId: "-100", label: "Ops alerts" }],
+      allowRules: [{ id: "rule-1", matchValue: "example.com" }],
+      inboundDomains: [{ id: "dom-1", domain: "custom.example.com", kind: "custom" }],
       usageMonths: [{ month: "2026-05", egressBytes: "123" }],
       storageUsage: { rawEmailBytes: "100", attachmentBytes: "200" },
+      deliveryLogs: [
+        {
+          id: "log-1",
+          envelopeFrom: "sender@example.com",
+          subject: "Hello",
+          receivedAt: "2026-05-10T00:00:00.000Z",
+          finalStatus: "delivered",
+        },
+      ],
+      deliveryAttempts: [
+        {
+          id: "att-1",
+          deliveryLogId: "log-1",
+          targetChatId: "-100",
+          telegramMessageId: "999",
+          status: "succeeded",
+        },
+      ],
+      attachments: [
+        {
+          id: "file-1",
+          originalFilename: "report.pdf",
+          contentType: "application/pdf",
+          sizeBytes: 1024,
+        },
+      ],
       deliverySummary: {
         total: 1,
         billable: 1,
@@ -147,14 +237,7 @@ describe("exportHostedUserData", () => {
         byFinalStatus: { delivered: 1 },
         byMonth: { "2026-05": 1 },
       },
-      manualBillingEvents: [
-        {
-          id: "event-1",
-          telegramUserId: "1",
-          paidThroughAt: "2026-06-01T00:00:00.000Z",
-          paymentReference: "wise-1",
-        },
-      ],
+      manualBillingEvents: [{ id: "event-1", paymentReference: "wise-1" }],
     });
   });
 });
