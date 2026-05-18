@@ -5,7 +5,7 @@ import { findUserById } from "../../db/repos/users.js";
 import { createCustomerPortalSession } from "../../billing/customerPortal.js";
 import { buildUpgradePlanKeyboard } from "./upgrade.js";
 import { getLogger } from "../../utils/logger.js";
-import { canUseSelfServeBilling, MANUAL_BILLING_MESSAGE } from "../../billing/selfServe.js";
+import { canUseSelfServeBilling, manualBillingMessage } from "../../billing/selfServe.js";
 import { getMessages, resolveLocale } from "../../i18n/index.js";
 
 /** /portal command handler — opens Stripe Customer Portal or shows upgrade options. */
@@ -30,7 +30,7 @@ export async function portalHandler(ctx: Context): Promise<void> {
     }
 
     if (!canUseSelfServeBilling(config, user)) {
-      await ctx.reply(MANUAL_BILLING_MESSAGE);
+      await ctx.reply(manualBillingMessage(config, messages));
       return;
     }
 
@@ -77,7 +77,7 @@ export async function portalCallbackHandler(ctx: CallbackQueryContext<Context>):
 
     if (!canUseSelfServeBilling(config, user)) {
       await ctx.answerCallbackQuery();
-      await ctx.reply(MANUAL_BILLING_MESSAGE);
+      await ctx.reply(manualBillingMessage(config, messages));
       return;
     }
 

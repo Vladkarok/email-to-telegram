@@ -356,8 +356,8 @@ Esempi:
       "❌ I dati di fatturazione sono temporaneamente non disponibili. Riprova a breve.",
     upgradeButton: "⬆️ Upgrade",
     manageBillingButton: "🧾 Gestisci fatturazione",
-    manualBilling:
-      "ℹ️ I pagamenti self-serve sono temporaneamente non disponibili.\n\nGli upgrade hosted sono gestiti manualmente per il momento. Contatta il supporto per fare upgrade, rinnovare, annullare o per domande sulla fatturazione.",
+    manualBilling: (contact: string) =>
+      `ℹ️ I pagamenti self-serve sono temporaneamente non disponibili.\n\nGli upgrade hosted sono gestiti manualmente per il momento. Contatta ${contact} per fare upgrade, rinnovare, annullare o per domande sulla fatturazione.`,
   },
   donate: {
     title: "☕ Supporta il progetto",
