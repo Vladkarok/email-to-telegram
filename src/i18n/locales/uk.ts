@@ -15,10 +15,9 @@ export const uk = {
   common: {
     accessDenied: "⛔ Доступ заборонено.",
     tooManyRequests: "⚠️ Забагато запитів. Будь ласка, повільніше.",
-    hostedWorkspaceInactive: "⛔ Цей hosted-воркспейс зараз не готовий до створення аліасів.",
+    hostedAccountInactive: "⛔ Ваш hosted-акаунт зараз не готовий до створення аліасів.",
     aliasCreationUnavailable: "❌ Створення аліаса зараз недоступне. Спробуйте пізніше.",
-    noHostedWorkspace:
-      "❌ Для вашого акаунта не знайдено hosted-воркспейс. Використайте /start, щоб створити його.",
+    noHostedAccount: "❌ Hosted-акаунт не знайдено. Використайте /start, щоб створити його.",
     aliasNotFound: "❌ Аліас не знайдено.",
     aliasNotFoundShort: "Аліас не знайдено.",
     chatNotFoundShort: "Чат не знайдено.",
@@ -45,13 +44,13 @@ export const uk = {
   },
   help: {
     billingStripe: `<b>Білінг (лише hosted)</b>
-/billing — статус білінгу воркспейсу з кнопками оновлення плану та керування білінгом
+/billing — статус білінгу акаунта з кнопками оновлення плану та керування білінгом
 /plan — показати поточний план і ліміти
 /usage — показати прийняті/доставлені/невдалі/відхилені листи та квоти за місяць
 /upgrade — обрати план і отримати посилання Stripe Checkout
 /portal — відкрити Stripe billing portal для керування підпискою`,
     billingManual: `<b>План і використання</b>
-/billing — план воркспейсу та статус квот
+/billing — план акаунта та статус квот
 /plan — показати поточний план і ліміти
 /usage — показати прийняті/доставлені/невдалі/відхилені листи та квоти за місяць`,
     text: (billingSection: string, settingsHelp: string, safetyNotes: string) => `<b>📖 Довідка</b>
@@ -135,7 +134,7 @@ ${safetyNotes}
     nameTooLong: "❌ Назва задовга. Максимум 32 символи.",
     invalidName:
       "❌ Некоректна назва. Дозволені лише малі латинські літери, цифри, крапки, дефіси та підкреслення.",
-    sharedDomainUnavailable: "⛔ Цей hosted-воркспейс зараз не готовий до створення аліасів.",
+    sharedDomainUnavailable: "⛔ Ваш hosted-акаунт зараз не готовий до створення аліасів.",
     uniqueNameFailed: "❌ Не вдалося підібрати унікальну назву аліаса. Спробуйте іншу.",
     created: (fullAddress: string, chatNote: string) =>
       `✅ Email-аліас створено!\n\n📧 <code>${fullAddress}</code>${chatNote}\n\n⚠️ Уся пошта відхилятиметься, доки ви не дозволите хоча б одного відправника.\nНатисніть швидкий варіант або додайте власний домен:`,
@@ -282,7 +281,7 @@ ${safetyNotes}
     added: (localPart: string, icon: string, value: string) =>
       `✅ Додано allow rule для <code>${localPart}</code>: ${icon} ${value}`,
     subscriptionInactive: (localPart: string) =>
-      `⛔ <code>${localPart}</code> не прив'язаний до активного hosted-воркспейсу.`,
+      `⛔ <code>${localPart}</code> не прив'язаний до активного hosted-акаунта.`,
     limitReached: (localPart: string, used: number | undefined, limit: number) =>
       `📦 Досягнуто ліміт плану для <code>${localPart}</code>: ${used ?? limit}/${limit} allow rules. Оновіть план, щоб додати більше.`,
     createUnavailable: "❌ Створення allow rules зараз недоступне. Спробуйте пізніше.",
@@ -310,7 +309,7 @@ ${safetyNotes}
   portal: {
     selfHosted:
       "ℹ️ Білінг не увімкнено в self-hosted режимі. /portal доступна лише в hosted-сервісі.",
-    forbidden: "❌ Керування білінгом вимагає прав власника або адміністратора воркспейсу.",
+    forbidden: "❌ Керування білінгом доступне лише для активного hosted-акаунта.",
     noCustomer:
       "ℹ️ У вас ще немає активного білінгового акаунта.\n\nВикористайте /upgrade, щоб обрати план і почати підписку.\n\n<b>Оберіть план:</b>",
     text: "<b>🧾 Білінг-портал</b>\n\nНатисніть нижче, щоб керувати підпискою, переглянути рахунки або оновити платіжні реквізити. Це посилання діє 5 хвилин.",
@@ -320,7 +319,7 @@ ${safetyNotes}
   upgrade: {
     selfHosted:
       "ℹ️ Білінг не увімкнено в self-hosted режимі. /upgrade доступна лише в hosted-сервісі.",
-    forbidden: "❌ Зміни білінгу вимагають прав власника або адміністратора воркспейсу.",
+    forbidden: "❌ Зміни білінгу доступні лише для активного hosted-акаунта.",
     header: "<b>⬆️ Оновіть свій план</b>\n\nОберіть план, щоб почати оновлення:",
     invalidPlan: "❌ Невірний вибір плану.",
     loadFailed: "❌ Не вдалося завантажити опції оновлення. Спробуйте трохи пізніше.",
@@ -408,9 +407,9 @@ ${safetyNotes}
       "<i>Примітка: невдалі доставки в Telegram і повідомлення в очікуванні все одно рахуються в місячний billable total, бо email був прийнятий в обробку.</i>",
     bandwidthStorage: "<b>Трафік і сховище</b>",
     egress: "Egress",
-    workspace: "<b>Воркспейс</b>",
+    account: "<b>Акаунт</b>",
     billingTitle: "<b>💳 Білінг</b>",
-    workspaceName: "Воркспейс",
+    accountName: "Акаунт",
     thisMonth: (month: string) => `<b>Цей місяць — ${month}</b>`,
   },
 } as const;

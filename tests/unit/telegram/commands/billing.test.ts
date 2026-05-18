@@ -75,7 +75,7 @@ describe("/billing command", () => {
     await billingHandler(ctx);
 
     const [text] = ctx.reply.mock.calls[0] as [string, unknown];
-    expect(text).toMatch(/no.*workspace|organization.*not found/i);
+    expect(text).toMatch(/no.*account|organization.*not found/i);
   });
 
   it("renders status text and inline keyboard with Upgrade and Manage Billing buttons", async () => {

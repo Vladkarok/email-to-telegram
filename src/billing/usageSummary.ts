@@ -128,7 +128,7 @@ export function buildUsageSummaryText(
     `• ${messages.storage}: ${formatBytesQuota(storageBytes, BigInt(plan.limits.storageBytes))}`,
   );
   lines.push("");
-  lines.push(messages.workspace);
+  lines.push(messages.account);
   lines.push(`• ${messages.aliases}: ${formatCountQuota(aliasesUsed, plan.limits.aliases)}`);
   lines.push(
     `• ${messages.allowRules}: ${formatCountQuota(allowRulesUsed, plan.limits.allowRules)}`,
@@ -146,7 +146,7 @@ export function buildBillingStatusText(
   const lines: string[] = [];
 
   lines.push(messages.billingTitle);
-  lines.push(`${messages.workspaceName}: <b>${escapeHtml(user.displayName)}</b>`);
+  lines.push(`${messages.accountName}: <b>${escapeHtml(user.displayName)}</b>`);
   lines.push(`${messages.plan}: <b>${escapeHtml(plan.name)}</b>`);
   lines.push(`${messages.status}: <code>${escapeHtml(user.subscriptionStatus)}</code>`);
   if (user.currentPeriodEnd) {
@@ -160,7 +160,7 @@ export function buildBillingStatusText(
     `• ${messages.egress}: ${formatBytesQuota(egressBytes, BigInt(plan.limits.egressBytesMonth))}`,
   );
   lines.push("");
-  lines.push(messages.workspace);
+  lines.push(messages.account);
   lines.push(`• ${messages.aliases}: ${formatCountQuota(aliasesUsed, plan.limits.aliases)}`);
   lines.push(
     `• ${messages.storage}: ${formatBytesQuota(storageBytes, BigInt(plan.limits.storageBytes))}`,

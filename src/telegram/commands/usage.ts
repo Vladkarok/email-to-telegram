@@ -27,7 +27,7 @@ export async function usageHandler(ctx: Context): Promise<void> {
     const userId = BigInt(ctx.from.id);
     const user = await findUserById(db, userId);
     if (!user) {
-      await ctx.reply(messages.common.noHostedWorkspace);
+      await ctx.reply(messages.common.noHostedAccount);
       return;
     }
 

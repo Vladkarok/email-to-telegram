@@ -16,10 +16,10 @@ export const en = {
   common: {
     accessDenied: "⛔ Access denied.",
     tooManyRequests: "⚠️ Too many requests. Please slow down.",
-    hostedWorkspaceInactive: "⛔ This hosted workspace is not ready for alias creation right now.",
+    hostedAccountInactive: "⛔ Your hosted account is not ready for alias creation right now.",
     aliasCreationUnavailable:
       "❌ Alias creation is not available right now. Please try again later.",
-    noHostedWorkspace: "❌ No hosted workspace found for your account. Use /start to set one up.",
+    noHostedAccount: "❌ No hosted account found. Use /start to set one up.",
     aliasNotFound: "❌ Alias not found.",
     aliasNotFoundShort: "Alias not found.",
     chatNotFoundShort: "Chat not found.",
@@ -45,13 +45,13 @@ export const en = {
   },
   help: {
     billingStripe: `<b>Billing (hosted only)</b>
-/billing — workspace billing status with Upgrade and Manage Billing buttons
+/billing — account billing status with Upgrade and Manage Billing buttons
 /plan — show your current plan and limits
 /usage — show this month's accepted/delivered/failed/rejected counts and quotas
 /upgrade — choose a plan and get a Stripe checkout link
 /portal — open the Stripe billing portal to manage your subscription`,
     billingManual: `<b>Plan and usage</b>
-/billing — workspace plan and quota status
+/billing — account plan and quota status
 /plan — show your current plan and limits
 /usage — show this month's accepted/delivered/failed/rejected counts and quotas`,
     text: (billingSection: string, settingsHelp: string, safetyNotes: string) => `<b>📖 Help</b>
@@ -133,7 +133,7 @@ ${safetyNotes}
     nameTooLong: "❌ Name too long. Max 32 characters.",
     invalidName:
       "❌ Invalid name. Only lowercase letters, digits, dots, hyphens and underscores are allowed.",
-    sharedDomainUnavailable: "⛔ This hosted workspace is not ready for alias creation right now.",
+    sharedDomainUnavailable: "⛔ Your hosted account is not ready for alias creation right now.",
     uniqueNameFailed: "❌ Could not pick a unique alias name. Try a different one.",
     created: (fullAddress: string, chatNote: string) =>
       `✅ Email alias created!\n\n📧 <code>${fullAddress}</code>${chatNote}\n\n⚠️ All mail is rejected until you allow at least one sender.\nTap a quick pick or add a custom domain:`,
@@ -280,7 +280,7 @@ Examples:
     added: (localPart: string, icon: string, value: string) =>
       `✅ Added allow rule for <code>${localPart}</code>: ${icon} ${value}`,
     subscriptionInactive: (localPart: string) =>
-      `⛔ <code>${localPart}</code> is not attached to an active hosted workspace.`,
+      `⛔ <code>${localPart}</code> is not attached to an active hosted account.`,
     limitReached: (localPart: string, used: number | undefined, limit: number) =>
       `📦 Plan limit reached for <code>${localPart}</code>: ${used ?? limit}/${limit} allow rules used. Upgrade to add more.`,
     createUnavailable: "❌ Allow rule creation is not available right now. Please try again later.",
@@ -308,7 +308,7 @@ Examples:
   portal: {
     selfHosted:
       "ℹ️ Billing is not enabled in self-hosted mode. /portal is only available on the hosted service.",
-    forbidden: "❌ Billing management requires workspace owner or admin access.",
+    forbidden: "❌ Billing management requires an active hosted account.",
     noCustomer:
       "ℹ️ You don't have an active billing account yet.\n\nUse /upgrade to choose a plan and start a subscription.\n\n<b>Choose a plan:</b>",
     text: "<b>🧾 Billing Portal</b>\n\nTap below to manage your subscription, view invoices, or update payment details. This link expires in 5 minutes.",
@@ -318,7 +318,7 @@ Examples:
   upgrade: {
     selfHosted:
       "ℹ️ Billing is not enabled in self-hosted mode. /upgrade is only available on the hosted service.",
-    forbidden: "❌ Billing changes require workspace owner or admin access.",
+    forbidden: "❌ Billing changes require an active hosted account.",
     header: "<b>⬆️ Upgrade your plan</b>\n\nSelect a plan to start your upgrade:",
     invalidPlan: "❌ Invalid plan selection.",
     loadFailed: "❌ Unable to load upgrade options. Please try again shortly.",
@@ -406,9 +406,9 @@ Examples:
       "<i>Note: Telegram delivery failures and pending messages are still counted toward your monthly billable total because the email was accepted into processing.</i>",
     bandwidthStorage: "<b>Bandwidth and storage</b>",
     egress: "Egress",
-    workspace: "<b>Workspace</b>",
+    account: "<b>Account</b>",
     billingTitle: "<b>💳 Billing</b>",
-    workspaceName: "Workspace",
+    accountName: "Account",
     thisMonth: (month: string) => `<b>This month — ${month}</b>`,
   },
 } as const;

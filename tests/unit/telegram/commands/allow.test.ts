@@ -187,7 +187,7 @@ describe("/allow command", () => {
       expect(buttons.some((b) => b.callback_data === "bill:upgrade")).toBe(false);
     });
 
-    it("shows a hosted workspace error when the alias has no active organization", async () => {
+    it("shows a hosted account error when the alias has no active organization", async () => {
       mockHasActiveHostedOrganization.mockResolvedValueOnce(false);
       const ctx = createMockCtx({ commandMatch: "add alerts-ab12cd github.com" });
 
@@ -196,7 +196,7 @@ describe("/allow command", () => {
       expect(mockAddAllowRule).not.toHaveBeenCalled();
       expect(mockCanManageAlias).not.toHaveBeenCalled();
       expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
-        /workspace|active hosted workspace|not attached/i,
+        /account|active hosted account|not attached/i,
       );
     });
 

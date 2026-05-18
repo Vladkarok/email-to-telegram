@@ -10,7 +10,7 @@ describe("buildBillingStatusText", () => {
     const text = buildBillingStatusText({
       plan: freePlan,
       user: {
-        displayName: "My Workspace",
+        displayName: "My Account",
         planCode: "free",
         subscriptionStatus: "free",
         currentPeriodEnd: null,
@@ -21,7 +21,7 @@ describe("buildBillingStatusText", () => {
       storageBytes: 0n,
       aliasesUsed: 0,
     });
-    expect(text).toContain("My Workspace");
+    expect(text).toContain("My Account");
   });
 
   it("HTML-escapes the user display name to prevent injection", () => {

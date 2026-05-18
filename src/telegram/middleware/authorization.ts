@@ -39,24 +39,24 @@ export async function assertAliasAccess(
   return allowed;
 }
 
-export async function assertHostedChatWorkspaceReady(
+export async function assertHostedChatReady(
   ctx: CallbackQueryContext<Context>,
   _chatId: bigint,
 ): Promise<boolean> {
-  // With no organization tenant, hosted readiness is keyed off the acting user.
+  // Hosted readiness is keyed off the acting user (single-user account model).
   const userId = ctx.from?.id;
   if (!userId) {
-    await ctx.answerCallbackQuery("⛔ Hosted workspace inactive");
+    await ctx.answerCallbackQuery("⛔ Hosted account inactive");
     return false;
   }
   if (await hasActiveHostedUser(getDb(), BigInt(userId))) {
     return true;
   }
-  await ctx.answerCallbackQuery("⛔ Hosted workspace inactive");
+  await ctx.answerCallbackQuery("⛔ Hosted account inactive");
   return false;
 }
 
-export async function assertHostedAliasWorkspaceReady(
+export async function assertHostedAliasReady(
   ctx: CallbackQueryContext<Context>,
   aliasId: string,
 ): Promise<boolean> {
@@ -66,6 +66,6 @@ export async function assertHostedAliasWorkspaceReady(
     return true;
   }
 
-  await ctx.answerCallbackQuery("⛔ Hosted workspace inactive");
+  await ctx.answerCallbackQuery("⛔ Hosted account inactive");
   return false;
 }
