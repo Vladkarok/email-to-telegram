@@ -51,6 +51,10 @@ export async function exportMeHandler(ctx: Context): Promise<void> {
     await ctx.reply(messages.exportMe.rateLimited(retryAfterSeconds));
     return;
   }
+  // Reserve the cooldown slot up front so a concurrent invocation from the
+  // same user is rate-limited. Released below when the call didn't actually
+  // produce or consume a successful export (no-data or thrown error), so
+  // honest retries don't get punished for transient failures.
   lastExportAt.set(userId, now);
 
   await ctx.reply(messages.exportMe.preparing);
@@ -58,6 +62,7 @@ export async function exportMeHandler(ctx: Context): Promise<void> {
   try {
     const data = await exportHostedUserData(db, userId);
     if (!data) {
+      lastExportAt.delete(userId);
       await ctx.reply(messages.exportMe.noData);
       return;
     }
@@ -66,6 +71,8 @@ export async function exportMeHandler(ctx: Context): Promise<void> {
     const buffer = Buffer.from(json, "utf8");
 
     if (buffer.byteLength > MAX_EXPORT_BYTES) {
+      // Keep the cooldown slot: the heavy DB work already ran, so this is
+      // exactly the case we want to throttle against retries of.
       logger.warn(
         { userId: userId.toString(), bytes: buffer.byteLength, limit: MAX_EXPORT_BYTES },
         "user.self_export_too_large",
@@ -84,6 +91,7 @@ export async function exportMeHandler(ctx: Context): Promise<void> {
       "user.self_export_succeeded",
     );
   } catch (err: unknown) {
+    lastExportAt.delete(userId);
     logger.error({ err, userId: userId.toString() }, "user.self_export_failed");
     await ctx.reply(messages.exportMe.failed);
   }
