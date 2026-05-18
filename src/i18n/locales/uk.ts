@@ -382,7 +382,8 @@ ${safetyNotes}
 • <b>Видалення:</b> виконайте /delete_me
 • <b>Відкликання згоди:</b> припиніть користуватися ботом і виконайте /delete_me
 
-${policyUrl ? `Повна політика: ${policyUrl}\n` : ""}${supportContact ? `Контакт: ${supportContact}` : ""}`.trim(),
+${policyUrl ? `Повна політика: ${policyUrl}\n` : ""}${supportContact ? `Контакт: ${supportContact}\n` : ""}
+🌐 Також доступно: English, Français, Italiano — використайте /language, щоб переключити.`.trim(),
   },
   deleteMe: {
     prompt: (aliasCount: number, deliveryCount: number, billingCount: number) =>
