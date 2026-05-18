@@ -117,6 +117,17 @@ export async function listManualBillingEventsForUser(
     .orderBy(desc(manualBillingEvents.createdAt));
 }
 
+export async function listRecentManualBillingEvents(
+  db: Db,
+  limit = 10,
+): Promise<ManualBillingEvent[]> {
+  return db
+    .select()
+    .from(manualBillingEvents)
+    .orderBy(desc(manualBillingEvents.createdAt))
+    .limit(limit);
+}
+
 export async function findLatestManualBillingEventForUser(
   db: Db,
   telegramUserId: bigint,

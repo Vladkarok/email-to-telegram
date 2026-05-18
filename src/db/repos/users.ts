@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { count, eq, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNotNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import {
   users,
   emailAddresses,
@@ -30,6 +30,118 @@ export async function countUsersByPlan(
     .from(users)
     .groupBy(users.planCode);
   return rows.map((row) => ({ planCode: row.planCode, count: Number(row.count) }));
+}
+
+export interface SubscriptionDeadlineUser {
+  id: bigint;
+  username: string | null;
+  planCode: string;
+  subscriptionStatus: string;
+  paidThroughAt: Date | null;
+  billingEndsAt: Date;
+}
+
+export interface BillingAttentionUser {
+  id: bigint;
+  username: string | null;
+  planCode: string;
+  subscriptionStatus: string;
+  paidThroughAt: Date | null;
+  currentPeriodEnd: Date | null;
+}
+
+export interface RecentSignupUser {
+  id: bigint;
+  username: string | null;
+  isAllowed: boolean;
+  planCode: string;
+  createdAt: Date;
+}
+
+export async function listSubscriptionDeadlines(
+  db: Db,
+  now: Date,
+  horizon: Date,
+  limit = 50,
+): Promise<SubscriptionDeadlineUser[]> {
+  const rows = await db
+    .select({
+      id: users.id,
+      username: users.username,
+      planCode: users.planCode,
+      subscriptionStatus: users.subscriptionStatus,
+      paidThroughAt: users.paidThroughAt,
+      billingEndsAt: users.paidThroughAt,
+    })
+    .from(users)
+    .where(
+      and(
+        ne(users.planCode, "free"),
+        inArray(users.subscriptionStatus, ["active", "trialing", "past_due"]),
+        isNotNull(users.paidThroughAt),
+        gte(users.paidThroughAt, now),
+        lte(users.paidThroughAt, horizon),
+      ),
+    )
+    .orderBy(users.paidThroughAt)
+    .limit(limit);
+
+  return rows.map((row) => {
+    const billingEndsAt = row.billingEndsAt ?? row.paidThroughAt;
+    if (!billingEndsAt) {
+      throw new Error("listSubscriptionDeadlines: row without paid-through deadline");
+    }
+    return { ...row, billingEndsAt };
+  });
+}
+
+export async function listBillingAttentionUsers(
+  db: Db,
+  now: Date,
+  limit = 50,
+): Promise<BillingAttentionUser[]> {
+  return db
+    .select({
+      id: users.id,
+      username: users.username,
+      planCode: users.planCode,
+      subscriptionStatus: users.subscriptionStatus,
+      paidThroughAt: users.paidThroughAt,
+      currentPeriodEnd: users.currentPeriodEnd,
+    })
+    .from(users)
+    .where(
+      and(
+        ne(users.planCode, "free"),
+        or(
+          and(isNotNull(users.paidThroughAt), lt(users.paidThroughAt, now)),
+          inArray(users.subscriptionStatus, [
+            "paused",
+            "past_due",
+            "unpaid",
+            "incomplete",
+            "incomplete_expired",
+          ]),
+          and(isNotNull(users.currentPeriodEnd), lt(users.currentPeriodEnd, now)),
+        ),
+      ),
+    )
+    .orderBy(users.paidThroughAt, users.currentPeriodEnd, users.id)
+    .limit(limit);
+}
+
+export async function listRecentSignups(db: Db, limit = 10): Promise<RecentSignupUser[]> {
+  return db
+    .select({
+      id: users.id,
+      username: users.username,
+      isAllowed: users.isAllowed,
+      planCode: users.planCode,
+      createdAt: users.createdAt,
+    })
+    .from(users)
+    .orderBy(desc(users.createdAt))
+    .limit(limit);
 }
 
 export class LocaleColumnUnavailableError extends Error {
