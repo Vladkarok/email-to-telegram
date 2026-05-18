@@ -34,6 +34,12 @@ import { planHandler } from "./commands/plan.js";
 import { usageHandler } from "./commands/usage.js";
 import { billingHandler } from "./commands/billing.js";
 import { donateHandler } from "./commands/donate.js";
+import { privacyHandler } from "./commands/privacy.js";
+import {
+  deleteMeHandler,
+  deleteMeConfirmCallback,
+  deleteMeCancelCallback,
+} from "./commands/deleteme.js";
 import {
   upgradeHandler,
   upgradeCallbackHandler,
@@ -70,6 +76,8 @@ import {
   CB_ALIAS_LABEL_CANCEL,
   CB_LANGUAGE_SET,
   CB_LANGUAGE_CLOSE,
+  CB_DELETE_ME_CONFIRM,
+  CB_DELETE_ME_CANCEL,
 } from "./callbacks.js";
 import { portalHandler, portalCallbackHandler } from "./commands/portal.js";
 import { chatMemberHandler } from "./handlers/chatMember.js";
@@ -115,8 +123,15 @@ export function createBot(token: string): Bot {
   // ── Auto-register groups ────────────────────────────────────────────────────
   bot.on("my_chat_member", chatMemberHandler);
 
-  // ── /start is exempt from auth ──────────────────────────────────────────────
+  // ── Commands exempt from auth ───────────────────────────────────────────────
+  // /start: onboarding entry point
+  // /privacy: GDPR — users must be able to read the policy without an account
+  // /delete_me: GDPR right-to-erasure — must work even for revoked users
   bot.command("start", startHandler);
+  bot.command("privacy", privacyHandler);
+  bot.command("delete_me", deleteMeHandler);
+  bot.callbackQuery(CB_DELETE_ME_CONFIRM, deleteMeConfirmCallback);
+  bot.callbackQuery(CB_DELETE_ME_CANCEL, deleteMeCancelCallback);
 
   // ── Auth middleware ─────────────────────────────────────────────────────────
   bot.use(authMiddleware);

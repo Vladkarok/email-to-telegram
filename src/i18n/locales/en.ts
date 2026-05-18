@@ -29,6 +29,8 @@ export const en = {
     openDmButton: "💬 Open DM",
     privateChatRedirect: "Manage email aliases in our private chat 👇",
     dmTitle: (name: string) => `🏠 ${name} (DM)`,
+    privacyDisclaimer:
+      "ℹ️ By using this bot you agree to our data handling. Use /privacy to view the policy, /delete_me to remove your data at any time.",
   },
   chatMenu: {
     welcomePrefix: "👋 Welcome! All email aliases are managed here.\n\n",
@@ -360,6 +362,46 @@ Examples:
     quotaHint: (url: string) =>
       `\n\n💛 If this bot is useful to you, you can support the project: ${url}`,
   },
+  privacy: {
+    text: (supportContact: string | null, policyUrl: string | null) =>
+      `<b>🔒 Privacy</b>
+
+This bot stores only what's needed to deliver email to your Telegram chats:
+
+• <b>Telegram account:</b> your user id, username, and language code
+• <b>Chats:</b> ids and titles where the bot is installed
+• <b>Aliases:</b> the email addresses you create and their settings
+• <b>Delivery logs:</b> per-email metadata (sender, subject, timestamps, byte counts) for retention/quota enforcement
+• <b>Billing records:</b> plan, subscription status, payment references (if applicable)
+
+Email bodies and attachments are stored only as long as your plan's retention allows, then purged.
+
+<b>Your rights</b>
+• <b>Access / export:</b> ask the operator using the contact below
+• <b>Erasure:</b> run /delete_me to remove your data
+• <b>Withdraw consent:</b> stop using the bot and run /delete_me
+
+${policyUrl ? `Full policy: ${policyUrl}\n` : ""}${supportContact ? `Contact: ${supportContact}` : ""}`.trim(),
+  },
+  deleteMe: {
+    prompt: (aliasCount: number, deliveryCount: number, billingCount: number) =>
+      `<b>⚠️ Delete all your data?</b>
+
+This will permanently remove:
+• ${aliasCount} email alias(es) and their allow rules
+• ${deliveryCount} delivery log entry(ies) (incl. stored bodies and attachments)
+• ${billingCount} billing record(s)
+• Your usage counters, custom domains, and account row
+
+This action <b>cannot be undone</b>. Confirm to proceed.`,
+    confirmButton: "🗑 Yes, delete everything",
+    cancelButton: "✖ Cancel",
+    activeSubscription:
+      "⛔ You have an active paid subscription. Cancel it first via /portal, then run /delete_me again.",
+    success: "✅ Your data has been deleted. Thanks for using the bot — goodbye 👋",
+    cancelled: "Deletion cancelled. Your data is unchanged.",
+    failed: "❌ Deletion failed. Please contact the operator.",
+  },
   botCommands: [
     { command: "start", description: "Get started" },
     { command: "newemail", description: "Create a new email alias" },
@@ -377,6 +419,8 @@ Examples:
     { command: "upgrade", description: "Upgrade plan" },
     { command: "portal", description: "Open Stripe billing portal" },
     { command: "donate", description: "Support the project" },
+    { command: "privacy", description: "View privacy policy" },
+    { command: "delete_me", description: "Delete all your data" },
     { command: "help", description: "Show help" },
   ],
   usageSummary: {

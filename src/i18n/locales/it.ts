@@ -30,6 +30,8 @@ export const it = {
     openDmButton: "💬 Apri chat privata",
     privateChatRedirect: "Gestisci gli alias email nella nostra chat privata 👇",
     dmTitle: (name: string) => `🏠 ${name} (DM)`,
+    privacyDisclaimer:
+      "ℹ️ Usando questo bot accetti il trattamento dei dati. /privacy — informativa, /delete_me — elimina tutti i tuoi dati.",
   },
   chatMenu: {
     welcomePrefix: "👋 Benvenuto! Tutti gli alias email si gestiscono qui.\n\n",
@@ -368,6 +370,46 @@ Esempi:
     quotaHint: (url: string) =>
       `\n\n💛 Se questo bot ti è utile, puoi supportare il progetto: ${url}`,
   },
+  privacy: {
+    text: (supportContact: string | null, policyUrl: string | null) =>
+      `<b>🔒 Privacy</b>
+
+Questo bot memorizza solo i dati necessari per consegnare email alle tue chat Telegram:
+
+• <b>Account Telegram:</b> id, username, codice lingua
+• <b>Chat:</b> id e titoli delle chat in cui è installato il bot
+• <b>Alias:</b> indirizzi email creati e relative impostazioni
+• <b>Log di consegna:</b> metadati delle email (mittente, oggetto, timestamp, byte) per quote e retention
+• <b>Fatturazione:</b> piano, stato dell'abbonamento, riferimenti di pagamento (se applicabile)
+
+I corpi delle email e gli allegati vengono conservati solo per la durata prevista dal tuo piano, poi eliminati.
+
+<b>I tuoi diritti</b>
+• <b>Accesso / esportazione:</b> contatta l'operatore qui sotto
+• <b>Cancellazione:</b> esegui /delete_me
+• <b>Revoca del consenso:</b> smetti di usare il bot ed esegui /delete_me
+
+${policyUrl ? `Informativa completa: ${policyUrl}\n` : ""}${supportContact ? `Contatto: ${supportContact}` : ""}`.trim(),
+  },
+  deleteMe: {
+    prompt: (aliasCount: number, deliveryCount: number, billingCount: number) =>
+      `<b>⚠️ Eliminare tutti i tuoi dati?</b>
+
+Verranno rimossi permanentemente:
+• ${aliasCount} alias email e le relative regole allow
+• ${deliveryCount} voce/voci di log (incl. corpi e allegati memorizzati)
+• ${billingCount} record di fatturazione
+• Contatori d'uso, domini personalizzati e account
+
+L'azione <b>non è reversibile</b>. Conferma per procedere.`,
+    confirmButton: "🗑 Sì, elimina tutto",
+    cancelButton: "✖ Annulla",
+    activeSubscription:
+      "⛔ Hai un abbonamento a pagamento attivo. Annullalo via /portal, poi riesegui /delete_me.",
+    success: "✅ I tuoi dati sono stati eliminati. Grazie per aver usato il bot — arrivederci 👋",
+    cancelled: "Eliminazione annullata. I dati non sono stati modificati.",
+    failed: "❌ Eliminazione non riuscita. Contatta l'operatore.",
+  },
   botCommands: [
     { command: "start", description: "Inizia" },
     { command: "newemail", description: "Crea un nuovo alias email" },
@@ -385,6 +427,8 @@ Esempi:
     { command: "upgrade", description: "Aggiorna il piano" },
     { command: "portal", description: "Apri il portale Stripe" },
     { command: "donate", description: "Supporta il progetto" },
+    { command: "privacy", description: "Informativa sulla privacy" },
+    { command: "delete_me", description: "Elimina tutti i tuoi dati" },
     { command: "help", description: "Mostra aiuto" },
   ],
   usageSummary: {

@@ -27,6 +27,8 @@ export const uk = {
     openDmButton: "💬 Відкрити приватний чат",
     privateChatRedirect: "Керуйте email-аліасами в приватному чаті 👇",
     dmTitle: (name: string) => `🏠 ${name} (приватний чат)`,
+    privacyDisclaimer:
+      "ℹ️ Використовуючи бота, ви погоджуєтеся з обробкою даних. /privacy — політика, /delete_me — видалити всі дані.",
   },
   chatMenu: {
     welcomePrefix: "👋 Вітаю! Усі email-аліаси керуються тут.\n\n",
@@ -361,6 +363,46 @@ ${safetyNotes}
     quotaHint: (url: string) =>
       `\n\n💛 Якщо цей бот вам корисний — можете підтримати проєкт: ${url}`,
   },
+  privacy: {
+    text: (supportContact: string | null, policyUrl: string | null) =>
+      `<b>🔒 Конфіденційність</b>
+
+Бот зберігає лише дані, необхідні для доставки пошти у ваші чати Telegram:
+
+• <b>Акаунт Telegram:</b> ваш id, юзернейм, код мови
+• <b>Чати:</b> id і назви чатів, де встановлений бот
+• <b>Аліаси:</b> створені вами email-адреси та їхні налаштування
+• <b>Журнал доставки:</b> метадані листів (відправник, тема, час, обсяг) для квот і політики зберігання
+• <b>Білінг:</b> план, статус підписки, посилання на платежі (якщо застосовно)
+
+Тіла листів і вкладення зберігаються лише в межах терміну вашого тарифу, після чого видаляються.
+
+<b>Ваші права</b>
+• <b>Доступ / експорт:</b> зверніться до оператора (контакт нижче)
+• <b>Видалення:</b> виконайте /delete_me
+• <b>Відкликання згоди:</b> припиніть користуватися ботом і виконайте /delete_me
+
+${policyUrl ? `Повна політика: ${policyUrl}\n` : ""}${supportContact ? `Контакт: ${supportContact}` : ""}`.trim(),
+  },
+  deleteMe: {
+    prompt: (aliasCount: number, deliveryCount: number, billingCount: number) =>
+      `<b>⚠️ Видалити всі ваші дані?</b>
+
+Буде остаточно видалено:
+• ${aliasCount} email-аліас(ів) і пов'язані правила allow
+• ${deliveryCount} запис(ів) журналу доставки (вкл. тіла листів і вкладення)
+• ${billingCount} запис(ів) білінгу
+• Лічильники використання, кастомні домени, акаунт
+
+Цю дію <b>неможливо скасувати</b>. Підтвердіть, щоб продовжити.`,
+    confirmButton: "🗑 Так, видалити все",
+    cancelButton: "✖ Скасувати",
+    activeSubscription:
+      "⛔ У вас активна платна підписка. Спочатку скасуйте її через /portal, потім знову виконайте /delete_me.",
+    success: "✅ Ваші дані видалено. Дякуємо за використання бота — до зустрічі 👋",
+    cancelled: "Видалення скасовано. Дані не змінено.",
+    failed: "❌ Не вдалося видалити. Зверніться до оператора.",
+  },
   botCommands: [
     { command: "start", description: "Розпочати" },
     { command: "newemail", description: "Створити новий email-аліас" },
@@ -378,6 +420,8 @@ ${safetyNotes}
     { command: "upgrade", description: "Оновити план" },
     { command: "portal", description: "Відкрити Stripe billing portal" },
     { command: "donate", description: "Підтримати проєкт" },
+    { command: "privacy", description: "Політика конфіденційності" },
+    { command: "delete_me", description: "Видалити всі ваші дані" },
     { command: "help", description: "Показати довідку" },
   ],
   usageSummary: {

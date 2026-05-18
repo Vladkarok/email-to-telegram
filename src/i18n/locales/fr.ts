@@ -30,6 +30,8 @@ export const fr = {
     openDmButton: "💬 Ouvrir le chat privé",
     privateChatRedirect: "Gérez les alias e-mail dans notre chat privé 👇",
     dmTitle: (name: string) => `🏠 ${name} (DM)`,
+    privacyDisclaimer:
+      "ℹ️ En utilisant ce bot, vous acceptez le traitement de vos données. /privacy — politique, /delete_me — supprimer vos données.",
   },
   chatMenu: {
     welcomePrefix: "👋 Bienvenue ! Tous les alias e-mail se gèrent ici.\n\n",
@@ -369,6 +371,46 @@ Exemples :
     quotaHint: (url: string) =>
       `\n\n💛 Si ce bot vous est utile, vous pouvez soutenir le projet : ${url}`,
   },
+  privacy: {
+    text: (supportContact: string | null, policyUrl: string | null) =>
+      `<b>🔒 Confidentialité</b>
+
+Ce bot ne stocke que les données nécessaires pour livrer vos e-mails sur Telegram :
+
+• <b>Compte Telegram :</b> votre id, nom d'utilisateur et code de langue
+• <b>Chats :</b> ids et titres des chats où le bot est installé
+• <b>Alias :</b> adresses e-mail créées et leurs réglages
+• <b>Journaux de livraison :</b> métadonnées des e-mails (expéditeur, sujet, horodatages, taille) pour quotas et rétention
+• <b>Facturation :</b> plan, statut d'abonnement, références de paiement (le cas échéant)
+
+Les corps d'e-mails et pièces jointes sont conservés selon la durée de votre plan, puis purgés.
+
+<b>Vos droits</b>
+• <b>Accès / export :</b> contactez l'opérateur ci-dessous
+• <b>Effacement :</b> exécutez /delete_me
+• <b>Retrait du consentement :</b> cessez d'utiliser le bot et exécutez /delete_me
+
+${policyUrl ? `Politique complète : ${policyUrl}\n` : ""}${supportContact ? `Contact : ${supportContact}` : ""}`.trim(),
+  },
+  deleteMe: {
+    prompt: (aliasCount: number, deliveryCount: number, billingCount: number) =>
+      `<b>⚠️ Supprimer toutes vos données ?</b>
+
+Ceci supprimera définitivement :
+• ${aliasCount} alias e-mail et règles d'autorisation associées
+• ${deliveryCount} entrée(s) de journal (incl. corps et pièces jointes stockés)
+• ${billingCount} enregistrement(s) de facturation
+• Vos compteurs d'usage, domaines personnalisés et compte
+
+Cette action est <b>irréversible</b>. Confirmez pour continuer.`,
+    confirmButton: "🗑 Oui, tout supprimer",
+    cancelButton: "✖ Annuler",
+    activeSubscription:
+      "⛔ Vous avez un abonnement payant actif. Annulez-le via /portal, puis relancez /delete_me.",
+    success: "✅ Vos données ont été supprimées. Merci d'avoir utilisé le bot — au revoir 👋",
+    cancelled: "Suppression annulée. Vos données sont inchangées.",
+    failed: "❌ Échec de la suppression. Veuillez contacter l'opérateur.",
+  },
   botCommands: [
     { command: "start", description: "Démarrer" },
     { command: "newemail", description: "Créer un nouvel alias e-mail" },
@@ -386,6 +428,8 @@ Exemples :
     { command: "upgrade", description: "Mettre à niveau le plan" },
     { command: "portal", description: "Ouvrir le portail Stripe" },
     { command: "donate", description: "Soutenir le projet" },
+    { command: "privacy", description: "Politique de confidentialité" },
+    { command: "delete_me", description: "Supprimer toutes vos données" },
     { command: "help", description: "Afficher l'aide" },
   ],
   usageSummary: {

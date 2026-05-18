@@ -1,6 +1,13 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { count, eq, sql } from "drizzle-orm";
-import { users, type User, type NewUser } from "../schema.js";
+import {
+  users,
+  emailAddresses,
+  deliveryLogs,
+  manualBillingEvents,
+  type User,
+  type NewUser,
+} from "../schema.js";
 import type * as schema from "../schema.js";
 
 type Db = NodePgDatabase<typeof schema>;
@@ -227,4 +234,43 @@ function normalizeSupportedLocale(locale: string | null | undefined): "en" | "uk
   if (language === "en") return "en";
   if (language === "uk" || language === "ua") return "uk";
   return null;
+}
+
+export interface UserDeletionSummary {
+  aliasCount: number;
+  deliveryLogCount: number;
+  billingEventCount: number;
+}
+
+/**
+ * Counts what `deleteUserCompletely` would remove. Used to show the user a
+ * preview before they confirm.
+ */
+export async function getUserDeletionSummary(db: Db, userId: bigint): Promise<UserDeletionSummary> {
+  const [aliasRow] = await db
+    .select({ c: count() })
+    .from(emailAddresses)
+    .where(eq(emailAddresses.createdBy, userId));
+  const [deliveryRow] = await db
+    .select({ c: count() })
+    .from(deliveryLogs)
+    .where(eq(deliveryLogs.userId, userId));
+  const [billingRow] = await db
+    .select({ c: count() })
+    .from(manualBillingEvents)
+    .where(eq(manualBillingEvents.telegramUserId, userId));
+  return {
+    aliasCount: Number(aliasRow?.c ?? 0),
+    deliveryLogCount: Number(deliveryRow?.c ?? 0),
+    billingEventCount: Number(billingRow?.c ?? 0),
+  };
+}
+
+/**
+ * True iff the user has a live paid subscription that should be cancelled
+ * before account deletion (to avoid orphaning Stripe billing state).
+ */
+export function hasLivePaidSubscription(user: User): boolean {
+  if (!user.stripeSubscriptionId) return false;
+  return ["trialing", "active", "past_due"].includes(user.subscriptionStatus);
 }
