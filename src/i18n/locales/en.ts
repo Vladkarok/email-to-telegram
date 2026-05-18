@@ -401,6 +401,8 @@ This action <b>cannot be undone</b>. Confirm to proceed.`,
     success: "✅ Your data has been deleted. Thanks for using the bot — goodbye 👋",
     cancelled: "Deletion cancelled. Your data is unchanged.",
     failed: "❌ Deletion failed. Please contact the operator.",
+    partial:
+      "⚠️ Your account and database records were removed, but some stored email files could not be deleted. Please contact the operator to complete the erasure.",
   },
   botCommands: [
     { command: "start", description: "Get started" },

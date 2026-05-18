@@ -267,10 +267,18 @@ export async function getUserDeletionSummary(db: Db, userId: bigint): Promise<Us
 }
 
 /**
- * True iff the user has a live paid subscription that should be cancelled
- * before account deletion (to avoid orphaning Stripe billing state).
+ * True iff the user has any Stripe billing linkage that would be orphaned by
+ * deleting the user row. Deletion must be refused until the user clears this
+ * state via /portal — otherwise later Stripe webhook events arrive with no
+ * matching user/customer/subscription row.
+ *
+ * We block on EITHER a customer id or a subscription id whose status is not
+ * terminal. Terminal statuses (free / canceled / incomplete_expired) are safe
+ * to delete around because Stripe will not generate further billable activity.
  */
 export function hasLivePaidSubscription(user: User): boolean {
-  if (!user.stripeSubscriptionId) return false;
-  return ["trialing", "active", "past_due"].includes(user.subscriptionStatus);
+  const TERMINAL_STATUSES = new Set(["free", "canceled", "incomplete_expired"]);
+  const isNonTerminal = !TERMINAL_STATUSES.has(user.subscriptionStatus);
+  const hasStripeLink = user.stripeCustomerId != null || user.stripeSubscriptionId != null;
+  return hasStripeLink && isNonTerminal;
 }

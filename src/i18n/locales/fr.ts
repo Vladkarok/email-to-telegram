@@ -410,6 +410,8 @@ Cette action est <b>irréversible</b>. Confirmez pour continuer.`,
     success: "✅ Vos données ont été supprimées. Merci d'avoir utilisé le bot — au revoir 👋",
     cancelled: "Suppression annulée. Vos données sont inchangées.",
     failed: "❌ Échec de la suppression. Veuillez contacter l'opérateur.",
+    partial:
+      "⚠️ Votre compte et vos enregistrements en base ont été supprimés, mais certains fichiers d'e-mail stockés n'ont pas pu être supprimés. Veuillez contacter l'opérateur pour terminer l'effacement.",
   },
   botCommands: [
     { command: "start", description: "Démarrer" },

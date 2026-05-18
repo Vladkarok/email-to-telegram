@@ -1,6 +1,6 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { eq, sql } from "drizzle-orm";
-import { attachments, deliveryLogs, emailAddresses, users } from "../db/schema.js";
+import { and, eq, sql } from "drizzle-orm";
+import { attachments, chats, deliveryLogs, emailAddresses, users } from "../db/schema.js";
 import type * as schema from "../db/schema.js";
 import { deleteFile } from "../storage/disk.js";
 
@@ -42,6 +42,10 @@ export async function deleteHostedUser(db: Db, userId: bigint): Promise<DeleteUs
     // on created_by).
     await tx.delete(deliveryLogs).where(eq(deliveryLogs.userId, userId));
     await tx.delete(emailAddresses).where(eq(emailAddresses.createdBy, userId));
+    // Telegram DM chat rows share the user's id; their title embeds the user's
+    // name (e.g. "🏠 <first> <last> (DM)"), so it must be wiped too. Group
+    // chats are shared and intentionally left in place.
+    await tx.delete(chats).where(and(eq(chats.id, userId), eq(chats.type, "private")));
     await tx.delete(users).where(eq(users.id, userId));
 
     return {
