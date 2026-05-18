@@ -1,5 +1,6 @@
 import type { AppConfig } from "../config.js";
 import type { Messages } from "../i18n/index.js";
+import { escapeHtml } from "../utils/html.js";
 
 const DEFAULT_SUPPORT_CONTACT = "support";
 
@@ -11,7 +12,7 @@ export function manualBillingMessage(
   config: Pick<AppConfig, "supportContact">,
   messages: Messages,
 ): string {
-  return messages.billingCommands.manualBilling(resolveSupportContact(config));
+  return messages.billingCommands.manualBilling(escapeHtml(resolveSupportContact(config)));
 }
 
 export const MANUAL_BILLING_ALERT = "Self-serve payments are temporarily unavailable.";
