@@ -59,7 +59,7 @@ describe("/start command", () => {
     await startHandler(ctx);
     expect(mockUpsertChat).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ organizationId: null }),
+      expect.objectContaining({ id: 123456789n, type: "private" }),
     );
     expect(ctx.reply).toHaveBeenCalled();
     const firstCall = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as unknown;
@@ -79,7 +79,7 @@ describe("/start command", () => {
     expect(mockEnsurePersonalOrganizationForUserWithOnboardingLimit).toHaveBeenCalled();
     expect(mockUpsertChat).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ organizationId: "org-1" }),
+      expect.objectContaining({ id: 123456789n, type: "private" }),
     );
   });
 

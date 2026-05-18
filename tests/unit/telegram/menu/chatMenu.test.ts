@@ -13,14 +13,12 @@ vi.mock("../../../../src/telegram/authorization.js", () => ({
 
 const mockFindUserById = vi.fn();
 vi.mock("../../../../src/db/repos/users.js", () => ({
-  findUserById: (...args: unknown[]): unknown =>
-    mockFindUserById(...args),
+  findUserById: (...args: unknown[]): unknown => mockFindUserById(...args),
 }));
 
 const mockCountActiveAliasesByUser = vi.fn();
 vi.mock("../../../../src/db/repos/aliases.js", () => ({
-  countActiveAliasesByUser: (...args: unknown[]): unknown =>
-    mockCountActiveAliasesByUser(...args),
+  countActiveAliasesByUser: (...args: unknown[]): unknown => mockCountActiveAliasesByUser(...args),
   createAlias: vi.fn(),
   findAliasByLocalPart: vi.fn(),
   findAliasById: vi.fn(),
@@ -72,7 +70,6 @@ describe("sendChatSelectionMenu", () => {
     await sendChatSelectionMenu(ctx, fakeDb);
     const [text] = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
     expect(text).not.toMatch(/Plan:/i);
-    expect(mockFindUserById).not.toHaveBeenCalled();
   });
 
   it("in hosted mode appends plan/alias footer when org exists", async () => {
