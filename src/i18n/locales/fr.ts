@@ -390,7 +390,8 @@ Les corps d'e-mails et pièces jointes sont conservés selon la durée de votre 
 • <b>Effacement :</b> exécutez /delete_me
 • <b>Retrait du consentement :</b> cessez d'utiliser le bot et exécutez /delete_me
 
-${policyUrl ? `Politique complète : ${policyUrl}\n` : ""}${supportContact ? `Contact : ${supportContact}` : ""}`.trim(),
+${policyUrl ? `Politique complète : ${policyUrl}\n` : ""}${supportContact ? `Contact : ${supportContact}\n` : ""}
+🌐 Également disponible en English, Українська, Italiano — utilisez /language pour changer.`.trim(),
   },
   deleteMe: {
     prompt: (aliasCount: number, deliveryCount: number, billingCount: number) =>

@@ -381,7 +381,8 @@ Email bodies and attachments are stored only as long as your plan's retention al
 • <b>Erasure:</b> run /delete_me to remove your data
 • <b>Withdraw consent:</b> stop using the bot and run /delete_me
 
-${policyUrl ? `Full policy: ${policyUrl}\n` : ""}${supportContact ? `Contact: ${supportContact}` : ""}`.trim(),
+${policyUrl ? `Full policy: ${policyUrl}\n` : ""}${supportContact ? `Contact: ${supportContact}\n` : ""}
+🌐 Also available in Українська, Français, Italiano — use /language to switch.`.trim(),
   },
   deleteMe: {
     prompt: (aliasCount: number, deliveryCount: number, billingCount: number) =>

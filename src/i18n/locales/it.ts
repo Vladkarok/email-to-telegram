@@ -389,7 +389,8 @@ I corpi delle email e gli allegati vengono conservati solo per la durata previst
 • <b>Cancellazione:</b> esegui /delete_me
 • <b>Revoca del consenso:</b> smetti di usare il bot ed esegui /delete_me
 
-${policyUrl ? `Informativa completa: ${policyUrl}\n` : ""}${supportContact ? `Contatto: ${supportContact}` : ""}`.trim(),
+${policyUrl ? `Informativa completa: ${policyUrl}\n` : ""}${supportContact ? `Contatto: ${supportContact}\n` : ""}
+🌐 Disponibile anche in English, Українська, Français — usa /language per cambiare.`.trim(),
   },
   deleteMe: {
     prompt: (aliasCount: number, deliveryCount: number, billingCount: number) =>
