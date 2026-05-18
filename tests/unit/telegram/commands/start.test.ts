@@ -25,7 +25,7 @@ const mockEnsurePersonalOrganizationForUserWithOnboardingLimit = vi.fn();
 class MockHostedOnboardingRateLimitError extends Error {}
 vi.mock("../../../../src/abuse/hostedOnboarding.js", () => ({
   HOSTED_ONBOARDING_RATE_LIMIT_MESSAGE:
-    "⚠️ Too many workspace setup attempts. Please try again later.",
+    "⚠️ Too many account setup attempts. Please try again later.",
   HostedOnboardingRateLimitError: MockHostedOnboardingRateLimitError,
   ensureUserWithOnboardingLimit: (...args: unknown[]): unknown =>
     mockEnsurePersonalOrganizationForUserWithOnboardingLimit(...args),
@@ -66,17 +66,17 @@ describe("/start command", () => {
     expect(String(firstCall)).toMatch(/Welcome|manage/i);
   });
 
-  it("in hosted mode: onboards user and registers DM chat under the organization", async () => {
+  it("in hosted mode: onboards user and registers DM chat", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
     const ctx = createMockCtx({ chatType: "private", fromId: 123456789, languageCode: "uk" });
 
     await startHandler(ctx);
 
-    expect(mockUpsertUser).toHaveBeenCalledWith(
+    expect(mockEnsurePersonalOrganizationForUserWithOnboardingLimit).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ id: 123456789n, locale: "uk" }),
     );
-    expect(mockEnsurePersonalOrganizationForUserWithOnboardingLimit).toHaveBeenCalled();
+    expect(mockUpsertUser).not.toHaveBeenCalled();
     expect(mockUpsertChat).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ id: 123456789n, type: "private" }),
@@ -93,7 +93,7 @@ describe("/start command", () => {
     await startHandler(ctx);
 
     expect(mockUpsertChat).not.toHaveBeenCalled();
-    expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("Too many workspace"));
+    expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("Too many account"));
   });
 
   it("in group chat: redirects to DM with button", async () => {

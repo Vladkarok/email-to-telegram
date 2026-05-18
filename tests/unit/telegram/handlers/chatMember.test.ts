@@ -83,16 +83,16 @@ describe("chatMemberHandler", () => {
     expect(data.type).toBe("supergroup");
   });
 
-  it("in hosted mode: upserts the acting user before registering the group chat", async () => {
+  it("in hosted mode: onboards the acting user before registering the group chat", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
 
     await chatMemberHandler(makeCtx("supergroup", "member", undefined, undefined, "uk"));
 
-    expect(mockUpsertUser).toHaveBeenCalledWith(
+    expect(mockEnsurePersonalOrganizationForUserWithOnboardingLimit).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ id: 123456789n, username: "adder", locale: "uk" }),
     );
-    expect(mockEnsurePersonalOrganizationForUserWithOnboardingLimit).toHaveBeenCalled();
+    expect(mockUpsertUser).not.toHaveBeenCalled();
     expect(mockUpsertChat).toHaveBeenCalledOnce();
   });
 
