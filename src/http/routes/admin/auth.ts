@@ -4,6 +4,7 @@ import type { FastifyRequest, FastifyReply } from "fastify";
 export interface AdminSession {
   authenticated?: boolean;
   loginAt?: number;
+  lastActivityAt?: number;
   csrfToken?: string;
 }
 
@@ -28,8 +29,16 @@ export function generateCsrfToken(): string {
 export function isAdminAuthenticated(req: FastifyRequest, sessionTtlMinutes: number): boolean {
   const admin = req.session?.admin;
   if (!admin?.authenticated || !admin.loginAt) return false;
-  const elapsed = Date.now() - admin.loginAt;
+  const lastActivityAt = admin.lastActivityAt ?? admin.loginAt;
+  const elapsed = Date.now() - lastActivityAt;
   return elapsed < sessionTtlMinutes * 60 * 1000;
+}
+
+export function refreshAdminActivity(req: FastifyRequest): void {
+  const admin = req.session?.admin;
+  if (!admin?.authenticated) return;
+  admin.lastActivityAt = Date.now();
+  req.session.touch();
 }
 
 export function verifyCsrfToken(req: FastifyRequest): boolean {
@@ -49,5 +58,6 @@ export function requireAdmin(
       await reply.redirect("/admin/login");
       return;
     }
+    refreshAdminActivity(req);
   };
 }

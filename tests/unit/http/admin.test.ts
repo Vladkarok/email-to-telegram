@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Fastify, { type FastifyInstance } from "fastify";
 import { parse as parseQs } from "querystring";
 import { registerRoutes } from "../../../src/http/routes/index.js";
@@ -484,6 +484,14 @@ describe("admin CSRF protection", () => {
 });
 
 describe("admin auth module", () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("verifyAdminSecret uses constant-time comparison", async () => {
     const { verifyAdminSecret } = await import("../../../src/http/routes/admin/auth.js");
     expect(verifyAdminSecret("correct-secret-here", "correct-secret-here")).toBe(true);
@@ -495,6 +503,68 @@ describe("admin auth module", () => {
     const { generateCsrfToken } = await import("../../../src/http/routes/admin/auth.js");
     const token = generateCsrfToken();
     expect(token).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("uses last activity, not original login time, for admin session expiry", async () => {
+    const { isAdminAuthenticated } = await import("../../../src/http/routes/admin/auth.js");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-18T12:00:00.000Z"));
+
+    const req = {
+      session: {
+        admin: {
+          authenticated: true,
+          loginAt: Date.now() - 8 * 60 * 60 * 1000,
+          lastActivityAt: Date.now() - 30 * 60 * 1000,
+        },
+      },
+    } as unknown as import("fastify").FastifyRequest;
+
+    expect(isAdminAuthenticated(req, 60)).toBe(true);
+  });
+
+  it("refreshAdminActivity extends the idle window and touches the session cookie", async () => {
+    const { isAdminAuthenticated, refreshAdminActivity } =
+      await import("../../../src/http/routes/admin/auth.js");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-18T12:00:00.000Z"));
+
+    const touch = vi.fn();
+    const req = {
+      session: {
+        touch,
+        admin: {
+          authenticated: true,
+          loginAt: Date.now() - 50 * 60 * 1000,
+          lastActivityAt: Date.now() - 50 * 60 * 1000,
+        },
+      },
+    } as unknown as import("fastify").FastifyRequest;
+
+    expect(isAdminAuthenticated(req, 60)).toBe(true);
+    refreshAdminActivity(req);
+
+    vi.setSystemTime(new Date("2026-05-18T12:59:00.000Z"));
+    expect(isAdminAuthenticated(req, 60)).toBe(true);
+    expect(touch).toHaveBeenCalledTimes(1);
+  });
+
+  it("expires admin session after idle TTL", async () => {
+    const { isAdminAuthenticated } = await import("../../../src/http/routes/admin/auth.js");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-18T12:00:00.000Z"));
+
+    const req = {
+      session: {
+        admin: {
+          authenticated: true,
+          loginAt: Date.now() - 2 * 60 * 60 * 1000,
+          lastActivityAt: Date.now() - 61 * 60 * 1000,
+        },
+      },
+    } as unknown as import("fastify").FastifyRequest;
+
+    expect(isAdminAuthenticated(req, 60)).toBe(false);
   });
 });
 
