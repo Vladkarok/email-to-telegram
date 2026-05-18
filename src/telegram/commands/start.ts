@@ -32,13 +32,12 @@ export async function startHandler(ctx: Context): Promise<void> {
   // Register DM chat so it appears in selection menus
   const db = getDb();
   if (loadConfig().appMode === "hosted") {
-    const user = await upsertUser(db, {
-      id: BigInt(ctx.from.id),
-      username: ctx.from.username ?? null,
-      locale,
-    });
     try {
-      await ensureUserWithOnboardingLimit(db, user);
+      await ensureUserWithOnboardingLimit(db, {
+        id: BigInt(ctx.from.id),
+        username: ctx.from.username ?? null,
+        locale,
+      });
     } catch (err: unknown) {
       if (err instanceof HostedOnboardingRateLimitError) {
         await ctx.reply(HOSTED_ONBOARDING_RATE_LIMIT_MESSAGE);
@@ -46,6 +45,12 @@ export async function startHandler(ctx: Context): Promise<void> {
       }
       throw err;
     }
+  } else {
+    await upsertUser(db, {
+      id: BigInt(ctx.from.id),
+      username: ctx.from.username ?? null,
+      locale,
+    });
   }
 
   const name = [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(" ");

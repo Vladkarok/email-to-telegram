@@ -23,7 +23,7 @@ const mockEnsurePersonalOrganizationForUserWithOnboardingLimit = vi.fn();
 class MockHostedOnboardingRateLimitError extends Error {}
 vi.mock("../../../../src/abuse/hostedOnboarding.js", () => ({
   HOSTED_ONBOARDING_RATE_LIMIT_MESSAGE:
-    "⚠️ Too many workspace setup attempts. Please try again later.",
+    "⚠️ Too many account setup attempts. Please try again later.",
   HostedOnboardingRateLimitError: MockHostedOnboardingRateLimitError,
   ensureUserWithOnboardingLimit: (...args: unknown[]): unknown =>
     mockEnsurePersonalOrganizationForUserWithOnboardingLimit(...args),
@@ -91,7 +91,7 @@ describe("authMiddleware", () => {
 
     expect(mockEnsurePersonalOrganizationForUserWithOnboardingLimit).toHaveBeenCalledWith(
       expect.anything(),
-      BLOCKED_USER,
+      expect.objectContaining({ id: 999n, username: "testuser" }),
     );
     expect(next).toHaveBeenCalledOnce();
     expect(ctx.reply).not.toHaveBeenCalled();
@@ -137,7 +137,7 @@ describe("authMiddleware", () => {
 
     expect(next).not.toHaveBeenCalled();
     expect(mockUpsertChat).not.toHaveBeenCalled();
-    expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("Too many workspace"));
+    expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("Too many account"));
   });
 
   it("upserts user with correct id and username", async () => {

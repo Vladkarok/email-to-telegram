@@ -2,7 +2,6 @@ import type { Context } from "grammy";
 import { loadConfig } from "../../config.js";
 import { getDb } from "../../db/client.js";
 import { upsertChat, deactivateChat } from "../../db/repos/chats.js";
-import { upsertUser } from "../../db/repos/users.js";
 import {
   HostedOnboardingRateLimitError,
   ensureUserWithOnboardingLimit,
@@ -41,13 +40,12 @@ async function ensureHostedActingUser(ctx: Context): Promise<void> {
   if (loadConfig().appMode !== "hosted" || !ctx.from) return;
 
   const db = getDb();
-  const user = await upsertUser(db, {
-    id: BigInt(ctx.from.id),
-    username: ctx.from.username ?? null,
-    locale: localeFromTelegram(ctx.from.language_code),
-  });
   try {
-    await ensureUserWithOnboardingLimit(db, user);
+    await ensureUserWithOnboardingLimit(db, {
+      id: BigInt(ctx.from.id),
+      username: ctx.from.username ?? null,
+      locale: localeFromTelegram(ctx.from.language_code),
+    });
   } catch (err: unknown) {
     if (err instanceof HostedOnboardingRateLimitError) return;
     throw err;
