@@ -117,6 +117,23 @@ describe("sendTelegramMessage", () => {
     await expect(promise).resolves.toMatchObject({ ok: false });
   });
 
+  it("returns an error when Telegram send attempts time out", async () => {
+    const api = makeApi(() => new Promise(() => {}));
+    const promise = sendTelegramMessage(api, {
+      chatId: 400n,
+      threadId: null,
+      text: "Timeout",
+    });
+
+    await vi.runAllTimersAsync();
+
+    await expect(promise).resolves.toMatchObject({
+      ok: false,
+      error: "sendMessage timed out",
+    });
+    expect(api.sendMessage).toHaveBeenCalledTimes(3);
+  });
+
   it("omits parse_mode when one is not provided", async () => {
     const api = makeApi(() => Promise.resolve({ message_id: 8 }));
 
