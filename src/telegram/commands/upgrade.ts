@@ -10,7 +10,7 @@ import { CB_UPGRADE_PLAN } from "../callbacks.js";
 import {
   isManualBillingUser,
   isSelfServeBillingEnabled,
-  MANUAL_BILLING_ALERT,
+  manualBillingAlert,
   manualBillingMessage,
 } from "../../billing/selfServe.js";
 import { DEFAULT_LOCALE, getMessages, resolveLocale, type Locale } from "../../i18n/index.js";
@@ -131,7 +131,7 @@ export async function upgradePlanCallbackHandler(
   }
   if (!isSelfServeBillingEnabled(config)) {
     await ctx.answerCallbackQuery({
-      text: MANUAL_BILLING_ALERT,
+      text: manualBillingAlert(messages),
       show_alert: true,
     });
     return;
@@ -152,7 +152,7 @@ export async function upgradePlanCallbackHandler(
     }
     if (isManualBillingUser(user)) {
       await ctx.answerCallbackQuery({
-        text: MANUAL_BILLING_ALERT,
+        text: manualBillingAlert(messages),
         show_alert: true,
       });
       return;

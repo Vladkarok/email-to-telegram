@@ -15,7 +15,9 @@ export function manualBillingMessage(
   return messages.billingCommands.manualBilling(escapeHtml(resolveSupportContact(config)));
 }
 
-export const MANUAL_BILLING_ALERT = "Self-serve payments are temporarily unavailable.";
+export function manualBillingAlert(messages: Messages): string {
+  return messages.billingCommands.manualBillingAlert;
+}
 
 export function isSelfServeBillingEnabled(
   config: Pick<AppConfig, "appMode" | "billingProvider">,

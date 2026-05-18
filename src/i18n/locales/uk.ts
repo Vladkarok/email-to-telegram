@@ -349,6 +349,7 @@ ${safetyNotes}
     billingUnavailable: "❌ Дані білінгу тимчасово недоступні. Спробуйте трохи пізніше.",
     upgradeButton: "⬆️ Оновити",
     manageBillingButton: "🧾 Керувати білінгом",
+    manualBillingAlert: "Self-serve платежі тимчасово недоступні.",
     manualBilling: (contact: string) =>
       `ℹ️ Self-serve платежі тимчасово недоступні.\n\nHosted-оновлення зараз обробляються вручну. Зверніться до ${contact}, щоб оновити, продовжити, скасувати план або поставити питання щодо білінгу.`,
   },

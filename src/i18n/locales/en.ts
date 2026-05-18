@@ -348,6 +348,7 @@ Examples:
     billingUnavailable: "❌ Billing data is temporarily unavailable. Please try again shortly.",
     upgradeButton: "⬆️ Upgrade",
     manageBillingButton: "🧾 Manage Billing",
+    manualBillingAlert: "Self-serve payments are temporarily unavailable.",
     manualBilling: (contact: string) =>
       `ℹ️ Self-serve payments are temporarily unavailable.\n\nHosted upgrades are handled manually for now. Contact ${contact} to upgrade, renew, cancel, or ask billing questions.`,
   },

@@ -357,6 +357,7 @@ Exemples :
       "❌ Les données de facturation sont temporairement indisponibles. Réessayez sous peu.",
     upgradeButton: "⬆️ Mettre à niveau",
     manageBillingButton: "🧾 Gérer la facturation",
+    manualBillingAlert: "Les paiements self-serve sont temporairement indisponibles.",
     manualBilling: (contact: string) =>
       `ℹ️ Les paiements self-serve sont temporairement indisponibles.\n\nLes mises à niveau hosted sont traitées manuellement pour le moment. Contactez ${contact} pour mettre à niveau, renouveler, annuler ou pour toute question de facturation.`,
   },
