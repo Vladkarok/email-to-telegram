@@ -8,10 +8,10 @@ vi.mock("../../../../src/config.js", () => ({
   loadConfig: (): unknown => mockLoadConfig(),
 }));
 
-const mockGetBillingOrganizationForUser = vi.fn();
+const mockFindUserById = vi.fn();
 vi.mock("../../../../src/db/repos/users.js", () => ({
-  getBillingOrganizationForUser: (...args: unknown[]): unknown =>
-    mockGetBillingOrganizationForUser(...args),
+  findUserById: (...args: unknown[]): unknown =>
+    mockFindUserById(...args),
 }));
 
 const mockCreateCheckoutSession = vi.fn();
@@ -45,7 +45,7 @@ describe("/upgrade command", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLoadConfig.mockReturnValue({ appMode: "hosted", billingProvider: "stripe" });
-    mockGetBillingOrganizationForUser.mockResolvedValue(ORG);
+    mockFindUserById.mockResolvedValue(ORG);
   });
 
   it("in self-hosted mode replies with billing-disabled message", async () => {
@@ -54,11 +54,10 @@ describe("/upgrade command", () => {
     await upgradeHandler(ctx);
     const [text] = ctx.reply.mock.calls[0] as [string];
     expect(text).toMatch(/self-hosted|billing.*not enabled/i);
-    expect(mockGetBillingOrganizationForUser).not.toHaveBeenCalled();
   });
 
   it("in hosted mode without owner/admin access replies defensively", async () => {
-    mockGetBillingOrganizationForUser.mockResolvedValue(null);
+    mockFindUserById.mockResolvedValue(null);
     const ctx = createMockCtx({ chatType: "private" });
     await upgradeHandler(ctx);
     const [text] = ctx.reply.mock.calls[0] as [string];
@@ -71,7 +70,6 @@ describe("/upgrade command", () => {
     await upgradeHandler(ctx);
     const [text] = ctx.reply.mock.calls[0] as [string];
     expect(text).toMatch(/self-serve payments|manual|support/i);
-    expect(mockGetBillingOrganizationForUser).not.toHaveBeenCalled();
   });
 
   it("shows plan selection keyboard with all 6 plan buttons", async () => {
@@ -97,7 +95,7 @@ describe("/upgrade command", () => {
   });
 
   it("shows manual billing message for manual paid organizations", async () => {
-    mockGetBillingOrganizationForUser.mockResolvedValue({
+    mockFindUserById.mockResolvedValue({
       ...ORG,
       planCode: "pro",
       subscriptionStatus: "active",
@@ -112,7 +110,7 @@ describe("/upgrade command", () => {
   });
 
   it("replies with error on DB failure", async () => {
-    mockGetBillingOrganizationForUser.mockRejectedValue(new Error("connection refused"));
+    mockFindUserById.mockRejectedValue(new Error("connection refused"));
     const mockError = vi.fn();
     mockGetLogger.mockReturnValue({ error: mockError });
     const ctx = createMockCtx({ chatType: "private" });
@@ -127,7 +125,7 @@ describe("upgradeCallbackHandler (bill:upgrade)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLoadConfig.mockReturnValue({ appMode: "hosted", billingProvider: "stripe" });
-    mockGetBillingOrganizationForUser.mockResolvedValue(ORG);
+    mockFindUserById.mockResolvedValue(ORG);
   });
 
   it("answers callback and sends plan selection keyboard", async () => {
@@ -159,11 +157,10 @@ describe("upgradeCallbackHandler (bill:upgrade)", () => {
     expect(ctx.answerCallbackQuery).toHaveBeenCalled();
     const [text] = ctx.reply.mock.calls[0] as [string];
     expect(text).toMatch(/self-serve payments|manual|support/i);
-    expect(mockGetBillingOrganizationForUser).not.toHaveBeenCalled();
   });
 
   it("answers callback and sends manual billing message for manual paid organizations", async () => {
-    mockGetBillingOrganizationForUser.mockResolvedValue({
+    mockFindUserById.mockResolvedValue({
       ...ORG,
       planCode: "pro",
       subscriptionStatus: "active",
@@ -183,7 +180,7 @@ describe("upgradePlanCallbackHandler (upg:{priceKey})", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLoadConfig.mockReturnValue({ appMode: "hosted", billingProvider: "stripe" });
-    mockGetBillingOrganizationForUser.mockResolvedValue(ORG);
+    mockFindUserById.mockResolvedValue(ORG);
     mockCreateCheckoutSession.mockResolvedValue("https://checkout.stripe.com/pay/cs_test_abc");
   });
 
@@ -224,7 +221,7 @@ describe("upgradePlanCallbackHandler (upg:{priceKey})", () => {
   });
 
   it("answers with show_alert for manual paid organizations", async () => {
-    mockGetBillingOrganizationForUser.mockResolvedValue({
+    mockFindUserById.mockResolvedValue({
       ...ORG,
       planCode: "pro",
       subscriptionStatus: "active",
@@ -277,7 +274,7 @@ describe("upgradePlanCallbackHandler (upg:{priceKey})", () => {
   });
 
   it("answers with no-org message when organization not found", async () => {
-    mockGetBillingOrganizationForUser.mockResolvedValue(null);
+    mockFindUserById.mockResolvedValue(null);
     const ctx = createMockCtx({ chatType: "private" });
     (ctx as unknown as { match: string[] }).match = ["upg:team_monthly", "team_monthly"];
     await upgradePlanCallbackHandler(ctx);

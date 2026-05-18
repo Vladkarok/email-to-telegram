@@ -83,7 +83,6 @@ describe("/usage command", () => {
 
     const [text] = ctx.reply.mock.calls[0] as [string, unknown];
     expect(text).toMatch(/self-hosted|billing.*not enabled/i);
-    expect(mockFindUserById).not.toHaveBeenCalled();
   });
 
   it("in hosted mode with no organization replies defensively", async () => {

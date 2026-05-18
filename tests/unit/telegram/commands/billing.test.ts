@@ -9,10 +9,7 @@ vi.mock("../../../../src/config.js", () => ({
 }));
 
 const mockFindUserById = vi.fn();
-const mockGetBillingOrganizationForUser = vi.fn();
 vi.mock("../../../../src/db/repos/users.js", () => ({
-  getBillingOrganizationForUser: (...args: unknown[]): unknown =>
-    mockGetBillingOrganizationForUser(...args),
   findUserById: (...args: unknown[]): unknown => mockFindUserById(...args),
 }));
 
@@ -44,7 +41,7 @@ describe("/billing command", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLoadConfig.mockReturnValue({ appMode: "hosted", billingProvider: "stripe" });
-    mockGetBillingOrganizationForUser.mockResolvedValue(null);
+    mockFindUserById.mockResolvedValue(null);
     mockUsageMonthForDate.mockReturnValue("2026-04");
     mockGetUserUsageMonth.mockResolvedValue({
       organizationId: "org-1",
@@ -89,7 +86,7 @@ describe("/billing command", () => {
       subscriptionStatus: "free",
       currentPeriodEnd: null,
     });
-    mockGetBillingOrganizationForUser.mockResolvedValue({
+    mockFindUserById.mockResolvedValue({
       id: "org-1",
       username: "acme",
       planCode: "free",
@@ -129,7 +126,7 @@ describe("/billing command", () => {
       subscriptionStatus: "free",
       currentPeriodEnd: null,
     });
-    mockGetBillingOrganizationForUser.mockResolvedValue({
+    mockFindUserById.mockResolvedValue({
       id: "org-1",
       username: "acme",
       planCode: "free",
@@ -159,7 +156,7 @@ describe("/billing command", () => {
       stripeCustomerId: null,
       currentPeriodEnd: null,
     });
-    mockGetBillingOrganizationForUser.mockResolvedValue({
+    mockFindUserById.mockResolvedValue({
       id: "org-1",
       username: "acme",
       planCode: "pro",
