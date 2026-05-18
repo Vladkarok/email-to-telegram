@@ -1,7 +1,7 @@
 import util from "node:util";
 import { describe, expect, it } from "vitest";
-import { countActiveAliasesByOrganization } from "../../../../src/db/repos/aliases.js";
-import { countAllowRulesByOrganization } from "../../../../src/db/repos/allowRules.js";
+import { countActiveAliasesByUser } from "../../../../src/db/repos/aliases.js";
+import { countAllowRulesByUser } from "../../../../src/db/repos/allowRules.js";
 
 describe("quota count query filters", () => {
   it("excludes deleted aliases from organization alias counts", async () => {
@@ -17,7 +17,7 @@ describe("quota count query filters", () => {
       }),
     };
 
-    await countActiveAliasesByOrganization(db as never, "org-1");
+    await countActiveAliasesByUser(db as never, 1n);
 
     expect(util.inspect(whereArg, { depth: 8 })).toContain("deleted");
   });
@@ -37,7 +37,7 @@ describe("quota count query filters", () => {
       }),
     };
 
-    await countAllowRulesByOrganization(db as never, "org-1");
+    await countAllowRulesByUser(db as never, 1n);
 
     expect(util.inspect(whereArg, { depth: 8 })).toContain("deleted");
   });
