@@ -8,42 +8,42 @@ vi.mock("../../../../src/config.js", () => ({
   loadConfig: (): unknown => mockLoadConfig(),
 }));
 
-const mockGetPrimaryOrganizationForUser = vi.fn();
-vi.mock("../../../../src/tenant/currentOrganization.js", () => ({
-  getUserById: (...args: unknown[]): unknown =>
-    mockGetPrimaryOrganizationForUser(...args),
+const mockFindUserById = vi.fn();
+vi.mock("../../../../src/db/repos/users.js", () => ({
+  findUserById: (...args: unknown[]): unknown =>
+    mockFindUserById(...args),
 }));
 
-const mockGetOrganizationUsageMonth = vi.fn();
+const mockGetUserUsageMonth = vi.fn();
 const mockUsageMonthForDate = vi.fn(() => "2026-04");
 vi.mock("../../../../src/db/repos/usage.js", () => ({
-  getOrganizationUsageMonth: (...args: unknown[]): unknown =>
-    mockGetOrganizationUsageMonth(...args),
+  getUserUsageMonth: (...args: unknown[]): unknown =>
+    mockGetUserUsageMonth(...args),
   usageMonthForDate: (...args: unknown[]): unknown => mockUsageMonthForDate(...args),
 }));
 
-const mockGetOrganizationStorageUsage = vi.fn();
+const mockGetUserStorageUsage = vi.fn();
 vi.mock("../../../../src/db/repos/storageUsage.js", () => ({
-  getOrganizationStorageUsage: (...args: unknown[]): unknown =>
-    mockGetOrganizationStorageUsage(...args),
+  getUserStorageUsage: (...args: unknown[]): unknown =>
+    mockGetUserStorageUsage(...args),
 }));
 
-const mockCountActiveAliasesByOrganization = vi.fn();
+const mockCountActiveAliasesByUser = vi.fn();
 vi.mock("../../../../src/db/repos/aliases.js", () => ({
-  countActiveAliasesByOrganization: (...args: unknown[]): unknown =>
-    mockCountActiveAliasesByOrganization(...args),
+  countActiveAliasesByUser: (...args: unknown[]): unknown =>
+    mockCountActiveAliasesByUser(...args),
 }));
 
-const mockCountAllowRulesByOrganization = vi.fn();
+const mockCountAllowRulesByUser = vi.fn();
 vi.mock("../../../../src/db/repos/allowRules.js", () => ({
-  countAllowRulesByOrganization: (...args: unknown[]): unknown =>
-    mockCountAllowRulesByOrganization(...args),
+  countAllowRulesByUser: (...args: unknown[]): unknown =>
+    mockCountAllowRulesByUser(...args),
 }));
 
-const mockCountDeliveryLogsByOrgInMonth = vi.fn();
+const mockCountDeliveryLogsByUserInMonth = vi.fn();
 vi.mock("../../../../src/db/repos/deliveryLogs.js", () => ({
-  countDeliveryLogsByOrgInMonth: (...args: unknown[]): unknown =>
-    mockCountDeliveryLogsByOrgInMonth(...args),
+  countDeliveryLogsByUserInMonth: (...args: unknown[]): unknown =>
+    mockCountDeliveryLogsByUserInMonth(...args),
 }));
 
 const mockGetLogger = vi.fn(() => ({ error: vi.fn() }));
@@ -58,21 +58,21 @@ describe("/usage command", () => {
     vi.clearAllMocks();
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
     mockUsageMonthForDate.mockReturnValue("2026-04");
-    mockGetOrganizationUsageMonth.mockResolvedValue({
+    mockGetUserUsageMonth.mockResolvedValue({
       organizationId: "org-1",
       month: "2026-04",
       deliveredCount: 0,
       rejectedCount: 0,
       egressBytes: 0n,
     });
-    mockGetOrganizationStorageUsage.mockResolvedValue({
+    mockGetUserStorageUsage.mockResolvedValue({
       organizationId: "org-1",
       rawEmailBytes: 0n,
       attachmentBytes: 0n,
     });
-    mockCountActiveAliasesByOrganization.mockResolvedValue(0);
-    mockCountAllowRulesByOrganization.mockResolvedValue(0);
-    mockCountDeliveryLogsByOrgInMonth.mockResolvedValue(0);
+    mockCountActiveAliasesByUser.mockResolvedValue(0);
+    mockCountAllowRulesByUser.mockResolvedValue(0);
+    mockCountDeliveryLogsByUserInMonth.mockResolvedValue(0);
   });
 
   it("in self-hosted mode replies with billing-disabled message", async () => {
@@ -83,11 +83,11 @@ describe("/usage command", () => {
 
     const [text] = ctx.reply.mock.calls[0] as [string, unknown];
     expect(text).toMatch(/self-hosted|billing.*not enabled/i);
-    expect(mockGetPrimaryOrganizationForUser).not.toHaveBeenCalled();
+    expect(mockFindUserById).not.toHaveBeenCalled();
   });
 
   it("in hosted mode with no organization replies defensively", async () => {
-    mockGetPrimaryOrganizationForUser.mockResolvedValue(null);
+    mockFindUserById.mockResolvedValue(null);
     const ctx = createMockCtx({ chatType: "private" });
 
     await usageHandler(ctx);
@@ -97,21 +97,21 @@ describe("/usage command", () => {
   });
 
   it("renders accepted, rejected, telegram delivered, telegram failed, pending counts", async () => {
-    mockGetPrimaryOrganizationForUser.mockResolvedValue({
+    mockFindUserById.mockResolvedValue({
       id: "org-1",
       name: "Test",
       planCode: "free",
       subscriptionStatus: "free",
       currentPeriodEnd: null,
     });
-    mockGetOrganizationUsageMonth.mockResolvedValue({
+    mockGetUserUsageMonth.mockResolvedValue({
       organizationId: "org-1",
       month: "2026-04",
       deliveredCount: 12,
       rejectedCount: 3,
       egressBytes: 0n,
     });
-    mockCountDeliveryLogsByOrgInMonth.mockImplementation(
+    mockCountDeliveryLogsByUserInMonth.mockImplementation(
       (_db: unknown, _orgId: string, _month: string, statuses: readonly string[]) => {
         if (statuses.includes("delivered")) return Promise.resolve(9);
         if (statuses.includes("failed")) return Promise.resolve(1);
@@ -133,7 +133,7 @@ describe("/usage command", () => {
   });
 
   it("replies with a friendly error when a DB query throws", async () => {
-    mockGetPrimaryOrganizationForUser.mockRejectedValue(new Error("connection refused"));
+    mockFindUserById.mockRejectedValue(new Error("connection refused"));
     const mockError = vi.fn();
     mockGetLogger.mockReturnValue({ error: mockError });
 
@@ -146,27 +146,27 @@ describe("/usage command", () => {
   });
 
   it("renders egress, storage, aliases and allow-rule quotas", async () => {
-    mockGetPrimaryOrganizationForUser.mockResolvedValue({
+    mockFindUserById.mockResolvedValue({
       id: "org-1",
       name: "Test",
       planCode: "free",
       subscriptionStatus: "free",
       currentPeriodEnd: null,
     });
-    mockGetOrganizationUsageMonth.mockResolvedValue({
+    mockGetUserUsageMonth.mockResolvedValue({
       organizationId: "org-1",
       month: "2026-04",
       deliveredCount: 0,
       rejectedCount: 0,
       egressBytes: 100n * 1024n * 1024n,
     });
-    mockGetOrganizationStorageUsage.mockResolvedValue({
+    mockGetUserStorageUsage.mockResolvedValue({
       organizationId: "org-1",
       rawEmailBytes: 30n * 1024n * 1024n,
       attachmentBytes: 20n * 1024n * 1024n,
     });
-    mockCountActiveAliasesByOrganization.mockResolvedValue(2);
-    mockCountAllowRulesByOrganization.mockResolvedValue(4);
+    mockCountActiveAliasesByUser.mockResolvedValue(2);
+    mockCountAllowRulesByUser.mockResolvedValue(4);
 
     const ctx = createMockCtx({ chatType: "private" });
     await usageHandler(ctx);
@@ -181,15 +181,15 @@ describe("/usage command", () => {
   });
 
   it("treats missing usage row as zero counts", async () => {
-    mockGetPrimaryOrganizationForUser.mockResolvedValue({
+    mockFindUserById.mockResolvedValue({
       id: "org-1",
       name: "Test",
       planCode: "free",
       subscriptionStatus: "free",
       currentPeriodEnd: null,
     });
-    mockGetOrganizationUsageMonth.mockResolvedValue(null);
-    mockGetOrganizationStorageUsage.mockResolvedValue(null);
+    mockGetUserUsageMonth.mockResolvedValue(null);
+    mockGetUserStorageUsage.mockResolvedValue(null);
 
     const ctx = createMockCtx({ chatType: "private" });
     await usageHandler(ctx);
@@ -201,7 +201,7 @@ describe("/usage command", () => {
   });
 
   it("uses HTML parse mode", async () => {
-    mockGetPrimaryOrganizationForUser.mockResolvedValue({
+    mockFindUserById.mockResolvedValue({
       id: "org-1",
       name: "Test",
       planCode: "free",

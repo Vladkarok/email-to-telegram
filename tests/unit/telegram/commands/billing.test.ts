@@ -8,33 +8,29 @@ vi.mock("../../../../src/config.js", () => ({
   loadConfig: (): unknown => mockLoadConfig(),
 }));
 
-const mockGetPrimaryOrganizationForUser = vi.fn();
+const mockFindUserById = vi.fn();
 const mockGetBillingOrganizationForUser = vi.fn();
-vi.mock("../../../../src/tenant/currentOrganization.js", () => ({
+vi.mock("../../../../src/db/repos/users.js", () => ({
   getBillingOrganizationForUser: (...args: unknown[]): unknown =>
     mockGetBillingOrganizationForUser(...args),
-  getUserById: (...args: unknown[]): unknown =>
-    mockGetPrimaryOrganizationForUser(...args),
+  findUserById: (...args: unknown[]): unknown => mockFindUserById(...args),
 }));
 
-const mockGetOrganizationUsageMonth = vi.fn();
+const mockGetUserUsageMonth = vi.fn();
 const mockUsageMonthForDate = vi.fn(() => "2026-04");
 vi.mock("../../../../src/db/repos/usage.js", () => ({
-  getOrganizationUsageMonth: (...args: unknown[]): unknown =>
-    mockGetOrganizationUsageMonth(...args),
+  getUserUsageMonth: (...args: unknown[]): unknown => mockGetUserUsageMonth(...args),
   usageMonthForDate: (...args: unknown[]): unknown => mockUsageMonthForDate(...args),
 }));
 
-const mockGetOrganizationStorageUsage = vi.fn();
+const mockGetUserStorageUsage = vi.fn();
 vi.mock("../../../../src/db/repos/storageUsage.js", () => ({
-  getOrganizationStorageUsage: (...args: unknown[]): unknown =>
-    mockGetOrganizationStorageUsage(...args),
+  getUserStorageUsage: (...args: unknown[]): unknown => mockGetUserStorageUsage(...args),
 }));
 
-const mockCountActiveAliasesByOrganization = vi.fn();
+const mockCountActiveAliasesByUser = vi.fn();
 vi.mock("../../../../src/db/repos/aliases.js", () => ({
-  countActiveAliasesByOrganization: (...args: unknown[]): unknown =>
-    mockCountActiveAliasesByOrganization(...args),
+  countActiveAliasesByUser: (...args: unknown[]): unknown => mockCountActiveAliasesByUser(...args),
 }));
 
 const mockGetLogger = vi.fn(() => ({ error: vi.fn() }));
@@ -50,19 +46,19 @@ describe("/billing command", () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted", billingProvider: "stripe" });
     mockGetBillingOrganizationForUser.mockResolvedValue(null);
     mockUsageMonthForDate.mockReturnValue("2026-04");
-    mockGetOrganizationUsageMonth.mockResolvedValue({
+    mockGetUserUsageMonth.mockResolvedValue({
       organizationId: "org-1",
       month: "2026-04",
       deliveredCount: 0,
       rejectedCount: 0,
       egressBytes: 0n,
     });
-    mockGetOrganizationStorageUsage.mockResolvedValue({
+    mockGetUserStorageUsage.mockResolvedValue({
       organizationId: "org-1",
       rawEmailBytes: 0n,
       attachmentBytes: 0n,
     });
-    mockCountActiveAliasesByOrganization.mockResolvedValue(0);
+    mockCountActiveAliasesByUser.mockResolvedValue(0);
   });
 
   it("in self-hosted mode replies with billing-disabled message", async () => {
@@ -73,11 +69,10 @@ describe("/billing command", () => {
 
     const [text] = ctx.reply.mock.calls[0] as [string, unknown];
     expect(text).toMatch(/self-hosted|billing.*not enabled/i);
-    expect(mockGetPrimaryOrganizationForUser).not.toHaveBeenCalled();
   });
 
   it("in hosted mode with no organization replies defensively", async () => {
-    mockGetPrimaryOrganizationForUser.mockResolvedValue(null);
+    mockFindUserById.mockResolvedValue(null);
     const ctx = createMockCtx({ chatType: "private" });
 
     await billingHandler(ctx);
@@ -87,16 +82,16 @@ describe("/billing command", () => {
   });
 
   it("renders status text and inline keyboard with Upgrade and Manage Billing buttons", async () => {
-    mockGetPrimaryOrganizationForUser.mockResolvedValue({
+    mockFindUserById.mockResolvedValue({
       id: "org-1",
-      name: "Acme Co",
+      username: "acme",
       planCode: "free",
       subscriptionStatus: "free",
       currentPeriodEnd: null,
     });
     mockGetBillingOrganizationForUser.mockResolvedValue({
       id: "org-1",
-      name: "Acme Co",
+      username: "acme",
       planCode: "free",
       subscriptionStatus: "free",
       currentPeriodEnd: null,
@@ -109,7 +104,7 @@ describe("/billing command", () => {
       string,
       { parse_mode?: string; reply_markup?: unknown },
     ];
-    expect(text).toContain("Acme Co");
+    expect(text).toContain("@acme");
     expect(opts.parse_mode).toBe("HTML");
     expect(opts.reply_markup).toBeDefined();
     const markup = opts.reply_markup as { inline_keyboard: unknown[][] };
@@ -125,40 +120,18 @@ describe("/billing command", () => {
     expect(callbacks).toContain("bill:portal");
   });
 
-  it("omits billing action buttons for non-admin organization members", async () => {
-    mockGetPrimaryOrganizationForUser.mockResolvedValue({
-      id: "org-1",
-      name: "Acme Co",
-      planCode: "free",
-      subscriptionStatus: "free",
-      currentPeriodEnd: null,
-    });
-    mockGetBillingOrganizationForUser.mockResolvedValue(null);
-
-    const ctx = createMockCtx({ chatType: "private" });
-    await billingHandler(ctx);
-
-    const [text, opts] = ctx.reply.mock.calls[0] as [
-      string,
-      { parse_mode?: string; reply_markup?: unknown },
-    ];
-    expect(text).toContain("Acme Co");
-    expect(opts.parse_mode).toBe("HTML");
-    expect(opts.reply_markup).toBeUndefined();
-  });
-
   it("omits billing action buttons when self-serve billing is disabled", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted", billingProvider: "none" });
-    mockGetPrimaryOrganizationForUser.mockResolvedValue({
+    mockFindUserById.mockResolvedValue({
       id: "org-1",
-      name: "Acme Co",
+      username: "acme",
       planCode: "free",
       subscriptionStatus: "free",
       currentPeriodEnd: null,
     });
     mockGetBillingOrganizationForUser.mockResolvedValue({
       id: "org-1",
-      name: "Acme Co",
+      username: "acme",
       planCode: "free",
       subscriptionStatus: "free",
       currentPeriodEnd: null,
@@ -171,16 +144,16 @@ describe("/billing command", () => {
       string,
       { parse_mode?: string; reply_markup?: unknown },
     ];
-    expect(text).toContain("Acme Co");
+    expect(text).toContain("@acme");
     expect(text).toMatch(/self-serve payments|manual|support/i);
     expect(opts.parse_mode).toBe("HTML");
     expect(opts.reply_markup).toBeUndefined();
   });
 
   it("omits billing action buttons for manual paid organizations even when Stripe is enabled", async () => {
-    mockGetPrimaryOrganizationForUser.mockResolvedValue({
+    mockFindUserById.mockResolvedValue({
       id: "org-1",
-      name: "Acme Co",
+      username: "acme",
       planCode: "pro",
       subscriptionStatus: "active",
       stripeCustomerId: null,
@@ -188,7 +161,7 @@ describe("/billing command", () => {
     });
     mockGetBillingOrganizationForUser.mockResolvedValue({
       id: "org-1",
-      name: "Acme Co",
+      username: "acme",
       planCode: "pro",
       subscriptionStatus: "active",
       stripeCustomerId: null,
@@ -202,33 +175,33 @@ describe("/billing command", () => {
       string,
       { parse_mode?: string; reply_markup?: unknown },
     ];
-    expect(text).toContain("Acme Co");
+    expect(text).toContain("@acme");
     expect(text).toMatch(/self-serve payments|manual|support/i);
     expect(opts.parse_mode).toBe("HTML");
     expect(opts.reply_markup).toBeUndefined();
   });
 
   it("shows monthly accepted count and current alias usage", async () => {
-    mockGetPrimaryOrganizationForUser.mockResolvedValue({
+    mockFindUserById.mockResolvedValue({
       id: "org-1",
-      name: "Acme Co",
+      username: "acme",
       planCode: "free",
       subscriptionStatus: "free",
       currentPeriodEnd: null,
     });
-    mockGetOrganizationUsageMonth.mockResolvedValue({
+    mockGetUserUsageMonth.mockResolvedValue({
       organizationId: "org-1",
       month: "2026-04",
       deliveredCount: 25,
       rejectedCount: 1,
       egressBytes: 100n * 1024n * 1024n,
     });
-    mockGetOrganizationStorageUsage.mockResolvedValue({
+    mockGetUserStorageUsage.mockResolvedValue({
       organizationId: "org-1",
       rawEmailBytes: 10n * 1024n * 1024n,
       attachmentBytes: 5n * 1024n * 1024n,
     });
-    mockCountActiveAliasesByOrganization.mockResolvedValue(2);
+    mockCountActiveAliasesByUser.mockResolvedValue(2);
 
     const ctx = createMockCtx({ chatType: "private" });
     await billingHandler(ctx);
@@ -241,7 +214,7 @@ describe("/billing command", () => {
   });
 
   it("replies with a friendly error when a DB query throws", async () => {
-    mockGetPrimaryOrganizationForUser.mockRejectedValue(new Error("connection refused"));
+    mockFindUserById.mockRejectedValue(new Error("connection refused"));
     const mockError = vi.fn();
     mockGetLogger.mockReturnValue({ error: mockError });
 
@@ -254,21 +227,21 @@ describe("/billing command", () => {
   });
 
   it("treats missing usage and storage rows as zero", async () => {
-    mockGetPrimaryOrganizationForUser.mockResolvedValue({
+    mockFindUserById.mockResolvedValue({
       id: "org-1",
-      name: "Acme Co",
+      username: "acme",
       planCode: "free",
       subscriptionStatus: "free",
       currentPeriodEnd: null,
     });
-    mockGetOrganizationUsageMonth.mockResolvedValue(null);
-    mockGetOrganizationStorageUsage.mockResolvedValue(null);
+    mockGetUserUsageMonth.mockResolvedValue(null);
+    mockGetUserStorageUsage.mockResolvedValue(null);
 
     const ctx = createMockCtx({ chatType: "private" });
     await billingHandler(ctx);
 
     expect(ctx.reply).toHaveBeenCalledOnce();
     const [text] = ctx.reply.mock.calls[0] as [string, unknown];
-    expect(String(text)).toContain("Acme Co");
+    expect(String(text)).toContain("@acme");
   });
 });

@@ -11,16 +11,16 @@ vi.mock("../../../../src/telegram/authorization.js", () => ({
   getAccessibleChats: (...args: unknown[]): unknown => mockGetAccessibleChats(...args),
 }));
 
-const mockGetPrimaryOrganizationForUser = vi.fn();
-vi.mock("../../../../src/tenant/currentOrganization.js", () => ({
-  getUserById: (...args: unknown[]): unknown =>
-    mockGetPrimaryOrganizationForUser(...args),
+const mockFindUserById = vi.fn();
+vi.mock("../../../../src/db/repos/users.js", () => ({
+  findUserById: (...args: unknown[]): unknown =>
+    mockFindUserById(...args),
 }));
 
-const mockCountActiveAliasesByOrganization = vi.fn();
+const mockCountActiveAliasesByUser = vi.fn();
 vi.mock("../../../../src/db/repos/aliases.js", () => ({
-  countActiveAliasesByOrganization: (...args: unknown[]): unknown =>
-    mockCountActiveAliasesByOrganization(...args),
+  countActiveAliasesByUser: (...args: unknown[]): unknown =>
+    mockCountActiveAliasesByUser(...args),
   createAlias: vi.fn(),
   findAliasByLocalPart: vi.fn(),
   findAliasById: vi.fn(),
@@ -72,13 +72,13 @@ describe("sendChatSelectionMenu", () => {
     await sendChatSelectionMenu(ctx, fakeDb);
     const [text] = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
     expect(text).not.toMatch(/Plan:/i);
-    expect(mockGetPrimaryOrganizationForUser).not.toHaveBeenCalled();
+    expect(mockFindUserById).not.toHaveBeenCalled();
   });
 
   it("in hosted mode appends plan/alias footer when org exists", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
-    mockGetPrimaryOrganizationForUser.mockResolvedValue(FREE_ORG);
-    mockCountActiveAliasesByOrganization.mockResolvedValue(2);
+    mockFindUserById.mockResolvedValue(FREE_ORG);
+    mockCountActiveAliasesByUser.mockResolvedValue(2);
     const ctx = createMockCtx({ chatType: "private" });
     await sendChatSelectionMenu(ctx, fakeDb);
     const [text] = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
@@ -88,7 +88,7 @@ describe("sendChatSelectionMenu", () => {
 
   it("in hosted mode shows no footer when org fetch fails (silently degrades)", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
-    mockGetPrimaryOrganizationForUser.mockRejectedValue(new Error("db error"));
+    mockFindUserById.mockRejectedValue(new Error("db error"));
     const ctx = createMockCtx({ chatType: "private" });
     await sendChatSelectionMenu(ctx, fakeDb);
     // Should still reply successfully without crashing
@@ -99,7 +99,7 @@ describe("sendChatSelectionMenu", () => {
 
   it("in hosted mode shows no footer when no org found", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
-    mockGetPrimaryOrganizationForUser.mockResolvedValue(null);
+    mockFindUserById.mockResolvedValue(null);
     const ctx = createMockCtx({ chatType: "private" });
     await sendChatSelectionMenu(ctx, fakeDb);
     const [text] = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
@@ -134,8 +134,8 @@ describe("editChatSelectionMenu", () => {
 
   it("in hosted mode appends plan/alias footer when org exists", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
-    mockGetPrimaryOrganizationForUser.mockResolvedValue(FREE_ORG);
-    mockCountActiveAliasesByOrganization.mockResolvedValue(1);
+    mockFindUserById.mockResolvedValue(FREE_ORG);
+    mockCountActiveAliasesByUser.mockResolvedValue(1);
     const ctx = createMockCtx({ chatType: "private" });
     await editChatSelectionMenu(ctx, fakeDb);
     const [text] = (ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0] as [string];

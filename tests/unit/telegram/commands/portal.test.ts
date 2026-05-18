@@ -9,7 +9,7 @@ vi.mock("../../../../src/config.js", () => ({
 }));
 
 const mockGetBillingOrganizationForUser = vi.fn();
-vi.mock("../../../../src/tenant/currentOrganization.js", () => ({
+vi.mock("../../../../src/db/repos/users.js", () => ({
   getBillingOrganizationForUser: (...args: unknown[]): unknown =>
     mockGetBillingOrganizationForUser(...args),
 }));
