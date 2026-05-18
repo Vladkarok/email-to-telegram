@@ -86,6 +86,7 @@ const BASE_CONFIG: AppConfig = {
   adminSessionTtlMinutes: 60,
   metricsEnabled: false,
   metricsToken: undefined,
+  trustProxy: false,
 };
 
 describe("GET /metrics", () => {

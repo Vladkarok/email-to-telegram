@@ -27,10 +27,8 @@ export async function createHttpServer(config: AppConfig): Promise<FastifyInstan
     bodyLimit: config.maxSizeBytes,
     // Assign each request a UUID so it can be threaded through async pipeline logs.
     genReqId: () => randomUUID(),
-    // The service runs behind a Caddy reverse proxy. Without trustProxy, @fastify/rate-limit
-    // keys all requests on Caddy's internal bridge IP instead of the real client address,
-    // which causes everyone to share the same rate-limit bucket.
-    trustProxy: true,
+    // Enable only when the app is reachable exclusively through a trusted reverse proxy.
+    trustProxy: Boolean(config.trustProxy),
   });
 
   await app.register(helmet);

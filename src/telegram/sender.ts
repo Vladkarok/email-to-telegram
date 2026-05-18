@@ -7,6 +7,7 @@ import { recordTelegramSendFailure } from "../observability/metrics.js";
 
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
 const MEDIA_GROUP_MAX = 10;
+const TELEGRAM_API_TIMEOUT_MS = 30_000;
 
 export interface SendOptions {
   chatId: bigint;
@@ -61,7 +62,11 @@ export async function sendTelegramMessage(api: Api, opts: SendOptions): Promise<
 
   for (let attempt = 0; attempt < RETRY_DELAYS_MS.length; attempt++) {
     try {
-      const msg = await api.sendMessage(Number(opts.chatId), opts.text, other);
+      const msg = await withTimeout(
+        api.sendMessage(Number(opts.chatId), opts.text, other),
+        TELEGRAM_API_TIMEOUT_MS,
+        "sendMessage timed out",
+      );
       return { ok: true, telegramMessageId: msg.message_id };
     } catch (err: unknown) {
       lastError = err instanceof Error ? err.message : String(err);
@@ -99,7 +104,11 @@ export async function sendTelegramPhotos(
       if (chunk.length === 1) {
         const photo = chunk[0];
         const buf = await readAttachmentBytes(photo);
-        await api.sendPhoto(chatId, new InputFile(buf, photo.filename), other);
+        await withTimeout(
+          api.sendPhoto(chatId, new InputFile(buf, photo.filename), other),
+          TELEGRAM_API_TIMEOUT_MS,
+          "sendPhoto timed out",
+        );
       } else {
         const media = await Promise.all(
           chunk.map(async (p) => {
@@ -107,7 +116,11 @@ export async function sendTelegramPhotos(
             return { type: "photo" as const, media: new InputFile(buf, p.filename) };
           }),
         );
-        await api.sendMediaGroup(chatId, media, other);
+        await withTimeout(
+          api.sendMediaGroup(chatId, media, other),
+          TELEGRAM_API_TIMEOUT_MS,
+          "sendMediaGroup timed out",
+        );
       }
     } catch (err: unknown) {
       recordTelegramSendFailure(err instanceof Error ? err.message : String(err));
@@ -124,4 +137,15 @@ export async function sendTelegramPhotos(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }

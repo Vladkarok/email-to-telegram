@@ -147,6 +147,7 @@ Edit `.env` and set at least:
 
 Optional but useful on a real deployment:
 
+- `TRUST_PROXY=true` when the app is reachable only through your reverse proxy
 - `BACKUP_DIR=/data/backups`
 - `BACKUP_ARCHIVE_ENCRYPTION=storage-key`
 - `HEALTHCHECKS_URL=...`
@@ -347,6 +348,7 @@ See [`.env.example`](./.env.example) for the authoritative template.
 | `MASTER_ENCRYPTION_KEY_ID`    | No       | Optional key label stored with wrapped DEKs                |
 | `MASTER_ENCRYPTION_KEYRING`   | No       | Older read-only local keys for staged key rotation         |
 | `MAX_SIZE_BYTES`              | No       | Max accepted inbound body size                             |
+| `TRUST_PROXY`                 | No       | Trust reverse-proxy client IP headers for rate limits      |
 | `INITIAL_ALLOWED_USERS`       | No       | Initial Telegram operators; recommended on first deploy    |
 | `BACKUP_DIR`                  | No       | Nightly backup directory                                   |
 | `BACKUP_ARCHIVE_ENCRYPTION`   | No       | `off` or `storage-key`; `yes` is invalid                   |

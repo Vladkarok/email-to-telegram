@@ -133,6 +133,7 @@ const envSchema = z.object({
   ADMIN_SESSION_TTL_MINUTES: adminSessionTtlSchema,
   METRICS_ENABLED: optionalBooleanSchema,
   METRICS_TOKEN: z.string().optional(),
+  TRUST_PROXY: optionalBooleanSchema,
 });
 
 export type AppMode = z.infer<typeof appModeSchema>;
@@ -189,6 +190,7 @@ export interface AppConfig {
   adminSessionTtlMinutes: number;
   metricsEnabled: boolean;
   metricsToken: string | undefined;
+  trustProxy: boolean;
 }
 
 export function loadConfig(): AppConfig {
@@ -355,5 +357,6 @@ export function loadConfig(): AppConfig {
     adminSessionTtlMinutes: env.ADMIN_SESSION_TTL_MINUTES,
     metricsEnabled: env.METRICS_ENABLED,
     metricsToken: env.METRICS_TOKEN,
+    trustProxy: env.TRUST_PROXY,
   };
 }

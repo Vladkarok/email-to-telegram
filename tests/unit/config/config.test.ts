@@ -45,6 +45,7 @@ const OPTIONAL_ENV = [
   "ADMIN_SESSION_TTL_MINUTES",
   "METRICS_ENABLED",
   "METRICS_TOKEN",
+  "TRUST_PROXY",
 ];
 
 describe("loadConfig", () => {
@@ -96,6 +97,13 @@ describe("loadConfig", () => {
     expect(config.adminSessionTtlMinutes).toBe(60);
     expect(config.metricsEnabled).toBe(false);
     expect(config.metricsToken).toBeUndefined();
+    expect(config.trustProxy).toBe(false);
+  });
+
+  it("parses TRUST_PROXY as boolean", () => {
+    process.env["TRUST_PROXY"] = "true";
+    const config = loadConfig();
+    expect(config.trustProxy).toBe(true);
   });
 
   it("parses ATTACHMENT_TTL_HOURS as number", () => {

@@ -200,11 +200,10 @@ export async function deliverQueuedEmail(
     if (api) {
       const { sendTelegramMessage, sendTelegramPhotos } = await import("../../telegram/sender.js");
 
-      return await db.transaction(async (tx) => {
-        const workDb = tx as Db;
+      const stillActive = await db.transaction(async (tx) => {
         await tx.execute(sql`select pg_advisory_xact_lock(${alias.createdBy})`);
 
-        const currentAlias = await findAliasById(workDb, alias.id);
+        const currentAlias = await findAliasById(tx as Db, alias.id);
         if (
           !currentAlias ||
           currentAlias.status !== "active" ||
@@ -218,17 +217,25 @@ export async function deliverQueuedEmail(
             },
             "delivery.aborted_after_user_deletion",
           );
-          return { ok: false, reason: "user_deleted" };
+          return false;
         }
 
-        const result = await sendTelegramMessage(api, {
-          chatId: alias.chatId,
-          threadId: alias.messageThreadId ?? null,
-          text: prepared.text,
-          parseMode: prepared.parseMode,
-        });
+        return true;
+      });
 
-        // Record attempt in DB
+      if (!stillActive) {
+        return { ok: false, reason: "user_deleted" };
+      }
+
+      const result = await sendTelegramMessage(api, {
+        chatId: alias.chatId,
+        threadId: alias.messageThreadId ?? null,
+        text: prepared.text,
+        parseMode: prepared.parseMode,
+      });
+
+      await db.transaction(async (tx) => {
+        const workDb = tx as Db;
         await insertDeliveryAttempt(workDb, {
           deliveryLogId: deliveryLog.id,
           attemptNo: 1,
@@ -241,81 +248,79 @@ export async function deliverQueuedEmail(
 
         const finalStatus = result.ok ? "delivered" : "failed";
         await updateDeliveryLogStatus(workDb, deliveryLog.id, finalStatus);
-        recordDeliveryAttempt(result.ok ? "succeeded" : "failed");
+      });
+      recordDeliveryAttempt(result.ok ? "succeeded" : "failed");
 
-        if (!result.ok) {
-          recordTelegramSendFailure(result.error);
-          log.error(
-            { deliveryLogId: deliveryLog.id, error: result.error },
-            "delivery.telegram.failed",
-          );
-          return { ok: false, reason: "send_failed" };
-        }
+      if (!result.ok) {
+        recordTelegramSendFailure(result.error);
+        log.error(
+          { deliveryLogId: deliveryLog.id, error: result.error },
+          "delivery.telegram.failed",
+        );
+        return { ok: false, reason: "send_failed" };
+      }
 
-        // Send image attachments as Telegram photos (replied to the text message)
-        if (!privacyMode && prepared.imageAttachments.length > 0) {
-          try {
-            const photoResult = await sendTelegramPhotos(api, {
+      // Send image attachments as Telegram photos (replied to the text message)
+      if (!privacyMode && prepared.imageAttachments.length > 0) {
+        try {
+          const photoResult = await sendTelegramPhotos(api, {
+            chatId: alias.chatId,
+            threadId: alias.messageThreadId ?? null,
+            replyToMessageId: result.telegramMessageId,
+            photos: prepared.imageAttachments.map(
+              ({ id, storagePath, filename, encryptionMode, wrappedDek, kekKeyId }) => ({
+                id,
+                storagePath,
+                filename,
+                encryptionMode,
+                wrappedDek,
+                kekKeyId,
+              }),
+            ),
+          });
+
+          if (photoResult.failedPhotos.length > 0) {
+            const failedPaths = new Set(photoResult.failedPhotos.map((photo) => photo.storagePath));
+            const fallbackLinks = await Promise.all(
+              prepared.imageAttachments
+                .filter((attachment) => failedPaths.has(attachment.storagePath))
+                .map(async (attachment) => {
+                  const { token, expiresAt } = generateDownloadToken(
+                    attachment.attachmentId,
+                    attachmentTtlHours,
+                  );
+                  await createAttachmentLink(db, attachment.attachmentId, token, expiresAt);
+                  return {
+                    filename: attachment.filename,
+                    sizeBytes: attachment.sizeBytes,
+                    url: `${publicBaseUrl}/dl/${token}`,
+                  };
+                }),
+            );
+
+            const fallbackResult = await sendTelegramMessage(api, {
               chatId: alias.chatId,
               threadId: alias.messageThreadId ?? null,
-              replyToMessageId: result.telegramMessageId,
-              photos: prepared.imageAttachments.map(
-                ({ id, storagePath, filename, encryptionMode, wrappedDek, kekKeyId }) => ({
-                  id,
-                  storagePath,
-                  filename,
-                  encryptionMode,
-                  wrappedDek,
-                  kekKeyId,
-                }),
-              ),
+              text: renderAttachmentFallback(fallbackLinks),
             });
 
-            if (photoResult.failedPhotos.length > 0) {
-              const failedPaths = new Set(
-                photoResult.failedPhotos.map((photo) => photo.storagePath),
+            if (!fallbackResult.ok) {
+              recordTelegramSendFailure(fallbackResult.error);
+              log.error(
+                { deliveryLogId: deliveryLog.id, error: fallbackResult.error },
+                "image attachment fallback delivery failed",
               );
-              const fallbackLinks = await Promise.all(
-                prepared.imageAttachments
-                  .filter((attachment) => failedPaths.has(attachment.storagePath))
-                  .map(async (attachment) => {
-                    const { token, expiresAt } = generateDownloadToken(
-                      attachment.attachmentId,
-                      attachmentTtlHours,
-                    );
-                    await createAttachmentLink(workDb, attachment.attachmentId, token, expiresAt);
-                    return {
-                      filename: attachment.filename,
-                      sizeBytes: attachment.sizeBytes,
-                      url: `${publicBaseUrl}/dl/${token}`,
-                    };
-                  }),
-              );
-
-              const fallbackResult = await sendTelegramMessage(api, {
-                chatId: alias.chatId,
-                threadId: alias.messageThreadId ?? null,
-                text: renderAttachmentFallback(fallbackLinks),
-              });
-
-              if (!fallbackResult.ok) {
-                recordTelegramSendFailure(fallbackResult.error);
-                log.error(
-                  { deliveryLogId: deliveryLog.id, error: fallbackResult.error },
-                  "image attachment fallback delivery failed",
-                );
-              }
             }
-          } catch (err: unknown) {
-            log.error(
-              { err, deliveryLogId: deliveryLog.id },
-              "image attachment secondary delivery failed",
-            );
           }
+        } catch (err: unknown) {
+          log.error(
+            { err, deliveryLogId: deliveryLog.id },
+            "image attachment secondary delivery failed",
+          );
         }
+      }
 
-        return { ok: true };
-      });
+      return { ok: true };
     }
 
     return { ok: true };
