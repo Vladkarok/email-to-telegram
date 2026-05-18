@@ -23,7 +23,7 @@ vi.mock("../../../src/db/repos/organizationMembers.js", () => ({
   addOrganizationMember: (...args: unknown[]): unknown => mockAddOrganizationMember(...args),
 }));
 
-const { HostedOnboardingRateLimitError, ensurePersonalOrganizationForUserWithOnboardingLimit } =
+const { HostedOnboardingRateLimitError, ensureUserWithOnboardingLimit } =
   await import("../../../src/abuse/hostedOnboarding.js");
 
 const user = {
@@ -48,7 +48,7 @@ const organization = {
   updatedAt: new Date(),
 };
 
-describe("ensurePersonalOrganizationForUserWithOnboardingLimit", () => {
+describe("ensureUserWithOnboardingLimit", () => {
   const tx = {
     execute: vi.fn().mockResolvedValue(undefined),
   };
@@ -68,7 +68,7 @@ describe("ensurePersonalOrganizationForUserWithOnboardingLimit", () => {
     mockGetPrimaryOrganizationForUser.mockResolvedValue(organization);
 
     await expect(
-      ensurePersonalOrganizationForUserWithOnboardingLimit(db as never, user),
+      ensureUserWithOnboardingLimit(db as never, user),
     ).resolves.toBe(organization);
 
     expect(mockCreateOrganization).not.toHaveBeenCalled();
@@ -77,7 +77,7 @@ describe("ensurePersonalOrganizationForUserWithOnboardingLimit", () => {
 
   it("reserves durable onboarding quota inside the same user lock transaction before creating a new organization", async () => {
     await expect(
-      ensurePersonalOrganizationForUserWithOnboardingLimit(db as never, user),
+      ensureUserWithOnboardingLimit(db as never, user),
     ).resolves.toBe(organization);
 
     expect(tx.execute).toHaveBeenCalledOnce();
@@ -105,7 +105,7 @@ describe("ensurePersonalOrganizationForUserWithOnboardingLimit", () => {
     mockReserveHostedOnboardingAttemptInTransaction.mockResolvedValue(false);
 
     await expect(
-      ensurePersonalOrganizationForUserWithOnboardingLimit(db as never, user),
+      ensureUserWithOnboardingLimit(db as never, user),
     ).rejects.toBeInstanceOf(HostedOnboardingRateLimitError);
     expect(mockCreateOrganization).not.toHaveBeenCalled();
   });

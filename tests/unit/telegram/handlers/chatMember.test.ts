@@ -25,7 +25,7 @@ const mockEnsurePersonalOrganizationForUserWithOnboardingLimit = vi.fn();
 class MockHostedOnboardingRateLimitError extends Error {}
 vi.mock("../../../../src/abuse/hostedOnboarding.js", () => ({
   HostedOnboardingRateLimitError: MockHostedOnboardingRateLimitError,
-  ensurePersonalOrganizationForUserWithOnboardingLimit: (...args: unknown[]): unknown =>
+  ensureUserWithOnboardingLimit: (...args: unknown[]): unknown =>
     mockEnsurePersonalOrganizationForUserWithOnboardingLimit(...args),
 }));
 

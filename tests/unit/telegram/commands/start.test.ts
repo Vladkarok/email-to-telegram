@@ -27,7 +27,7 @@ vi.mock("../../../../src/abuse/hostedOnboarding.js", () => ({
   HOSTED_ONBOARDING_RATE_LIMIT_MESSAGE:
     "⚠️ Too many workspace setup attempts. Please try again later.",
   HostedOnboardingRateLimitError: MockHostedOnboardingRateLimitError,
-  ensurePersonalOrganizationForUserWithOnboardingLimit: (...args: unknown[]): unknown =>
+  ensureUserWithOnboardingLimit: (...args: unknown[]): unknown =>
     mockEnsurePersonalOrganizationForUserWithOnboardingLimit(...args),
 }));
 
