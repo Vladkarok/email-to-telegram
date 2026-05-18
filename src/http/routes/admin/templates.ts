@@ -70,6 +70,16 @@ dt:first-child { margin-top: 0; }
 dd { margin: 2px 0 0; }
 .flash { padding: 10px 14px; border-radius: 6px; margin-bottom: 14px; }
 .flash-error { background: #fde8e8; color: var(--danger); border: 1px solid #f5c6c6; }
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.dashboard-grid .panel { margin-bottom: 0; }
+.compact-table th, .compact-table td { padding: 7px 8px; font-size: 0.92rem; }
+.status-danger { color: var(--danger); font-weight: 600; }
+.status-warn { color: #8b5e34; font-weight: 600; }
 `;
 
 function adminLayout(title: string, bodyHtml: string, csrfToken?: string): string {
@@ -139,13 +149,165 @@ export function renderErrorPage(title: string, message: string): string {
   );
 }
 
-export function renderDashboardPage(csrfToken: string): string {
+export interface DashboardSubscriptionDeadline {
+  userId: string;
+  username: string | null;
+  planCode: string;
+  subscriptionStatus: string;
+  billingEndsAt: string;
+  daysUntil: number;
+}
+
+export interface DashboardBillingAttention {
+  userId: string;
+  username: string | null;
+  planCode: string;
+  subscriptionStatus: string;
+  paidThroughAt: string | null;
+  currentPeriodEnd: string | null;
+}
+
+export interface DashboardManualBillingEvent {
+  userId: string;
+  planCode: string;
+  subscriptionStatus: string;
+  paidThroughAt: string | null;
+  operatorSource: string;
+  createdAt: string;
+}
+
+export interface DashboardRecentSignup {
+  userId: string;
+  username: string | null;
+  isAllowed: boolean;
+  planCode: string;
+  createdAt: string;
+}
+
+export interface DashboardData {
+  subscriptionDeadlines: DashboardSubscriptionDeadline[];
+  billingAttention: DashboardBillingAttention[];
+  recentManualBillingEvents: DashboardManualBillingEvent[];
+  recentSignups: DashboardRecentSignup[];
+}
+
+function renderUserLabel(userId: string, username: string | null): string {
+  const escapedId = escapeHtml(userId);
+  const escapedHrefId = escapeHtmlAttribute(userId);
+  const usernameHtml = username ? ` <span class="muted">@${escapeHtml(username)}</span>` : "";
+  return `<a href="/admin/users/${escapedHrefId}">${escapedId}</a>${usernameHtml}`;
+}
+
+function renderDateCell(value: string | null): string {
+  return value ? escapeHtml(value.slice(0, 10)) : '<span class="muted">-</span>';
+}
+
+function renderSubscriptionDeadlines(rows: DashboardSubscriptionDeadline[]): string {
+  if (rows.length === 0) {
+    return '<p class="muted">No paid subscriptions expiring in the next 30 days.</p>';
+  }
+
+  const body = rows
+    .map((row) => {
+      const urgencyClass = row.daysUntil <= 7 ? "status-danger" : "status-warn";
+      return `<tr>
+        <td>${renderUserLabel(row.userId, row.username)}</td>
+        <td>${escapeHtml(row.planCode)}</td>
+        <td>${renderDateCell(row.billingEndsAt)}</td>
+        <td class="${urgencyClass}">${row.daysUntil}d</td>
+      </tr>`;
+    })
+    .join("");
+
+  return `<table class="compact-table"><thead><tr><th>User</th><th>Plan</th><th>Ends</th><th>Due</th></tr></thead><tbody>${body}</tbody></table>`;
+}
+
+function renderBillingAttention(rows: DashboardBillingAttention[]): string {
+  if (rows.length === 0) {
+    return '<p class="muted">No billing exceptions need attention.</p>';
+  }
+
+  const body = rows
+    .map(
+      (row) => `<tr>
+        <td>${renderUserLabel(row.userId, row.username)}</td>
+        <td>${escapeHtml(row.planCode)}</td>
+        <td class="status-danger">${escapeHtml(row.subscriptionStatus)}</td>
+        <td>${renderDateCell(row.paidThroughAt ?? row.currentPeriodEnd)}</td>
+      </tr>`,
+    )
+    .join("");
+
+  return `<table class="compact-table"><thead><tr><th>User</th><th>Plan</th><th>Status</th><th>Ended</th></tr></thead><tbody>${body}</tbody></table>`;
+}
+
+function renderRecentManualBillingEvents(rows: DashboardManualBillingEvent[]): string {
+  if (rows.length === 0) {
+    return '<p class="muted">No manual billing events yet.</p>';
+  }
+
+  const body = rows
+    .map(
+      (row) => `<tr>
+        <td>${renderDateCell(row.createdAt)}</td>
+        <td><a href="/admin/users/${escapeHtmlAttribute(row.userId)}">${escapeHtml(row.userId)}</a></td>
+        <td>${escapeHtml(row.planCode)}</td>
+        <td>${escapeHtml(row.subscriptionStatus)}</td>
+        <td>${escapeHtml(row.operatorSource)}</td>
+      </tr>`,
+    )
+    .join("");
+
+  return `<table class="compact-table"><thead><tr><th>Date</th><th>User</th><th>Plan</th><th>Status</th><th>Source</th></tr></thead><tbody>${body}</tbody></table>`;
+}
+
+function renderRecentSignups(rows: DashboardRecentSignup[]): string {
+  if (rows.length === 0) {
+    return '<p class="muted">No signups yet.</p>';
+  }
+
+  const body = rows
+    .map(
+      (row) => `<tr>
+        <td>${renderUserLabel(row.userId, row.username)}</td>
+        <td>${row.isAllowed ? "Yes" : "No"}</td>
+        <td>${escapeHtml(row.planCode)}</td>
+        <td>${renderDateCell(row.createdAt)}</td>
+      </tr>`,
+    )
+    .join("");
+
+  return `<table class="compact-table"><thead><tr><th>User</th><th>Allowed</th><th>Plan</th><th>Created</th></tr></thead><tbody>${body}</tbody></table>`;
+}
+
+export function renderDashboardPage(csrfToken: string, data: DashboardData): string {
   return adminLayout(
     "Dashboard",
     `<div class="panel">
       <h1>Admin Dashboard</h1>
-      <p class="muted">Operator administration panel.</p>
-      <p><a href="/admin/users">Search users &rarr;</a></p>
+      <form method="get" action="/admin/users" style="margin-bottom:10px;">
+        <input type="text" name="q" placeholder="Telegram ID or username" autocomplete="off" />
+        <button type="submit" style="margin-left:8px;">Search</button>
+      </form>
+      <p class="muted">Renewals, billing audit, and support context.</p>
+    </div>
+    <div class="dashboard-grid">
+      <div class="panel">
+        <h2>Renewals Due</h2>
+        ${renderSubscriptionDeadlines(data.subscriptionDeadlines)}
+      </div>
+      <div class="panel">
+        <h2>Billing Attention</h2>
+        ${renderBillingAttention(data.billingAttention)}
+      </div>
+      <div class="panel">
+        <h2>Recent Manual Billing</h2>
+        ${renderRecentManualBillingEvents(data.recentManualBillingEvents)}
+      </div>
+      <div class="panel">
+        <h2>Recent Signups</h2>
+        ${renderRecentSignups(data.recentSignups)}
+      </div>
     </div>`,
     csrfToken,
   );

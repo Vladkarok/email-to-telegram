@@ -4,14 +4,23 @@ import { parse as parseQs } from "querystring";
 import { registerRoutes } from "../../../src/http/routes/index.js";
 
 const mockFindUserById = vi.fn();
+const mockListSubscriptionDeadlines = vi.fn();
+const mockListBillingAttentionUsers = vi.fn();
+const mockListRecentSignups = vi.fn();
 const mockCountActiveAliasesByUser = vi.fn();
 const mockGetUserUsageMonth = vi.fn();
 const mockListManualBillingEventsForUser = vi.fn();
+const mockListRecentManualBillingEvents = vi.fn();
 const mockGrantManualUserPlan = vi.fn();
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 vi.mock("../../../src/db/repos/users.js", () => ({
   findUserById: (...args: unknown[]): unknown => mockFindUserById(...args),
+  listSubscriptionDeadlines: (...args: unknown[]): unknown =>
+    mockListSubscriptionDeadlines(...args),
+  listBillingAttentionUsers: (...args: unknown[]): unknown =>
+    mockListBillingAttentionUsers(...args),
+  listRecentSignups: (...args: unknown[]): unknown => mockListRecentSignups(...args),
 }));
 vi.mock("../../../src/db/repos/aliases.js", () => ({
   countActiveAliasesByUser: (...args: unknown[]): unknown => mockCountActiveAliasesByUser(...args),
@@ -23,6 +32,8 @@ vi.mock("../../../src/db/repos/usage.js", () => ({
 vi.mock("../../../src/db/repos/manualBillingEvents.js", () => ({
   listManualBillingEventsForUser: (...args: unknown[]): unknown =>
     mockListManualBillingEventsForUser(...args),
+  listRecentManualBillingEvents: (...args: unknown[]): unknown =>
+    mockListRecentManualBillingEvents(...args),
 }));
 vi.mock("../../../src/billing/manual.js", () => ({
   grantManualUserPlan: (...args: unknown[]): unknown => mockGrantManualUserPlan(...args),
@@ -155,10 +166,14 @@ function makeGrantSuccess(overrides: Record<string, unknown> = {}): Record<strin
 
 beforeEach(() => {
   mockFindUserById.mockReset();
+  mockListSubscriptionDeadlines.mockReset().mockResolvedValue([]);
+  mockListBillingAttentionUsers.mockReset().mockResolvedValue([]);
+  mockListRecentSignups.mockReset().mockResolvedValue([]);
 
   mockCountActiveAliasesByUser.mockReset().mockResolvedValue(0);
   mockGetUserUsageMonth.mockReset().mockResolvedValue(null);
   mockListManualBillingEventsForUser.mockReset().mockResolvedValue([]);
+  mockListRecentManualBillingEvents.mockReset().mockResolvedValue([]);
   mockGrantManualUserPlan.mockReset();
 });
 
@@ -229,6 +244,73 @@ describe("admin auth guard", () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("Admin Dashboard");
+  });
+
+  it("renders dashboard operator queues", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+
+    mockListSubscriptionDeadlines.mockResolvedValue([
+      {
+        id: 1001n,
+        username: "renewme",
+        planCode: "pro",
+        subscriptionStatus: "active",
+        paidThroughAt: new Date("2026-05-22T00:00:00.000Z"),
+        currentPeriodEnd: null,
+        billingEndsAt: new Date("2026-05-22T00:00:00.000Z"),
+      },
+    ]);
+    mockListBillingAttentionUsers.mockResolvedValue([
+      {
+        id: 1002n,
+        username: "pastdue",
+        planCode: "team",
+        subscriptionStatus: "past_due",
+        paidThroughAt: new Date("2026-05-01T00:00:00.000Z"),
+        currentPeriodEnd: null,
+      },
+    ]);
+    mockListRecentManualBillingEvents.mockResolvedValue([
+      {
+        id: "evt-1",
+        telegramUserId: 1003n,
+        planCode: "personal",
+        subscriptionStatus: "active",
+        paidThroughAt: new Date("2026-06-01T00:00:00.000Z"),
+        paymentReference: "ref-1",
+        note: null,
+        keptStripeLink: false,
+        operatorSource: "admin:abcdef1234567890",
+        createdAt: new Date("2026-05-18T10:00:00.000Z"),
+      },
+    ]);
+    mockListRecentSignups.mockResolvedValue([
+      {
+        id: 1004n,
+        username: "newuser",
+        isAllowed: false,
+        planCode: "free",
+        createdAt: new Date("2026-05-18T09:00:00.000Z"),
+      },
+    ]);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/admin",
+      headers: { cookie },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("Renewals Due");
+    expect(res.body).toContain("Billing Attention");
+    expect(res.body).toContain("Recent Manual Billing");
+    expect(res.body).toContain("Recent Signups");
+    expect(res.body).toContain("renewme");
+    expect(res.body).toContain("past_due");
+    expect(res.body).toContain("admin:abcdef1234567890");
+    expect(res.body).toContain("newuser");
+    expect(res.body).toContain('action="/admin/users"');
   });
 });
 

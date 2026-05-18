@@ -12,15 +12,24 @@ import {
   type UserDetail,
   type BillingFlash,
   type BillingFormOverrides,
+  type DashboardData,
 } from "./templates.js";
 import { adminOperatorSource, redactManualBillingForLog } from "../../../billing/audit.js";
 import { grantManualUserPlan, type ManualSubscriptionStatus } from "../../../billing/manual.js";
 import type { PlanCode } from "../../../billing/plans.js";
 import { getDb } from "../../../db/client.js";
-import { findUserById } from "../../../db/repos/users.js";
+import {
+  findUserById,
+  listBillingAttentionUsers,
+  listRecentSignups,
+  listSubscriptionDeadlines,
+} from "../../../db/repos/users.js";
 import { countActiveAliasesByUser } from "../../../db/repos/aliases.js";
 import { getUserUsageMonth, usageMonthForDate } from "../../../db/repos/usage.js";
-import { listManualBillingEventsForUser } from "../../../db/repos/manualBillingEvents.js";
+import {
+  listManualBillingEventsForUser,
+  listRecentManualBillingEvents,
+} from "../../../db/repos/manualBillingEvents.js";
 import { users } from "../../../db/schema.js";
 import { eq, ilike } from "drizzle-orm";
 import cookie from "@fastify/cookie";
@@ -30,6 +39,8 @@ type AdminConfig = Pick<
   AppConfig,
   "adminEnabled" | "adminSecret" | "adminSessionSecret" | "adminSessionTtlMinutes" | "nodeEnv"
 >;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Promise<void> {
   if (!config.adminEnabled || !config.adminSecret) return;
@@ -104,7 +115,8 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
 
   app.get("/admin", { preHandler: guard }, async (req, reply) => {
     const csrfToken = req.session.admin?.csrfToken ?? "";
-    await reply.type("text/html").send(renderDashboardPage(csrfToken));
+    const dashboard = await buildDashboardData();
+    await reply.type("text/html").send(renderDashboardPage(csrfToken, dashboard));
   });
 
   app.get("/admin/users", { preHandler: guard }, async (req, reply) => {
@@ -391,6 +403,54 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
       await reply.redirect(`/admin/users/${userId.toString()}?billing=${flashParam}`);
     },
   );
+}
+
+async function buildDashboardData(): Promise<DashboardData> {
+  const db = getDb();
+  const now = new Date();
+  const renewalHorizon = new Date(now.getTime() + 30 * DAY_MS);
+
+  const [subscriptionDeadlines, billingAttention, recentManualBillingEvents, recentSignups] =
+    await Promise.all([
+      listSubscriptionDeadlines(db, now, renewalHorizon),
+      listBillingAttentionUsers(db, now),
+      listRecentManualBillingEvents(db, 10),
+      listRecentSignups(db, 10),
+    ]);
+
+  return {
+    subscriptionDeadlines: subscriptionDeadlines.map((u) => ({
+      userId: u.id.toString(),
+      username: u.username,
+      planCode: u.planCode,
+      subscriptionStatus: u.subscriptionStatus,
+      billingEndsAt: u.billingEndsAt.toISOString(),
+      daysUntil: Math.max(0, Math.ceil((u.billingEndsAt.getTime() - now.getTime()) / DAY_MS)),
+    })),
+    billingAttention: billingAttention.map((u) => ({
+      userId: u.id.toString(),
+      username: u.username,
+      planCode: u.planCode,
+      subscriptionStatus: u.subscriptionStatus,
+      paidThroughAt: u.paidThroughAt?.toISOString() ?? null,
+      currentPeriodEnd: u.currentPeriodEnd?.toISOString() ?? null,
+    })),
+    recentManualBillingEvents: recentManualBillingEvents.map((e) => ({
+      userId: e.telegramUserId.toString(),
+      planCode: e.planCode,
+      subscriptionStatus: e.subscriptionStatus,
+      paidThroughAt: e.paidThroughAt?.toISOString() ?? null,
+      operatorSource: e.operatorSource,
+      createdAt: e.createdAt.toISOString(),
+    })),
+    recentSignups: recentSignups.map((u) => ({
+      userId: u.id.toString(),
+      username: u.username,
+      isAllowed: u.isAllowed,
+      planCode: u.planCode,
+      createdAt: u.createdAt.toISOString(),
+    })),
+  };
 }
 
 async function buildUserDetail(userId: bigint): Promise<UserDetail | null> {
