@@ -461,8 +461,8 @@ function renderBillingForm(
         <select id="bf-status" name="status">${statusOptions}</select>
       </div>
       <div style="margin-bottom:12px;">
-        <label for="bf-paid-through" style="display:block;margin-bottom:4px;" class="muted">Paid Through (YYYY-MM-DD)</label>
-        <input type="text" id="bf-paid-through" name="paid_through" placeholder="2026-12-31" value="${paidThroughValue}" maxlength="10" />
+        <label for="bf-paid-through" style="display:block;margin-bottom:4px;" class="muted">Paid Through</label>
+        <input type="date" id="bf-paid-through" name="paid_through" value="${paidThroughValue}" />
       </div>
       <div style="margin-bottom:12px;">
         <label for="bf-ref" style="display:block;margin-bottom:4px;" class="muted">Payment Reference <span style="color:var(--danger)">*</span></label>
