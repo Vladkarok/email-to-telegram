@@ -77,6 +77,17 @@ vi.mock("../../../src/telegram/sender.js", () => ({
   sendTelegramMessage: (...a: unknown[]): unknown => mockSendTelegram(...a),
   sendTelegramPhotos: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock("../../../src/db/repos/usage.js", () => ({
+  incrementUserUsageMonth: vi.fn().mockResolvedValue(undefined),
+  usageMonthForDate: () => "2026-04",
+}));
+vi.mock("../../../src/db/repos/storageUsage.js", () => ({
+  incrementUserStorageUsage: vi.fn().mockResolvedValue(undefined),
+  decrementUserStorageUsage: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("../../../src/billing/limits.js", () => ({
+  checkInboundLimit: vi.fn().mockResolvedValue({ ok: true }),
+}));
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

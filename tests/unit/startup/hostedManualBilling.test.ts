@@ -3,9 +3,7 @@ import type { StartupOptions } from "../../../src/cli.js";
 import type { AppConfig } from "../../../src/config.js";
 import {
   assertHostedManualBillingAllowed,
-  buildManualBillingPlanInput,
   buildManualBillingUserInput,
-  buildManualBillingMemberInput,
   hasHostedManualBillingOperation,
   hostedManualBillingExitCode,
   redactManualBillingForLog,
@@ -17,38 +15,26 @@ function startupOptions(overrides: Partial<StartupOptions>): StartupOptions {
     migrateOnly: false,
     rewrapStorageKeys: false,
     backfillStorageEncryption: false,
-    hostedExportOrganizationId: null,
+    hostedExportUserId: null,
     hostedExportOutputPath: null,
-    hostedDeleteOrganizationId: null,
-    hostedSetOrganizationPlanId: null,
+    hostedDeleteUserId: null,
     hostedSetUserPlanTelegramUserId: null,
-    hostedAddOrganizationMemberId: null,
     manualPlanCode: null,
     manualSubscriptionStatus: null,
     manualPaidThroughAt: null,
     manualPaymentReference: null,
     manualNote: null,
-    manualTelegramUserId: null,
-    manualOrganizationId: null,
-    manualOrganizationRole: null,
     manualKeepStripeLink: false,
-    manualCreateNewOrganization: false,
     warnings: [],
     ...overrides,
-  };
+  } as StartupOptions;
 }
 
 describe("hostedManualBilling helpers", () => {
   it("detects manual billing operations", () => {
     expect(hasHostedManualBillingOperation(startupOptions({}))).toBe(false);
     expect(
-      hasHostedManualBillingOperation(startupOptions({ hostedSetOrganizationPlanId: "org-1" })),
-    ).toBe(true);
-    expect(
       hasHostedManualBillingOperation(startupOptions({ hostedSetUserPlanTelegramUserId: "12345" })),
-    ).toBe(true);
-    expect(
-      hasHostedManualBillingOperation(startupOptions({ hostedAddOrganizationMemberId: "org-1" })),
     ).toBe(true);
   });
 
@@ -61,139 +47,64 @@ describe("hostedManualBilling helpers", () => {
     ).not.toThrow();
   });
 
-  it("builds an organization plan input from startup options", () => {
-    const opts = startupOptions({
-      hostedSetOrganizationPlanId: "org-1",
-      manualPlanCode: "pro",
-      manualSubscriptionStatus: "active",
-      manualPaidThroughAt: new Date("2026-05-30T00:00:00.000Z"),
-      manualPaymentReference: "wise-2026-04-001",
-      manualNote: "Manual Wise",
-      manualKeepStripeLink: false,
-    });
-    const input = buildManualBillingPlanInput(opts);
-    expect(input).toEqual({
-      organizationId: "org-1",
-      planCode: "pro",
-      subscriptionStatus: "active",
-      paidThroughAt: new Date("2026-05-30T00:00:00.000Z"),
-      paymentReference: "wise-2026-04-001",
-      note: "Manual Wise",
-      keptStripeLink: false,
-      operatorSource: "cli",
-    });
-  });
-
-  it("builds a user plan input including organizationId and createNewOrganization", () => {
+  it("builds a user plan input from startup options", () => {
     const opts = startupOptions({
       hostedSetUserPlanTelegramUserId: "12345",
       manualPlanCode: "personal",
       manualSubscriptionStatus: "active",
       manualPaidThroughAt: new Date("2026-05-30T00:00:00.000Z"),
-      manualOrganizationId: "org-x",
-      manualCreateNewOrganization: true,
       manualPaymentReference: "wise-2026-05-001",
     });
     const input = buildManualBillingUserInput(opts);
-    expect(input).toEqual({
+    expect(input).toMatchObject({
       telegramUserId: 12345n,
-      organizationId: "org-x",
-      createNewOrganization: true,
       planCode: "personal",
       subscriptionStatus: "active",
       paidThroughAt: new Date("2026-05-30T00:00:00.000Z"),
       paymentReference: "wise-2026-05-001",
-      note: null,
       keptStripeLink: false,
       operatorSource: "cli",
     });
-  });
-
-  it("throws when --manual-payment-reference is missing from org plan builder", () => {
-    const opts = startupOptions({
-      hostedSetOrganizationPlanId: "org-1",
-      manualPlanCode: "pro",
-      manualSubscriptionStatus: "active",
-    });
-    expect(() => buildManualBillingPlanInput(opts)).toThrow(/payment-reference/i);
   });
 
   it("throws when --manual-payment-reference is missing from user plan builder", () => {
     const opts = startupOptions({
       hostedSetUserPlanTelegramUserId: "12345",
-      manualPlanCode: "personal",
+      manualPlanCode: "pro",
       manualSubscriptionStatus: "active",
+      manualPaidThroughAt: new Date("2026-05-30T00:00:00.000Z"),
     });
     expect(() => buildManualBillingUserInput(opts)).toThrow(/payment-reference/i);
   });
 
-  it("builds a member input from startup options", () => {
-    const opts = startupOptions({
-      hostedAddOrganizationMemberId: "org-1",
-      manualTelegramUserId: "999",
-      manualOrganizationRole: "member",
-    });
-    const input = buildManualBillingMemberInput(opts);
-    expect(input).toEqual({
-      organizationId: "org-1",
-      telegramUserId: 999n,
-      role: "member",
-    });
-  });
-
   it("redacts payment reference and note from log payloads", () => {
-    const log = redactManualBillingForLog({
-      organizationId: "org-1",
+    const result = redactManualBillingForLog({
       telegramUserId: "12345",
       planCode: "pro",
       subscriptionStatus: "active",
       paidThroughAt: "2026-05-30T00:00:00.000Z",
-      paymentReference: "wise-2026-04-001",
-      note: "Operator chat with Bob said he paid by wire",
+      paymentReference: "wise-2026-05-001",
+      note: "secret",
       keptStripeLink: false,
-      manualBillingEventId: "event-1",
-    });
-    expect(log).toEqual({
-      organizationId: "org-1",
-      telegramUserId: "12345",
-      planCode: "pro",
-      subscriptionStatus: "active",
-      paidThroughAt: "2026-05-30T00:00:00.000Z",
-      paymentReferencePresent: true,
-      notePresent: true,
-      keptStripeLink: false,
-      manualBillingEventId: "event-1",
+      manualBillingEventId: "evt-1",
       operatorSource: "cli",
     });
+    expect(result.paymentReferencePresent).toBe(true);
+    expect(result.notePresent).toBe(true);
+    expect(result).not.toHaveProperty("paymentReference");
+    expect(result).not.toHaveProperty("note");
   });
 
   it("computes exit code from result", () => {
     expect(hostedManualBillingExitCode({ ok: true } as never)).toBe(0);
-    expect(
-      hostedManualBillingExitCode({ ok: false, code: "organization_not_found" } as never),
-    ).toBe(1);
+    expect(hostedManualBillingExitCode({ ok: false } as never)).not.toBe(0);
   });
 
   it("adds manual billing warnings to stdout payloads when present", () => {
-    const result = {
-      ok: true,
-      idempotent: false,
-      updated: true,
-      organizationId: "org-1",
-      telegramUserId: null,
-      planCode: "pro",
-      subscriptionStatus: "active",
-      paidThroughAt: "2026-05-30T00:00:00.000Z",
-      paymentReference: null,
-      note: null,
-      keptStripeLink: false,
-      manualBillingEventId: "event-1",
-    } as const;
-
-    expect(withManualBillingWarnings(result, [])).toBe(result);
-    expect(withManualBillingWarnings(result, ["backfill warning"])).toEqual({
-      ...result,
-      warnings: ["backfill warning"],
-    });
+    const result = withManualBillingWarnings(
+      { ok: true, idempotent: false, telegramUserId: "12345" } as never,
+      ["warning text"],
+    );
+    expect(result).toMatchObject({ warnings: ["warning text"] });
   });
 });

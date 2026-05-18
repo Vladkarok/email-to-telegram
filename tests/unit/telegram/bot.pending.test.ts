@@ -258,6 +258,10 @@ describe("pending text flow", () => {
   });
 
   it("sends the allow-rules menu on successful pending allow-rule creation", async () => {
+    // Reset is required because preceding tests use mockResolvedValueOnce(false)
+    // queues that vi.clearAllMocks() doesn't drain.
+    mockHasActiveHostedOrganization.mockReset();
+    mockHasActiveHostedOrganization.mockResolvedValue(true);
     const ctx = createMockCtx({ text: "github.com" });
 
     await handlePendingTextMessage(ctx, next);
