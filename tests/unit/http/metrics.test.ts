@@ -10,20 +10,15 @@ const mockCountAliasesByStatus = vi.fn();
 const mockCountAttachmentStorage = vi.fn();
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
-vi.mock("../../../src/db/repos/organizations.js", async () => {
-  const actual = await vi.importActual<typeof import("../../../src/db/repos/organizations.js")>(
-    "../../../src/db/repos/organizations.js",
-  );
-  return {
-    ...actual,
-    countUsersByPlan: (...args: unknown[]): unknown => mockCountOrganizationsByPlan(...args),
-  };
-});
 vi.mock("../../../src/db/repos/users.js", async () => {
   const actual = await vi.importActual<typeof import("../../../src/db/repos/users.js")>(
     "../../../src/db/repos/users.js",
   );
-  return { ...actual, countUsers: (...args: unknown[]): unknown => mockCountUsers(...args) };
+  return {
+    ...actual,
+    countUsersByPlan: (...args: unknown[]): unknown => mockCountOrganizationsByPlan(...args),
+    countUsers: (...args: unknown[]): unknown => mockCountUsers(...args),
+  };
 });
 vi.mock("../../../src/db/repos/chats.js", async () => {
   const actual = await vi.importActual<typeof import("../../../src/db/repos/chats.js")>(

@@ -21,8 +21,7 @@ const mockWithOrganizationQuotaLock = vi.fn(
 vi.mock("../../../src/billing/limits.js", () => ({
   checkInboundLimit: (...args: unknown[]): unknown => mockCheckInboundLimit(...args),
   checkEgressLimit: (...args: unknown[]): unknown => mockCheckEgressLimit(...args),
-  withUserQuotaLock: (...args: unknown[]): unknown =>
-    mockWithOrganizationQuotaLock(...args),
+  withUserQuotaLock: (...args: unknown[]): unknown => mockWithOrganizationQuotaLock(...args),
 }));
 
 const mockFindLink = vi.fn();
@@ -41,8 +40,7 @@ vi.mock("../../../src/storage/disk.js", () => ({
 const mockIncrementUserUsageMonth = vi.fn();
 const mockDecrementOrganizationUsageMonth = vi.fn();
 vi.mock("../../../src/db/repos/usage.js", () => ({
-  incrementUserUsageMonth: (...args: unknown[]): unknown =>
-    mockIncrementUserUsageMonth(...args),
+  incrementUserUsageMonth: (...args: unknown[]): unknown => mockIncrementUserUsageMonth(...args),
   decrementOrganizationUsageMonth: (...args: unknown[]): unknown =>
     mockDecrementOrganizationUsageMonth(...args),
   usageMonthForDate: vi.fn(() => "2026-04"),
@@ -150,7 +148,7 @@ describe("GET /dl/:token", () => {
       downloadedAt: null,
       attachmentId,
       attachment: {
-        organizationId: "org-1",
+        userId: 1n,
         storagePath: "/data/attachments/report.pdf",
         originalFilename: "report.pdf",
         contentType: "application/pdf",
@@ -171,7 +169,7 @@ describe("GET /dl/:token", () => {
     expect(mockIncrementUserUsageMonth).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        organizationId: "org-1",
+        userId: 1n,
         month: "2026-04",
         egressBytes: BigInt(fileContent.length),
       }),

@@ -373,7 +373,7 @@ describe("POST /inbound/preflight", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ accept: false });
     expect(mockFindHostedInboundBlock).toHaveBeenCalledWith(expect.anything(), {
-      createdBy: 1n,
+      userId: 1n,
       localPart: "alerts",
       recipientDomain: "mail.example.com",
       envelopeFrom: "spam@attacker.com",
@@ -735,7 +735,7 @@ describe("POST /inbound/raw", () => {
 
     expect(res.statusCode).toBe(403);
     expect(mockFindHostedInboundBlock).toHaveBeenCalledWith(expect.anything(), {
-      createdBy: 1n,
+      userId: 1n,
       localPart: "alerts",
       recipientDomain: "mail.example.com",
       envelopeFrom: "sender@example.com",
