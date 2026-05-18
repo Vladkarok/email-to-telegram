@@ -43,7 +43,7 @@
     {
       "id": 1,
       "type": "stat",
-      "title": "Organizations",
+      "title": "Users (allowed)",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -67,8 +67,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(email_to_telegram_organizations_total{env=~\"$env\"})",
-          "legendFormat": "orgs"
+          "expr": "sum(email_to_telegram_users{state=\"allowed\",env=~\"$env\"})",
+          "legendFormat": "allowed"
         }
       ]
     },
@@ -366,7 +366,7 @@
     {
       "id": 10,
       "type": "bargauge",
-      "title": "Active organizations by plan",
+      "title": "Active users by plan",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -396,7 +396,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (plan) (email_to_telegram_active_organizations{env=~\"$env\"})",
+          "expr": "sum by (plan) (email_to_telegram_active_users_by_plan{env=~\"$env\"})",
           "legendFormat": "{{plan}}"
         }
       ]
