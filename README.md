@@ -147,7 +147,7 @@ Edit `.env` and set at least:
 
 Optional but useful on a real deployment:
 
-- `TRUST_PROXY=true` when the app is reachable only through your reverse proxy
+- `TRUST_PROXY=true` when the app is reachable EXCLUSIVELY through a trusted reverse proxy. Required for per-client rate limits to work behind the bundled `docker-compose.yml` (Caddy/nginx in front of `HOST_BIND_IP`). Leave unset/`false` if clients can reach the app directly — otherwise `X-Forwarded-For` can be spoofed to bypass rate limits.
 - `BACKUP_DIR=/data/backups`
 - `BACKUP_ARCHIVE_ENCRYPTION=storage-key`
 - `HEALTHCHECKS_URL=...`
@@ -328,40 +328,40 @@ Verify:
 
 See [`.env.example`](./.env.example) for the authoritative template.
 
-| Variable                      | Required | Description                                                |
-| ----------------------------- | -------- | ---------------------------------------------------------- |
-| `POSTGRES_PASSWORD`           | Yes      | PostgreSQL password                                        |
-| `DATABASE_URL`                | Yes      | PostgreSQL connection string                               |
-| `TELEGRAM_BOT_TOKEN`          | Yes      | Telegram bot token                                         |
-| `MAIL_DOMAIN`                 | Yes      | Zone root mail domain, for example `example.com`           |
-| `PUBLIC_BASE_URL`             | Yes      | Public HTTPS URL for downloads and Worker callbacks        |
-| `HTTP_PORT`                   | Yes      | Internal app port, default `3000`                          |
-| `HMAC_SECRET`                 | Yes      | Secret for attachment download tokens                      |
-| `WORKER_SECRET`               | Yes      | Shared secret between Worker and VPS                       |
-| `ATTACHMENT_DIR`              | Yes      | Attachment storage path                                    |
-| `RAW_EMAIL_DIR`               | Yes      | Raw email storage path                                     |
-| `ATTACHMENT_TTL_HOURS`        | No       | Attachment retention window                                |
-| `RAW_EMAIL_TTL_HOURS`         | No       | Raw email retention window                                 |
-| `DELIVERY_LOG_RETENTION_DAYS` | No       | Delivery log and retry-attempt retention window            |
-| `STORAGE_ENCRYPTION_MODE`     | No       | `none` or `local-v1` for at-rest attachment/raw encryption |
-| `MASTER_ENCRYPTION_KEY`       | No       | Required for `local-v1`; 32-byte base64 or hex key         |
-| `MASTER_ENCRYPTION_KEY_ID`    | No       | Optional key label stored with wrapped DEKs                |
-| `MASTER_ENCRYPTION_KEYRING`   | No       | Older read-only local keys for staged key rotation         |
-| `MAX_SIZE_BYTES`              | No       | Max accepted inbound body size                             |
-| `TRUST_PROXY`                 | No       | Trust reverse-proxy client IP headers for rate limits      |
-| `INITIAL_ALLOWED_USERS`       | No       | Initial Telegram operators; recommended on first deploy    |
-| `BACKUP_DIR`                  | No       | Nightly backup directory                                   |
-| `BACKUP_ARCHIVE_ENCRYPTION`   | No       | `off` or `storage-key`; `yes` is invalid                   |
-| `HEALTHCHECKS_URL`            | No       | External heartbeat URL                                     |
-| `ALERT_CHAT_ID`               | No       | Telegram chat for critical alerts                          |
-| `ADMIN_ENABLED`               | No       | Enable internal `/admin` Web UI                            |
-| `ADMIN_SECRET`                | No       | Login secret required when admin is enabled                |
-| `ADMIN_SESSION_SECRET`        | No       | Optional separate admin session cookie signing secret      |
-| `ADMIN_SESSION_TTL_MINUTES`   | No       | Admin session lifetime, default `60`                       |
-| `METRICS_ENABLED`             | No       | Enable protected Prometheus `/metrics` endpoint            |
-| `METRICS_TOKEN`               | No       | Bearer token required when metrics are enabled             |
-| `LOG_LEVEL`                   | No       | Log verbosity                                              |
-| `NODE_ENV`                    | No       | Environment name                                           |
+| Variable                      | Required | Description                                                                                                         |
+| ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- |
+| `POSTGRES_PASSWORD`           | Yes      | PostgreSQL password                                                                                                 |
+| `DATABASE_URL`                | Yes      | PostgreSQL connection string                                                                                        |
+| `TELEGRAM_BOT_TOKEN`          | Yes      | Telegram bot token                                                                                                  |
+| `MAIL_DOMAIN`                 | Yes      | Zone root mail domain, for example `example.com`                                                                    |
+| `PUBLIC_BASE_URL`             | Yes      | Public HTTPS URL for downloads and Worker callbacks                                                                 |
+| `HTTP_PORT`                   | Yes      | Internal app port, default `3000`                                                                                   |
+| `HMAC_SECRET`                 | Yes      | Secret for attachment download tokens                                                                               |
+| `WORKER_SECRET`               | Yes      | Shared secret between Worker and VPS                                                                                |
+| `ATTACHMENT_DIR`              | Yes      | Attachment storage path                                                                                             |
+| `RAW_EMAIL_DIR`               | Yes      | Raw email storage path                                                                                              |
+| `ATTACHMENT_TTL_HOURS`        | No       | Attachment retention window                                                                                         |
+| `RAW_EMAIL_TTL_HOURS`         | No       | Raw email retention window                                                                                          |
+| `DELIVERY_LOG_RETENTION_DAYS` | No       | Delivery log and retry-attempt retention window                                                                     |
+| `STORAGE_ENCRYPTION_MODE`     | No       | `none` or `local-v1` for at-rest attachment/raw encryption                                                          |
+| `MASTER_ENCRYPTION_KEY`       | No       | Required for `local-v1`; 32-byte base64 or hex key                                                                  |
+| `MASTER_ENCRYPTION_KEY_ID`    | No       | Optional key label stored with wrapped DEKs                                                                         |
+| `MASTER_ENCRYPTION_KEYRING`   | No       | Older read-only local keys for staged key rotation                                                                  |
+| `MAX_SIZE_BYTES`              | No       | Max accepted inbound body size                                                                                      |
+| `TRUST_PROXY`                 | No       | Trust `X-Forwarded-*` for client IP (rate limits). Default `false`. Set `true` only behind a trusted reverse proxy. |
+| `INITIAL_ALLOWED_USERS`       | No       | Initial Telegram operators; recommended on first deploy                                                             |
+| `BACKUP_DIR`                  | No       | Nightly backup directory                                                                                            |
+| `BACKUP_ARCHIVE_ENCRYPTION`   | No       | `off` or `storage-key`; `yes` is invalid                                                                            |
+| `HEALTHCHECKS_URL`            | No       | External heartbeat URL                                                                                              |
+| `ALERT_CHAT_ID`               | No       | Telegram chat for critical alerts                                                                                   |
+| `ADMIN_ENABLED`               | No       | Enable internal `/admin` Web UI                                                                                     |
+| `ADMIN_SECRET`                | No       | Login secret required when admin is enabled                                                                         |
+| `ADMIN_SESSION_SECRET`        | No       | Optional separate admin session cookie signing secret                                                               |
+| `ADMIN_SESSION_TTL_MINUTES`   | No       | Admin session lifetime, default `60`                                                                                |
+| `METRICS_ENABLED`             | No       | Enable protected Prometheus `/metrics` endpoint                                                                     |
+| `METRICS_TOKEN`               | No       | Bearer token required when metrics are enabled                                                                      |
+| `LOG_LEVEL`                   | No       | Log verbosity                                                                                                       |
+| `NODE_ENV`                    | No       | Environment name                                                                                                    |
 
 `STORAGE_ENCRYPTION_MODE=local-v1` encrypts new attachment and raw email files
 at rest with envelope encryption. Existing plaintext files remain readable, so
