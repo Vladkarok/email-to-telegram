@@ -10,6 +10,7 @@ import { join } from "path";
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
 const mockFindAlias = vi.fn();
+const mockFindAliasById = vi.fn();
 const mockCheckAllow = vi.fn();
 const mockIsDuplicate = vi.fn();
 const mockCreateLog = vi.fn();
@@ -28,6 +29,7 @@ const mockDecrementOrganizationStorageUsage = vi.fn().mockResolvedValue(undefine
 const mockUsageMonthForDate = vi.fn(() => "2026-04");
 
 vi.mock("../../../src/db/repos/aliases.js", () => ({
+  findAliasById: (...args: unknown[]): unknown => mockFindAliasById(...args),
   findAliasByLocalPart: (...args: unknown[]): unknown => mockFindAlias(...args),
   findAliasByLocalPartAndDomainId: (...args: unknown[]): unknown => mockFindAlias(...args),
 }));
@@ -127,6 +129,7 @@ describe("processInboundEmail", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mockCheckInboundLimit.mockResolvedValue({ ok: true });
+    mockFindAliasById.mockResolvedValue(activeAlias);
     mockIncrementOrganizationUsageMonth.mockResolvedValue(undefined);
     mockIncrementOrganizationStorageUsage.mockResolvedValue(undefined);
     mockDecrementOrganizationStorageUsage.mockResolvedValue(undefined);
@@ -491,6 +494,7 @@ describe("deliverQueuedEmail", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockFindAliasById.mockResolvedValue(activeAlias);
     mockDeleteFile.mockResolvedValue(undefined);
     mockDecrementOrganizationStorageUsage.mockResolvedValue(undefined);
     mockCreateAttachment.mockResolvedValue({ id: "att-uuid-1" });
@@ -510,7 +514,7 @@ describe("deliverQueuedEmail", () => {
 
     await expect(
       deliverQueuedEmail(
-        {} as Parameters<typeof processInboundEmail>[0],
+        fakeDb() as Parameters<typeof processInboundEmail>[0],
         {} as Parameters<typeof processInboundEmail>[1],
         {
           alias: activeAlias,
@@ -536,11 +540,50 @@ describe("deliverQueuedEmail", () => {
     expect(mockUpdateLogStatus).toHaveBeenCalledWith(expect.anything(), "log-failed", "failed");
   });
 
+  it("aborts before Telegram send when the queued alias was deleted", async () => {
+    mockFindAliasById.mockResolvedValue(null);
+
+    const result = await deliverQueuedEmail(
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
+      {} as Parameters<typeof processInboundEmail>[1],
+      {
+        alias: activeAlias,
+        parsed: {
+          messageId: "<id@test>",
+          subject: "Hi",
+          envelopeFrom: "sender@example.com",
+          headerFrom: "Sender <sender@example.com>",
+          textBody: "hello",
+          htmlBody: null,
+          bodySha256: "hash",
+          attachments: [],
+          rawSizeBytes: 5,
+        },
+        deliveryLog: { id: "log-deleted" } as never,
+        envelopeFrom: "sender@example.com",
+        ...PIPELINE_CONFIG,
+      },
+    );
+
+    expect(result).toEqual({ ok: false, reason: "user_deleted" });
+    expect(mockSendTelegram).not.toHaveBeenCalled();
+    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "log-deleted",
+      "processing",
+    );
+    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "log-deleted",
+      "delivered",
+    );
+  });
+
   it("uses HTML parse mode for markdown-rendered deliveries", async () => {
     mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 77 });
 
     await deliverQueuedEmail(
-      {} as Parameters<typeof processInboundEmail>[0],
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
       {} as Parameters<typeof processInboundEmail>[1],
       {
         alias: { ...activeAlias, renderMode: "markdown" },
@@ -577,7 +620,7 @@ describe("deliverQueuedEmail", () => {
     mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 99 });
 
     await deliverQueuedEmail(
-      {} as Parameters<typeof processInboundEmail>[0],
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
       {} as Parameters<typeof processInboundEmail>[1],
       {
         alias: activeAlias,
@@ -640,7 +683,7 @@ describe("deliverQueuedEmail", () => {
     );
 
     await deliverQueuedEmail(
-      {} as Parameters<typeof processInboundEmail>[0],
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
       {} as Parameters<typeof processInboundEmail>[1],
       {
         alias: activeAlias,
@@ -687,7 +730,7 @@ describe("deliverQueuedEmail", () => {
     mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 99 });
 
     await deliverQueuedEmail(
-      {} as Parameters<typeof processInboundEmail>[0],
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
       {} as Parameters<typeof processInboundEmail>[1],
       {
         alias: activeAlias,
@@ -730,7 +773,7 @@ describe("deliverQueuedEmail", () => {
     mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 99 });
 
     await deliverQueuedEmail(
-      {} as Parameters<typeof processInboundEmail>[0],
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
       {} as Parameters<typeof processInboundEmail>[1],
       {
         alias: activeAlias,
@@ -773,7 +816,7 @@ describe("deliverQueuedEmail", () => {
     mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 99 });
 
     await deliverQueuedEmail(
-      {} as Parameters<typeof processInboundEmail>[0],
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
       {} as Parameters<typeof processInboundEmail>[1],
       {
         alias: activeAlias,
@@ -816,7 +859,7 @@ describe("deliverQueuedEmail", () => {
     mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 99 });
 
     await deliverQueuedEmail(
-      {} as Parameters<typeof processInboundEmail>[0],
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
       {} as Parameters<typeof processInboundEmail>[1],
       {
         alias: activeAlias,
@@ -868,7 +911,7 @@ describe("deliverQueuedEmail", () => {
     mockCreateAttachmentLink.mockRejectedValueOnce(new Error("db exploded"));
 
     const result = await deliverQueuedEmail(
-      {} as Parameters<typeof processInboundEmail>[0],
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
       {} as Parameters<typeof processInboundEmail>[1],
       {
         alias: activeAlias,
