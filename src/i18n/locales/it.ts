@@ -385,7 +385,7 @@ Questo bot memorizza solo i dati necessari per consegnare email alle tue chat Te
 I corpi delle email e gli allegati vengono conservati solo per la durata prevista dal tuo piano, poi eliminati.
 
 <b>I tuoi diritti</b>
-• <b>Accesso / esportazione:</b> contatta l'operatore qui sotto
+• <b>Accesso / esportazione:</b> esegui /export_me per scaricare una copia JSON dei tuoi dati
 • <b>Cancellazione:</b> esegui /delete_me
 • <b>Revoca del consenso:</b> smetti di usare il bot ed esegui /delete_me
 
@@ -413,6 +413,11 @@ L'azione <b>non è reversibile</b>. Conferma per procedere.`,
     partial:
       "⚠️ L'account e i record nel database sono stati rimossi, ma alcuni file email memorizzati non sono stati eliminati. Contatta l'operatore per completare l'eliminazione.",
   },
+  exportMe: {
+    caption: "Esportazione dei tuoi dati (JSON). Corpi delle email e allegati non sono inclusi.",
+    noData: "ℹ️ Niente da esportare — non ci sono record per il tuo account.",
+    failed: "❌ Esportazione non riuscita. Riprova o contatta l'operatore.",
+  },
   botCommands: [
     { command: "start", description: "Inizia" },
     { command: "newemail", description: "Crea un nuovo alias email" },
@@ -431,6 +436,7 @@ L'azione <b>non è reversibile</b>. Conferma per procedere.`,
     { command: "portal", description: "Apri il portale Stripe" },
     { command: "donate", description: "Supporta il progetto" },
     { command: "privacy", description: "Informativa sulla privacy" },
+    { command: "export_me", description: "Scarica una copia JSON dei tuoi dati" },
     { command: "delete_me", description: "Elimina tutti i tuoi dati" },
     { command: "help", description: "Mostra aiuto" },
   ],

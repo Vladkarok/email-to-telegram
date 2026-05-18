@@ -40,6 +40,7 @@ import {
   deleteMeConfirmCallback,
   deleteMeCancelCallback,
 } from "./commands/deleteme.js";
+import { exportMeHandler } from "./commands/exportme.js";
 import {
   upgradeHandler,
   upgradeCallbackHandler,
@@ -127,9 +128,11 @@ export function createBot(token: string): Bot {
   // /start: onboarding entry point
   // /privacy: GDPR — users must be able to read the policy without an account
   // /delete_me: GDPR right-to-erasure — must work even for revoked users
+  // /export_me: GDPR right-of-access — must work even for revoked users
   bot.command("start", startHandler);
   bot.command("privacy", privacyHandler);
   bot.command("delete_me", deleteMeHandler);
+  bot.command("export_me", exportMeHandler);
   bot.callbackQuery(CB_DELETE_ME_CONFIRM, deleteMeConfirmCallback);
   bot.callbackQuery(CB_DELETE_ME_CANCEL, deleteMeCancelCallback);
 

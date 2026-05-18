@@ -377,7 +377,7 @@ This bot stores only what's needed to deliver email to your Telegram chats:
 Email bodies and attachments are stored only as long as your plan's retention allows, then purged.
 
 <b>Your rights</b>
-• <b>Access / export:</b> ask the operator using the contact below
+• <b>Access / export:</b> run /export_me to download a JSON copy of your data
 • <b>Erasure:</b> run /delete_me to remove your data
 • <b>Withdraw consent:</b> stop using the bot and run /delete_me
 
@@ -405,6 +405,11 @@ This action <b>cannot be undone</b>. Confirm to proceed.`,
     partial:
       "⚠️ Your account and database records were removed, but some stored email files could not be deleted. Please contact the operator to complete the erasure.",
   },
+  exportMe: {
+    caption: "Your data export (JSON). Email bodies and attachments are not included.",
+    noData: "ℹ️ Nothing to export — there are no records for your account.",
+    failed: "❌ Export failed. Please try again or contact the operator.",
+  },
   botCommands: [
     { command: "start", description: "Get started" },
     { command: "newemail", description: "Create a new email alias" },
@@ -423,6 +428,7 @@ This action <b>cannot be undone</b>. Confirm to proceed.`,
     { command: "portal", description: "Open Stripe billing portal" },
     { command: "donate", description: "Support the project" },
     { command: "privacy", description: "View privacy policy" },
+    { command: "export_me", description: "Download a JSON copy of your data" },
     { command: "delete_me", description: "Delete all your data" },
     { command: "help", description: "Show help" },
   ],

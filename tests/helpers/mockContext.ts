@@ -16,6 +16,7 @@ export interface MockCtxOptions {
 
 export type MockCtx = CommandContext<Context> & {
   reply: ReturnType<typeof vi.fn>;
+  replyWithDocument: ReturnType<typeof vi.fn>;
   editMessageText: ReturnType<typeof vi.fn>;
   deleteMessage: ReturnType<typeof vi.fn>;
   answerCallbackQuery: ReturnType<typeof vi.fn>;
@@ -59,6 +60,7 @@ export function createMockCtx(opts: MockCtxOptions = {}): MockCtx {
     match: opts.commandMatch ?? "",
     reply: vi.fn().mockResolvedValue({ message_id: 99 }),
     replyWithHTML: vi.fn().mockResolvedValue({ message_id: 99 }),
+    replyWithDocument: vi.fn().mockResolvedValue({ message_id: 99 }),
     editMessageText: vi.fn().mockResolvedValue({}),
     deleteMessage: vi.fn().mockResolvedValue(true),
     answerCallbackQuery: vi.fn().mockResolvedValue(true),
