@@ -16,7 +16,7 @@ vi.mock("../../../src/db/repos/organizations.js", async () => {
   );
   return {
     ...actual,
-    countOrganizationsByPlan: (...args: unknown[]): unknown =>
+    countUsersByPlan: (...args: unknown[]): unknown =>
       mockCountOrganizationsByPlan(...args),
   };
 });

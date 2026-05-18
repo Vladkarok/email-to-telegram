@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 
-const { exportHostedOrganizationData } =
-  await import("../../../src/dataLifecycle/exportOrganization.js");
+const { exportHostedUserData } =
+  await import("../../../src/dataLifecycle/exportUser.js");
 
 function chain<T>(value: T) {
   const builder = {
@@ -20,21 +20,21 @@ function makeDb(results: unknown[]) {
   let index = 0;
   return {
     select: vi.fn(() => chain(results[index++])),
-  } as unknown as Parameters<typeof exportHostedOrganizationData>[0];
+  } as unknown as Parameters<typeof exportHostedUserData>[0];
 }
 
-describe("exportHostedOrganizationData", () => {
+describe("exportHostedUserData", () => {
   it("returns null when the organization does not exist", async () => {
     const db = makeDb([[]]);
 
-    await expect(exportHostedOrganizationData(db, "org-1")).resolves.toBeNull();
+    await expect(exportHostedUserData(db, 123n)).resolves.toBeNull();
   });
 
   it("exports organization metadata, aliases, usage, storage, and delivery summaries", async () => {
     const db = makeDb([
       [
         {
-          id: "org-1",
+          id: 123n,
           name: "Acme",
           planCode: "pro",
           subscriptionStatus: "active",
@@ -85,11 +85,11 @@ describe("exportHostedOrganizationData", () => {
     ]);
 
     await expect(
-      exportHostedOrganizationData(db, "org-1", new Date("2026-04-28T07:00:00.000Z")),
+      exportHostedUserData(db, 123n, new Date("2026-04-28T07:00:00.000Z")),
     ).resolves.toEqual({
       exportedAt: "2026-04-28T07:00:00.000Z",
       organization: {
-        id: "org-1",
+        id: 123n,
         name: "Acme",
         planCode: "pro",
         subscriptionStatus: "active",
@@ -143,7 +143,7 @@ describe("exportHostedOrganizationData", () => {
     const db = makeDb([
       [
         {
-          id: "org-1",
+          id: 123n,
           name: "Acme",
           planCode: "free",
           subscriptionStatus: "free",
@@ -158,9 +158,9 @@ describe("exportHostedOrganizationData", () => {
       [],
     ]);
 
-    const result = await exportHostedOrganizationData(
+    const result = await exportHostedUserData(
       db,
-      "org-1",
+      123n,
       new Date("2026-04-28T07:00:00.000Z"),
     );
 
@@ -175,7 +175,7 @@ describe("exportHostedOrganizationData", () => {
     const db = makeDb([
       [
         {
-          id: "org-1",
+          id: 123n,
           name: "Acme",
           planCode: "pro",
           subscriptionStatus: "active",
@@ -213,9 +213,9 @@ describe("exportHostedOrganizationData", () => {
       ],
     ]);
 
-    const result = await exportHostedOrganizationData(
+    const result = await exportHostedUserData(
       db,
-      "org-1",
+      123n,
       new Date("2026-04-28T07:00:00.000Z"),
     );
 

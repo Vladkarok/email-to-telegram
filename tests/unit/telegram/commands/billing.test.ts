@@ -13,7 +13,7 @@ const mockGetBillingOrganizationForUser = vi.fn();
 vi.mock("../../../../src/tenant/currentOrganization.js", () => ({
   getBillingOrganizationForUser: (...args: unknown[]): unknown =>
     mockGetBillingOrganizationForUser(...args),
-  getPrimaryOrganizationForUser: (...args: unknown[]): unknown =>
+  getUserById: (...args: unknown[]): unknown =>
     mockGetPrimaryOrganizationForUser(...args),
 }));
 

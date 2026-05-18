@@ -7,15 +7,15 @@ vi.mock("../../../src/storage/disk.js", () => ({
   deleteFile: (...args: unknown[]): unknown => mockDeleteFile(...args),
 }));
 
-const { deleteHostedOrganization } =
-  await import("../../../src/dataLifecycle/deleteOrganization.js");
+const { deleteHostedUser } =
+  await import("../../../src/dataLifecycle/deleteUser.js");
 
 function makeDb({
-  organizationExists = true,
+  userExists = true,
   rawRows = [],
   attachmentRows = [],
 }: {
-  organizationExists?: boolean;
+  userExists?: boolean;
   rawRows?: { rawEmailPath: string | null }[];
   attachmentRows?: { storagePath: string }[];
 }) {
@@ -30,7 +30,7 @@ function makeDb({
       return {
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue(organizationExists ? [{ id: "org-1" }] : []),
+            limit: vi.fn().mockResolvedValue(userExists ? [{ id: 123n }] : []),
           }),
         }),
       };
@@ -74,7 +74,7 @@ function makeDb({
       execute,
       transaction,
     },
-  } as unknown as Parameters<typeof deleteHostedOrganization>[0] & {
+  } as unknown as Parameters<typeof deleteHostedUser>[0] & {
     _mocks: {
       deletedTables: unknown[];
       deleteWhere: ReturnType<typeof vi.fn>;
@@ -84,16 +84,16 @@ function makeDb({
   };
 }
 
-describe("deleteHostedOrganization", () => {
+describe("deleteHostedUser", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockDeleteFile.mockResolvedValue(undefined);
   });
 
   it("returns without side effects when the organization does not exist", async () => {
-    const db = makeDb({ organizationExists: false });
+    const db = makeDb({ userExists: false });
 
-    await expect(deleteHostedOrganization(db, "org-1")).resolves.toEqual({
+    await expect(deleteHostedUser(db, 123n)).resolves.toEqual({
       deleted: false,
       rawEmailFiles: 0,
       attachmentFiles: 0,
@@ -119,7 +119,7 @@ describe("deleteHostedOrganization", () => {
       ],
     });
 
-    await expect(deleteHostedOrganization(db, "org-1")).resolves.toEqual({
+    await expect(deleteHostedUser(db, 123n)).resolves.toEqual({
       deleted: true,
       rawEmailFiles: 1,
       attachmentFiles: 2,
@@ -146,7 +146,7 @@ describe("deleteHostedOrganization", () => {
     });
     db._mocks.deleteWhere.mockRejectedValueOnce(new Error("db down"));
 
-    await expect(deleteHostedOrganization(db, "org-1")).rejects.toThrow("db down");
+    await expect(deleteHostedUser(db, 123n)).rejects.toThrow("db down");
 
     expect(mockDeleteFile).not.toHaveBeenCalled();
   });
@@ -158,7 +158,7 @@ describe("deleteHostedOrganization", () => {
     });
     mockDeleteFile.mockRejectedValueOnce(new Error("disk busy"));
 
-    await expect(deleteHostedOrganization(db, "org-1")).resolves.toEqual({
+    await expect(deleteHostedUser(db, 123n)).resolves.toEqual({
       deleted: true,
       rawEmailFiles: 1,
       attachmentFiles: 1,

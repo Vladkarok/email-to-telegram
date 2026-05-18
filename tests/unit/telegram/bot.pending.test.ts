@@ -21,7 +21,7 @@ vi.mock("../../../src/telegram/authorization.js", () => ({
 
 const mockHasActiveHostedOrganization = vi.fn().mockResolvedValue(true);
 vi.mock("../../../src/billing/limits.js", () => ({
-  hasActiveHostedOrganization: (...args: unknown[]): unknown =>
+  hasActiveHostedUser: (...args: unknown[]): unknown =>
     mockHasActiveHostedOrganization(...args),
 }));
 

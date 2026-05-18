@@ -6,7 +6,7 @@ const mockCreateOrganization = vi.fn();
 const mockAddOrganizationMember = vi.fn();
 
 vi.mock("../../../src/tenant/currentOrganization.js", () => ({
-  getPrimaryOrganizationForUser: (...args: unknown[]): unknown =>
+  getUserById: (...args: unknown[]): unknown =>
     mockGetPrimaryOrganizationForUser(...args),
 }));
 

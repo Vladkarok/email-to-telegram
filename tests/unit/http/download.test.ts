@@ -21,7 +21,7 @@ const mockWithOrganizationQuotaLock = vi.fn(
 vi.mock("../../../src/billing/limits.js", () => ({
   checkInboundLimit: (...args: unknown[]): unknown => mockCheckInboundLimit(...args),
   checkEgressLimit: (...args: unknown[]): unknown => mockCheckEgressLimit(...args),
-  withOrganizationQuotaLock: (...args: unknown[]): unknown =>
+  withUserQuotaLock: (...args: unknown[]): unknown =>
     mockWithOrganizationQuotaLock(...args),
 }));
 
