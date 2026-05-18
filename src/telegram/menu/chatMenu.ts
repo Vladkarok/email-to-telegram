@@ -20,7 +20,7 @@ function chatIcon(type: string): string {
 /**
  * Returns a one-line plan/alias footer for hosted mode,
  * e.g. "Plan: Free | 2/3 aliases used".
- * Returns null in self-hosted mode or when org info is unavailable.
+ * Returns null in self-hosted mode or when user billing info is unavailable.
  */
 async function buildPlanFooter(db: Db, userId: number, locale: Locale): Promise<string | null> {
   if (loadConfig().appMode !== "hosted") return null;

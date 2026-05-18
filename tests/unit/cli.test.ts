@@ -30,7 +30,7 @@ describe("parseStartupOptions", () => {
     );
   });
 
-  it("accepts hosted organization export arguments", () => {
+  it("accepts hosted user export arguments", () => {
     const opts = parseStartupOptions([
       "--hosted-export-user",
       "123",
@@ -41,7 +41,7 @@ describe("parseStartupOptions", () => {
     expect(opts.hostedExportOutputPath).toBe("/secure/user_123.json");
   });
 
-  it("accepts hosted organization delete arguments", () => {
+  it("accepts hosted user delete arguments", () => {
     const opts = parseStartupOptions(["--hosted-delete-user", "123"]);
     expect(opts.hostedDeleteUserId).toBe("123");
   });
@@ -96,7 +96,7 @@ describe("parseStartupOptions", () => {
 
 describe("parseStartupOptions: manual billing", () => {
   describe("--hosted-set-user-plan", () => {
-    it("accepts a full org plan grant", () => {
+    it("accepts a full user plan grant", () => {
       const opts = parseStartupOptions([
         "--hosted-set-user-plan",
         "123",
