@@ -22,6 +22,8 @@ export const uk = {
     aliasNotFoundShort: "Аліас не знайдено.",
     chatNotFoundShort: "Чат не знайдено.",
     ruleNotFoundShort: "Правило не знайдено.",
+    languageHint:
+      "🌐 Також доступно: English, Français, Italiano — використайте /language, щоб переключити.",
   },
   start: {
     openDmButton: "💬 Відкрити приватний чат",
@@ -382,8 +384,7 @@ ${safetyNotes}
 • <b>Видалення:</b> виконайте /delete_me
 • <b>Відкликання згоди:</b> припиніть користуватися ботом і виконайте /delete_me
 
-${policyUrl ? `Повна політика: ${policyUrl}\n` : ""}${supportContact ? `Контакт: ${supportContact}\n` : ""}
-🌐 Також доступно: English, Français, Italiano — використайте /language, щоб переключити.`.trim(),
+${policyUrl ? `Повна політика: ${policyUrl}\n` : ""}${supportContact ? `Контакт: ${supportContact}` : ""}`.trim(),
   },
   deleteMe: {
     prompt: (aliasCount: number, deliveryCount: number, billingCount: number) =>

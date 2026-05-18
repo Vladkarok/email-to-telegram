@@ -17,12 +17,14 @@ export async function helpHandler(ctx: Context): Promise<void> {
         : messages.help.billingManual;
   const billingSection = billingHelp ? `\n${billingHelp}\n` : "";
 
-  await ctx.reply(
-    messages.help.text(billingSection, settingsHelpText(locale), safetyDisclaimerText(locale)),
-    {
-      parse_mode: "HTML",
-    },
+  const body = messages.help.text(
+    billingSection,
+    settingsHelpText(locale),
+    safetyDisclaimerText(locale),
   );
+  await ctx.reply(`${body}\n\n${messages.common.languageHint}`, {
+    parse_mode: "HTML",
+  });
 }
 
 async function resolveHelpLocale(ctx: Context) {
