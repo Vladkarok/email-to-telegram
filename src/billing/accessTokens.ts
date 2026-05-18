@@ -2,7 +2,6 @@ import { createHmac, timingSafeEqual } from "crypto";
 
 export interface BillingAccessTokenPayload {
   telegramUserId: string;
-  organizationId: string;
   exp: number;
 }
 
@@ -44,11 +43,7 @@ export function verifyBillingAccessToken(token: string): BillingAccessTokenPaylo
     return null;
   }
 
-  if (
-    typeof payload.telegramUserId !== "string" ||
-    typeof payload.organizationId !== "string" ||
-    typeof payload.exp !== "number"
-  ) {
+  if (typeof payload.telegramUserId !== "string" || typeof payload.exp !== "number") {
     return null;
   }
 

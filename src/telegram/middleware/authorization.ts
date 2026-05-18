@@ -10,9 +10,8 @@
 import type { Context, CallbackQueryContext } from "grammy";
 import { getDb } from "../../db/client.js";
 import { canManageChat, canManageAlias } from "../authorization.js";
-import { findChatById } from "../../db/repos/chats.js";
 import { findAliasById } from "../../db/repos/aliases.js";
-import { hasActiveHostedOrganization } from "../../billing/limits.js";
+import { hasActiveHostedUser } from "../../billing/limits.js";
 
 export async function assertChatAccess(
   ctx: CallbackQueryContext<Context>,
@@ -42,13 +41,17 @@ export async function assertAliasAccess(
 
 export async function assertHostedChatWorkspaceReady(
   ctx: CallbackQueryContext<Context>,
-  chatId: bigint,
+  _chatId: bigint,
 ): Promise<boolean> {
-  const chat = await findChatById(getDb(), chatId);
-  if (await hasActiveHostedOrganization(getDb(), chat?.organizationId ?? null)) {
+  // With no organization tenant, hosted readiness is keyed off the acting user.
+  const userId = ctx.from?.id;
+  if (!userId) {
+    await ctx.answerCallbackQuery("⛔ Hosted workspace inactive");
+    return false;
+  }
+  if (await hasActiveHostedUser(getDb(), BigInt(userId))) {
     return true;
   }
-
   await ctx.answerCallbackQuery("⛔ Hosted workspace inactive");
   return false;
 }
@@ -59,7 +62,7 @@ export async function assertHostedAliasWorkspaceReady(
 ): Promise<boolean> {
   const alias = await findAliasById(getDb(), aliasId);
   if (!alias) return true;
-  if (await hasActiveHostedOrganization(getDb(), alias.organizationId ?? null)) {
+  if (await hasActiveHostedUser(getDb(), alias.createdBy)) {
     return true;
   }
 

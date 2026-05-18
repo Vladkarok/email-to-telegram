@@ -57,7 +57,7 @@ export function preflightRoute(app: FastifyInstance): void {
       }
 
       const hostedBlock = await findHostedInboundRejection(getDb(), {
-        organizationId: alias.organizationId,
+        userId: alias.createdBy,
         localPart,
         recipientDomain,
         envelopeFrom,
@@ -67,7 +67,7 @@ export function preflightRoute(app: FastifyInstance): void {
           {
             localPart,
             aliasId: alias.id,
-            organizationId: alias.organizationId,
+            userId: alias.createdBy.toString(),
             blockType: hostedBlock.blockType,
             blockValue: hostedBlock.value,
           },
@@ -78,13 +78,13 @@ export function preflightRoute(app: FastifyInstance): void {
         return;
       }
 
-      const inboundLimit = await checkInboundLimit(getDb(), alias.organizationId);
+      const inboundLimit = await checkInboundLimit(getDb(), alias.createdBy);
       if (!inboundLimit.ok) {
         getLogger().info(
           {
             localPart,
             aliasId: alias.id,
-            organizationId: alias.organizationId,
+            userId: alias.createdBy.toString(),
             reason: inboundLimit.code,
           },
           "inbound.preflight.rejected",

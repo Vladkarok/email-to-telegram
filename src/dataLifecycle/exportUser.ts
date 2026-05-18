@@ -1,22 +1,22 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { asc, desc, eq, or } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import {
   deliveryLogs,
   emailAddresses,
   manualBillingEvents,
-  organizationStorageUsage,
-  organizationUsageMonths,
-  organizations,
+  userStorageUsage,
+  userUsageMonths,
+  users,
 } from "../db/schema.js";
 import type * as schema from "../db/schema.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
-export interface OrganizationExport {
+export interface UserExport {
   exportedAt: string;
-  organization: {
+  user: {
     id: string;
-    name: string;
+    username: string | null;
     planCode: string;
     subscriptionStatus: string;
     createdAt: string;
@@ -54,7 +54,7 @@ export interface OrganizationExport {
   };
   manualBillingEvents: Array<{
     id: string;
-    telegramUserId: string | null;
+    telegramUserId: string;
     planCode: string;
     subscriptionStatus: string;
     paidThroughAt: string | null;
@@ -65,43 +65,43 @@ export interface OrganizationExport {
   }>;
 }
 
-export async function exportHostedOrganizationData(
+export async function exportHostedUserData(
   db: Db,
-  organizationId: string,
+  userId: bigint,
   now = new Date(),
-): Promise<OrganizationExport | null> {
-  const [organization] = await db
+): Promise<UserExport | null> {
+  const [user] = await db
     .select({
-      id: organizations.id,
-      name: organizations.name,
-      planCode: organizations.planCode,
-      subscriptionStatus: organizations.subscriptionStatus,
-      createdAt: organizations.createdAt,
-      updatedAt: organizations.updatedAt,
+      id: users.id,
+      username: users.username,
+      planCode: users.planCode,
+      subscriptionStatus: users.subscriptionStatus,
+      createdAt: users.createdAt,
+      updatedAt: users.updatedAt,
     })
-    .from(organizations)
-    .where(eq(organizations.id, organizationId))
+    .from(users)
+    .where(eq(users.id, userId))
     .limit(1);
 
-  if (!organization) return null;
+  if (!user) return null;
 
   const [aliases, usageMonths, storageRows, deliveryRows, manualEventRows] = await Promise.all([
-    listAliases(db, organizationId),
-    listUsageMonths(db, organizationId),
-    listStorageUsage(db, organizationId),
-    listDeliverySummaryRows(db, organizationId),
-    listManualBillingEvents(db, organizationId),
+    listAliases(db, userId),
+    listUsageMonths(db, userId),
+    listStorageUsage(db, userId),
+    listDeliverySummaryRows(db, userId),
+    listManualBillingEvents(db, userId),
   ]);
 
   return {
     exportedAt: now.toISOString(),
-    organization: {
-      id: organization.id,
-      name: organization.name,
-      planCode: organization.planCode,
-      subscriptionStatus: organization.subscriptionStatus,
-      createdAt: organization.createdAt.toISOString(),
-      updatedAt: organization.updatedAt.toISOString(),
+    user: {
+      id: user.id.toString(),
+      username: user.username,
+      planCode: user.planCode,
+      subscriptionStatus: user.subscriptionStatus,
+      createdAt: user.createdAt.toISOString(),
+      updatedAt: user.updatedAt.toISOString(),
     },
     aliases: aliases.map((alias) => ({
       id: alias.id,
@@ -128,7 +128,7 @@ export async function exportHostedOrganizationData(
     deliverySummary: buildDeliverySummary(deliveryRows),
     manualBillingEvents: manualEventRows.map((row) => ({
       id: row.id,
-      telegramUserId: row.telegramUserId?.toString() ?? null,
+      telegramUserId: row.telegramUserId.toString(),
       planCode: row.planCode,
       subscriptionStatus: row.subscriptionStatus,
       paidThroughAt: row.paidThroughAt ? row.paidThroughAt.toISOString() : null,
@@ -140,7 +140,7 @@ export async function exportHostedOrganizationData(
   };
 }
 
-async function listManualBillingEvents(db: Db, organizationId: string) {
+async function listManualBillingEvents(db: Db, userId: bigint) {
   return db
     .select({
       id: manualBillingEvents.id,
@@ -154,11 +154,11 @@ async function listManualBillingEvents(db: Db, organizationId: string) {
       createdAt: manualBillingEvents.createdAt,
     })
     .from(manualBillingEvents)
-    .where(eq(manualBillingEvents.organizationId, organizationId))
+    .where(eq(manualBillingEvents.telegramUserId, userId))
     .orderBy(desc(manualBillingEvents.createdAt));
 }
 
-async function listAliases(db: Db, organizationId: string) {
+async function listAliases(db: Db, userId: bigint) {
   return db
     .select({
       id: emailAddresses.id,
@@ -173,35 +173,35 @@ async function listAliases(db: Db, organizationId: string) {
       createdAt: emailAddresses.createdAt,
     })
     .from(emailAddresses)
-    .where(eq(emailAddresses.organizationId, organizationId))
+    .where(eq(emailAddresses.createdBy, userId))
     .orderBy(asc(emailAddresses.createdAt));
 }
 
-async function listUsageMonths(db: Db, organizationId: string) {
+async function listUsageMonths(db: Db, userId: bigint) {
   return db
     .select({
-      month: organizationUsageMonths.month,
-      deliveredCount: organizationUsageMonths.deliveredCount,
-      rejectedCount: organizationUsageMonths.rejectedCount,
-      egressBytes: organizationUsageMonths.egressBytes,
+      month: userUsageMonths.month,
+      deliveredCount: userUsageMonths.deliveredCount,
+      rejectedCount: userUsageMonths.rejectedCount,
+      egressBytes: userUsageMonths.egressBytes,
     })
-    .from(organizationUsageMonths)
-    .where(eq(organizationUsageMonths.organizationId, organizationId))
-    .orderBy(asc(organizationUsageMonths.month));
+    .from(userUsageMonths)
+    .where(eq(userUsageMonths.userId, userId))
+    .orderBy(asc(userUsageMonths.month));
 }
 
-async function listStorageUsage(db: Db, organizationId: string) {
+async function listStorageUsage(db: Db, userId: bigint) {
   return db
     .select({
-      rawEmailBytes: organizationStorageUsage.rawEmailBytes,
-      attachmentBytes: organizationStorageUsage.attachmentBytes,
+      rawEmailBytes: userStorageUsage.rawEmailBytes,
+      attachmentBytes: userStorageUsage.attachmentBytes,
     })
-    .from(organizationStorageUsage)
-    .where(eq(organizationStorageUsage.organizationId, organizationId))
+    .from(userStorageUsage)
+    .where(eq(userStorageUsage.userId, userId))
     .limit(1);
 }
 
-async function listDeliverySummaryRows(db: Db, organizationId: string) {
+async function listDeliverySummaryRows(db: Db, userId: bigint) {
   return db
     .select({
       finalStatus: deliveryLogs.finalStatus,
@@ -211,18 +211,12 @@ async function listDeliverySummaryRows(db: Db, organizationId: string) {
       receivedAt: deliveryLogs.receivedAt,
     })
     .from(deliveryLogs)
-    .leftJoin(emailAddresses, eq(emailAddresses.id, deliveryLogs.emailAddressId))
-    .where(
-      or(
-        eq(deliveryLogs.organizationId, organizationId),
-        eq(emailAddresses.organizationId, organizationId),
-      ),
-    );
+    .where(eq(deliveryLogs.userId, userId));
 }
 
 function buildDeliverySummary(
   rows: Awaited<ReturnType<typeof listDeliverySummaryRows>>,
-): OrganizationExport["deliverySummary"] {
+): UserExport["deliverySummary"] {
   const byFinalStatus: Record<string, number> = {};
   const byMonth: Record<string, number> = {};
   let billable = 0;

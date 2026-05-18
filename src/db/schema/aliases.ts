@@ -10,10 +10,11 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
-import { organizations, inboundDomains } from "./org.js";
+import { inboundDomains } from "./org.js";
 import { users } from "./users.js";
 
 // ─── email_addresses ─────────────────────────────────────────────────────────
+// Tenant scope: chatId (where mail lands) + createdBy (the owning user).
 
 export const emailAddresses = pgTable(
   "email_addresses",
@@ -23,7 +24,6 @@ export const emailAddresses = pgTable(
       .default(sql`gen_random_uuid()`),
     localPart: varchar("local_part", { length: 64 }).notNull(),
     fullAddress: varchar("full_address", { length: 320 }).notNull(),
-    organizationId: uuid("organization_id").references(() => organizations.id),
     domainId: uuid("domain_id").references(() => inboundDomains.id),
     chatId: bigint("chat_id", { mode: "bigint" }).notNull(),
     messageThreadId: bigint("message_thread_id", { mode: "bigint" }),
@@ -47,11 +47,11 @@ export const emailAddresses = pgTable(
     index("idx_alias_active")
       .on(t.localPart)
       .where(sql`status = 'active'`),
-    index("idx_alias_org").on(t.organizationId),
     uniqueIndex("idx_alias_domain_local_part")
       .on(t.domainId, t.localPart)
       .where(sql`${t.domainId} is not null`),
     index("idx_alias_chat").on(t.chatId),
+    index("idx_alias_created_by").on(t.createdBy),
   ],
 );
 

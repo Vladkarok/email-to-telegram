@@ -80,7 +80,7 @@ describe("buildPlanSummaryText", () => {
   it("renders plan name and free status", () => {
     const text = buildPlanSummaryText({
       plan: freePlan,
-      organization: {
+      user: {
         planCode: "free",
         subscriptionStatus: "free",
         currentPeriodEnd: null,
@@ -95,7 +95,7 @@ describe("buildPlanSummaryText", () => {
   it("renders pro plan with active status", () => {
     const text = buildPlanSummaryText({
       plan: proPlan,
-      organization: {
+      user: {
         planCode: "pro",
         subscriptionStatus: "active",
         currentPeriodEnd: new Date("2030-01-01T00:00:00Z"),
@@ -109,7 +109,7 @@ describe("buildPlanSummaryText", () => {
   it("flags past_due explicitly", () => {
     const text = buildPlanSummaryText({
       plan: proPlan,
-      organization: {
+      user: {
         planCode: "pro",
         subscriptionStatus: "past_due",
         currentPeriodEnd: new Date("2030-01-01T00:00:00Z"),
@@ -217,7 +217,7 @@ describe("buildUsageSummaryText", () => {
   it("labels the plan limit as 'Accepted emails / month' matching billable counter terminology", () => {
     const text = buildPlanSummaryText({
       plan: freePlan,
-      organization: { planCode: "free", subscriptionStatus: "free", currentPeriodEnd: null },
+      user: { planCode: "free", subscriptionStatus: "free", currentPeriodEnd: null },
     });
     expect(text).toMatch(/Accepted emails \/ month/);
   });

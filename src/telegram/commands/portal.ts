@@ -1,7 +1,7 @@
 import { InlineKeyboard, type Context, type CallbackQueryContext } from "grammy";
 import { loadConfig } from "../../config.js";
 import { getDb } from "../../db/client.js";
-import { getBillingOrganizationForUser } from "../../tenant/currentOrganization.js";
+import { findUserById } from "../../db/repos/users.js";
 import { createCustomerPortalSession } from "../../billing/customerPortal.js";
 import { buildUpgradePlanKeyboard } from "./upgrade.js";
 import { getLogger } from "../../utils/logger.js";
@@ -22,18 +22,19 @@ export async function portalHandler(ctx: Context): Promise<void> {
 
   try {
     const db = getDb();
-    const organization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
-    if (!organization) {
+    const userId = BigInt(ctx.from.id);
+    const user = await findUserById(db, userId);
+    if (!user) {
       await ctx.reply(messages.portal.forbidden);
       return;
     }
 
-    if (!canUseSelfServeBilling(config, organization)) {
+    if (!canUseSelfServeBilling(config, user)) {
       await ctx.reply(MANUAL_BILLING_MESSAGE);
       return;
     }
 
-    const url = await createCustomerPortalSession(db, organization.id);
+    const url = await createCustomerPortalSession(db, userId);
     if (!url) {
       await ctx.reply(messages.portal.noCustomer, {
         parse_mode: "HTML",
@@ -67,19 +68,20 @@ export async function portalCallbackHandler(ctx: CallbackQueryContext<Context>):
 
   try {
     const db = getDb();
-    const organization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
-    if (!organization) {
+    const userId = BigInt(ctx.from.id);
+    const user = await findUserById(db, userId);
+    if (!user) {
       await ctx.answerCallbackQuery({ text: messages.portal.forbidden, show_alert: true });
       return;
     }
 
-    if (!canUseSelfServeBilling(config, organization)) {
+    if (!canUseSelfServeBilling(config, user)) {
       await ctx.answerCallbackQuery();
       await ctx.reply(MANUAL_BILLING_MESSAGE);
       return;
     }
 
-    const url = await createCustomerPortalSession(db, organization.id);
+    const url = await createCustomerPortalSession(db, userId);
     if (!url) {
       await ctx.answerCallbackQuery();
       await ctx.reply(messages.portal.noCustomer, {

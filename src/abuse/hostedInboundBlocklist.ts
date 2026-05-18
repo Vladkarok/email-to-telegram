@@ -10,10 +10,10 @@ type Db = NodePgDatabase<typeof schema>;
 
 export async function findHostedInboundRejection(
   db: Db,
-  input: HostedInboundBlockInput & { organizationId?: string | null },
+  input: HostedInboundBlockInput & { userId?: bigint | null },
 ) {
   if (!shouldCheckHostedInboundBlocklist()) return null;
-  if (!input.organizationId) return null;
+  if (input.userId == null) return null;
   return findHostedInboundBlock(db, input);
 }
 

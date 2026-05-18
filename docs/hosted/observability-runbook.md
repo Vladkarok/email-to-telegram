@@ -31,7 +31,7 @@ Core panels:
 - Telegram send failures by coarse error class.
 - Manual plan grants by plan.
 - Quota rejections by reason.
-- Active organizations by stored plan.
+- Active users by stored plan.
 
 Rollback: set `METRICS_ENABLED=false` and restart the app. No schema changes are
 introduced by metrics.

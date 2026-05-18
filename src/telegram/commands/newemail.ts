@@ -19,8 +19,8 @@ import { loadConfig } from "../../config.js";
 import { donateHintSuffix } from "../donateHint.js";
 import {
   checkAliasCreateLimit,
-  hasActiveHostedOrganization,
-  withOrganizationQuotaLock,
+  hasActiveHostedUser,
+  withUserQuotaLock,
 } from "../../billing/limits.js";
 import { getPending, clearPending, setPending } from "../session.js";
 import { canManageChat } from "../authorization.js";
@@ -104,30 +104,28 @@ export async function newemailHandler(ctx: CommandContext<Context>): Promise<voi
 
   const rawName = ctx.match.trim();
   const db = getDb();
+  const acting = BigInt(ctx.from.id);
 
   // Determine target chat: session context (DM flow) > current chat
   const pending = getPending(ctx.from.id);
   let targetChatId: bigint;
   let targetThreadId: bigint | null = null;
   let targetChatTitle: string | undefined;
-  let targetChatOrganizationId: string | null | undefined;
 
   if (pending?.action === "newemail") {
     targetChatId = pending.chatId;
     targetChatTitle = pending.chatTitle;
-    targetChatOrganizationId = (await findChatById(db, targetChatId))?.organizationId;
   } else {
     targetChatId = BigInt(ctx.chat.id);
     targetThreadId =
       ctx.message?.message_thread_id != null ? BigInt(ctx.message.message_thread_id) : null;
     const chat = await findChatById(db, targetChatId);
     targetChatTitle = chat?.title;
-    targetChatOrganizationId = chat?.organizationId;
   }
 
   if (rawName.length === 0 && !pending) {
     const messages = getMessages(await resolveLocale(ctx, db));
-    if (!(await hasActiveHostedOrganization(db, targetChatOrganizationId ?? null))) {
+    if (!(await hasActiveHostedUser(db, acting))) {
       await replyForAliasLimitFailure(ctx, { ok: false, code: "subscription_inactive" });
       return;
     }
@@ -147,7 +145,7 @@ export async function newemailHandler(ctx: CommandContext<Context>): Promise<voi
     return;
   }
 
-  if (!(await hasActiveHostedOrganization(db, targetChatOrganizationId ?? null))) {
+  if (!(await hasActiveHostedUser(db, acting))) {
     clearPending(ctx.from.id);
     await replyForAliasLimitFailure(ctx, { ok: false, code: "subscription_inactive" });
     return;
@@ -161,22 +159,9 @@ export async function newemailHandler(ctx: CommandContext<Context>): Promise<voi
 
   clearPending(ctx.from.id);
 
-  await createEmailAlias(
-    ctx,
-    rawName,
-    targetChatId,
-    targetThreadId,
-    targetChatTitle,
-    targetChatOrganizationId,
-  );
+  await createEmailAlias(ctx, rawName, targetChatId, targetThreadId, targetChatTitle);
 }
 
-/**
- * Generates the next available friendly auto-name for a chat ("inbox", "inbox-2", …).
- *
- * Scans existing aliases for the chat and returns the next free `inbox-N` slot.
- * Falls back to "inbox" if no inbox-* aliases exist.
- */
 async function nextInboxName(db: ReturnType<typeof getDb>, chatId: bigint): Promise<string> {
   const aliases = await listAliasesByChat(db, chatId);
   let maxN = 0;
@@ -197,12 +182,6 @@ async function nextInboxName(db: ReturnType<typeof getDb>, chatId: bigint): Prom
   return `inbox-${Math.max(maxN, 1) + 1}`;
 }
 
-/**
- * True when the error indicates a unique-constraint violation on `local_part`.
- *
- * The driver surfaces these via Postgres error class 23505 ("unique_violation"),
- * with various message shapes depending on the index involved.
- */
 function isLocalPartConflict(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return (
@@ -219,7 +198,6 @@ export async function createEmailAlias(
   chatId: bigint,
   threadId: bigint | null,
   chatTitle: string | undefined,
-  chatOrganizationId?: string | null,
 ): Promise<void> {
   if (!ctx.from) return;
   const config = loadConfig();
@@ -239,10 +217,6 @@ export async function createEmailAlias(
 
   const db = getDb();
   const createdBy = BigInt(ctx.from.id);
-  const organizationId =
-    chatOrganizationId === undefined
-      ? ((await findChatById(db, chatId))?.organizationId ?? null)
-      : chatOrganizationId;
 
   const baseName = rawName.length > 0 ? rawName : await nextInboxName(db, chatId);
 
@@ -253,24 +227,23 @@ export async function createEmailAlias(
     const candidate = attempt === 0 ? baseName : `${baseName}-${generateSuffix()}`;
 
     try {
-      alias = await withOrganizationQuotaLock(db, organizationId, async (tx) => {
+      alias = await withUserQuotaLock(db, createdBy, async (tx) => {
         const inboundDomain =
           config.appMode === "hosted"
             ? await ensureSharedInboundDomain(tx, config.hostedMailDomain!)
             : null;
         const fullAddress = `${candidate}@${inboundDomain?.domain ?? config.mailDomain}`;
-        const limit = await checkAliasCreateLimit(tx, organizationId);
+        const limit = await checkAliasCreateLimit(tx, createdBy);
         if (!limit.ok) {
           blockedLimit = limit;
           throw new Error("quota-blocked");
         }
 
-        await reserveHostedAliasCreateAttempt(tx, organizationId, createdBy);
+        await reserveHostedAliasCreateAttempt(tx, createdBy);
 
         return createAlias(tx, {
           localPart: candidate,
           fullAddress,
-          organizationId,
           domainId: inboundDomain?.id ?? null,
           chatId,
           messageThreadId: threadId,
@@ -297,7 +270,6 @@ export async function createEmailAlias(
         return;
       }
       if (isLocalPartConflict(err)) {
-        // Try again with a suffix
         continue;
       }
       throw err;
@@ -312,7 +284,6 @@ export async function createEmailAlias(
   const chatNote = chatTitle ? messages.newemail.deliveringTo(escapeHtml(chatTitle)) : "";
   const fullAddress = alias.fullAddress;
 
-  // Quick-pick keyboard: top common domains, then Custom… and Manage entries.
   const keyboard = appendAliasManageButton(
     buildQuickAllowKeyboard(alias.id, "detail", locale),
     alias.id,

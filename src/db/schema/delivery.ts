@@ -12,7 +12,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
-import { organizations } from "./org.js";
+import { users } from "./users.js";
 import { emailAddresses } from "./aliases.js";
 
 // ─── delivery_logs ───────────────────────────────────────────────────────────
@@ -26,7 +26,7 @@ export const deliveryLogs = pgTable(
     emailAddressId: uuid("email_address_id")
       .notNull()
       .references(() => emailAddresses.id, { onDelete: "cascade" }),
-    organizationId: uuid("organization_id").references(() => organizations.id),
+    userId: bigint("user_id", { mode: "bigint" }).references(() => users.id),
     messageIdHeader: varchar("message_id_header", { length: 998 }),
     bodySha256: varchar("body_sha256", { length: 64 }),
     bodyDedupApplied: boolean("body_dedup_applied").notNull().default(false),
@@ -55,7 +55,7 @@ export const deliveryLogs = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    index("idx_log_org_time").on(t.organizationId, t.receivedAt),
+    index("idx_log_user_time").on(t.userId, t.receivedAt),
     index("idx_log_alias_time").on(t.emailAddressId, t.receivedAt),
     index("idx_log_message_id").on(t.messageIdHeader),
     index("idx_log_body_hash").on(t.bodySha256),

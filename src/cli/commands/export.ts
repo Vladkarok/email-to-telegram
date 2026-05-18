@@ -1,20 +1,17 @@
 import { writeFile } from "fs/promises";
 import type { OperatorCommand } from "../dispatcher.js";
 import { getDb } from "../../db/client.js";
-import { exportHostedOrganizationData } from "../../dataLifecycle/exportOrganization.js";
+import { exportHostedUserData } from "../../dataLifecycle/exportUser.js";
 
 export const exportCommand: OperatorCommand = {
-  matches: (startup) => startup.hostedExportOrganizationId !== null,
+  matches: (startup) => startup.hostedExportUserId !== null,
 
   async run({ startup, logger }) {
-    const organizationId = startup.hostedExportOrganizationId!;
-    const exportData = await exportHostedOrganizationData(getDb(), organizationId);
+    const userId = BigInt(startup.hostedExportUserId!);
+    const exportData = await exportHostedUserData(getDb(), userId);
 
     if (!exportData) {
-      logger.error(
-        { organizationId },
-        "Hosted organization export failed: organization not found.",
-      );
+      logger.error({ userId: userId.toString() }, "Hosted user export failed: user not found.");
       process.exitCode = 1;
       return;
     }
@@ -25,8 +22,8 @@ export const exportCommand: OperatorCommand = {
     });
 
     logger.info(
-      { organizationId, outputPath: startup.hostedExportOutputPath },
-      "Hosted organization export complete.",
+      { userId: userId.toString(), outputPath: startup.hostedExportOutputPath },
+      "Hosted user export complete.",
     );
   },
 };

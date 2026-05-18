@@ -21,8 +21,7 @@ vi.mock("../../../src/telegram/authorization.js", () => ({
 
 const mockHasActiveHostedOrganization = vi.fn().mockResolvedValue(true);
 vi.mock("../../../src/billing/limits.js", () => ({
-  hasActiveHostedOrganization: (...args: unknown[]): unknown =>
-    mockHasActiveHostedOrganization(...args),
+  hasActiveHostedUser: (...args: unknown[]): unknown => mockHasActiveHostedOrganization(...args),
 }));
 
 const mockFindAliasById = vi.fn();
@@ -170,7 +169,7 @@ describe("pending text flow", () => {
     mockFindAliasById.mockResolvedValue({
       id: "alias-1",
       localPart: "alerts",
-      organizationId: "org-1",
+      createdBy: 123456789n,
     });
     mockAddAllowRuleForAlias.mockResolvedValue(true);
     mockCreateEmailAlias.mockResolvedValue(undefined);
@@ -259,6 +258,10 @@ describe("pending text flow", () => {
   });
 
   it("sends the allow-rules menu on successful pending allow-rule creation", async () => {
+    // Reset is required because preceding tests use mockResolvedValueOnce(false)
+    // queues that vi.clearAllMocks() doesn't drain.
+    mockHasActiveHostedOrganization.mockReset();
+    mockHasActiveHostedOrganization.mockResolvedValue(true);
     const ctx = createMockCtx({ text: "github.com" });
 
     await handlePendingTextMessage(ctx, next);

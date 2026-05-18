@@ -29,7 +29,7 @@ vi.mock("../../../src/storage/disk.js", () => ({
 }));
 
 vi.mock("../../../src/db/repos/storageUsage.js", () => ({
-  decrementOrganizationStorageUsage: (...args: unknown[]): unknown =>
+  decrementUserStorageUsage: (...args: unknown[]): unknown =>
     mockDecrementOrganizationStorageUsage(...args),
 }));
 
@@ -40,58 +40,58 @@ function makeDb(
     id: string;
     storagePath: string;
     sizeBytes?: number | null;
-    organizationId?: string | null;
+    userId?: bigint | null;
     createdAt?: Date;
-    organizationPlanCode?: string | null;
-    organizationSubscriptionStatus?: string | null;
-    organizationCurrentPeriodEnd?: Date | null;
-    organizationPaidThroughAt?: Date | null;
+    userPlanCode?: string | null;
+    userSubscriptionStatus?: string | null;
+    userCurrentPeriodEnd?: Date | null;
+    userPaidThroughAt?: Date | null;
   }[] = [],
   expiredRawLogs: {
     id: string;
     rawEmailPath: string | null;
     rawSizeBytes?: number | null;
-    organizationId?: string | null;
+    userId?: bigint | null;
     receivedAt?: Date;
-    organizationPlanCode?: string | null;
-    organizationSubscriptionStatus?: string | null;
-    organizationCurrentPeriodEnd?: Date | null;
-    organizationPaidThroughAt?: Date | null;
+    userPlanCode?: string | null;
+    userSubscriptionStatus?: string | null;
+    userCurrentPeriodEnd?: Date | null;
+    userPaidThroughAt?: Date | null;
   }[] = [],
   deliveryLogCandidates: {
     id: string;
     createdAt?: Date;
     rawEmailPath?: string | null;
-    organizationPlanCode?: string | null;
-    organizationSubscriptionStatus?: string | null;
-    organizationCurrentPeriodEnd?: Date | null;
-    organizationPaidThroughAt?: Date | null;
+    userPlanCode?: string | null;
+    userSubscriptionStatus?: string | null;
+    userCurrentPeriodEnd?: Date | null;
+    userPaidThroughAt?: Date | null;
   }[] = [],
 ) {
   const defaultOldDate = new Date("2025-01-01T00:00:00.000Z");
   const attachmentRows = expiredAttachments.map((row) => ({
     createdAt: defaultOldDate,
-    organizationPlanCode: null,
-    organizationSubscriptionStatus: null,
-    organizationCurrentPeriodEnd: null,
-    organizationPaidThroughAt: null,
+    userPlanCode: null,
+    userSubscriptionStatus: null,
+    userCurrentPeriodEnd: null,
+    userPaidThroughAt: null,
     ...row,
   }));
   const rawLogRows = expiredRawLogs.map((row) => ({
     receivedAt: defaultOldDate,
-    organizationPlanCode: null,
-    organizationSubscriptionStatus: null,
-    organizationCurrentPeriodEnd: null,
-    organizationPaidThroughAt: null,
+    userPlanCode: null,
+    userSubscriptionStatus: null,
+    userCurrentPeriodEnd: null,
+    userPaidThroughAt: null,
     ...row,
   }));
   const deliveryLogRows = deliveryLogCandidates.map((row) => ({
     createdAt: defaultOldDate,
     rawEmailPath: null,
-    organizationPlanCode: null,
-    organizationSubscriptionStatus: null,
-    organizationCurrentPeriodEnd: null,
-    organizationPaidThroughAt: null,
+    userPlanCode: null,
+    userSubscriptionStatus: null,
+    userCurrentPeriodEnd: null,
+    userPaidThroughAt: null,
     ...row,
   }));
   const attachmentDeleteWhere = vi.fn().mockResolvedValue({ rowCount: 1 });
@@ -205,12 +205,12 @@ describe("runCleanup", () => {
         id: "att-1",
         storagePath: "/data/attachments/log-id/file.bin",
         sizeBytes: 10,
-        organizationId: "org-1",
+        userId: 1n,
       },
     ]);
     await runCleanup(db, config);
     expect(mockDeleteFile).toHaveBeenCalledWith("/data/attachments/log-id/file.bin");
-    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(expect.anything(), "org-1", {
+    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(expect.anything(), 1n, {
       attachmentBytes: 10n,
     });
   });
@@ -239,7 +239,7 @@ describe("runCleanup", () => {
           id: "log-1",
           rawEmailPath: "/data/rawemails/2025-01-01/log-1.eml",
           rawSizeBytes: 42,
-          organizationId: "org-1",
+          userId: 1n,
         },
       ],
     );
@@ -247,7 +247,7 @@ describe("runCleanup", () => {
     await runCleanup(db, config);
 
     expect(mockDeleteFile).toHaveBeenCalledWith("/data/rawemails/2025-01-01/log-1.eml");
-    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(expect.anything(), "org-1", {
+    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(expect.anything(), 1n, {
       rawEmailBytes: 42n,
     });
     expect(db._mocks.updateSet).toHaveBeenCalledWith({
@@ -270,25 +270,25 @@ describe("runCleanup", () => {
         id: "att-free",
         storagePath: "/data/attachments/free/file.bin",
         sizeBytes: 10,
-        organizationId: "org-free",
+        userId: "org-free",
         createdAt: eightDaysAgo,
-        organizationPlanCode: "free",
-        organizationSubscriptionStatus: "free",
+        userPlanCode: "free",
+        userSubscriptionStatus: "free",
       },
       {
         id: "att-personal",
         storagePath: "/data/attachments/personal/file.bin",
         sizeBytes: 10,
-        organizationId: "org-personal",
+        userId: "org-personal",
         createdAt: eightDaysAgo,
-        organizationPlanCode: "personal",
-        organizationSubscriptionStatus: "active",
+        userPlanCode: "personal",
+        userSubscriptionStatus: "active",
       },
       {
         id: "att-self-hosted",
         storagePath: "/data/attachments/self-hosted/file.bin",
         sizeBytes: 10,
-        organizationId: null,
+        userId: null,
         createdAt: eightDaysAgo,
       },
     ]);
@@ -315,19 +315,19 @@ describe("runCleanup", () => {
           id: "raw-canceled",
           rawEmailPath: "/data/rawemails/canceled/message.eml",
           rawSizeBytes: 42,
-          organizationId: "org-canceled",
+          userId: "org-canceled",
           receivedAt: eightDaysAgo,
-          organizationPlanCode: "pro",
-          organizationSubscriptionStatus: "canceled",
+          userPlanCode: "pro",
+          userSubscriptionStatus: "canceled",
         },
         {
           id: "raw-active",
           rawEmailPath: "/data/rawemails/active/message.eml",
           rawSizeBytes: 42,
-          organizationId: "org-active",
+          userId: "org-active",
           receivedAt: eightDaysAgo,
-          organizationPlanCode: "pro",
-          organizationSubscriptionStatus: "active",
+          userPlanCode: "pro",
+          userSubscriptionStatus: "active",
         },
       ],
     );
@@ -353,10 +353,10 @@ describe("runCleanup", () => {
           id: "att-pro",
           storagePath: "/data/attachments/pro/file.bin",
           sizeBytes: 10,
-          organizationId: "org-pro",
+          userId: "org-pro",
           createdAt: twentyDaysAgo,
-          organizationPlanCode: "pro",
-          organizationSubscriptionStatus: "active",
+          userPlanCode: "pro",
+          userSubscriptionStatus: "active",
         },
       ],
       [
@@ -364,10 +364,10 @@ describe("runCleanup", () => {
           id: "raw-pro",
           rawEmailPath: "/data/rawemails/pro/message.eml",
           rawSizeBytes: 42,
-          organizationId: "org-pro",
+          userId: "org-pro",
           receivedAt: twentyDaysAgo,
-          organizationPlanCode: "pro",
-          organizationSubscriptionStatus: "active",
+          userPlanCode: "pro",
+          userSubscriptionStatus: "active",
         },
       ],
     );
@@ -384,7 +384,7 @@ describe("runCleanup", () => {
         id: "att-1",
         storagePath: "/data/attachments/log-id/file.bin",
         sizeBytes: 10,
-        organizationId: "org-1",
+        userId: 1n,
       },
     ]);
     mockDeleteFile.mockRejectedValueOnce(new Error("busy"));
@@ -408,7 +408,7 @@ describe("runCleanup", () => {
           id: "log-1",
           rawEmailPath: "/data/rawemails/2025-01-01/log-1.eml",
           rawSizeBytes: 42,
-          organizationId: "org-1",
+          userId: 1n,
         },
       ],
     );
@@ -431,7 +431,7 @@ describe("runCleanup", () => {
         id: "att-1",
         storagePath: "/data/attachments/log-id/file.bin",
         sizeBytes: 10,
-        organizationId: "org-1",
+        userId: 1n,
       },
     ]);
     db._mocks.attachmentDeleteWhere
@@ -442,7 +442,7 @@ describe("runCleanup", () => {
     await runCleanup(db, config);
 
     expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledTimes(1);
-    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(expect.anything(), "org-1", {
+    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(expect.anything(), 1n, {
       attachmentBytes: 10n,
     });
   });
@@ -455,7 +455,7 @@ describe("runCleanup", () => {
           id: "log-1",
           rawEmailPath: "/data/rawemails/2025-01-01/log-1.eml",
           rawSizeBytes: 42,
-          organizationId: "org-1",
+          userId: 1n,
         },
       ],
     );
@@ -467,7 +467,7 @@ describe("runCleanup", () => {
     await runCleanup(db, config);
 
     expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledTimes(1);
-    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(expect.anything(), "org-1", {
+    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(expect.anything(), 1n, {
       rawEmailBytes: 42n,
     });
   });
@@ -478,7 +478,7 @@ describe("runCleanup", () => {
         id: "att-1",
         storagePath: "/data/attachments/log-id/file.bin",
         sizeBytes: 10,
-        organizationId: "org-1",
+        userId: 1n,
       },
     ]);
     mockDecrementOrganizationStorageUsage
@@ -500,7 +500,7 @@ describe("runCleanup", () => {
           id: "log-1",
           rawEmailPath: "/data/rawemails/2025-01-01/log-1.eml",
           rawSizeBytes: 42,
-          organizationId: "org-1",
+          userId: 1n,
         },
       ],
     );
@@ -536,14 +536,14 @@ describe("runCleanup", () => {
         {
           id: "log-pro",
           createdAt: fortyDaysAgo,
-          organizationPlanCode: "pro",
-          organizationSubscriptionStatus: "active",
+          userPlanCode: "pro",
+          userSubscriptionStatus: "active",
         },
         {
           id: "log-free",
           createdAt: fortyDaysAgo,
-          organizationPlanCode: "free",
-          organizationSubscriptionStatus: "free",
+          userPlanCode: "free",
+          userSubscriptionStatus: "free",
         },
       ],
     );

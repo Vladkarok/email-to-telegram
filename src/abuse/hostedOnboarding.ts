@@ -1,10 +1,8 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { sql } from "drizzle-orm";
 import type * as schema from "../db/schema.js";
-import type { Organization, User } from "../db/schema.js";
-import { createOrganization } from "../db/repos/organizations.js";
-import { addOrganizationMember } from "../db/repos/organizationMembers.js";
-import { getPrimaryOrganizationForUser } from "../tenant/currentOrganization.js";
+import type { User } from "../db/schema.js";
+import { findOrCreateUserById } from "../db/repos/users.js";
 import { reserveHostedOnboardingAttemptInTransaction } from "../db/repos/hostedOnboardingAttempts.js";
 
 type Db = NodePgDatabase<typeof schema>;
@@ -19,35 +17,21 @@ export class HostedOnboardingRateLimitError extends Error {
   }
 }
 
-export async function ensurePersonalOrganizationForUserWithOnboardingLimit(
-  db: Db,
-  user: User,
-): Promise<Organization> {
+/**
+ * Ensures the user row exists (the user IS the tenant). On hosted deployments,
+ * applies a per-user attempt rate limit before any side effect — this is the
+ * only state we need to provision for new accounts now that organizations
+ * are gone.
+ */
+export async function ensureUserWithOnboardingLimit(db: Db, user: User): Promise<User> {
   return db.transaction(async (tx) => {
     const transactionalDb = tx as Db;
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${user.id.toString()}))`);
+    await tx.execute(sql`select pg_advisory_xact_lock(${user.id})`);
 
-    const existing = await getPrimaryOrganizationForUser(transactionalDb, user.id);
-    if (existing) return existing;
-
+    // Rate-limit before any user-row mutation: limits churn on bot abuse.
     if (!(await reserveHostedOnboardingAttemptInTransaction(transactionalDb, user.id))) {
       throw new HostedOnboardingRateLimitError();
     }
-
-    const organization = await createOrganization(transactionalDb, {
-      name: personalOrganizationName(user),
-      planCode: "free",
-      subscriptionStatus: "free",
-    });
-    await addOrganizationMember(transactionalDb, {
-      organizationId: organization.id,
-      userId: user.id,
-      role: "owner",
-    });
-    return organization;
+    return findOrCreateUserById(transactionalDb, user.id);
   });
-}
-
-function personalOrganizationName(user: Pick<User, "username" | "id">): string {
-  return user.username ? `@${user.username}` : `Telegram ${user.id.toString()}`;
 }

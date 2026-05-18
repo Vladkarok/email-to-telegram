@@ -8,7 +8,7 @@ const state = {
     id: "alias-1",
     localPart: "alerts",
     fullAddress: "alerts@example.com",
-    organizationId: "org-1",
+    createdBy: 1n,
     domainId: "domain-1",
     chatId: 123n,
     messageThreadId: null,
@@ -152,15 +152,16 @@ vi.mock("../../src/db/repos/usage.js", async () => {
   const actual = await vi.importActual<object>("../../src/db/repos/usage.js");
   return {
     ...actual,
-    incrementOrganizationUsageMonth: vi.fn(
+    incrementUserUsageMonth: vi.fn(
       (_db: unknown, data: { deliveredCount?: number; rejectedCount?: number }) => {
         state.usage.deliveredCount += data.deliveredCount ?? 0;
         state.usage.rejectedCount += data.rejectedCount ?? 0;
         return Promise.resolve({
-          organizationId: state.alias.organizationId,
+          userId: state.alias.createdBy,
           month: "2026-04",
           deliveredCount: state.usage.deliveredCount,
           rejectedCount: state.usage.rejectedCount,
+          egressBytes: 0n,
         });
       },
     ),
@@ -168,40 +169,32 @@ vi.mock("../../src/db/repos/usage.js", async () => {
 });
 
 vi.mock("../../src/db/repos/storageUsage.js", () => ({
-  getOrganizationStorageUsage: vi.fn(() =>
+  getUserStorageUsage: vi.fn(() =>
     Promise.resolve({
-      organizationId: state.alias.organizationId,
+      userId: state.alias.createdBy,
       rawEmailBytes: state.storage.rawEmailBytes,
       attachmentBytes: state.storage.attachmentBytes,
     }),
   ),
-  incrementOrganizationStorageUsage: vi.fn(
-    (
-      _db: unknown,
-      _organizationId: string,
-      data: { rawEmailBytes?: bigint; attachmentBytes?: bigint },
-    ) => {
+  incrementUserStorageUsage: vi.fn(
+    (_db: unknown, _userId: bigint, data: { rawEmailBytes?: bigint; attachmentBytes?: bigint }) => {
       state.storage.rawEmailBytes += data.rawEmailBytes ?? 0n;
       state.storage.attachmentBytes += data.attachmentBytes ?? 0n;
       return Promise.resolve({
-        organizationId: state.alias.organizationId,
+        userId: state.alias.createdBy,
         rawEmailBytes: state.storage.rawEmailBytes,
         attachmentBytes: state.storage.attachmentBytes,
       });
     },
   ),
-  decrementOrganizationStorageUsage: vi.fn(
-    (
-      _db: unknown,
-      _organizationId: string,
-      data: { rawEmailBytes?: bigint; attachmentBytes?: bigint },
-    ) => {
+  decrementUserStorageUsage: vi.fn(
+    (_db: unknown, _userId: bigint, data: { rawEmailBytes?: bigint; attachmentBytes?: bigint }) => {
       state.storage.rawEmailBytes -= data.rawEmailBytes ?? 0n;
       state.storage.attachmentBytes -= data.attachmentBytes ?? 0n;
       if (state.storage.rawEmailBytes < 0n) state.storage.rawEmailBytes = 0n;
       if (state.storage.attachmentBytes < 0n) state.storage.attachmentBytes = 0n;
       return Promise.resolve({
-        organizationId: state.alias.organizationId,
+        userId: state.alias.createdBy,
         rawEmailBytes: state.storage.rawEmailBytes,
         attachmentBytes: state.storage.attachmentBytes,
       });

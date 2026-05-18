@@ -4,9 +4,9 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../../db/schema.js";
 import { loadConfig } from "../../config.js";
 import { getAccessibleChats } from "../authorization.js";
-import { getPrimaryOrganizationForUser } from "../../tenant/currentOrganization.js";
+import { findUserById } from "../../db/repos/users.js";
 import { getEffectivePlan } from "../../billing/limits.js";
-import { countActiveAliasesByOrganization } from "../../db/repos/aliases.js";
+import { countActiveAliasesByUser } from "../../db/repos/aliases.js";
 import { escapeHtml } from "../../utils/html.js";
 import { CB_CHAT_SELECTION, CB_CHAT_MENU, CB_NEW_EMAIL, CB_ALIAS_LIST } from "../callbacks.js";
 import { getMessages, resolveLocale, type Locale } from "../../i18n/index.js";
@@ -20,17 +20,17 @@ function chatIcon(type: string): string {
 /**
  * Returns a one-line plan/alias footer for hosted mode,
  * e.g. "Plan: Free | 2/3 aliases used".
- * Returns null in self-hosted mode or when org info is unavailable.
+ * Returns null in self-hosted mode or when user billing info is unavailable.
  */
 async function buildPlanFooter(db: Db, userId: number, locale: Locale): Promise<string | null> {
   if (loadConfig().appMode !== "hosted") return null;
 
   try {
-    const org = await getPrimaryOrganizationForUser(db, BigInt(userId));
-    if (!org) return null;
+    const user = await findUserById(db, BigInt(userId));
+    if (!user) return null;
 
-    const plan = getEffectivePlan(org);
-    const used = await countActiveAliasesByOrganization(db, org.id);
+    const plan = getEffectivePlan(user);
+    const used = await countActiveAliasesByUser(db, user.id);
     return getMessages(locale).chatMenu.planFooter(
       escapeHtml(plan.name),
       used,

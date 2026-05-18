@@ -8,10 +8,9 @@ vi.mock("../../../../src/config.js", () => ({
   loadConfig: (): unknown => mockLoadConfig(),
 }));
 
-const mockGetBillingOrganizationForUser = vi.fn();
-vi.mock("../../../../src/tenant/currentOrganization.js", () => ({
-  getBillingOrganizationForUser: (...args: unknown[]): unknown =>
-    mockGetBillingOrganizationForUser(...args),
+const mockFindUserById = vi.fn();
+vi.mock("../../../../src/db/repos/users.js", () => ({
+  findUserById: (...args: unknown[]): unknown => mockFindUserById(...args),
 }));
 
 const mockCreateCustomerPortalSession = vi.fn();
@@ -47,7 +46,7 @@ describe("/portal command", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLoadConfig.mockReturnValue({ appMode: "hosted", billingProvider: "stripe" });
-    mockGetBillingOrganizationForUser.mockResolvedValue(ORG);
+    mockFindUserById.mockResolvedValue(ORG);
     mockCreateCustomerPortalSession.mockResolvedValue("https://billing.stripe.com/session_abc");
   });
 
@@ -57,11 +56,10 @@ describe("/portal command", () => {
     await portalHandler(ctx);
     const [text] = ctx.reply.mock.calls[0] as [string];
     expect(text).toMatch(/self-hosted|billing.*not enabled/i);
-    expect(mockGetBillingOrganizationForUser).not.toHaveBeenCalled();
   });
 
   it("in hosted mode without owner/admin access replies defensively", async () => {
-    mockGetBillingOrganizationForUser.mockResolvedValue(null);
+    mockFindUserById.mockResolvedValue(null);
     const ctx = createMockCtx({ chatType: "private" });
     await portalHandler(ctx);
     const [text] = ctx.reply.mock.calls[0] as [string];
@@ -69,7 +67,7 @@ describe("/portal command", () => {
   });
 
   it("when no Stripe customer yet, shows upgrade prompt", async () => {
-    mockGetBillingOrganizationForUser.mockResolvedValue({
+    mockFindUserById.mockResolvedValue({
       ...ORG,
       planCode: "free",
       stripeCustomerId: null,
@@ -82,7 +80,7 @@ describe("/portal command", () => {
   });
 
   it("shows manual billing support message when paid org has no Stripe customer", async () => {
-    mockGetBillingOrganizationForUser.mockResolvedValue({ ...ORG, stripeCustomerId: null });
+    mockFindUserById.mockResolvedValue({ ...ORG, stripeCustomerId: null });
     const ctx = createMockCtx({ chatType: "private" });
     await portalHandler(ctx);
     const [text] = ctx.reply.mock.calls[0] as [string];
@@ -113,7 +111,7 @@ describe("/portal command", () => {
   });
 
   it("replies with error on DB failure", async () => {
-    mockGetBillingOrganizationForUser.mockRejectedValue(new Error("db error"));
+    mockFindUserById.mockRejectedValue(new Error("db error"));
     const mockError = vi.fn();
     mockGetLogger.mockReturnValue({ error: mockError });
     const ctx = createMockCtx({ chatType: "private" });
@@ -128,7 +126,7 @@ describe("portalCallbackHandler (bill:portal)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLoadConfig.mockReturnValue({ appMode: "hosted", billingProvider: "stripe" });
-    mockGetBillingOrganizationForUser.mockResolvedValue(ORG);
+    mockFindUserById.mockResolvedValue(ORG);
     mockCreateCustomerPortalSession.mockResolvedValue("https://billing.stripe.com/session_abc");
   });
 
@@ -145,7 +143,7 @@ describe("portalCallbackHandler (bill:portal)", () => {
   });
 
   it("answers callback and shows upgrade prompt when no customer", async () => {
-    mockGetBillingOrganizationForUser.mockResolvedValue({
+    mockFindUserById.mockResolvedValue({
       ...ORG,
       planCode: "free",
       stripeCustomerId: null,
@@ -160,7 +158,7 @@ describe("portalCallbackHandler (bill:portal)", () => {
   });
 
   it("answers callback and shows manual billing support message for manual paid orgs", async () => {
-    mockGetBillingOrganizationForUser.mockResolvedValue({ ...ORG, stripeCustomerId: null });
+    mockFindUserById.mockResolvedValue({ ...ORG, stripeCustomerId: null });
     const ctx = createMockCtx({ chatType: "private" });
     await portalCallbackHandler(ctx);
     expect(ctx.answerCallbackQuery).toHaveBeenCalled();
@@ -182,7 +180,7 @@ describe("portalCallbackHandler (bill:portal)", () => {
   });
 
   it("answers with show_alert on error", async () => {
-    mockGetBillingOrganizationForUser.mockRejectedValue(new Error("error"));
+    mockFindUserById.mockRejectedValue(new Error("error"));
     const mockError = vi.fn();
     mockGetLogger.mockReturnValue({ error: mockError });
     const ctx = createMockCtx({ chatType: "private" });

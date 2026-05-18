@@ -57,9 +57,8 @@ const mockCheckAliasCreateLimit = vi.fn().mockResolvedValue({ ok: true });
 const mockHasActiveHostedOrganization = vi.fn().mockResolvedValue(true);
 vi.mock("../../../../src/billing/limits.js", () => ({
   checkAliasCreateLimit: (...args: unknown[]): unknown => mockCheckAliasCreateLimit(...args),
-  hasActiveHostedOrganization: (...args: unknown[]): unknown =>
-    mockHasActiveHostedOrganization(...args),
-  withOrganizationQuotaLock: vi.fn(
+  hasActiveHostedUser: (...args: unknown[]): unknown => mockHasActiveHostedOrganization(...args),
+  withUserQuotaLock: vi.fn(
     async (_db: unknown, _organizationId: string | null, work: (tx: unknown) => Promise<unknown>) =>
       work({}),
   ),
@@ -261,11 +260,10 @@ describe("/newemail command", () => {
     expect(aliasData.chatId).toBe(-1009999999n);
   });
 
-  it("stores organizationId from the target chat when present", async () => {
+  it("stores createdBy from the acting user when creating an alias", async () => {
     mockFindChatById.mockResolvedValueOnce({
-      title: "Hosted DM",
+      title: "DM",
       type: "private",
-      organizationId: "org-1",
     });
     const ctx = createMockCtx({ commandMatch: "alerts", chatType: "private" });
 
@@ -273,15 +271,10 @@ describe("/newemail command", () => {
 
     const [, aliasData] = mockCreateAlias.mock.calls[0] as [
       unknown,
-      { organizationId: string | null; domainId: string | null },
+      { createdBy: bigint; domainId: string | null },
     ];
-    expect(aliasData.organizationId).toBe("org-1");
+    expect(aliasData.createdBy).toBe(123456789n);
     expect(aliasData.domainId).toBeNull();
-    expect(mockReserveHostedAliasCreateAttempt).toHaveBeenCalledWith(
-      expect.anything(),
-      "org-1",
-      123456789n,
-    );
   });
 
   it("uses the hosted shared inbound domain when hosted mode creates aliases", async () => {

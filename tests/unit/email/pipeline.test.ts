@@ -69,14 +69,14 @@ vi.mock("../../../src/billing/limits.js", () => ({
   checkInboundLimit: (...args: unknown[]): unknown => mockCheckInboundLimit(...args),
 }));
 vi.mock("../../../src/db/repos/usage.js", () => ({
-  incrementOrganizationUsageMonth: (...args: unknown[]): unknown =>
+  incrementUserUsageMonth: (...args: unknown[]): unknown =>
     mockIncrementOrganizationUsageMonth(...args),
   usageMonthForDate: (): unknown => mockUsageMonthForDate(),
 }));
 vi.mock("../../../src/db/repos/storageUsage.js", () => ({
-  incrementOrganizationStorageUsage: (...args: unknown[]): unknown =>
+  incrementUserStorageUsage: (...args: unknown[]): unknown =>
     mockIncrementOrganizationStorageUsage(...args),
-  decrementOrganizationStorageUsage: (...args: unknown[]): unknown =>
+  decrementUserStorageUsage: (...args: unknown[]): unknown =>
     mockDecrementOrganizationStorageUsage(...args),
 }));
 
@@ -95,7 +95,7 @@ const activeAlias = {
   id: "alias-uuid-1",
   localPart: "alerts",
   fullAddress: "alerts@example.com",
-  organizationId: "org-1",
+  createdBy: 1n,
   chatId: 100n,
   messageThreadId: null,
   status: "active",
@@ -380,7 +380,7 @@ describe("processInboundEmail", () => {
     expect(mockIncrementOrganizationUsageMonth).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        organizationId: activeAlias.organizationId,
+        userId: activeAlias.createdBy,
         deliveredCount: 1,
       }),
     );
@@ -424,14 +424,14 @@ describe("queueInboundEmail", () => {
     expect(mockIncrementOrganizationUsageMonth).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        organizationId: activeAlias.organizationId,
+        userId: activeAlias.createdBy,
         month: "2026-04",
         deliveredCount: 1,
       }),
     );
     expect(mockIncrementOrganizationStorageUsage).toHaveBeenCalledWith(
       expect.anything(),
-      activeAlias.organizationId,
+      activeAlias.createdBy,
       {
         rawEmailBytes: BigInt(simpleEmail().length),
         attachmentBytes: 0n,
@@ -719,7 +719,7 @@ describe("deliverQueuedEmail", () => {
     expect(mockDeleteFile).toHaveBeenCalled();
     expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(
       expect.anything(),
-      activeAlias.organizationId,
+      activeAlias.createdBy,
       { attachmentBytes: 12n },
     );
   });

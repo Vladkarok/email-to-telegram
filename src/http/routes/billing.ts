@@ -5,7 +5,6 @@ import { BillingCheckoutConflictError, createCheckoutSession } from "../../billi
 import { createCustomerPortalSession } from "../../billing/customerPortal.js";
 import { constructWebhookEvent, isStripePriceKey } from "../../billing/stripe.js";
 import { processStripeWebhookEvent } from "../../billing/webhooks.js";
-import { userHasOrganizationRole } from "../../db/repos/organizationMembers.js";
 
 export function billingRoutes(app: FastifyInstance): void {
   app.post(
@@ -22,20 +21,10 @@ export function billingRoutes(app: FastifyInstance): void {
         await reply.status(400).send({ error: "invalid request" });
         return;
       }
-      const allowed = await userHasOrganizationRole(
-        getDb(),
-        access.organizationId,
-        BigInt(access.telegramUserId),
-        ["owner", "admin"],
-      );
-      if (!allowed) {
-        await reply.status(403).send({ error: "forbidden" });
-        return;
-      }
 
       let url: string;
       try {
-        url = await createCheckoutSession(getDb(), access.organizationId, priceKey);
+        url = await createCheckoutSession(getDb(), BigInt(access.telegramUserId), priceKey);
       } catch (err: unknown) {
         if (err instanceof BillingCheckoutConflictError) {
           await reply.status(409).send({ error: "subscription already exists" });
@@ -57,18 +46,8 @@ export function billingRoutes(app: FastifyInstance): void {
         await reply.status(401).send({ error: "invalid token" });
         return;
       }
-      const allowed = await userHasOrganizationRole(
-        getDb(),
-        access.organizationId,
-        BigInt(access.telegramUserId),
-        ["owner", "admin"],
-      );
-      if (!allowed) {
-        await reply.status(403).send({ error: "forbidden" });
-        return;
-      }
 
-      const url = await createCustomerPortalSession(getDb(), access.organizationId);
+      const url = await createCustomerPortalSession(getDb(), BigInt(access.telegramUserId));
       if (!url) {
         await reply.status(409).send({ error: "customer not found" });
         return;

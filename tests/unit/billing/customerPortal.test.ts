@@ -5,9 +5,9 @@ vi.mock("../../../src/config.js", () => ({
   loadConfig: (): unknown => mockLoadConfig(),
 }));
 
-const mockFindOrganizationById = vi.fn();
-vi.mock("../../../src/db/repos/organizations.js", () => ({
-  findOrganizationById: (...args: unknown[]): unknown => mockFindOrganizationById(...args),
+const mockFindUserById = vi.fn();
+vi.mock("../../../src/db/repos/users.js", () => ({
+  findUserById: (...args: unknown[]): unknown => mockFindUserById(...args),
 }));
 
 const mockCreatePortalSessionApi = vi.fn();
@@ -36,14 +36,14 @@ describe("createCustomerPortalSession", () => {
     mockCreatePortalSessionApi.mockResolvedValue({ url: "https://billing.stripe.test/portal" });
   });
 
-  it("returns null when the organization has no Stripe customer", async () => {
-    mockFindOrganizationById.mockResolvedValue({ id: "org-1", stripeCustomerId: null });
-    await expect(createCustomerPortalSession({} as never, "org-1")).resolves.toBeNull();
+  it("returns null when the user has no Stripe customer", async () => {
+    mockFindUserById.mockResolvedValue({ id: 1n, stripeCustomerId: null });
+    await expect(createCustomerPortalSession({} as never, 1n)).resolves.toBeNull();
   });
 
-  it("creates a customer portal session for linked organizations", async () => {
-    mockFindOrganizationById.mockResolvedValue({ id: "org-1", stripeCustomerId: "cus_123" });
-    await expect(createCustomerPortalSession({} as never, "org-1")).resolves.toBe(
+  it("creates a customer portal session for linked users", async () => {
+    mockFindUserById.mockResolvedValue({ id: 1n, stripeCustomerId: "cus_123" });
+    await expect(createCustomerPortalSession({} as never, 1n)).resolves.toBe(
       "https://billing.stripe.test/portal",
     );
     expect(mockCreatePortalSessionApi).toHaveBeenCalledWith(
@@ -57,9 +57,9 @@ describe("createCustomerPortalSession", () => {
       billingCancelUrl: undefined,
       publicBaseUrl: "https://mail.example.com",
     });
-    mockFindOrganizationById.mockResolvedValue({ id: "org-1", stripeCustomerId: "cus_123" });
+    mockFindUserById.mockResolvedValue({ id: 1n, stripeCustomerId: "cus_123" });
 
-    await createCustomerPortalSession({} as never, "org-1");
+    await createCustomerPortalSession({} as never, 1n);
 
     expect(mockCreatePortalSessionApi).toHaveBeenCalledWith(
       expect.objectContaining({ return_url: "https://mail.example.com" }),
@@ -73,8 +73,6 @@ describe("createCustomerPortalSession", () => {
       publicBaseUrl: "https://mail.example.com",
     });
 
-    await expect(createCustomerPortalSession({} as never, "org-1")).rejects.toThrow(
-      /not configured/i,
-    );
+    await expect(createCustomerPortalSession({} as never, 1n)).rejects.toThrow(/not configured/i);
   });
 });

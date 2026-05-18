@@ -1,9 +1,9 @@
 import type { StartupOptions } from "../cli.js";
 import type { AppConfig } from "../config.js";
-import type { DeleteOrganizationResult } from "../dataLifecycle/deleteOrganization.js";
+import type { DeleteUserResult } from "../dataLifecycle/deleteUser.js";
 
 export function hasHostedDataLifecycleOperation(startup: StartupOptions): boolean {
-  return Boolean(startup.hostedExportOrganizationId || startup.hostedDeleteOrganizationId);
+  return Boolean(startup.hostedExportUserId || startup.hostedDeleteUserId);
 }
 
 export function assertHostedDataLifecycleAllowed(config: AppConfig): void {
@@ -12,6 +12,6 @@ export function assertHostedDataLifecycleAllowed(config: AppConfig): void {
   }
 }
 
-export function hostedDeleteExitCode(result: DeleteOrganizationResult): number {
+export function hostedDeleteExitCode(result: DeleteUserResult): number {
   return result.deleted && result.failedFileDeletes.length === 0 ? 0 : 1;
 }

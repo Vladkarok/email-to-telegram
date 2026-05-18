@@ -4,7 +4,6 @@ import type { ManualGrantSummary } from "../../../src/billing/manual.js";
 
 function makeSummary(overrides: Partial<ManualGrantSummary> = {}): ManualGrantSummary {
   return {
-    organizationId: "org-1",
     telegramUserId: "12345",
     planCode: "pro",
     subscriptionStatus: "active",
@@ -73,7 +72,6 @@ describe("redactManualBillingForLog", () => {
   it("preserves non-sensitive fields", () => {
     const result = redactManualBillingForLog(
       makeSummary({
-        organizationId: "org-2",
         telegramUserId: "99999",
         planCode: "team",
         subscriptionStatus: "canceled",
@@ -82,7 +80,6 @@ describe("redactManualBillingForLog", () => {
         manualBillingEventId: "evt-xyz",
       }),
     );
-    expect(result.organizationId).toBe("org-2");
     expect(result.telegramUserId).toBe("99999");
     expect(result.planCode).toBe("team");
     expect(result.subscriptionStatus).toBe("canceled");

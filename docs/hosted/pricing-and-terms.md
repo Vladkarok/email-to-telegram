@@ -57,7 +57,7 @@ Stripe Checkout.
 - During early beta, any paid plan may be granted manually after direct payment
   while automated Stripe billing remains disabled.
 - Annual plans are billed upfront.
-- Upgrades can apply after Stripe webhook delivery updates the organization.
+- Upgrades can apply after Stripe webhook delivery updates the account.
 - Downgrades and cancellations do not delete aliases or stored data
   automatically.
 

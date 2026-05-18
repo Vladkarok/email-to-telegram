@@ -20,12 +20,10 @@ describe("billing access tokens", () => {
   it("round-trips valid billing access tokens", () => {
     const token = generateBillingAccessToken({
       telegramUserId: "123",
-      organizationId: "org-1",
     });
 
     expect(verifyBillingAccessToken(token)).toMatchObject({
       telegramUserId: "123",
-      organizationId: "org-1",
     });
   });
 
@@ -33,7 +31,6 @@ describe("billing access tokens", () => {
     const token = generateBillingAccessToken(
       {
         telegramUserId: "123",
-        organizationId: "org-1",
       },
       -10,
     );
@@ -44,7 +41,6 @@ describe("billing access tokens", () => {
   it("rejects tampered tokens", () => {
     const token = generateBillingAccessToken({
       telegramUserId: "123",
-      organizationId: "org-1",
     });
 
     expect(verifyBillingAccessToken(`${token}oops`)).toBeNull();
@@ -66,7 +62,7 @@ describe("billing access tokens", () => {
 
   it("rejects tokens whose payload shape is invalid", () => {
     const encodedPayload = Buffer.from(
-      JSON.stringify({ telegramUserId: 123, organizationId: "org-1", exp: Date.now() / 1000 + 60 }),
+      JSON.stringify({ telegramUserId: 123, exp: Date.now() / 1000 + 60 }),
       "utf8",
     ).toString("base64url");
     const signature = createHmac("sha256", process.env["HMAC_SECRET"]!)

@@ -155,7 +155,7 @@ export interface UserSearchResult {
   id: string;
   username: string | null;
   isAllowed: boolean;
-  organizationCount: number;
+  planCode: string;
 }
 
 export function renderUsersPage(
@@ -175,11 +175,11 @@ export function renderUsersPage(
               <td><a href="/admin/users/${escapeHtmlAttribute(u.id)}">${escapeHtml(u.id)}</a></td>
               <td>${u.username ? escapeHtml(u.username) : '<span class="muted">-</span>'}</td>
               <td>${u.isAllowed ? "Yes" : "No"}</td>
-              <td>${u.organizationCount}</td>
+              <td>${escapeHtml(u.planCode)}</td>
             </tr>`,
         )
         .join("");
-      resultsHtml = `<table><thead><tr><th>Telegram ID</th><th>Username</th><th>Allowed</th><th>Orgs</th></tr></thead><tbody>${rows}</tbody></table>`;
+      resultsHtml = `<table><thead><tr><th>Telegram ID</th><th>Username</th><th>Allowed</th><th>Plan</th></tr></thead><tbody>${rows}</tbody></table>`;
     }
   }
 
@@ -202,18 +202,17 @@ export interface BillingFlash {
   message: string;
 }
 
-export interface OrganizationDetail {
+export interface UserDetail {
   id: string;
-  name: string;
+  username: string | null;
+  isAllowed: boolean;
+  createdAt: string;
+  updatedAt: string;
   planCode: string;
   subscriptionStatus: string;
   paidThroughAt: string | null;
-  createdAt: string;
-  updatedAt: string;
   hasStripeLink: boolean;
   aliasCount: number;
-  memberCount: number;
-  members: Array<{ userId: string; role: string; username: string | null }>;
   currentMonthUsage: { delivered: number; rejected: number } | null;
   latestBillingEvents: Array<{
     id: string;
@@ -222,53 +221,6 @@ export interface OrganizationDetail {
     operatorSource: string;
     createdAt: string;
   }>;
-}
-
-export interface UserDetail {
-  id: string;
-  username: string | null;
-  isAllowed: boolean;
-  createdAt: string;
-  organizations: OrganizationDetail[];
-}
-
-export function renderUserDetailPage(csrfToken: string, user: UserDetail): string {
-  const orgsHtml = user.organizations
-    .map(
-      (org) => `
-    <div class="panel">
-      <h2><a href="/admin/organizations/${escapeHtmlAttribute(org.id)}">${escapeHtml(org.name)}</a></h2>
-      <dl>
-        <dt>Organization ID</dt><dd>${escapeHtml(org.id)}</dd>
-        <dt>Plan</dt><dd>${escapeHtml(org.planCode)}</dd>
-        <dt>Status</dt><dd>${escapeHtml(org.subscriptionStatus)}</dd>
-        <dt>Paid Through</dt><dd>${org.paidThroughAt ? escapeHtml(org.paidThroughAt) : '<span class="muted">-</span>'}</dd>
-        <dt>Aliases</dt><dd>${org.aliasCount}</dd>
-        <dt>Members</dt><dd>${org.memberCount}</dd>
-        ${
-          org.currentMonthUsage
-            ? `<dt>This Month</dt><dd>${org.currentMonthUsage.delivered} delivered, ${org.currentMonthUsage.rejected} rejected</dd>`
-            : ""
-        }
-      </dl>
-    </div>`,
-    )
-    .join("");
-
-  return adminLayout(
-    `User ${user.id}`,
-    `<div class="panel">
-      <h1>User ${escapeHtml(user.id)}</h1>
-      <dl>
-        <dt>Username</dt><dd>${user.username ? escapeHtml(user.username) : '<span class="muted">-</span>'}</dd>
-        <dt>Allowed</dt><dd>${user.isAllowed ? "Yes" : "No"}</dd>
-        <dt>Created</dt><dd>${escapeHtml(user.createdAt)}</dd>
-      </dl>
-    </div>
-    <h2>Organizations</h2>
-    ${orgsHtml || '<p class="muted">No organizations.</p>'}`,
-    csrfToken,
-  );
 }
 
 const PLAN_CODES = ["free", "personal", "pro", "team", "business"] as const;
@@ -280,12 +232,12 @@ export interface BillingFormOverrides {
   paidThrough: string;
   paymentReference: string;
   note: string;
-  orgVersion: string;
+  userVersion: string;
 }
 
 function renderBillingForm(
   csrfToken: string,
-  org: OrganizationDetail,
+  user: UserDetail,
   flash?: BillingFlash,
   submittedKeptStripeLink?: boolean,
   submittedValues?: BillingFormOverrides,
@@ -294,19 +246,19 @@ function renderBillingForm(
     ? `<div class="flash flash-${flash.type === "success" ? "success" : flash.type === "idempotent" ? "info" : "error"}">${escapeHtml(flash.message)}</div>`
     : "";
 
-  const activePlan = submittedValues?.plan ?? org.planCode;
+  const activePlan = submittedValues?.plan ?? user.planCode;
   const planOptions = PLAN_CODES.map(
     (p) => `<option value="${p}"${activePlan === p ? " selected" : ""}>${p}</option>`,
   ).join("");
 
-  const activeStatus = submittedValues?.status ?? org.subscriptionStatus;
+  const activeStatus = submittedValues?.status ?? user.subscriptionStatus;
   const statusIsManual = (SUBSCRIPTION_STATUSES as readonly string[]).includes(
-    org.subscriptionStatus,
+    user.subscriptionStatus,
   );
   const currentStatusOption =
     statusIsManual || submittedValues
       ? ""
-      : `<option value="${escapeHtmlAttribute(org.subscriptionStatus)}" selected disabled>(current: ${escapeHtml(org.subscriptionStatus)} — read-only)</option>`;
+      : `<option value="${escapeHtmlAttribute(user.subscriptionStatus)}" selected disabled>(current: ${escapeHtml(user.subscriptionStatus)} — read-only)</option>`;
   const statusOptions =
     currentStatusOption +
     SUBSCRIPTION_STATUSES.map(
@@ -314,28 +266,24 @@ function renderBillingForm(
     ).join("");
 
   const paidThroughValue = escapeHtmlAttribute(
-    submittedValues?.paidThrough ?? (org.paidThroughAt ? org.paidThroughAt.slice(0, 10) : ""),
+    submittedValues?.paidThrough ?? (user.paidThroughAt ? user.paidThroughAt.slice(0, 10) : ""),
   );
 
   const paymentReferenceValue = escapeHtmlAttribute(submittedValues?.paymentReference ?? "");
   const noteValue = escapeHtml(submittedValues?.note ?? "");
 
-  // On error re-render, use the submitted value; on first render, default to checked
-  // only if the org is currently on business plan with an active Stripe link.
-  // Non-business plans must not default to checked: the service rejects keptStripeLink
-  // for non-business plans, so pre-checking it would break the first submit.
   const keepStripeLinkChecked =
-    submittedKeptStripeLink ?? (org.hasStripeLink && activePlan === "business");
-  const stripeLinkStatus = org.hasStripeLink
+    submittedKeptStripeLink ?? (user.hasStripeLink && activePlan === "business");
+  const stripeLinkStatus = user.hasStripeLink
     ? `<span style="color:#1a5c2a;">linked</span>`
     : `<span class="muted">none</span>`;
 
   return `<div class="panel">
     <h2>Grant / Update Plan</h2>
     ${flashHtml}
-    <form method="post" action="/admin/organizations/${escapeHtmlAttribute(org.id)}/billing">
+    <form method="post" action="/admin/users/${escapeHtmlAttribute(user.id)}/billing">
       <input type="hidden" name="_csrf" value="${escapeHtmlAttribute(csrfToken)}" />
-      <input type="hidden" name="_org_version" value="${escapeHtmlAttribute(submittedValues?.orgVersion ?? org.updatedAt)}" />
+      <input type="hidden" name="_user_version" value="${escapeHtmlAttribute(submittedValues?.userVersion ?? user.updatedAt)}" />
       <div style="margin-bottom:12px;">
         <label for="bf-plan" style="display:block;margin-bottom:4px;" class="muted">Plan</label>
         <select id="bf-plan" name="plan">${planOptions}</select>
@@ -367,25 +315,14 @@ function renderBillingForm(
   </div>`;
 }
 
-export function renderOrganizationDetailPage(
+export function renderUserDetailPage(
   csrfToken: string,
-  org: OrganizationDetail,
+  user: UserDetail,
   flash?: BillingFlash,
   submittedKeptStripeLink?: boolean,
   submittedValues?: BillingFormOverrides,
 ): string {
-  const membersHtml = org.members
-    .map(
-      (m) =>
-        `<tr>
-          <td><a href="/admin/users/${escapeHtmlAttribute(m.userId)}">${escapeHtml(m.userId)}</a></td>
-          <td>${m.username ? escapeHtml(m.username) : '<span class="muted">-</span>'}</td>
-          <td>${escapeHtml(m.role)}</td>
-        </tr>`,
-    )
-    .join("");
-
-  const billingHtml = org.latestBillingEvents
+  const billingHtml = user.latestBillingEvents
     .map(
       (e) =>
         `<tr>
@@ -398,31 +335,24 @@ export function renderOrganizationDetailPage(
     .join("");
 
   return adminLayout(
-    `Org ${org.name}`,
+    `User ${user.id}`,
     `<div class="panel">
-      <h1>${escapeHtml(org.name)}</h1>
+      <h1>User ${escapeHtml(user.id)}</h1>
       <dl>
-        <dt>Organization ID</dt><dd>${escapeHtml(org.id)}</dd>
-        <dt>Plan</dt><dd>${escapeHtml(org.planCode)}</dd>
-        <dt>Status</dt><dd>${escapeHtml(org.subscriptionStatus)}</dd>
-        <dt>Paid Through</dt><dd>${org.paidThroughAt ? escapeHtml(org.paidThroughAt) : '<span class="muted">-</span>'}</dd>
-        <dt>Created</dt><dd>${escapeHtml(org.createdAt)}</dd>
-        <dt>Stripe Link</dt><dd>${org.hasStripeLink ? "linked" : '<span class="muted">none</span>'}</dd>
-        <dt>Aliases</dt><dd>${org.aliasCount}</dd>
+        <dt>Username</dt><dd>${user.username ? escapeHtml(user.username) : '<span class="muted">-</span>'}</dd>
+        <dt>Allowed</dt><dd>${user.isAllowed ? "Yes" : "No"}</dd>
+        <dt>Plan</dt><dd>${escapeHtml(user.planCode)}</dd>
+        <dt>Status</dt><dd>${escapeHtml(user.subscriptionStatus)}</dd>
+        <dt>Paid Through</dt><dd>${user.paidThroughAt ? escapeHtml(user.paidThroughAt) : '<span class="muted">-</span>'}</dd>
+        <dt>Created</dt><dd>${escapeHtml(user.createdAt)}</dd>
+        <dt>Stripe Link</dt><dd>${user.hasStripeLink ? "linked" : '<span class="muted">none</span>'}</dd>
+        <dt>Aliases</dt><dd>${user.aliasCount}</dd>
         ${
-          org.currentMonthUsage
-            ? `<dt>This Month</dt><dd>${org.currentMonthUsage.delivered} delivered, ${org.currentMonthUsage.rejected} rejected</dd>`
+          user.currentMonthUsage
+            ? `<dt>This Month</dt><dd>${user.currentMonthUsage.delivered} delivered, ${user.currentMonthUsage.rejected} rejected</dd>`
             : ""
         }
       </dl>
-    </div>
-    <div class="panel">
-      <h2>Members</h2>
-      ${
-        membersHtml
-          ? `<table><thead><tr><th>User ID</th><th>Username</th><th>Role</th></tr></thead><tbody>${membersHtml}</tbody></table>`
-          : '<p class="muted">No members.</p>'
-      }
     </div>
     <div class="panel">
       <h2>Manual Billing Events</h2>
@@ -432,7 +362,7 @@ export function renderOrganizationDetailPage(
           : '<p class="muted">No billing events.</p>'
       }
     </div>
-    ${renderBillingForm(csrfToken, org, flash, submittedKeptStripeLink, submittedValues)}`,
+    ${renderBillingForm(csrfToken, user, flash, submittedKeptStripeLink, submittedValues)}`,
     csrfToken,
   );
 }

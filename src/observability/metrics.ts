@@ -1,8 +1,7 @@
 import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from "prom-client";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema.js";
-import { countOrganizationsByPlan } from "../db/repos/organizations.js";
-import { countUsers } from "../db/repos/users.js";
+import { countUsers, countUsersByPlan } from "../db/repos/users.js";
 import { countChats } from "../db/repos/chats.js";
 import { countAliasesByStatus } from "../db/repos/aliases.js";
 import { countAttachmentStorage } from "../db/repos/attachments.js";
@@ -83,9 +82,9 @@ const quotaRejectionsTotal = new Counter({
   registers: [metricsRegistry],
 });
 
-const activeOrganizationsByPlan = new Gauge({
-  name: "email_to_telegram_active_organizations",
-  help: "Current organizations by plan code.",
+const activeUsersByPlan = new Gauge({
+  name: "email_to_telegram_active_users_by_plan",
+  help: "Current users by plan code (the user IS the tenant).",
   labelNames: ["plan"] as const,
   registers: [metricsRegistry],
 });
@@ -111,9 +110,9 @@ const aliasesGauge = new Gauge({
   registers: [metricsRegistry],
 });
 
-const organizationsTotalGauge = new Gauge({
-  name: "email_to_telegram_organizations_total",
-  help: "Total organizations across all plans.",
+const usersTotalGauge = new Gauge({
+  name: "email_to_telegram_users_total",
+  help: "Total users across all plans.",
   registers: [metricsRegistry],
 });
 
@@ -177,29 +176,29 @@ export function recordQuotaRejection(reason: string): void {
 // a consistent snapshot or fully retain its previous values on failure,
 // matching the route's "serving last known values" promise.
 export async function refreshBusinessGauges(db: Db): Promise<void> {
-  const [orgRows, userCounts, chatCounts, aliasRows, attachmentStats] = await Promise.all([
-    countOrganizationsByPlan(db),
+  const [planRows, userCounts, chatCounts, aliasRows, attachmentStats] = await Promise.all([
+    countUsersByPlan(db),
     countUsers(db),
     countChats(db),
     countAliasesByStatus(db),
     countAttachmentStorage(db),
   ]);
 
-  applyOrganizationsGauges(orgRows);
+  applyUsersByPlanGauges(planRows);
   applyUsersGauge(userCounts);
   applyChatsGauge(chatCounts);
   applyAliasesGauge(aliasRows);
   applyAttachmentsGauge(attachmentStats);
 }
 
-function applyOrganizationsGauges(rows: Array<{ planCode: string; count: number }>): void {
-  activeOrganizationsByPlan.reset();
+function applyUsersByPlanGauges(rows: Array<{ planCode: string; count: number }>): void {
+  activeUsersByPlan.reset();
   let total = 0;
   for (const row of rows) {
-    activeOrganizationsByPlan.set({ plan: row.planCode }, row.count);
+    activeUsersByPlan.set({ plan: row.planCode }, row.count);
     total += row.count;
   }
-  organizationsTotalGauge.set(total);
+  usersTotalGauge.set(total);
 }
 
 function applyUsersGauge(counts: { total: number; allowed: number }): void {

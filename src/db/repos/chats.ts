@@ -3,6 +3,8 @@ import { count, eq, sql } from "drizzle-orm";
 import { chats, type Chat } from "../schema.js";
 import type * as schema from "../schema.js";
 
+type Db = NodePgDatabase<typeof schema>;
+
 export async function countChats(db: Db): Promise<{ total: number; active: number }> {
   const [row] = await db
     .select({
@@ -13,17 +15,14 @@ export async function countChats(db: Db): Promise<{ total: number; active: numbe
   return { total: Number(row?.total ?? 0), active: Number(row?.active ?? 0) };
 }
 
-type Db = NodePgDatabase<typeof schema>;
-
 export async function upsertChat(
   db: Db,
-  data: { id: bigint; title: string; type: string; organizationId?: string | null },
+  data: { id: bigint; title: string; type: string },
 ): Promise<void> {
   await db
     .insert(chats)
     .values({
       id: data.id,
-      organizationId: data.organizationId ?? null,
       title: data.title,
       type: data.type,
       isActive: true,
@@ -31,7 +30,6 @@ export async function upsertChat(
     .onConflictDoUpdate({
       target: chats.id,
       set: {
-        organizationId: sql`coalesce(${chats.organizationId}, ${data.organizationId ?? null})`,
         title: data.title,
         isActive: true,
         updatedAt: new Date(),

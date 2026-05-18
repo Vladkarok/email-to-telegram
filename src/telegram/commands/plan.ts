@@ -3,7 +3,7 @@ import { loadConfig } from "../../config.js";
 import { getDb } from "../../db/client.js";
 import { getEffectivePlan } from "../../billing/limits.js";
 import { buildPlanSummaryText } from "../../billing/usageSummary.js";
-import { getPrimaryOrganizationForUser } from "../../tenant/currentOrganization.js";
+import { findUserById } from "../../db/repos/users.js";
 import { getMessages, resolveLocale } from "../../i18n/index.js";
 
 export async function planHandler(ctx: Context): Promise<void> {
@@ -17,13 +17,13 @@ export async function planHandler(ctx: Context): Promise<void> {
     return;
   }
 
-  const organization = await getPrimaryOrganizationForUser(db, BigInt(ctx.from.id));
-  if (!organization) {
+  const user = await findUserById(db, BigInt(ctx.from.id));
+  if (!user) {
     await ctx.reply(messages.common.noHostedWorkspace);
     return;
   }
 
-  const plan = getEffectivePlan(organization);
-  const text = buildPlanSummaryText({ plan, organization }, locale);
+  const plan = getEffectivePlan(user);
+  const text = buildPlanSummaryText({ plan, user }, locale);
   await ctx.reply(text, { parse_mode: "HTML" });
 }

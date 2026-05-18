@@ -7,7 +7,7 @@ import { upsertUser } from "../../db/repos/users.js";
 import {
   HOSTED_ONBOARDING_RATE_LIMIT_MESSAGE,
   HostedOnboardingRateLimitError,
-  ensurePersonalOrganizationForUserWithOnboardingLimit,
+  ensureUserWithOnboardingLimit,
 } from "../../abuse/hostedOnboarding.js";
 import { sendChatSelectionMenu } from "../menu/chatMenu.js";
 import { getMessages, localeFromTelegram } from "../../i18n/index.js";
@@ -18,7 +18,6 @@ export async function startHandler(ctx: Context): Promise<void> {
   const messages = getMessages(locale);
 
   if (ctx.chat?.type !== "private") {
-    // In a group — redirect to DM
     const botUsername = ctx.me.username;
     const keyboard = new InlineKeyboard().url(
       messages.start.openDmButton,
@@ -32,16 +31,14 @@ export async function startHandler(ctx: Context): Promise<void> {
 
   // Register DM chat so it appears in selection menus
   const db = getDb();
-  let organizationId: string | null = null;
   if (loadConfig().appMode === "hosted") {
     const user = await upsertUser(db, {
       id: BigInt(ctx.from.id),
       username: ctx.from.username ?? null,
       locale,
     });
-    let organization;
     try {
-      organization = await ensurePersonalOrganizationForUserWithOnboardingLimit(db, user);
+      await ensureUserWithOnboardingLimit(db, user);
     } catch (err: unknown) {
       if (err instanceof HostedOnboardingRateLimitError) {
         await ctx.reply(HOSTED_ONBOARDING_RATE_LIMIT_MESSAGE);
@@ -49,13 +46,11 @@ export async function startHandler(ctx: Context): Promise<void> {
       }
       throw err;
     }
-    organizationId = organization.id;
   }
 
   const name = [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(" ");
   await upsertChat(db, {
     id: BigInt(ctx.chat.id),
-    organizationId,
     title: messages.start.dmTitle(name),
     type: "private",
   });

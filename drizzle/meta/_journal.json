@@ -141,6 +141,13 @@
       "when": 1778582400000,
       "tag": "0019_users_locale",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1779084000000,
+      "tag": "0020_drop_orgs",
+      "breakpoints": true
     }
   ]
 }

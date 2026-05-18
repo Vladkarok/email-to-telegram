@@ -25,7 +25,7 @@ vi.mock("../../../../src/abuse/hostedOnboarding.js", () => ({
   HOSTED_ONBOARDING_RATE_LIMIT_MESSAGE:
     "⚠️ Too many workspace setup attempts. Please try again later.",
   HostedOnboardingRateLimitError: MockHostedOnboardingRateLimitError,
-  ensurePersonalOrganizationForUserWithOnboardingLimit: (...args: unknown[]): unknown =>
+  ensureUserWithOnboardingLimit: (...args: unknown[]): unknown =>
     mockEnsurePersonalOrganizationForUserWithOnboardingLimit(...args),
 }));
 
@@ -97,7 +97,7 @@ describe("authMiddleware", () => {
     expect(ctx.reply).not.toHaveBeenCalled();
   });
 
-  it("in hosted mode: registers private DM under the user's organization", async () => {
+  it("in hosted mode: registers private DM after upserting the user", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
     mockUpsertUser.mockResolvedValue(BLOCKED_USER);
     const ctx = createMockCtx({ chatType: "private", fromId: 999 });
@@ -108,7 +108,6 @@ describe("authMiddleware", () => {
       expect.anything(),
       expect.objectContaining({
         id: 999n,
-        organizationId: "org-1",
         type: "private",
       }),
     );

@@ -147,7 +147,7 @@ describe("upsertUser", () => {
 
     const result = await upsertUser(db, { id: 123n, username: "alice", locale: "uk" });
 
-    expect(result).toEqual({ ...legacyReturned, locale: null });
+    expect(result).toEqual(legacyReturned);
     expect(firstValues).toHaveBeenCalledWith({
       id: 123n,
       username: "alice",

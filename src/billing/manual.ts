@@ -1,18 +1,10 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { sql } from "drizzle-orm";
 import {
-  createOrganization,
-  findOrganizationById,
-  findOrganizationByIdForUpdate,
-  updateOrganizationBillingState,
-} from "../db/repos/organizations.js";
-import { findOrCreateUserById } from "../db/repos/users.js";
-import {
-  addOrganizationMember,
-  listOrganizationMembershipsForUser,
-  userHasOrganizationRole,
-  type OrganizationRole,
-} from "../db/repos/organizationMembers.js";
+  findOrCreateUserById,
+  findUserByIdForUpdate,
+  updateUserBillingState,
+} from "../db/repos/users.js";
 import {
   findManualBillingEventByUserAndPaymentReference,
   findOrCreateManualBillingEvent,
@@ -29,9 +21,6 @@ export type ManualSubscriptionStatus = "free" | "active" | "canceled";
 
 const MANUAL_PLAN_CODES: readonly PlanCode[] = ["free", "personal", "pro", "team", "business"];
 const MANUAL_STATUSES: readonly ManualSubscriptionStatus[] = ["free", "active", "canceled"];
-const MANUAL_ROLES: readonly OrganizationRole[] = ["owner", "admin", "member"];
-const PRIVILEGED_ROLES: readonly OrganizationRole[] = ["owner", "admin"];
-const PRIVILEGED_ROLE_SET: ReadonlySet<string> = new Set(PRIVILEGED_ROLES);
 
 export interface ManualPlanGrantInput {
   planCode: PlanCode;
@@ -43,35 +32,18 @@ export interface ManualPlanGrantInput {
   operatorSource: OperatorSource;
 }
 
-export interface GrantManualOrganizationPlanInput extends ManualPlanGrantInput {
-  organizationId: string;
-  telegramUserId?: bigint | null;
+export interface GrantManualUserPlanInput extends ManualPlanGrantInput {
+  telegramUserId: bigint;
   expectedUpdatedAt?: string | null;
 }
 
-export interface GrantManualUserPlanInput extends ManualPlanGrantInput {
-  telegramUserId: bigint;
-  organizationId: string | null;
-  createNewOrganization: boolean;
-}
-
-export interface AddManualOrganizationMemberInput {
-  organizationId: string;
-  telegramUserId: bigint;
-  role: OrganizationRole;
-}
-
 export type ManualGrantErrorCode =
-  | "organization_not_found"
+  | "user_not_found"
   | "invalid_plan"
   | "invalid_status"
-  | "invalid_role"
   | "free_status_required"
   | "paid_through_required"
   | "keep_stripe_link_not_allowed"
-  | "ambiguous_organization"
-  | "member_only_memberships"
-  | "user_not_in_organization"
   | "free_status_not_allowed_for_paid_plan"
   | "concurrent_update"
   | "payment_reference_required"
@@ -82,8 +54,7 @@ export type ManualGrantErrorCode =
   | "canceled_not_allowed_for_business";
 
 export interface ManualGrantSummary {
-  organizationId: string;
-  telegramUserId: string | null;
+  telegramUserId: string;
   planCode: PlanCode;
   subscriptionStatus: ManualSubscriptionStatus;
   paidThroughAt: string | null;
@@ -94,32 +65,11 @@ export interface ManualGrantSummary {
   operatorSource: string;
 }
 
-export type GrantManualOrganizationPlanResult =
+export type GrantManualUserPlanResult =
   | ({ ok: true; idempotent: false; updated: true } & ManualGrantSummary)
   | ({ ok: true; idempotent: true; updated: false; reconciled: boolean } & ManualGrantSummary)
   | { ok: false; code: ManualGrantErrorCode };
 
-export type GrantManualUserPlanResult =
-  | ({
-      ok: true;
-      idempotent: false;
-      updated: true;
-      createdOrganization: boolean;
-    } & ManualGrantSummary)
-  | ({
-      ok: true;
-      idempotent: true;
-      updated: false;
-      reconciled: boolean;
-      createdOrganization: boolean;
-    } & ManualGrantSummary)
-  | { ok: false; code: ManualGrantErrorCode; organizationIds?: string[] };
-
-export type AddManualOrganizationMemberResult =
-  | { ok: true; organizationId: string; telegramUserId: string; role: OrganizationRole }
-  | { ok: false; code: ManualGrantErrorCode };
-
-// Trim paymentReference and note so all callers share the same idempotency key semantics.
 function normalizePlanInput<T extends ManualPlanGrantInput>(input: T): T {
   return {
     ...input,
@@ -144,8 +94,6 @@ function validatePlanInput(
     return { ok: false, code: "free_status_not_allowed_for_paid_plan" };
   }
   if (input.keptStripeLink && input.planCode !== "business") {
-    // --keep-stripe-link is allowed only with --plan business; webhook
-    // overwrite protection only exists for business plans.
     return { ok: false, code: "keep_stripe_link_not_allowed" };
   }
   const isPaidPlan =
@@ -154,15 +102,9 @@ function validatePlanInput(
     return { ok: false, code: "paid_through_required" };
   }
   if (input.subscriptionStatus === "canceled" && input.paidThroughAt != null) {
-    // Runtime enforcement treats canceled as free immediately regardless of paidThroughAt.
-    // Storing a future paidThroughAt with canceled status would create a split-brain billing
-    // state: the event records one date while plan enforcement ignores it.
     return { ok: false, code: "paid_through_not_allowed" };
   }
   if (input.planCode === "business" && input.subscriptionStatus === "canceled") {
-    // The entitlement path does not check subscriptionStatus for business plans, so
-    // storing business+canceled would leave business limits active despite the status.
-    // Operators must downgrade to a lower plan code instead of canceling in-place.
     return { ok: false, code: "canceled_not_allowed_for_business" };
   }
   if (!input.paymentReference) {
@@ -183,7 +125,6 @@ function buildBillingPatch(input: ManualPlanGrantInput): Record<string, unknown>
     subscriptionStatus: input.subscriptionStatus,
     paidThroughAt: input.paidThroughAt,
   };
-  // Always clear Stripe IDs and Stripe-derived period fields unless explicitly kept.
   if (!input.keptStripeLink) {
     patch.stripeCustomerId = null;
     patch.stripeSubscriptionId = null;
@@ -196,11 +137,9 @@ function buildBillingPatch(input: ManualPlanGrantInput): Record<string, unknown>
 
 function buildEventInput(
   input: ManualPlanGrantInput,
-  organizationId: string,
-  telegramUserId: bigint | null,
+  telegramUserId: bigint,
 ): ManualBillingEventInput & { paymentReference: string } {
   return {
-    organizationId,
     telegramUserId,
     planCode: input.planCode,
     subscriptionStatus: input.subscriptionStatus,
@@ -214,13 +153,11 @@ function buildEventInput(
 
 function summarize(
   input: ManualPlanGrantInput,
-  organizationId: string,
-  telegramUserId: bigint | null,
+  telegramUserId: bigint,
   manualBillingEventId: string,
 ): ManualGrantSummary {
   return {
-    organizationId,
-    telegramUserId: telegramUserId == null ? null : telegramUserId.toString(),
+    telegramUserId: telegramUserId.toString(),
     planCode: input.planCode,
     subscriptionStatus: input.subscriptionStatus,
     paidThroughAt: input.paidThroughAt ? input.paidThroughAt.toISOString() : null,
@@ -234,8 +171,7 @@ function summarize(
 
 function summarizeEvent(event: {
   id: string;
-  organizationId: string;
-  telegramUserId: bigint | null;
+  telegramUserId: bigint;
   planCode: string;
   subscriptionStatus: string;
   paidThroughAt: Date | null;
@@ -245,8 +181,7 @@ function summarizeEvent(event: {
   operatorSource?: string | null;
 }): ManualGrantSummary {
   return {
-    organizationId: event.organizationId,
-    telegramUserId: event.telegramUserId == null ? null : event.telegramUserId.toString(),
+    telegramUserId: event.telegramUserId.toString(),
     planCode: event.planCode as PlanCode,
     subscriptionStatus: event.subscriptionStatus as ManualSubscriptionStatus,
     paidThroughAt: event.paidThroughAt ? event.paidThroughAt.toISOString() : null,
@@ -277,16 +212,8 @@ function payloadMatchesEvent(
   );
 }
 
-// Returns true when the org's billing fields already match the stored event so
-// a re-apply write can be skipped, avoiding a spurious updatedAt bump.
-//
-// Note on keptStripeLink=true: when an event preserves Stripe IDs, the manual_billing_events
-// row does not store which IDs were present at grant time. buildBillingPatch also omits
-// Stripe fields when keptStripeLink=true, so re-apply cannot restore them even if they have
-// since been cleared. Stripe ID drift on kept-link Business orgs is therefore not detectable
-// or healable here; it requires a schema change to track the original IDs in the event row.
-function orgMatchesStoredEvent(
-  org: {
+function userMatchesStoredEvent(
+  user: {
     planCode: string;
     subscriptionStatus: string;
     paidThroughAt: Date | null;
@@ -303,117 +230,23 @@ function orgMatchesStoredEvent(
     keptStripeLink: boolean;
   },
 ): boolean {
-  if (org.planCode !== event.planCode) return false;
-  if (org.subscriptionStatus !== event.subscriptionStatus) return false;
-  if ((org.paidThroughAt?.getTime() ?? null) !== (event.paidThroughAt?.getTime() ?? null))
+  if (user.planCode !== event.planCode) return false;
+  if (user.subscriptionStatus !== event.subscriptionStatus) return false;
+  if ((user.paidThroughAt?.getTime() ?? null) !== (event.paidThroughAt?.getTime() ?? null))
     return false;
   if (!event.keptStripeLink) {
-    if (org.stripeCustomerId !== null || org.stripeSubscriptionId !== null) return false;
+    if (user.stripeCustomerId !== null || user.stripeSubscriptionId !== null) return false;
     if (
-      org.trialEndsAt !== null ||
-      org.currentPeriodStart !== null ||
-      org.currentPeriodEnd !== null
+      user.trialEndsAt !== null ||
+      user.currentPeriodStart !== null ||
+      user.currentPeriodEnd !== null
     )
       return false;
   }
   return true;
 }
 
-// Thrown inside a transaction to force rollback; caught outside to return ok:false.
 class ConcurrentUpdateSignal extends Error {}
-// Thrown when a newly created org must be rolled back because a concurrent
-// request won the billing-event insert race on (telegram_user_id, payment_reference).
-class OrgCreationRaceSignal extends Error {}
-// Thrown when createNewOrganization=true but the paymentReference is already owned
-// by a different user/admin grant (global unique-index conflict). Throwing forces
-// the transaction to roll back the freshly created org+member rows.
-class PayRefConflictSignal extends Error {}
-
-export async function grantManualOrganizationPlan(
-  db: Db,
-  rawInput: GrantManualOrganizationPlanInput,
-): Promise<GrantManualOrganizationPlanResult> {
-  const input = normalizePlanInput(rawInput);
-  const validation = validatePlanInput(input);
-  if (!validation.ok) return validation;
-
-  try {
-    return await db.transaction(async (tx) => {
-      // FOR UPDATE locks the row so no concurrent transaction can write to this
-      // org between the version check and the billing write.
-      const organization = await findOrganizationByIdForUpdate(tx, input.organizationId);
-      if (!organization) return { ok: false, code: "organization_not_found" };
-
-      const telegramUserId = input.telegramUserId ?? null;
-
-      // Atomic insert-or-find: race-safe via unique partial index.
-      // Idempotency result comes BEFORE the version check so a retry of an
-      // already-applied write succeeds even when the caller's page is stale.
-      const { event, created } = await findOrCreateManualBillingEvent(
-        tx,
-        buildEventInput(input, input.organizationId, telegramUserId),
-      );
-      if (!created) {
-        // The secondary user+payref fallback in findOrCreateManualBillingEvent may
-        // return an event from a different org. Guard against cross-org replays.
-        if (event.organizationId !== input.organizationId) {
-          return { ok: false, code: "payment_reference_conflict" };
-        }
-        // telegramUserId must match exactly: null vs. non-null indicates a
-        // different targeting mode (org-scoped vs. user-scoped) and must conflict.
-        if (event.telegramUserId !== telegramUserId) {
-          return { ok: false, code: "payment_reference_conflict" };
-        }
-        // A second submission with the same payment reference but different billing
-        // fields is a correction attempt — reject rather than silently drop it.
-        if (!payloadMatchesEvent(event, input)) {
-          return { ok: false, code: "payment_reference_conflict" };
-        }
-        // Re-apply under the existing FOR UPDATE lock only when the org has drifted
-        // from the stored event (e.g. a Stripe webhook changed the plan since).
-        // Skipping unnecessary writes prevents spurious updatedAt bumps that would
-        // invalidate open admin forms and cause false concurrent_update failures.
-        let reconciled = false;
-        if (!orgMatchesStoredEvent(organization, event)) {
-          // Honor the version guard on reconciling replays: if the caller holds a
-          // stale token and we would mutate, refuse rather than overwrite newer state.
-          if (
-            input.expectedUpdatedAt != null &&
-            organization.updatedAt.toISOString() !== input.expectedUpdatedAt
-          ) {
-            return { ok: false, code: "concurrent_update" };
-          }
-          await updateOrganizationBillingState(tx, input.organizationId, buildBillingPatch(input));
-          reconciled = true;
-        }
-        return {
-          ok: true,
-          idempotent: true,
-          updated: false,
-          reconciled,
-          ...summarizeEvent(event),
-        };
-      }
-      // New event just inserted — version check now. Throw to roll back the
-      // insert if the page is stale (no orphaned event left behind).
-      if (
-        input.expectedUpdatedAt != null &&
-        organization.updatedAt.toISOString() !== input.expectedUpdatedAt
-      ) {
-        throw new ConcurrentUpdateSignal();
-      }
-      await updateOrganizationBillingState(tx, input.organizationId, buildBillingPatch(input));
-      const summary = summarize(input, input.organizationId, telegramUserId, event.id);
-      recordManualPlanGrant(input.planCode);
-      return { ok: true, idempotent: false, updated: true, ...summary };
-    });
-  } catch (err) {
-    if (err instanceof ConcurrentUpdateSignal) {
-      return { ok: false, code: "concurrent_update" };
-    }
-    throw err;
-  }
-}
 
 export async function grantManualUserPlan(
   db: Db,
@@ -423,53 +256,28 @@ export async function grantManualUserPlan(
   const validation = validatePlanInput(input);
   if (!validation.ok) return validation;
 
-  // Reject contradictory targeting: createNewOrganization and an explicit
-  // organizationId are mutually exclusive. Accepting both silently would bill
-  // a newly-created org while leaving the intended existing org unchanged.
-  if (input.createNewOrganization && input.organizationId != null) {
-    return { ok: false, code: "ambiguous_organization" };
-  }
-
   try {
     return await db.transaction(async (tx) => {
       await findOrCreateUserById(tx, input.telegramUserId);
-      // Serialize all grantManualUserPlan calls and normal personal-org auto-creation
-      // for the same Telegram user. Uses the same hashtext key as ensurePersonalOrganizationForUser
-      // so that concurrent normal onboarding and manual billing flows cannot both
-      // observe memberships.length === 0 and each create a separate organization.
-      await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtext(${input.telegramUserId.toString()}))`,
-      );
+      // Serialize concurrent grants for the same user via bigint advisory lock.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${input.telegramUserId})`);
 
-      // Pre-check idempotency before org resolution so that a retry with the
-      // same paymentReference never creates a second organization or billing event.
-      // If the caller explicitly provides an organizationId that differs from the
-      // existing event's org, it is a conflict — refuse rather than silently grant twice.
+      const user = await findUserByIdForUpdate(tx, input.telegramUserId);
+      if (!user) return { ok: false, code: "user_not_found" };
+
+      // Idempotency check before any write so a retry never duplicates.
       const existingEvent = await findManualBillingEventByUserAndPaymentReference(
         tx,
         input.telegramUserId,
         input.paymentReference,
       );
       if (existingEvent) {
-        if (input.organizationId && existingEvent.organizationId !== input.organizationId) {
-          return { ok: false, code: "payment_reference_conflict" };
-        }
         if (!payloadMatchesEvent(existingEvent, input)) {
           return { ok: false, code: "payment_reference_conflict" };
         }
-        // Lock and conditionally re-apply: only write when the org has drifted.
-        // Org eligibility (ownership/role) is intentionally NOT re-checked here:
-        // the stored event is the authoritative record of an already-authorized grant.
-        // Reconciliation merely restores what was explicitly set by a prior operator.
-        const replayOrg = await findOrganizationByIdForUpdate(tx, existingEvent.organizationId);
-        if (!replayOrg) return { ok: false, code: "organization_not_found" };
         let reconciled = false;
-        if (!orgMatchesStoredEvent(replayOrg, existingEvent)) {
-          await updateOrganizationBillingState(
-            tx,
-            existingEvent.organizationId,
-            buildBillingPatch(input),
-          );
+        if (!userMatchesStoredEvent(user, existingEvent)) {
+          await updateUserBillingState(tx, input.telegramUserId, buildBillingPatch(input));
           reconciled = true;
         }
         return {
@@ -477,108 +285,27 @@ export async function grantManualUserPlan(
           idempotent: true,
           updated: false,
           reconciled,
-          createdOrganization: false,
           ...summarizeEvent(existingEvent),
         };
       }
 
-      let resolvedOrganizationId: string | null;
-      let createdOrganization = false;
-
-      if (input.createNewOrganization) {
-        const newOrg = await createOrganization(tx, {
-          name: `Telegram ${input.telegramUserId.toString()}`,
-        });
-        await addOrganizationMember(tx, {
-          organizationId: newOrg.id,
-          userId: input.telegramUserId,
-          role: "owner",
-        });
-        resolvedOrganizationId = newOrg.id;
-        createdOrganization = true;
-      } else if (input.organizationId) {
-        const isPrivileged = await userHasOrganizationRole(
-          tx,
-          input.organizationId,
-          input.telegramUserId,
-          PRIVILEGED_ROLES,
-        );
-        if (!isPrivileged) return { ok: false, code: "user_not_in_organization" };
-        resolvedOrganizationId = input.organizationId;
-      } else {
-        const memberships = await listOrganizationMembershipsForUser(tx, input.telegramUserId);
-        if (memberships.length === 0) {
-          const newOrg = await createOrganization(tx, {
-            name: `Telegram ${input.telegramUserId.toString()}`,
-          });
-          await addOrganizationMember(tx, {
-            organizationId: newOrg.id,
-            userId: input.telegramUserId,
-            role: "owner",
-          });
-          resolvedOrganizationId = newOrg.id;
-          createdOrganization = true;
-        } else {
-          const privileged = memberships.filter((m) => PRIVILEGED_ROLE_SET.has(m.role));
-          if (privileged.length === 0) {
-            return { ok: false, code: "member_only_memberships" };
-          }
-          if (privileged.length > 1) {
-            return {
-              ok: false,
-              code: "ambiguous_organization",
-              organizationIds: privileged.map((m) => m.organizationId),
-            };
-          }
-          resolvedOrganizationId = privileged[0].organizationId;
-        }
-      }
-
-      const organization = await findOrganizationByIdForUpdate(tx, resolvedOrganizationId);
-      if (!organization) return { ok: false, code: "organization_not_found" };
-
+      // Atomic insert-or-find: race-safe via unique partial index.
       const { event, created } = await findOrCreateManualBillingEvent(
         tx,
-        buildEventInput(input, resolvedOrganizationId, input.telegramUserId),
+        buildEventInput(input, input.telegramUserId),
       );
       if (!created) {
-        if (createdOrganization) {
-          // Only a same-user idempotent race should roll back the new org.
-          // If the conflict came from the global payment_reference index (different
-          // user/org, e.g. an admin grant with telegramUserId=null), return a
-          // structured conflict instead of throwing — the catch block would find no
-          // user-scoped canonical event and throw an unhandled error.
-          if (event.telegramUserId !== input.telegramUserId) {
-            // Cross-user/admin conflict: throw to roll back the freshly created
-            // org+member rows. Returning normally would commit them orphaned.
-            throw new PayRefConflictSignal();
-          }
-          // A concurrent request from the same user won the event race; throw to
-          // roll back this transaction so the freshly created org is not orphaned.
-          throw new OrgCreationRaceSignal();
-        }
-        // The secondary fallback in findOrCreateManualBillingEvent may return an event
-        // from a different org (concurrent request on a different org won the user-scoped
-        // unique index race). Refuse instead of mutating the org this transaction resolved
-        // while returning the other org's event summary.
-        if (event.organizationId !== resolvedOrganizationId) {
-          return { ok: false, code: "payment_reference_conflict" };
-        }
-        // Exact telegramUserId equality: null vs. non-null is a targeting conflict.
+        // Conflict path: returned event belongs to a different user (global
+        // payment_reference uniqueness).
         if (event.telegramUserId !== input.telegramUserId) {
           return { ok: false, code: "payment_reference_conflict" };
         }
         if (!payloadMatchesEvent(event, input)) {
           return { ok: false, code: "payment_reference_conflict" };
         }
-        // Conditionally re-apply under the existing FOR UPDATE lock.
         let reconciled = false;
-        if (!orgMatchesStoredEvent(organization, event)) {
-          await updateOrganizationBillingState(
-            tx,
-            resolvedOrganizationId,
-            buildBillingPatch(input),
-          );
+        if (!userMatchesStoredEvent(user, event)) {
+          await updateUserBillingState(tx, input.telegramUserId, buildBillingPatch(input));
           reconciled = true;
         }
         return {
@@ -586,94 +313,27 @@ export async function grantManualUserPlan(
           idempotent: true,
           updated: false,
           reconciled,
-          createdOrganization,
           ...summarizeEvent(event),
         };
       }
-      await updateOrganizationBillingState(tx, resolvedOrganizationId, buildBillingPatch(input));
-      const summary = summarize(input, resolvedOrganizationId, input.telegramUserId, event.id);
+
+      // New event just inserted — version check now. Throw to roll back the
+      // insert if the page is stale (no orphaned event left behind).
+      if (
+        input.expectedUpdatedAt != null &&
+        user.updatedAt.toISOString() !== input.expectedUpdatedAt
+      ) {
+        throw new ConcurrentUpdateSignal();
+      }
+      await updateUserBillingState(tx, input.telegramUserId, buildBillingPatch(input));
+      const summary = summarize(input, input.telegramUserId, event.id);
       recordManualPlanGrant(input.planCode);
-      return { ok: true, idempotent: false, updated: true, createdOrganization, ...summary };
+      return { ok: true, idempotent: false, updated: true, ...summary };
     });
   } catch (err) {
-    if (err instanceof PayRefConflictSignal) {
-      return { ok: false, code: "payment_reference_conflict" };
-    }
-    if (err instanceof OrgCreationRaceSignal) {
-      // Transaction rolled back — read the winning event from the committed tx.
-      const canonical = await findManualBillingEventByUserAndPaymentReference(
-        db,
-        input.telegramUserId,
-        input.paymentReference,
-      );
-      if (canonical) {
-        // Apply the same conflict guards used in the normal !created path.
-        if (input.organizationId && canonical.organizationId !== input.organizationId) {
-          return { ok: false, code: "payment_reference_conflict" };
-        }
-        // Exact equality: null vs. non-null telegramUserId is a targeting conflict.
-        if (canonical.telegramUserId !== input.telegramUserId) {
-          return { ok: false, code: "payment_reference_conflict" };
-        }
-        if (!payloadMatchesEvent(canonical, input)) {
-          return { ok: false, code: "payment_reference_conflict" };
-        }
-        // Re-apply in a fresh transaction: the winning tx committed the billing
-        // state, but another writer may have changed the org since then.
-        return await db.transaction(async (tx) => {
-          const canonOrg = await findOrganizationByIdForUpdate(tx, canonical.organizationId);
-          if (!canonOrg) return { ok: false, code: "organization_not_found" };
-          let reconciled = false;
-          if (!orgMatchesStoredEvent(canonOrg, canonical)) {
-            await updateOrganizationBillingState(
-              tx,
-              canonical.organizationId,
-              buildBillingPatch(input),
-            );
-            reconciled = true;
-          }
-          return {
-            ok: true,
-            idempotent: true,
-            updated: false,
-            reconciled,
-            createdOrganization: false,
-            ...summarizeEvent(canonical),
-          };
-        });
-      }
-      throw new Error("grantManualUserPlan: event race signal but no canonical event found", {
-        cause: err,
-      });
+    if (err instanceof ConcurrentUpdateSignal) {
+      return { ok: false, code: "concurrent_update" };
     }
     throw err;
   }
-}
-
-export async function addManualOrganizationMember(
-  db: Db,
-  input: AddManualOrganizationMemberInput,
-): Promise<AddManualOrganizationMemberResult> {
-  if (!MANUAL_ROLES.includes(input.role)) {
-    return { ok: false, code: "invalid_role" };
-  }
-
-  return db.transaction(async (tx) => {
-    const organization = await findOrganizationById(tx, input.organizationId);
-    if (!organization) return { ok: false, code: "organization_not_found" };
-
-    await findOrCreateUserById(tx, input.telegramUserId);
-    await addOrganizationMember(tx, {
-      organizationId: input.organizationId,
-      userId: input.telegramUserId,
-      role: input.role,
-    });
-
-    return {
-      ok: true,
-      organizationId: input.organizationId,
-      telegramUserId: input.telegramUserId.toString(),
-      role: input.role,
-    };
-  });
 }
