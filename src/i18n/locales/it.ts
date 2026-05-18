@@ -409,6 +409,8 @@ L'azione <b>non è reversibile</b>. Conferma per procedere.`,
     success: "✅ I tuoi dati sono stati eliminati. Grazie per aver usato il bot — arrivederci 👋",
     cancelled: "Eliminazione annullata. I dati non sono stati modificati.",
     failed: "❌ Eliminazione non riuscita. Contatta l'operatore.",
+    partial:
+      "⚠️ L'account e i record nel database sono stati rimossi, ma alcuni file email memorizzati non sono stati eliminati. Contatta l'operatore per completare l'eliminazione.",
   },
   botCommands: [
     { command: "start", description: "Inizia" },

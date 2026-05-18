@@ -126,6 +126,23 @@ describe("/delete_me command", () => {
     expect(text).toContain("deleted");
   });
 
+  it("confirm callback surfaces a partial-failure message when files could not be removed", async () => {
+    mockFindUserById.mockResolvedValue(baseUser());
+    mockDeleteHostedUser.mockResolvedValue({
+      deleted: true,
+      rawEmailFiles: 2,
+      attachmentFiles: 1,
+      failedFileDeletes: ["/raw/a.eml"],
+    });
+    const ctx = createMockCtx({ chatType: "private" });
+
+    await deleteMeConfirmCallback(ctx);
+
+    const [text] = ctx.editMessageText.mock.calls[0] as [string];
+    expect(text).not.toContain("Thanks for using");
+    expect(text).toContain("could not be deleted");
+  });
+
   it("confirm callback re-checks subscription and aborts if it became active", async () => {
     mockFindUserById.mockResolvedValue(
       baseUser({ stripeSubscriptionId: "sub_1", subscriptionStatus: "active" }),

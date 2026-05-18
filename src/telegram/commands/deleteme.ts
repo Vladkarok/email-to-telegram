@@ -74,6 +74,7 @@ export async function deleteMeConfirmCallback(ctx: Context): Promise<void> {
 
   try {
     const result = await deleteHostedUser(db, userId);
+    const partialFileFailure = result.failedFileDeletes.length > 0;
     logger.info(
       {
         userId: userId.toString(),
@@ -81,12 +82,20 @@ export async function deleteMeConfirmCallback(ctx: Context): Promise<void> {
         rawEmailFiles: result.rawEmailFiles,
         attachmentFiles: result.attachmentFiles,
         failedFileDeletes: result.failedFileDeletes.length,
+        partialFileFailure,
         source: "user_self_delete",
       },
-      "user.self_deleted",
+      partialFileFailure ? "user.self_delete_partial" : "user.self_deleted",
     );
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(messages.deleteMe.success);
+    // Fail closed: only claim full erasure when DB rows were removed AND every
+    // referenced file was unlinked. Partial state must be surfaced so the user
+    // knows residual data remains and contacts the operator.
+    if (partialFileFailure) {
+      await ctx.editMessageText(messages.deleteMe.partial);
+    } else {
+      await ctx.editMessageText(messages.deleteMe.success);
+    }
   } catch (err: unknown) {
     logger.error({ err, userId: userId.toString() }, "user.self_delete_failed");
     await ctx.answerCallbackQuery();
