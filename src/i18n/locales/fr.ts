@@ -386,7 +386,7 @@ Ce bot ne stocke que les données nécessaires pour livrer vos e-mails sur Teleg
 Les corps d'e-mails et pièces jointes sont conservés selon la durée de votre plan, puis purgés.
 
 <b>Vos droits</b>
-• <b>Accès / export :</b> contactez l'opérateur ci-dessous
+• <b>Accès / export :</b> exécutez /export_me pour télécharger une copie JSON de vos données
 • <b>Effacement :</b> exécutez /delete_me
 • <b>Retrait du consentement :</b> cessez d'utiliser le bot et exécutez /delete_me
 
@@ -414,6 +414,12 @@ Cette action est <b>irréversible</b>. Confirmez pour continuer.`,
     partial:
       "⚠️ Votre compte et vos enregistrements en base ont été supprimés, mais certains fichiers d'e-mail stockés n'ont pas pu être supprimés. Veuillez contacter l'opérateur pour terminer l'effacement.",
   },
+  exportMe: {
+    caption:
+      "Export de vos données (JSON). Les corps d'e-mails et pièces jointes ne sont pas inclus.",
+    noData: "ℹ️ Rien à exporter — aucun enregistrement n'existe pour votre compte.",
+    failed: "❌ Échec de l'export. Veuillez réessayer ou contacter l'opérateur.",
+  },
   botCommands: [
     { command: "start", description: "Démarrer" },
     { command: "newemail", description: "Créer un nouvel alias e-mail" },
@@ -432,6 +438,7 @@ Cette action est <b>irréversible</b>. Confirmez pour continuer.`,
     { command: "portal", description: "Ouvrir le portail Stripe" },
     { command: "donate", description: "Soutenir le projet" },
     { command: "privacy", description: "Politique de confidentialité" },
+    { command: "export_me", description: "Télécharger une copie JSON de vos données" },
     { command: "delete_me", description: "Supprimer toutes vos données" },
     { command: "help", description: "Afficher l'aide" },
   ],
