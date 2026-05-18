@@ -29,7 +29,7 @@ import { writeAttachment, deleteFile } from "../../storage/disk.js";
 import { generateDownloadToken } from "../../utils/tokens.js";
 import { getLogger } from "../../utils/logger.js";
 import { createPrivacyViewUrl } from "../privacy.js";
-import { decrementOrganizationStorageUsage } from "../../db/repos/storageUsage.js";
+import { decrementUserStorageUsage } from "../../db/repos/storageUsage.js";
 import type { DeliveryLog } from "../../db/schema.js";
 import type { parseEmail } from "../parser.js";
 import type { Db, QueuedInboundEmail, PipelineResult } from "./types.js";
@@ -130,11 +130,10 @@ export async function deliverQueuedEmail(
         if (
           !attachmentStored &&
           deletedCompensatingFile &&
-          alias.organizationId &&
           att.sizeBytes != null &&
           att.sizeBytes > 0
         ) {
-          await decrementOrganizationStorageUsage(db, alias.organizationId, {
+          await decrementUserStorageUsage(db, alias.createdBy, {
             attachmentBytes: BigInt(att.sizeBytes),
           }).catch((storageErr: unknown) => {
             log.error(

@@ -10,21 +10,15 @@ const mockCountAliasesByStatus = vi.fn();
 const mockCountAttachmentStorage = vi.fn();
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
-vi.mock("../../../src/db/repos/organizations.js", async () => {
-  const actual = await vi.importActual<typeof import("../../../src/db/repos/organizations.js")>(
-    "../../../src/db/repos/organizations.js",
-  );
-  return {
-    ...actual,
-    countOrganizationsByPlan: (...args: unknown[]): unknown =>
-      mockCountOrganizationsByPlan(...args),
-  };
-});
 vi.mock("../../../src/db/repos/users.js", async () => {
   const actual = await vi.importActual<typeof import("../../../src/db/repos/users.js")>(
     "../../../src/db/repos/users.js",
   );
-  return { ...actual, countUsers: (...args: unknown[]): unknown => mockCountUsers(...args) };
+  return {
+    ...actual,
+    countUsersByPlan: (...args: unknown[]): unknown => mockCountOrganizationsByPlan(...args),
+    countUsers: (...args: unknown[]): unknown => mockCountUsers(...args),
+  };
 });
 vi.mock("../../../src/db/repos/chats.js", async () => {
   const actual = await vi.importActual<typeof import("../../../src/db/repos/chats.js")>(
@@ -153,9 +147,9 @@ describe("GET /metrics", () => {
     expect(res.headers["content-type"]).toContain("text/plain");
     expect(res.body).toContain("email_to_telegram_http_requests_total");
     expect(res.body).toContain('route="/healthz"');
-    expect(res.body).toContain("email_to_telegram_active_organizations");
+    expect(res.body).toContain("email_to_telegram_active_users_by_plan");
     expect(res.body).toContain('plan="free"');
-    expect(res.body).toMatch(/email_to_telegram_organizations_total\{[^}]*\} 3/);
+    expect(res.body).toMatch(/email_to_telegram_users_total\{[^}]*\} 3/);
     expect(res.body).toMatch(/email_to_telegram_users\{[^}]*state="total"[^}]*\} 5/);
     expect(res.body).toMatch(/email_to_telegram_users\{[^}]*state="allowed"[^}]*\} 3/);
     expect(res.body).toMatch(/email_to_telegram_chats\{[^}]*state="active"[^}]*\} 4/);

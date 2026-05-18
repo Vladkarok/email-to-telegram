@@ -25,7 +25,7 @@ const mockEnsurePersonalOrganizationForUserWithOnboardingLimit = vi.fn();
 class MockHostedOnboardingRateLimitError extends Error {}
 vi.mock("../../../../src/abuse/hostedOnboarding.js", () => ({
   HostedOnboardingRateLimitError: MockHostedOnboardingRateLimitError,
-  ensurePersonalOrganizationForUserWithOnboardingLimit: (...args: unknown[]): unknown =>
+  ensureUserWithOnboardingLimit: (...args: unknown[]): unknown =>
     mockEnsurePersonalOrganizationForUserWithOnboardingLimit(...args),
 }));
 
@@ -81,10 +81,9 @@ describe("chatMemberHandler", () => {
     ];
     expect(data.title).toBe("Test Group");
     expect(data.type).toBe("supergroup");
-    expect(data.organizationId).toBeNull();
   });
 
-  it("in hosted mode: registers group chat under the acting user's organization", async () => {
+  it("in hosted mode: upserts the acting user before registering the group chat", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
 
     await chatMemberHandler(makeCtx("supergroup", "member", undefined, undefined, "uk"));
@@ -94,11 +93,13 @@ describe("chatMemberHandler", () => {
       expect.objectContaining({ id: 123456789n, username: "adder", locale: "uk" }),
     );
     expect(mockEnsurePersonalOrganizationForUserWithOnboardingLimit).toHaveBeenCalled();
-    const [, data] = mockUpsertChat.mock.calls[0] as [unknown, { organizationId: string | null }];
-    expect(data.organizationId).toBe("org-1");
+    expect(mockUpsertChat).toHaveBeenCalledOnce();
   });
 
-  it("in hosted mode: skips group registration when onboarding is rate limited", async () => {
+  it("in hosted mode: still registers the group chat when onboarding is rate limited", async () => {
+    // Telegram membership is the source of truth for chat access, so the
+    // chat row is created even if the inviting user hit their onboarding
+    // rate limit (their own quota work just gets skipped).
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
     mockEnsurePersonalOrganizationForUserWithOnboardingLimit.mockRejectedValue(
       new MockHostedOnboardingRateLimitError(),
@@ -106,7 +107,7 @@ describe("chatMemberHandler", () => {
 
     await chatMemberHandler(makeCtx("supergroup", "member"));
 
-    expect(mockUpsertChat).not.toHaveBeenCalled();
+    expect(mockUpsertChat).toHaveBeenCalledOnce();
   });
 
   it("upserts chat when bot is added as administrator", async () => {

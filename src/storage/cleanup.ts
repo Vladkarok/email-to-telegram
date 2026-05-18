@@ -2,16 +2,16 @@ import { readdir, stat } from "fs/promises";
 import { join } from "path";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { and, eq, isNotNull, isNull, lt, notExists, sql } from "drizzle-orm";
-import { deliveryLogs, attachments, organizations } from "../db/schema.js";
+import { deliveryLogs, attachments, users } from "../db/schema.js";
 import type * as schema from "../db/schema.js";
 import { deleteFile, deleteDir } from "./disk.js";
 import { getLogger } from "../utils/logger.js";
-import { decrementOrganizationStorageUsage } from "../db/repos/storageUsage.js";
+import { decrementUserStorageUsage } from "../db/repos/storageUsage.js";
 import { getEffectivePlan } from "../billing/limits.js";
 import { PLAN_DEFINITIONS } from "../billing/plans.js";
 
 type Db = NodePgDatabase<typeof schema>;
-type RetentionOrganization = Parameters<typeof getEffectivePlan>[0] | null;
+type RetentionUser = Parameters<typeof getEffectivePlan>[0] | null;
 
 export interface CleanupConfig {
   attachmentDir: string;
@@ -25,13 +25,8 @@ export async function runCleanup(db: Db, config: CleanupConfig): Promise<void> {
   const log = getLogger();
   const now = Date.now();
 
-  // 1. Delete expired attachment files + their DB rows
   await cleanAttachments(db, config.attachmentDir, config.attachmentTtlHours, now, log);
-
-  // 2. Delete old raw email files
   await cleanRawEmails(db, config.rawEmailDir, config.rawEmailTtlHours, now, log);
-
-  // 3. Delete old delivery_log rows (cascades to delivery_attempts)
   await cleanDeliveryLogs(db, config.deliveryLogRetentionDays, now, log);
 }
 
@@ -44,28 +39,27 @@ async function cleanAttachments(
 ): Promise<void> {
   const candidateCutoff = broadRetentionCandidateCutoff(now, ttlHours);
   try {
-    // Delete DB rows older than cutoff (storagePath used to find files)
     const candidates = await db
       .select({
         id: attachments.id,
         storagePath: attachments.storagePath,
         sizeBytes: attachments.sizeBytes,
         createdAt: attachments.createdAt,
-        organizationId: deliveryLogs.organizationId,
-        organizationPlanCode: organizations.planCode,
-        organizationSubscriptionStatus: organizations.subscriptionStatus,
-        organizationCurrentPeriodEnd: organizations.currentPeriodEnd,
-        organizationPaidThroughAt: organizations.paidThroughAt,
+        userId: deliveryLogs.userId,
+        userPlanCode: users.planCode,
+        userSubscriptionStatus: users.subscriptionStatus,
+        userCurrentPeriodEnd: users.currentPeriodEnd,
+        userPaidThroughAt: users.paidThroughAt,
       })
       .from(attachments)
       .innerJoin(deliveryLogs, eq(deliveryLogs.id, attachments.deliveryLogId))
-      .leftJoin(organizations, eq(organizations.id, deliveryLogs.organizationId))
+      .leftJoin(users, eq(users.id, deliveryLogs.userId))
       .where(lt(attachments.createdAt, candidateCutoff));
 
     let deletedFiles = 0;
     let deletedRows = 0;
     for (const row of candidates) {
-      if (!isExpiredByRetention(row.createdAt, now, ttlHours, rowOrganization(row))) {
+      if (!isExpiredByRetention(row.createdAt, now, ttlHours, rowUser(row))) {
         continue;
       }
       try {
@@ -76,8 +70,8 @@ async function cleanAttachments(
       const rows = await db.transaction(async (tx) => {
         const result = await tx.delete(attachments).where(eq(attachments.id, row.id));
         const rowCount = (result as unknown as { rowCount?: number }).rowCount ?? 0;
-        if (rowCount > 0 && row.organizationId && row.sizeBytes != null && row.sizeBytes > 0) {
-          await decrementOrganizationStorageUsage(tx as Db, row.organizationId, {
+        if (rowCount > 0 && row.userId && row.sizeBytes != null && row.sizeBytes > 0) {
+          await decrementUserStorageUsage(tx as Db, row.userId, {
             attachmentBytes: BigInt(row.sizeBytes),
           });
         }
@@ -93,7 +87,6 @@ async function cleanAttachments(
     log.error({ err }, "cleanup: attachment cleanup failed");
   }
 
-  // Also clean up any orphaned per-delivery-log attachment dirs
   await cleanOrphanedDirs(attachmentDir, ttlHours, now, log);
 }
 
@@ -139,24 +132,24 @@ async function cleanRawEmails(
     const rawLogCandidates = await db
       .select({
         id: deliveryLogs.id,
-        organizationId: deliveryLogs.organizationId,
-        organizationPlanCode: organizations.planCode,
-        organizationSubscriptionStatus: organizations.subscriptionStatus,
-        organizationCurrentPeriodEnd: organizations.currentPeriodEnd,
-        organizationPaidThroughAt: organizations.paidThroughAt,
+        userId: deliveryLogs.userId,
+        userPlanCode: users.planCode,
+        userSubscriptionStatus: users.subscriptionStatus,
+        userCurrentPeriodEnd: users.currentPeriodEnd,
+        userPaidThroughAt: users.paidThroughAt,
         receivedAt: deliveryLogs.receivedAt,
         rawSizeBytes: deliveryLogs.rawSizeBytes,
         rawEmailPath: deliveryLogs.rawEmailPath,
       })
       .from(deliveryLogs)
-      .leftJoin(organizations, eq(organizations.id, deliveryLogs.organizationId))
+      .leftJoin(users, eq(users.id, deliveryLogs.userId))
       .where(and(isNotNull(deliveryLogs.rawEmailPath), lt(deliveryLogs.receivedAt, cutoff)));
     let cleared = 0;
     for (const row of rawLogCandidates) {
       if (!row.rawEmailPath) {
         continue;
       }
-      if (!isExpiredByRetention(row.receivedAt, now, ttlHours, rowOrganization(row))) {
+      if (!isExpiredByRetention(row.receivedAt, now, ttlHours, rowUser(row))) {
         continue;
       }
       try {
@@ -176,13 +169,8 @@ async function cleanRawEmails(
           })
           .where(eq(deliveryLogs.id, row.id));
         const rowCount = (result as unknown as { rowCount?: number }).rowCount ?? 0;
-        if (
-          rowCount > 0 &&
-          row.organizationId &&
-          row.rawSizeBytes != null &&
-          row.rawSizeBytes > 0
-        ) {
-          await decrementOrganizationStorageUsage(tx as Db, row.organizationId, {
+        if (rowCount > 0 && row.userId && row.rawSizeBytes != null && row.rawSizeBytes > 0) {
+          await decrementUserStorageUsage(tx as Db, row.userId, {
             rawEmailBytes: BigInt(row.rawSizeBytes),
           });
         }
@@ -213,20 +201,20 @@ async function cleanDeliveryLogs(
         id: deliveryLogs.id,
         createdAt: deliveryLogs.createdAt,
         rawEmailPath: deliveryLogs.rawEmailPath,
-        organizationPlanCode: organizations.planCode,
-        organizationSubscriptionStatus: organizations.subscriptionStatus,
-        organizationCurrentPeriodEnd: organizations.currentPeriodEnd,
-        organizationPaidThroughAt: organizations.paidThroughAt,
+        userPlanCode: users.planCode,
+        userSubscriptionStatus: users.subscriptionStatus,
+        userCurrentPeriodEnd: users.currentPeriodEnd,
+        userPaidThroughAt: users.paidThroughAt,
       })
       .from(deliveryLogs)
-      .leftJoin(organizations, eq(organizations.id, deliveryLogs.organizationId))
+      .leftJoin(users, eq(users.id, deliveryLogs.userId))
       .where(lt(deliveryLogs.createdAt, candidateCutoff));
 
     let rows = 0;
     for (const row of candidates) {
       if (
         row.rawEmailPath ||
-        !isExpiredByDeliveryLogRetention(row.createdAt, now, retentionDays, rowOrganization(row))
+        !isExpiredByDeliveryLogRetention(row.createdAt, now, retentionDays, rowUser(row))
       ) {
         continue;
       }
@@ -265,10 +253,10 @@ function isExpiredByRetention(
   timestamp: Date,
   now: number,
   globalTtlHours: number,
-  organization: RetentionOrganization,
+  user: RetentionUser,
 ): boolean {
-  const retentionMs = organization
-    ? getEffectivePlan(organization).limits.retentionDays * 24 * 3600 * 1000
+  const retentionMs = user
+    ? getEffectivePlan(user).limits.retentionDays * 24 * 3600 * 1000
     : globalTtlHours * 3600 * 1000;
   return timestamp.getTime() < now - retentionMs;
 }
@@ -277,28 +265,26 @@ function isExpiredByDeliveryLogRetention(
   timestamp: Date,
   now: number,
   globalRetentionDays: number,
-  organization: RetentionOrganization,
+  user: RetentionUser,
 ): boolean {
-  const retentionDays = organization
-    ? getEffectivePlan(organization).limits.retentionDays
-    : globalRetentionDays;
+  const retentionDays = user ? getEffectivePlan(user).limits.retentionDays : globalRetentionDays;
   return timestamp.getTime() < now - retentionDays * 24 * 3600 * 1000;
 }
 
-function rowOrganization(row: {
-  organizationPlanCode: string | null;
-  organizationSubscriptionStatus: string | null;
-  organizationCurrentPeriodEnd: Date | null;
-  organizationPaidThroughAt: Date | null;
-}): RetentionOrganization {
-  if (!row.organizationPlanCode || !row.organizationSubscriptionStatus) {
+function rowUser(row: {
+  userPlanCode: string | null;
+  userSubscriptionStatus: string | null;
+  userCurrentPeriodEnd: Date | null;
+  userPaidThroughAt: Date | null;
+}): RetentionUser {
+  if (!row.userPlanCode || !row.userSubscriptionStatus) {
     return null;
   }
 
   return {
-    planCode: row.organizationPlanCode,
-    subscriptionStatus: row.organizationSubscriptionStatus,
-    currentPeriodEnd: row.organizationCurrentPeriodEnd,
-    paidThroughAt: row.organizationPaidThroughAt,
+    planCode: row.userPlanCode,
+    subscriptionStatus: row.userSubscriptionStatus,
+    currentPeriodEnd: row.userCurrentPeriodEnd,
+    paidThroughAt: row.userPaidThroughAt,
   };
 }

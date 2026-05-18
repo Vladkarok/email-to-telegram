@@ -51,13 +51,13 @@ Use this before enabling public hosted signup or live Stripe billing.
 - Exercise hosted export in staging:
 
   ```bash
-  APP_MODE=hosted npm start -- --hosted-export-organization <organizationId> --hosted-export-output /secure/support/exports/<organizationId>.json
+  APP_MODE=hosted npm start -- --hosted-export-user <telegramUserId> --hosted-export-output /secure/support/exports/<telegramUserId>.json
   ```
 
 - Exercise hosted deletion in staging:
 
   ```bash
-  APP_MODE=hosted npm start -- --hosted-delete-organization <organizationId>
+  APP_MODE=hosted npm start -- --hosted-delete-user <telegramUserId>
   ```
 
 - Confirm failed file deletes cause non-zero exit and are remediated manually.

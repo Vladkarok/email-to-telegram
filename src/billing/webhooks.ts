@@ -4,17 +4,26 @@ import type * as schema from "../db/schema.js";
 import { loadConfig } from "../config.js";
 import { recordBillingWebhookEvent } from "../db/repos/billingWebhookEvents.js";
 import {
-  findOrganizationById,
-  findOrganizationByIdForUpdate,
-  findOrganizationByStripeCustomerId,
-  findOrganizationByStripeSubscriptionId,
-  updateOrganizationBillingState,
-  updateOrganizationPaidThroughAtIfLater,
-} from "../db/repos/organizations.js";
-import { findLatestManualBillingEventForOrganization } from "../db/repos/manualBillingEvents.js";
+  findUserById,
+  findUserByIdForUpdate,
+  findUserByStripeCustomerId,
+  findUserByStripeSubscriptionId,
+  updateUserBillingState,
+  updateUserPaidThroughAtIfLater,
+} from "../db/repos/users.js";
+import { findLatestManualBillingEventForUser } from "../db/repos/manualBillingEvents.js";
 import { resolvePlanFromStripePriceId } from "./stripe.js";
 
 type Db = NodePgDatabase<typeof schema>;
+
+function parseTelegramUserIdMetadata(value: string | null | undefined): bigint | null {
+  if (value == null) return null;
+  try {
+    return BigInt(value);
+  } catch {
+    return null;
+  }
+}
 
 export async function processStripeWebhookEvent(
   db: Db,
@@ -28,27 +37,28 @@ export async function processStripeWebhookEvent(
     switch (event.type) {
       case "checkout.session.completed": {
         const session = event.data.object;
-        const found = await findOrganizationForStripeSubject(txDb, {
-          organizationId:
-            session.metadata?.["organizationId"] ?? session.client_reference_id ?? null,
+        const found = await findUserForStripeSubject(txDb, {
+          telegramUserId: parseTelegramUserIdMetadata(
+            session.metadata?.["telegramUserId"] ?? session.client_reference_id ?? null,
+          ),
           stripeCustomerId: typeof session.customer === "string" ? session.customer : null,
         });
         if (!found) return "ignored";
-        const organization = await findOrganizationByIdForUpdate(txDb, found.id);
-        if (!organization) return "ignored";
+        const user = await findUserByIdForUpdate(txDb, found.id);
+        if (!user) return "ignored";
         if (
           await shouldIgnoreStripeUpdate(
             txDb,
-            organization,
+            user,
             null,
             typeof session.customer === "string" ? session.customer : null,
           )
         ) {
           return "ignored";
         }
-        await updateOrganizationBillingState(txDb, organization.id, {
+        await updateUserBillingState(txDb, user.id, {
           stripeCustomerId:
-            typeof session.customer === "string" ? session.customer : organization.stripeCustomerId,
+            typeof session.customer === "string" ? session.customer : user.stripeCustomerId,
         });
         return "processed";
       }
@@ -77,18 +87,18 @@ async function applyStripeSubscription(
     | "customer.subscription.deleted",
   subscription: Stripe.Subscription,
 ): Promise<"processed" | "ignored"> {
-  const found = await findOrganizationForStripeSubject(db, {
-    organizationId: subscription.metadata?.["organizationId"] ?? null,
+  const found = await findUserForStripeSubject(db, {
+    telegramUserId: parseTelegramUserIdMetadata(subscription.metadata?.["telegramUserId"] ?? null),
     stripeCustomerId: typeof subscription.customer === "string" ? subscription.customer : null,
     stripeSubscriptionId: subscription.id,
   });
   if (!found) return "ignored";
-  const organization = await findOrganizationByIdForUpdate(db, found.id);
-  if (!organization) return "ignored";
+  const user = await findUserByIdForUpdate(db, found.id);
+  if (!user) return "ignored";
   if (
     await shouldIgnoreStripeUpdate(
       db,
-      organization,
+      user,
       subscription.id,
       typeof subscription.customer === "string" ? subscription.customer : null,
     )
@@ -96,10 +106,10 @@ async function applyStripeSubscription(
     return "ignored";
   }
   if (
-    organization.stripeSubscriptionId &&
-    organization.stripeSubscriptionId !== subscription.id &&
+    user.stripeSubscriptionId &&
+    user.stripeSubscriptionId !== subscription.id &&
     (eventType !== "customer.subscription.created" ||
-      !canReplaceStripeSubscription(organization.subscriptionStatus))
+      !canReplaceStripeSubscription(user.subscriptionStatus))
   ) {
     return "ignored";
   }
@@ -109,13 +119,11 @@ async function applyStripeSubscription(
   const resolvedPlan = resolvePlanFromStripePriceId(config, primaryPriceId);
   if (!resolvedPlan) return "ignored";
 
-  await updateOrganizationBillingState(db, organization.id, {
+  await updateUserBillingState(db, user.id, {
     planCode: resolvedPlan.planCode,
     subscriptionStatus: mapStripeSubscriptionStatus(subscription.status),
     stripeCustomerId:
-      typeof subscription.customer === "string"
-        ? subscription.customer
-        : organization.stripeCustomerId,
+      typeof subscription.customer === "string" ? subscription.customer : user.stripeCustomerId,
     stripeSubscriptionId: subscription.id,
     trialEndsAt: subscription.trial_end != null ? new Date(subscription.trial_end * 1000) : null,
     currentPeriodStart:
@@ -132,28 +140,27 @@ async function applyStripeSubscription(
 
 async function validateStripeInvoiceSubject(db: Db, invoice: Stripe.Invoice): Promise<"ignored"> {
   const stripeSubscriptionId = getInvoiceSubscriptionId(invoice);
-  const organization = await findOrganizationForStripeSubject(db, {
-    organizationId: invoice.parent?.subscription_details?.metadata?.["organizationId"] ?? null,
+  const user = await findUserForStripeSubject(db, {
+    telegramUserId: parseTelegramUserIdMetadata(
+      invoice.parent?.subscription_details?.metadata?.["telegramUserId"] ?? null,
+    ),
     stripeCustomerId: typeof invoice.customer === "string" ? invoice.customer : null,
     stripeSubscriptionId,
   });
-  if (!organization) return "ignored";
+  if (!user) return "ignored";
   if (
     await shouldIgnoreStripeUpdate(
       db,
-      organization,
+      user,
       stripeSubscriptionId,
       typeof invoice.customer === "string" ? invoice.customer : null,
     )
   ) {
     return "ignored";
   }
-  if (!stripeSubscriptionId || organization.stripeSubscriptionId !== stripeSubscriptionId) {
+  if (!stripeSubscriptionId || user.stripeSubscriptionId !== stripeSubscriptionId) {
     return "ignored";
   }
-
-  // Subscription events remain the authoritative source of billing state. Invoice
-  // payment events can arrive out of order, so we avoid mutating plan/status here.
   return "ignored";
 }
 
@@ -162,63 +169,62 @@ async function applyStripeInvoicePaymentSucceeded(
   invoice: Stripe.Invoice,
 ): Promise<"processed" | "ignored"> {
   const stripeSubscriptionId = getInvoiceSubscriptionId(invoice);
-  const found = await findOrganizationForStripeSubject(db, {
-    organizationId: invoice.parent?.subscription_details?.metadata?.["organizationId"] ?? null,
+  const found = await findUserForStripeSubject(db, {
+    telegramUserId: parseTelegramUserIdMetadata(
+      invoice.parent?.subscription_details?.metadata?.["telegramUserId"] ?? null,
+    ),
     stripeCustomerId: typeof invoice.customer === "string" ? invoice.customer : null,
     stripeSubscriptionId,
   });
   if (!found) return "ignored";
-  const organization = await findOrganizationByIdForUpdate(db, found.id);
-  if (!organization) return "ignored";
+  const user = await findUserByIdForUpdate(db, found.id);
+  if (!user) return "ignored";
   if (
     await shouldIgnoreStripeUpdate(
       db,
-      organization,
+      user,
       stripeSubscriptionId,
       typeof invoice.customer === "string" ? invoice.customer : null,
     )
   ) {
     return "ignored";
   }
-  if (!stripeSubscriptionId || organization.stripeSubscriptionId !== stripeSubscriptionId) {
+  if (!stripeSubscriptionId || user.stripeSubscriptionId !== stripeSubscriptionId) {
     return "ignored";
   }
 
   const paidThroughAt = getInvoicePaidThroughAt(invoice, stripeSubscriptionId);
   if (!paidThroughAt) return "ignored";
-  await updateOrganizationPaidThroughAtIfLater(db, organization.id, paidThroughAt);
+  await updateUserPaidThroughAtIfLater(db, user.id, paidThroughAt);
   return "processed";
 }
 
-async function findOrganizationForStripeSubject(
+async function findUserForStripeSubject(
   db: Db,
   input: {
-    organizationId: string | null;
+    telegramUserId: bigint | null;
     stripeCustomerId?: string | null;
     stripeSubscriptionId?: string | null;
   },
 ) {
   if (input.stripeSubscriptionId) {
-    const organization = await findOrganizationByStripeSubscriptionId(
-      db,
-      input.stripeSubscriptionId,
-    );
-    if (organization) return organization;
+    const user = await findUserByStripeSubscriptionId(db, input.stripeSubscriptionId);
+    if (user) return user;
   }
   if (input.stripeCustomerId) {
-    const organization = await findOrganizationByStripeCustomerId(db, input.stripeCustomerId);
-    if (organization) return organization;
+    const user = await findUserByStripeCustomerId(db, input.stripeCustomerId);
+    if (user) return user;
   }
-  if (input.organizationId) {
-    return findOrganizationById(db, input.organizationId);
+  if (input.telegramUserId != null) {
+    return findUserById(db, input.telegramUserId);
   }
   return null;
 }
 
 async function shouldIgnoreStripeUpdate(
   db: Db,
-  organization: {
-    id: string;
+  user: {
+    id: bigint;
     planCode: string;
     stripeSubscriptionId: string | null;
     stripeCustomerId: string | null;
@@ -226,42 +232,26 @@ async function shouldIgnoreStripeUpdate(
   stripeSubscriptionId: string | null,
   stripeCustomerId: string | null,
 ): Promise<boolean> {
-  if (!organization.stripeSubscriptionId && !organization.stripeCustomerId) {
-    // Manual paid grants clear Stripe links. A delayed Stripe event may still
-    // carry organizationId metadata, but without a current Stripe link it must
-    // not be allowed to clobber the manual entitlement.
-    if (organization.planCode !== "free") return true;
+  if (!user.stripeSubscriptionId && !user.stripeCustomerId) {
+    if (user.planCode !== "free") return true;
 
-    // Fresh free organizations also have no Stripe links and must still be able
-    // to start checkout. Protect only free orgs whose latest manual event is the
-    // operator's manual downgrade/cancellation to free.
-    const latestManualEvent = await findLatestManualBillingEventForOrganization(
-      db,
-      organization.id,
-    );
+    const latestManualEvent = await findLatestManualBillingEventForUser(db, user.id);
     if (latestManualEvent?.planCode === "free") return true;
   }
-  // Org has current Stripe links. If the incoming event carries Stripe IDs that do
-  // not match the current links, it was routed here only via organizationId metadata
-  // and refers to a stale customer/subscription — reject for all plan types.
-  if (organization.stripeSubscriptionId || organization.stripeCustomerId) {
+  if (user.stripeSubscriptionId || user.stripeCustomerId) {
     const hasMatchingStripeId =
-      (stripeSubscriptionId != null &&
-        organization.stripeSubscriptionId === stripeSubscriptionId) ||
-      (stripeCustomerId != null && organization.stripeCustomerId === stripeCustomerId);
+      (stripeSubscriptionId != null && user.stripeSubscriptionId === stripeSubscriptionId) ||
+      (stripeCustomerId != null && user.stripeCustomerId === stripeCustomerId);
     if ((stripeSubscriptionId != null || stripeCustomerId != null) && !hasMatchingStripeId) {
       return true;
     }
   }
-  if (organization.planCode !== "business") return false;
+  if (user.planCode !== "business") return false;
   const hasMatchingStripeId =
-    (stripeSubscriptionId && organization.stripeSubscriptionId === stripeSubscriptionId) ||
-    (stripeCustomerId && organization.stripeCustomerId === stripeCustomerId);
+    (stripeSubscriptionId && user.stripeSubscriptionId === stripeSubscriptionId) ||
+    (stripeCustomerId && user.stripeCustomerId === stripeCustomerId);
   if (!hasMatchingStripeId) return true;
-  // Matching Stripe ID: protect the business grant if the operator explicitly
-  // kept the Stripe link (keptStripeLink=true). The Stripe subscription is retained
-  // for invoicing but must not overwrite the manually assigned business entitlement.
-  const latestManualEvent = await findLatestManualBillingEventForOrganization(db, organization.id);
+  const latestManualEvent = await findLatestManualBillingEventForUser(db, user.id);
   return latestManualEvent?.keptStripeLink === true;
 }
 

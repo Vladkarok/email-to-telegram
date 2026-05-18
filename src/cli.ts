@@ -1,27 +1,20 @@
 export type ManualPlanCode = "free" | "personal" | "pro" | "team" | "business";
 export type ManualSubscriptionStatus = "free" | "active" | "canceled";
-export type ManualOrganizationRole = "owner" | "admin" | "member";
 
 export interface StartupOptions {
   migrateOnly: boolean;
   rewrapStorageKeys: boolean;
   backfillStorageEncryption: boolean;
-  hostedExportOrganizationId: string | null;
+  hostedExportUserId: string | null;
   hostedExportOutputPath: string | null;
-  hostedDeleteOrganizationId: string | null;
-  hostedSetOrganizationPlanId: string | null;
+  hostedDeleteUserId: string | null;
   hostedSetUserPlanTelegramUserId: string | null;
-  hostedAddOrganizationMemberId: string | null;
   manualPlanCode: ManualPlanCode | null;
   manualSubscriptionStatus: ManualSubscriptionStatus | null;
   manualPaidThroughAt: Date | null;
   manualPaymentReference: string | null;
   manualNote: string | null;
-  manualTelegramUserId: string | null;
-  manualOrganizationId: string | null;
-  manualOrganizationRole: ManualOrganizationRole | null;
   manualKeepStripeLink: boolean;
-  manualCreateNewOrganization: boolean;
   warnings: string[];
 }
 
@@ -30,7 +23,6 @@ const PAID_THROUGH_BACKFILL_DAYS = 7;
 
 const VALID_PLAN_CODES: readonly ManualPlanCode[] = ["free", "personal", "pro", "team", "business"];
 const VALID_STATUSES: readonly ManualSubscriptionStatus[] = ["free", "active", "canceled"];
-const VALID_ROLES: readonly ManualOrganizationRole[] = ["owner", "admin", "member"];
 
 const booleanOperationFlags = new Set([
   "--migrate-only",
@@ -39,11 +31,9 @@ const booleanOperationFlags = new Set([
 ]);
 
 const valuedOperationFlags = new Set([
-  "--hosted-export-organization",
-  "--hosted-delete-organization",
-  "--hosted-set-organization-plan",
+  "--hosted-export-user",
+  "--hosted-delete-user",
   "--hosted-set-user-plan",
-  "--hosted-add-organization-member",
 ]);
 
 const valuedAuxFlags = new Set([
@@ -53,36 +43,33 @@ const valuedAuxFlags = new Set([
   "--paid-through",
   "--manual-payment-reference",
   "--note",
-  "--telegram-user-id",
-  "--organization-id",
-  "--role",
 ]);
 
-const booleanAuxFlags = new Set(["--keep-stripe-link", "--create-new-organization"]);
+const booleanAuxFlags = new Set(["--keep-stripe-link"]);
 
 function defaultOptions(): StartupOptions {
   return {
     migrateOnly: false,
     rewrapStorageKeys: false,
     backfillStorageEncryption: false,
-    hostedExportOrganizationId: null,
+    hostedExportUserId: null,
     hostedExportOutputPath: null,
-    hostedDeleteOrganizationId: null,
-    hostedSetOrganizationPlanId: null,
+    hostedDeleteUserId: null,
     hostedSetUserPlanTelegramUserId: null,
-    hostedAddOrganizationMemberId: null,
     manualPlanCode: null,
     manualSubscriptionStatus: null,
     manualPaidThroughAt: null,
     manualPaymentReference: null,
     manualNote: null,
-    manualTelegramUserId: null,
-    manualOrganizationId: null,
-    manualOrganizationRole: null,
     manualKeepStripeLink: false,
-    manualCreateNewOrganization: false,
     warnings: [],
   };
+}
+
+function ensureNumericUserId(value: string, flag: string): void {
+  if (!/^-?\d+$/.test(value)) {
+    throw new Error(`${flag} must be a numeric Telegram user id`);
+  }
 }
 
 export function parseStartupOptions(argv: readonly string[]): StartupOptions {
@@ -113,9 +100,6 @@ export function parseStartupOptions(argv: readonly string[]): StartupOptions {
         case "--keep-stripe-link":
           options.manualKeepStripeLink = true;
           break;
-        case "--create-new-organization":
-          options.manualCreateNewOrganization = true;
-          break;
       }
       continue;
     }
@@ -128,11 +112,12 @@ export function parseStartupOptions(argv: readonly string[]): StartupOptions {
       index += 1;
 
       switch (arg) {
-        case "--hosted-export-organization":
-          if (options.hostedExportOrganizationId) {
-            throw new Error("CLI argument cannot be repeated: --hosted-export-organization");
+        case "--hosted-export-user":
+          if (options.hostedExportUserId) {
+            throw new Error("CLI argument cannot be repeated: --hosted-export-user");
           }
-          options.hostedExportOrganizationId = value;
+          ensureNumericUserId(value, "--hosted-export-user");
+          options.hostedExportUserId = value;
           operationFlags.push(arg);
           break;
         case "--hosted-export-output":
@@ -141,32 +126,20 @@ export function parseStartupOptions(argv: readonly string[]): StartupOptions {
           }
           options.hostedExportOutputPath = value;
           break;
-        case "--hosted-delete-organization":
-          if (options.hostedDeleteOrganizationId) {
-            throw new Error("CLI argument cannot be repeated: --hosted-delete-organization");
+        case "--hosted-delete-user":
+          if (options.hostedDeleteUserId) {
+            throw new Error("CLI argument cannot be repeated: --hosted-delete-user");
           }
-          options.hostedDeleteOrganizationId = value;
-          operationFlags.push(arg);
-          break;
-        case "--hosted-set-organization-plan":
-          if (options.hostedSetOrganizationPlanId) {
-            throw new Error("CLI argument cannot be repeated: --hosted-set-organization-plan");
-          }
-          options.hostedSetOrganizationPlanId = value;
+          ensureNumericUserId(value, "--hosted-delete-user");
+          options.hostedDeleteUserId = value;
           operationFlags.push(arg);
           break;
         case "--hosted-set-user-plan":
           if (options.hostedSetUserPlanTelegramUserId) {
             throw new Error("CLI argument cannot be repeated: --hosted-set-user-plan");
           }
+          ensureNumericUserId(value, "--hosted-set-user-plan");
           options.hostedSetUserPlanTelegramUserId = value;
-          operationFlags.push(arg);
-          break;
-        case "--hosted-add-organization-member":
-          if (options.hostedAddOrganizationMemberId) {
-            throw new Error("CLI argument cannot be repeated: --hosted-add-organization-member");
-          }
-          options.hostedAddOrganizationMemberId = value;
           operationFlags.push(arg);
           break;
         case "--plan":
@@ -215,32 +188,6 @@ export function parseStartupOptions(argv: readonly string[]): StartupOptions {
           }
           options.manualNote = value;
           break;
-        case "--telegram-user-id":
-          if (options.manualTelegramUserId) {
-            throw new Error("CLI argument cannot be repeated: --telegram-user-id");
-          }
-          if (!/^-?\d+$/.test(value)) {
-            throw new Error("--telegram-user-id must be a numeric Telegram user id");
-          }
-          options.manualTelegramUserId = value;
-          break;
-        case "--organization-id":
-          if (options.manualOrganizationId) {
-            throw new Error("CLI argument cannot be repeated: --organization-id");
-          }
-          options.manualOrganizationId = value;
-          break;
-        case "--role":
-          if (options.manualOrganizationRole) {
-            throw new Error("CLI argument cannot be repeated: --role");
-          }
-          if (!VALID_ROLES.includes(value as ManualOrganizationRole)) {
-            throw new Error(
-              `Invalid value for --role: ${value}. Valid roles: ${VALID_ROLES.join(", ")}`,
-            );
-          }
-          options.manualOrganizationRole = value as ManualOrganizationRole;
-          break;
       }
       continue;
     }
@@ -254,100 +201,49 @@ export function parseStartupOptions(argv: readonly string[]): StartupOptions {
     );
   }
 
-  if (options.hostedExportOrganizationId && !options.hostedExportOutputPath) {
-    throw new Error(
-      "CLI argument --hosted-export-output is required with --hosted-export-organization",
-    );
+  if (options.hostedExportUserId && !options.hostedExportOutputPath) {
+    throw new Error("CLI argument --hosted-export-output is required with --hosted-export-user");
   }
-  if (!options.hostedExportOrganizationId && options.hostedExportOutputPath) {
-    throw new Error("CLI argument --hosted-export-output requires --hosted-export-organization");
+  if (!options.hostedExportUserId && options.hostedExportOutputPath) {
+    throw new Error("CLI argument --hosted-export-output requires --hosted-export-user");
   }
 
-  // Validate --hosted-set-user-plan numeric id
-  if (options.hostedSetUserPlanTelegramUserId !== null) {
-    if (!/^-?\d+$/.test(options.hostedSetUserPlanTelegramUserId)) {
-      throw new Error("--hosted-set-user-plan must be a numeric Telegram user id");
-    }
-  }
-
-  const isManualPlanOperation =
-    options.hostedSetOrganizationPlanId !== null ||
-    options.hostedSetUserPlanTelegramUserId !== null;
-  const isManualBillingOperation =
-    isManualPlanOperation || options.hostedAddOrganizationMemberId !== null;
+  const isManualPlanOperation = options.hostedSetUserPlanTelegramUserId !== null;
   const hasManualAuxFlag =
     options.manualPlanCode !== null ||
     options.manualSubscriptionStatus !== null ||
     options.manualPaidThroughAt !== null ||
     options.manualPaymentReference !== null ||
     options.manualNote !== null ||
-    options.manualTelegramUserId !== null ||
-    options.manualOrganizationId !== null ||
-    options.manualOrganizationRole !== null ||
-    options.manualKeepStripeLink ||
-    options.manualCreateNewOrganization;
+    options.manualKeepStripeLink;
 
-  if (hasManualAuxFlag && !isManualBillingOperation) {
-    throw new Error("Manual billing arguments require a --hosted-* manual billing operation");
+  if (hasManualAuxFlag && !isManualPlanOperation) {
+    throw new Error("Manual billing arguments require --hosted-set-user-plan");
   }
 
   if (isManualPlanOperation) {
-    if (
-      options.hostedSetOrganizationPlanId !== null &&
-      (options.manualTelegramUserId !== null ||
-        options.manualOrganizationId !== null ||
-        options.manualOrganizationRole !== null ||
-        options.manualCreateNewOrganization)
-    ) {
-      throw new Error(
-        "--hosted-set-organization-plan does not accept --telegram-user-id, --organization-id, --role, or --create-new-organization",
-      );
-    }
-
-    if (
-      options.hostedSetUserPlanTelegramUserId !== null &&
-      (options.manualTelegramUserId !== null || options.manualOrganizationRole !== null)
-    ) {
-      throw new Error("--hosted-set-user-plan does not accept --telegram-user-id or --role");
-    }
-
-    if (
-      options.hostedSetUserPlanTelegramUserId !== null &&
-      options.manualOrganizationId !== null &&
-      options.manualCreateNewOrganization
-    ) {
-      throw new Error(
-        "--organization-id and --create-new-organization cannot be used together with --hosted-set-user-plan",
-      );
-    }
-
     if (!options.manualPlanCode) {
       throw new Error("--plan is required for manual plan operations");
     }
 
-    // Default subscription status: free for free plans, active for paid plans.
     if (!options.manualSubscriptionStatus) {
       options.manualSubscriptionStatus = options.manualPlanCode === "free" ? "free" : "active";
     }
 
-    // free plan must be paired with free status
     if (options.manualPlanCode === "free" && options.manualSubscriptionStatus !== "free") {
       throw new Error("--plan free must be used with --status free");
     }
 
-    // free plan must not use --keep-stripe-link
     if (options.manualPlanCode === "free" && options.manualKeepStripeLink) {
       throw new Error("--keep-stripe-link is not allowed with --plan free");
     }
 
-    // --keep-stripe-link allowed only with business
     if (options.manualKeepStripeLink && options.manualPlanCode !== "business") {
       throw new Error(
         "--keep-stripe-link is allowed only with --plan business (webhook overwrite protection)",
       );
     }
 
-    // paid plans (personal, pro, team) require --paid-through; business is exempt
     const requiresPaidThrough =
       (options.manualPlanCode === "personal" ||
         options.manualPlanCode === "pro" ||
@@ -359,7 +255,6 @@ export function parseStartupOptions(argv: readonly string[]): StartupOptions {
       );
     }
 
-    // Warn if --paid-through is in the past 7-day backfill window
     if (options.manualPaidThroughAt) {
       const now = Date.now();
       const target = options.manualPaidThroughAt.getTime();
@@ -378,34 +273,10 @@ export function parseStartupOptions(argv: readonly string[]): StartupOptions {
     }
   }
 
-  if (options.hostedAddOrganizationMemberId !== null) {
-    if (
-      options.manualPlanCode !== null ||
-      options.manualSubscriptionStatus !== null ||
-      options.manualPaidThroughAt !== null ||
-      options.manualPaymentReference !== null ||
-      options.manualNote !== null ||
-      options.manualOrganizationId !== null ||
-      options.manualKeepStripeLink ||
-      options.manualCreateNewOrganization
-    ) {
-      throw new Error(
-        "--hosted-add-organization-member only accepts --telegram-user-id and --role manual arguments",
-      );
-    }
-    if (!options.manualTelegramUserId) {
-      throw new Error("--telegram-user-id is required with --hosted-add-organization-member");
-    }
-    if (!options.manualOrganizationRole) {
-      throw new Error("--role is required with --hosted-add-organization-member");
-    }
-  }
-
   return options;
 }
 
 function parsePaidThrough(value: string): Date {
-  // Accept YYYY-MM-DD (treated as UTC midnight) or full ISO 8601
   const isoDateOnly = /^(\d{4})-(\d{2})-(\d{2})$/;
   const isoDateTime =
     /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/;

@@ -120,7 +120,7 @@ export function rawRoute(
       }
       if (alias?.status === "active") {
         const hostedBlock = await findHostedInboundRejection(getDb(), {
-          organizationId: alias.organizationId,
+          userId: alias.createdBy,
           localPart,
           recipientDomain,
           envelopeFrom,
@@ -130,7 +130,7 @@ export function rawRoute(
             {
               localPart,
               aliasId: alias.id,
-              organizationId: alias.organizationId,
+              userId: alias.createdBy.toString(),
               blockType: hostedBlock.blockType,
               blockValue: hostedBlock.value,
             },
@@ -143,7 +143,7 @@ export function rawRoute(
 
         const inboundLimit = await checkInboundLimit(
           getDb(),
-          alias.organizationId,
+          alias.createdBy,
           body.length,
           BigInt(body.length),
         );

@@ -11,7 +11,7 @@ import {
   check,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
-import { organizations } from "./org.js";
+import { users } from "./users.js";
 import { deliveryLogs } from "./delivery.js";
 
 // ─── attachments ─────────────────────────────────────────────────────────────
@@ -54,14 +54,14 @@ export const attachmentLinks = pgTable(
   (t) => [uniqueIndex("idx_link_token").on(t.token), index("idx_link_expires").on(t.expiresAt)],
 );
 
-// ─── organization_storage_usage ──────────────────────────────────────────────
+// ─── user_storage_usage ──────────────────────────────────────────────────────
 
-export const organizationStorageUsage = pgTable(
-  "organization_storage_usage",
+export const userStorageUsage = pgTable(
+  "user_storage_usage",
   {
-    organizationId: uuid("organization_id")
+    userId: bigint("user_id", { mode: "bigint" })
       .primaryKey()
-      .references(() => organizations.id, { onDelete: "cascade" }),
+      .references(() => users.id, { onDelete: "cascade" }),
     rawEmailBytes: bigint("raw_email_bytes", { mode: "bigint" })
       .notNull()
       .default(sql`0`),
@@ -71,8 +71,8 @@ export const organizationStorageUsage = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    check("chk_org_storage_raw_nonnegative", sql`${t.rawEmailBytes} >= 0`),
-    check("chk_org_storage_attachment_nonnegative", sql`${t.attachmentBytes} >= 0`),
+    check("chk_user_storage_raw_nonnegative", sql`${t.rawEmailBytes} >= 0`),
+    check("chk_user_storage_attachment_nonnegative", sql`${t.attachmentBytes} >= 0`),
   ],
 );
 
@@ -82,5 +82,5 @@ export type Attachment = typeof attachments.$inferSelect;
 export type NewAttachment = typeof attachments.$inferInsert;
 export type AttachmentLink = typeof attachmentLinks.$inferSelect;
 export type NewAttachmentLink = typeof attachmentLinks.$inferInsert;
-export type OrganizationStorageUsage = typeof organizationStorageUsage.$inferSelect;
-export type NewOrganizationStorageUsage = typeof organizationStorageUsage.$inferInsert;
+export type UserStorageUsage = typeof userStorageUsage.$inferSelect;
+export type NewUserStorageUsage = typeof userStorageUsage.$inferInsert;

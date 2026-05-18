@@ -5,7 +5,7 @@ import { upsertChat, deactivateChat } from "../../db/repos/chats.js";
 import { upsertUser } from "../../db/repos/users.js";
 import {
   HostedOnboardingRateLimitError,
-  ensurePersonalOrganizationForUserWithOnboardingLimit,
+  ensureUserWithOnboardingLimit,
 } from "../../abuse/hostedOnboarding.js";
 import { getLogger } from "../../utils/logger.js";
 import { localeFromTelegram } from "../../i18n/index.js";
@@ -23,12 +23,13 @@ export async function chatMemberHandler(ctx: Context): Promise<void> {
   const title = "title" in chat ? chat.title : "Unknown";
 
   if (status === "member" || status === "administrator") {
-    const organizationId = await resolveHostedOrganizationId(ctx);
-    if (loadConfig().appMode === "hosted" && !organizationId) {
-      getLogger().warn({ chatId: chatId.toString() }, "hosted chat registration skipped");
-      return;
+    if (loadConfig().appMode === "hosted") {
+      // Ensure the inviting user has a hosted user row (rate-limited). If we cannot
+      // resolve them, still register the chat — Telegram membership is the source
+      // of truth for chat-level permissions.
+      await ensureHostedActingUser(ctx);
     }
-    await upsertChat(db, { id: chatId, organizationId, title, type: chat.type });
+    await upsertChat(db, { id: chatId, title, type: chat.type });
     getLogger().info({ chatId: chatId.toString(), title }, "Bot added to chat");
   } else if (status === "left" || status === "kicked") {
     await deactivateChat(db, chatId);
@@ -36,8 +37,8 @@ export async function chatMemberHandler(ctx: Context): Promise<void> {
   }
 }
 
-async function resolveHostedOrganizationId(ctx: Context): Promise<string | null> {
-  if (loadConfig().appMode !== "hosted" || !ctx.from) return null;
+async function ensureHostedActingUser(ctx: Context): Promise<void> {
+  if (loadConfig().appMode !== "hosted" || !ctx.from) return;
 
   const db = getDb();
   const user = await upsertUser(db, {
@@ -45,14 +46,10 @@ async function resolveHostedOrganizationId(ctx: Context): Promise<string | null>
     username: ctx.from.username ?? null,
     locale: localeFromTelegram(ctx.from.language_code),
   });
-  let organization;
   try {
-    organization = await ensurePersonalOrganizationForUserWithOnboardingLimit(db, user);
+    await ensureUserWithOnboardingLimit(db, user);
   } catch (err: unknown) {
-    if (err instanceof HostedOnboardingRateLimitError) {
-      return null;
-    }
+    if (err instanceof HostedOnboardingRateLimitError) return;
     throw err;
   }
-  return organization.id;
 }

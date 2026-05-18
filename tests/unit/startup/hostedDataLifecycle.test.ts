@@ -13,14 +13,14 @@ describe("hosted data lifecycle startup helpers", () => {
     expect(
       hasHostedDataLifecycleOperation(
         startupOptions({
-          hostedExportOrganizationId: "org_123",
+          hostedExportUserId: "123",
           hostedExportOutputPath: "out.json",
         }),
       ),
     ).toBe(true);
-    expect(
-      hasHostedDataLifecycleOperation(startupOptions({ hostedDeleteOrganizationId: "org_123" })),
-    ).toBe(true);
+    expect(hasHostedDataLifecycleOperation(startupOptions({ hostedDeleteUserId: "123" }))).toBe(
+      true,
+    );
   });
 
   it("rejects hosted data lifecycle operations outside hosted mode", () => {
@@ -63,9 +63,9 @@ function startupOptions(overrides: Partial<StartupOptions>): StartupOptions {
     migrateOnly: false,
     rewrapStorageKeys: false,
     backfillStorageEncryption: false,
-    hostedExportOrganizationId: null,
+    hostedExportUserId: null,
     hostedExportOutputPath: null,
-    hostedDeleteOrganizationId: null,
+    hostedDeleteUserId: null,
     ...overrides,
   };
 }

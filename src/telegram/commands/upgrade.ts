@@ -1,14 +1,14 @@
 import { InlineKeyboard, type Context, type CallbackQueryContext } from "grammy";
 import { loadConfig } from "../../config.js";
 import { getDb } from "../../db/client.js";
-import { getBillingOrganizationForUser } from "../../tenant/currentOrganization.js";
+import { findUserById } from "../../db/repos/users.js";
 import { createCheckoutSession, BillingCheckoutConflictError } from "../../billing/checkout.js";
 import { isStripePriceKey } from "../../billing/stripe.js";
 import { getLogger } from "../../utils/logger.js";
 import { escapeHtml } from "../../utils/html.js";
 import { CB_UPGRADE_PLAN } from "../callbacks.js";
 import {
-  isManualBillingOrganization,
+  isManualBillingUser,
   isSelfServeBillingEnabled,
   MANUAL_BILLING_ALERT,
   MANUAL_BILLING_MESSAGE,
@@ -47,12 +47,12 @@ export async function upgradeHandler(ctx: Context): Promise<void> {
 
   try {
     const db = getDb();
-    const organization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
-    if (!organization) {
+    const user = await findUserById(db, BigInt(ctx.from.id));
+    if (!user) {
       await ctx.reply(messages.upgrade.forbidden);
       return;
     }
-    if (isManualBillingOrganization(organization)) {
+    if (isManualBillingUser(user)) {
       await ctx.reply(MANUAL_BILLING_MESSAGE);
       return;
     }
@@ -89,12 +89,12 @@ export async function upgradeCallbackHandler(ctx: CallbackQueryContext<Context>)
 
   try {
     const db = getDb();
-    const organization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
-    if (!organization) {
+    const user = await findUserById(db, BigInt(ctx.from.id));
+    if (!user) {
       await ctx.answerCallbackQuery({ text: messages.upgrade.forbidden, show_alert: true });
       return;
     }
-    if (isManualBillingOrganization(organization)) {
+    if (isManualBillingUser(user)) {
       await ctx.answerCallbackQuery();
       await ctx.reply(MANUAL_BILLING_MESSAGE);
       return;
@@ -145,12 +145,12 @@ export async function upgradePlanCallbackHandler(
 
   try {
     const db = getDb();
-    const organization = await getBillingOrganizationForUser(db, BigInt(ctx.from.id));
-    if (!organization) {
+    const user = await findUserById(db, BigInt(ctx.from.id));
+    if (!user) {
       await ctx.answerCallbackQuery({ text: messages.upgrade.forbidden, show_alert: true });
       return;
     }
-    if (isManualBillingOrganization(organization)) {
+    if (isManualBillingUser(user)) {
       await ctx.answerCallbackQuery({
         text: MANUAL_BILLING_ALERT,
         show_alert: true,
@@ -158,7 +158,7 @@ export async function upgradePlanCallbackHandler(
       return;
     }
 
-    const url = await createCheckoutSession(db, organization.id, priceKey);
+    const url = await createCheckoutSession(db, user.id, priceKey);
     const label = messages.upgrade.planLabels[priceKey];
 
     await ctx.answerCallbackQuery();

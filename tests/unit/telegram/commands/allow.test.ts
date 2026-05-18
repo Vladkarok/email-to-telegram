@@ -38,9 +38,8 @@ const mockHasActiveHostedOrganization = vi.fn().mockResolvedValue(true);
 vi.mock("../../../../src/billing/limits.js", () => ({
   checkAllowRuleCreateLimit: (...args: unknown[]): unknown =>
     mockCheckAllowRuleCreateLimit(...args),
-  hasActiveHostedOrganization: (...args: unknown[]): unknown =>
-    mockHasActiveHostedOrganization(...args),
-  withOrganizationQuotaLock: vi.fn(
+  hasActiveHostedUser: (...args: unknown[]): unknown => mockHasActiveHostedOrganization(...args),
+  withUserQuotaLock: vi.fn(
     async (_db: unknown, _organizationId: string | null, work: (tx: unknown) => Promise<unknown>) =>
       work({}),
   ),

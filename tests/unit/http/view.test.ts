@@ -13,14 +13,12 @@ vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 const mockCheckInboundLimit = vi.fn().mockResolvedValue({ ok: true });
 const mockCheckEgressLimit = vi.fn().mockResolvedValue({ ok: true });
 const mockWithOrganizationQuotaLock = vi.fn(
-  async (_db: unknown, _organizationId: string | null, work: (tx: unknown) => Promise<unknown>) =>
-    work({}),
+  async (_db: unknown, _userId: bigint | null, work: (tx: unknown) => Promise<unknown>) => work({}),
 );
 vi.mock("../../../src/billing/limits.js", () => ({
   checkInboundLimit: (...args: unknown[]): unknown => mockCheckInboundLimit(...args),
   checkEgressLimit: (...args: unknown[]): unknown => mockCheckEgressLimit(...args),
-  withOrganizationQuotaLock: (...args: unknown[]): unknown =>
-    mockWithOrganizationQuotaLock(...args),
+  withUserQuotaLock: (...args: unknown[]): unknown => mockWithOrganizationQuotaLock(...args),
 }));
 
 const mockFindDeliveryViewLinkByTokenHash = vi.fn();
@@ -45,9 +43,9 @@ vi.mock("../../../src/db/repos/attachmentLinks.js", () => ({
 const mockIncrementOrganizationUsageMonth = vi.fn();
 const mockDecrementOrganizationUsageMonth = vi.fn();
 vi.mock("../../../src/db/repos/usage.js", () => ({
-  incrementOrganizationUsageMonth: (...args: unknown[]): unknown =>
+  incrementUserUsageMonth: (...args: unknown[]): unknown =>
     mockIncrementOrganizationUsageMonth(...args),
-  decrementOrganizationUsageMonth: (...args: unknown[]): unknown =>
+  decrementUserUsageMonth: (...args: unknown[]): unknown =>
     mockDecrementOrganizationUsageMonth(...args),
   usageMonthForDate: vi.fn(() => "2026-04"),
 }));
@@ -91,7 +89,7 @@ function viewLinkRow(expiresAt: Date, overrides: Record<string, unknown> = {}) {
     deliveryLog: {
       id: "log-uuid-1",
       emailAddressId: "alias-uuid-1",
-      organizationId: "org-1",
+      userId: 1n,
       rawEmailPath: "/tmp/rawemails/privacy.eml",
       envelopeFrom: "sender@example.com",
       headerFrom: "sender@example.com",
@@ -196,9 +194,9 @@ describe("/view/:token", () => {
     );
     const [, usageUpdate] = mockIncrementOrganizationUsageMonth.mock.calls[0] as [
       unknown,
-      { organizationId: string; month: string; egressBytes: bigint },
+      { userId: bigint; month: string; egressBytes: bigint },
     ];
-    expect(usageUpdate.organizationId).toBe("org-1");
+    expect(usageUpdate.userId).toBe(1n);
     expect(usageUpdate.month).toBe("2026-04");
     expect(usageUpdate.egressBytes).toBeGreaterThan(0n);
   });

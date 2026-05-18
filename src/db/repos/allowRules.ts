@@ -55,17 +55,12 @@ export async function listAllowRules(db: Db, emailAddressId: string): Promise<Al
   return db.select().from(allowRules).where(eq(allowRules.emailAddressId, emailAddressId));
 }
 
-export async function countAllowRulesByOrganization(
-  db: Db,
-  organizationId: string,
-): Promise<number> {
+export async function countAllowRulesByUser(db: Db, userId: bigint): Promise<number> {
   const [row] = await db
     .select({ count: count() })
     .from(allowRules)
     .innerJoin(emailAddresses, eq(emailAddresses.id, allowRules.emailAddressId))
-    .where(
-      and(eq(emailAddresses.organizationId, organizationId), ne(emailAddresses.status, "deleted")),
-    );
+    .where(and(eq(emailAddresses.createdBy, userId), ne(emailAddresses.status, "deleted")));
   return row?.count ?? 0;
 }
 

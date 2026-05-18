@@ -9,12 +9,10 @@ describe("parseStartupOptions", () => {
     expect(opts.migrateOnly).toBe(false);
     expect(opts.rewrapStorageKeys).toBe(false);
     expect(opts.backfillStorageEncryption).toBe(false);
-    expect(opts.hostedExportOrganizationId).toBeNull();
+    expect(opts.hostedExportUserId).toBeNull();
     expect(opts.hostedExportOutputPath).toBeNull();
-    expect(opts.hostedDeleteOrganizationId).toBeNull();
-    expect(opts.hostedSetOrganizationPlanId).toBeNull();
+    expect(opts.hostedDeleteUserId).toBeNull();
     expect(opts.hostedSetUserPlanTelegramUserId).toBeNull();
-    expect(opts.hostedAddOrganizationMemberId).toBeNull();
     expect(opts.warnings).toEqual([]);
   });
 
@@ -32,20 +30,20 @@ describe("parseStartupOptions", () => {
     );
   });
 
-  it("accepts hosted organization export arguments", () => {
+  it("accepts hosted user export arguments", () => {
     const opts = parseStartupOptions([
-      "--hosted-export-organization",
-      "org_123",
+      "--hosted-export-user",
+      "123",
       "--hosted-export-output",
-      "/secure/org_123.json",
+      "/secure/user_123.json",
     ]);
-    expect(opts.hostedExportOrganizationId).toBe("org_123");
-    expect(opts.hostedExportOutputPath).toBe("/secure/org_123.json");
+    expect(opts.hostedExportUserId).toBe("123");
+    expect(opts.hostedExportOutputPath).toBe("/secure/user_123.json");
   });
 
-  it("accepts hosted organization delete arguments", () => {
-    const opts = parseStartupOptions(["--hosted-delete-organization", "org_123"]);
-    expect(opts.hostedDeleteOrganizationId).toBe("org_123");
+  it("accepts hosted user delete arguments", () => {
+    const opts = parseStartupOptions(["--hosted-delete-user", "123"]);
+    expect(opts.hostedDeleteUserId).toBe("123");
   });
 
   it("rejects multiple startup operation flags", () => {
@@ -57,43 +55,38 @@ describe("parseStartupOptions", () => {
   it("rejects combining hosted export and delete operations", () => {
     expect(() =>
       parseStartupOptions([
-        "--hosted-export-organization",
-        "org_123",
+        "--hosted-export-user",
+        "123",
         "--hosted-export-output",
-        "/secure/org_123.json",
-        "--hosted-delete-organization",
-        "org_123",
+        "/secure/user_123.json",
+        "--hosted-delete-user",
+        "123",
       ]),
     ).toThrow(/Choose only one startup operation flag/i);
   });
 
   it("rejects hosted export without an output path", () => {
-    expect(() => parseStartupOptions(["--hosted-export-organization", "org_123"])).toThrow(
+    expect(() => parseStartupOptions(["--hosted-export-user", "123"])).toThrow(
       /--hosted-export-output is required/i,
     );
   });
 
   it("rejects hosted export output without an export operation", () => {
-    expect(() => parseStartupOptions(["--hosted-export-output", "/secure/org_123.json"])).toThrow(
-      /requires --hosted-export-organization/i,
+    expect(() => parseStartupOptions(["--hosted-export-output", "/secure/user_123.json"])).toThrow(
+      /requires --hosted-export-user/i,
     );
   });
 
   it("rejects missing values for valued arguments", () => {
-    expect(() => parseStartupOptions(["--hosted-delete-organization"])).toThrow(
-      "Missing value for CLI argument: --hosted-delete-organization",
+    expect(() => parseStartupOptions(["--hosted-delete-user"])).toThrow(
+      "Missing value for CLI argument: --hosted-delete-user",
     );
   });
 
   it("rejects repeated valued arguments", () => {
     expect(() =>
-      parseStartupOptions([
-        "--hosted-delete-organization",
-        "org_123",
-        "--hosted-delete-organization",
-        "org_456",
-      ]),
-    ).toThrow("CLI argument cannot be repeated: --hosted-delete-organization");
+      parseStartupOptions(["--hosted-delete-user", "123", "--hosted-delete-user", "456"]),
+    ).toThrow("CLI argument cannot be repeated: --hosted-delete-user");
   });
 
   it("rejects unknown arguments", () => {
@@ -102,11 +95,11 @@ describe("parseStartupOptions", () => {
 });
 
 describe("parseStartupOptions: manual billing", () => {
-  describe("--hosted-set-organization-plan", () => {
-    it("accepts a full org plan grant", () => {
+  describe("--hosted-set-user-plan", () => {
+    it("accepts a full user plan grant", () => {
       const opts = parseStartupOptions([
-        "--hosted-set-organization-plan",
-        "org-1",
+        "--hosted-set-user-plan",
+        "123",
         "--plan",
         "pro",
         "--status",
@@ -118,7 +111,7 @@ describe("parseStartupOptions: manual billing", () => {
         "--note",
         "Manual Wise payment",
       ]);
-      expect(opts.hostedSetOrganizationPlanId).toBe("org-1");
+      expect(opts.hostedSetUserPlanTelegramUserId).toBe("123");
       expect(opts.manualPlanCode).toBe("pro");
       expect(opts.manualSubscriptionStatus).toBe("active");
       expect(opts.manualPaidThroughAt).toEqual(new Date(`${FUTURE_DATE}T00:00:00.000Z`));
@@ -129,8 +122,8 @@ describe("parseStartupOptions: manual billing", () => {
 
     it("defaults --status to active for paid plans", () => {
       const opts = parseStartupOptions([
-        "--hosted-set-organization-plan",
-        "org-1",
+        "--hosted-set-user-plan",
+        "123",
         "--plan",
         "pro",
         "--paid-through",
@@ -140,18 +133,13 @@ describe("parseStartupOptions: manual billing", () => {
     });
 
     it("rejects plan without paid-through unless plan is business", () => {
-      expect(() =>
-        parseStartupOptions(["--hosted-set-organization-plan", "org-1", "--plan", "pro"]),
-      ).toThrow(/--paid-through is required/i);
+      expect(() => parseStartupOptions(["--hosted-set-user-plan", "123", "--plan", "pro"])).toThrow(
+        /--paid-through is required/i,
+      );
     });
 
     it("allows business plan without paid-through", () => {
-      const opts = parseStartupOptions([
-        "--hosted-set-organization-plan",
-        "org-1",
-        "--plan",
-        "business",
-      ]);
+      const opts = parseStartupOptions(["--hosted-set-user-plan", "123", "--plan", "business"]);
       expect(opts.manualPlanCode).toBe("business");
       expect(opts.manualSubscriptionStatus).toBe("active");
       expect(opts.manualPaidThroughAt).toBeNull();
@@ -160,8 +148,8 @@ describe("parseStartupOptions: manual billing", () => {
     it("rejects --plan free with --status active", () => {
       expect(() =>
         parseStartupOptions([
-          "--hosted-set-organization-plan",
-          "org-1",
+          "--hosted-set-user-plan",
+          "123",
           "--plan",
           "free",
           "--status",
@@ -173,8 +161,8 @@ describe("parseStartupOptions: manual billing", () => {
     it("rejects --plan free with --keep-stripe-link", () => {
       expect(() =>
         parseStartupOptions([
-          "--hosted-set-organization-plan",
-          "org-1",
+          "--hosted-set-user-plan",
+          "123",
           "--plan",
           "free",
           "--keep-stripe-link",
@@ -185,8 +173,8 @@ describe("parseStartupOptions: manual billing", () => {
     it("rejects --keep-stripe-link for non-business plans", () => {
       expect(() =>
         parseStartupOptions([
-          "--hosted-set-organization-plan",
-          "org-1",
+          "--hosted-set-user-plan",
+          "123",
           "--plan",
           "pro",
           "--paid-through",
@@ -198,8 +186,8 @@ describe("parseStartupOptions: manual billing", () => {
 
     it("allows --keep-stripe-link with --plan business", () => {
       const opts = parseStartupOptions([
-        "--hosted-set-organization-plan",
-        "org-1",
+        "--hosted-set-user-plan",
+        "123",
         "--plan",
         "business",
         "--keep-stripe-link",
@@ -212,8 +200,8 @@ describe("parseStartupOptions: manual billing", () => {
       const sixDaysAgo = new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000);
       const isoDate = sixDaysAgo.toISOString().slice(0, 10);
       const opts = parseStartupOptions([
-        "--hosted-set-organization-plan",
-        "org-1",
+        "--hosted-set-user-plan",
+        "123",
         "--plan",
         "pro",
         "--paid-through",
@@ -228,8 +216,8 @@ describe("parseStartupOptions: manual billing", () => {
       const isoDate = tenDaysAgo.toISOString().slice(0, 10);
       expect(() =>
         parseStartupOptions([
-          "--hosted-set-organization-plan",
-          "org-1",
+          "--hosted-set-user-plan",
+          "123",
           "--plan",
           "pro",
           "--paid-through",
@@ -241,8 +229,8 @@ describe("parseStartupOptions: manual billing", () => {
     it("rejects unparseable --paid-through", () => {
       expect(() =>
         parseStartupOptions([
-          "--hosted-set-organization-plan",
-          "org-1",
+          "--hosted-set-user-plan",
+          "123",
           "--plan",
           "pro",
           "--paid-through",
@@ -254,8 +242,8 @@ describe("parseStartupOptions: manual billing", () => {
     it("rejects normalized invalid calendar dates for --paid-through", () => {
       expect(() =>
         parseStartupOptions([
-          "--hosted-set-organization-plan",
-          "org-1",
+          "--hosted-set-user-plan",
+          "123",
           "--plan",
           "pro",
           "--paid-through",
@@ -267,8 +255,8 @@ describe("parseStartupOptions: manual billing", () => {
     it("rejects non-ISO date formats for --paid-through", () => {
       expect(() =>
         parseStartupOptions([
-          "--hosted-set-organization-plan",
-          "org-1",
+          "--hosted-set-user-plan",
+          "123",
           "--plan",
           "pro",
           "--paid-through",
@@ -280,8 +268,8 @@ describe("parseStartupOptions: manual billing", () => {
     it("rejects unknown --plan value", () => {
       expect(() =>
         parseStartupOptions([
-          "--hosted-set-organization-plan",
-          "org-1",
+          "--hosted-set-user-plan",
+          "123",
           "--plan",
           "platinum",
           "--paid-through",
@@ -293,8 +281,8 @@ describe("parseStartupOptions: manual billing", () => {
     it("rejects unknown --status value", () => {
       expect(() =>
         parseStartupOptions([
-          "--hosted-set-organization-plan",
-          "org-1",
+          "--hosted-set-user-plan",
+          "123",
           "--plan",
           "pro",
           "--status",
@@ -308,8 +296,8 @@ describe("parseStartupOptions: manual billing", () => {
     it("rejects --note longer than 1000 characters", () => {
       expect(() =>
         parseStartupOptions([
-          "--hosted-set-organization-plan",
-          "org-1",
+          "--hosted-set-user-plan",
+          "123",
           "--plan",
           "pro",
           "--paid-through",
@@ -318,180 +306,6 @@ describe("parseStartupOptions: manual billing", () => {
           "x".repeat(1001),
         ]),
       ).toThrow(/--note/i);
-    });
-  });
-
-  describe("--hosted-set-user-plan", () => {
-    it("accepts a user plan grant with optional --organization-id", () => {
-      const opts = parseStartupOptions([
-        "--hosted-set-user-plan",
-        "12345",
-        "--plan",
-        "personal",
-        "--paid-through",
-        FUTURE_DATE,
-        "--organization-id",
-        "org-1",
-      ]);
-      expect(opts.hostedSetUserPlanTelegramUserId).toBe("12345");
-      expect(opts.manualOrganizationId).toBe("org-1");
-    });
-
-    it("accepts --create-new-organization", () => {
-      const opts = parseStartupOptions([
-        "--hosted-set-user-plan",
-        "12345",
-        "--plan",
-        "personal",
-        "--paid-through",
-        FUTURE_DATE,
-        "--create-new-organization",
-      ]);
-      expect(opts.manualCreateNewOrganization).toBe(true);
-    });
-
-    it("rejects --organization-id together with --create-new-organization", () => {
-      expect(() =>
-        parseStartupOptions([
-          "--hosted-set-user-plan",
-          "12345",
-          "--plan",
-          "personal",
-          "--paid-through",
-          FUTURE_DATE,
-          "--organization-id",
-          "org-1",
-          "--create-new-organization",
-        ]),
-      ).toThrow(/organization-id.*create-new-organization/i);
-    });
-
-    it("rejects non-numeric telegram user id", () => {
-      expect(() =>
-        parseStartupOptions([
-          "--hosted-set-user-plan",
-          "abc",
-          "--plan",
-          "personal",
-          "--paid-through",
-          FUTURE_DATE,
-        ]),
-      ).toThrow(/telegram.*user.*id/i);
-    });
-  });
-
-  describe("--hosted-add-organization-member", () => {
-    it("accepts member command with required role", () => {
-      const opts = parseStartupOptions([
-        "--hosted-add-organization-member",
-        "org-1",
-        "--telegram-user-id",
-        "12345",
-        "--role",
-        "member",
-      ]);
-      expect(opts.hostedAddOrganizationMemberId).toBe("org-1");
-      expect(opts.manualTelegramUserId).toBe("12345");
-      expect(opts.manualOrganizationRole).toBe("member");
-    });
-
-    it("requires --telegram-user-id", () => {
-      expect(() =>
-        parseStartupOptions(["--hosted-add-organization-member", "org-1", "--role", "member"]),
-      ).toThrow(/--telegram-user-id/i);
-    });
-
-    it("requires --role", () => {
-      expect(() =>
-        parseStartupOptions([
-          "--hosted-add-organization-member",
-          "org-1",
-          "--telegram-user-id",
-          "12345",
-        ]),
-      ).toThrow(/--role/i);
-    });
-
-    it("rejects invalid --role value", () => {
-      expect(() =>
-        parseStartupOptions([
-          "--hosted-add-organization-member",
-          "org-1",
-          "--telegram-user-id",
-          "12345",
-          "--role",
-          "superadmin",
-        ]),
-      ).toThrow(/--role/i);
-    });
-  });
-
-  describe("mutual exclusion across hosted operations", () => {
-    it("rejects manual auxiliary flags without a manual operation", () => {
-      expect(() => parseStartupOptions(["--plan", "pro", "--paid-through", FUTURE_DATE])).toThrow(
-        /manual billing arguments require/i,
-      );
-      expect(() => parseStartupOptions(["--keep-stripe-link"])).toThrow(
-        /manual billing arguments require/i,
-      );
-    });
-
-    it("rejects irrelevant manual flags for organization grants", () => {
-      expect(() =>
-        parseStartupOptions([
-          "--hosted-set-organization-plan",
-          "org-1",
-          "--plan",
-          "business",
-          "--telegram-user-id",
-          "12345",
-        ]),
-      ).toThrow(/hosted-set-organization-plan does not accept/i);
-    });
-
-    it("rejects plan flags for member-add operations", () => {
-      expect(() =>
-        parseStartupOptions([
-          "--hosted-add-organization-member",
-          "org-1",
-          "--telegram-user-id",
-          "12345",
-          "--role",
-          "member",
-          "--plan",
-          "pro",
-          "--paid-through",
-          FUTURE_DATE,
-        ]),
-      ).toThrow(/hosted-add-organization-member only accepts/i);
-    });
-
-    it("rejects manual + export together", () => {
-      expect(() =>
-        parseStartupOptions([
-          "--hosted-set-organization-plan",
-          "org-1",
-          "--plan",
-          "business",
-          "--hosted-export-organization",
-          "org-1",
-          "--hosted-export-output",
-          "/tmp/x.json",
-        ]),
-      ).toThrow(/Choose only one startup operation flag/i);
-    });
-
-    it("rejects two manual operations together", () => {
-      expect(() =>
-        parseStartupOptions([
-          "--hosted-set-organization-plan",
-          "org-1",
-          "--hosted-set-user-plan",
-          "12345",
-          "--plan",
-          "business",
-        ]),
-      ).toThrow(/Choose only one startup operation flag/i);
     });
   });
 });

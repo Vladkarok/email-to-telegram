@@ -8,10 +8,9 @@ vi.mock("../../../../src/config.js", () => ({
   loadConfig: (): unknown => mockLoadConfig(),
 }));
 
-const mockGetPrimaryOrganizationForUser = vi.fn();
-vi.mock("../../../../src/tenant/currentOrganization.js", () => ({
-  getPrimaryOrganizationForUser: (...args: unknown[]): unknown =>
-    mockGetPrimaryOrganizationForUser(...args),
+const mockFindUserById = vi.fn();
+vi.mock("../../../../src/db/repos/users.js", () => ({
+  findUserById: (...args: unknown[]): unknown => mockFindUserById(...args),
 }));
 
 const { planHandler } = await import("../../../../src/telegram/commands/plan.js");
@@ -30,11 +29,10 @@ describe("/plan command", () => {
 
     const [text] = ctx.reply.mock.calls[0] as [string, unknown];
     expect(text).toMatch(/self-hosted|billing.*not enabled/i);
-    expect(mockGetPrimaryOrganizationForUser).not.toHaveBeenCalled();
   });
 
   it("in hosted mode with no organization replies defensively", async () => {
-    mockGetPrimaryOrganizationForUser.mockResolvedValue(null);
+    mockFindUserById.mockResolvedValue(null);
     const ctx = createMockCtx({ chatType: "private" });
 
     await planHandler(ctx);
@@ -44,7 +42,7 @@ describe("/plan command", () => {
   });
 
   it("renders the free plan for a free organization", async () => {
-    mockGetPrimaryOrganizationForUser.mockResolvedValue({
+    mockFindUserById.mockResolvedValue({
       id: "org-1",
       name: "Test Org",
       planCode: "free",
@@ -61,7 +59,7 @@ describe("/plan command", () => {
   });
 
   it("renders the pro plan for an active pro subscription", async () => {
-    mockGetPrimaryOrganizationForUser.mockResolvedValue({
+    mockFindUserById.mockResolvedValue({
       id: "org-1",
       name: "Test Org",
       planCode: "pro",
@@ -78,7 +76,7 @@ describe("/plan command", () => {
   });
 
   it("renders the free effective plan for a canceled subscription", async () => {
-    mockGetPrimaryOrganizationForUser.mockResolvedValue({
+    mockFindUserById.mockResolvedValue({
       id: "org-1",
       name: "Test Org",
       planCode: "pro",
@@ -96,7 +94,7 @@ describe("/plan command", () => {
   });
 
   it("uses HTML parse mode", async () => {
-    mockGetPrimaryOrganizationForUser.mockResolvedValue({
+    mockFindUserById.mockResolvedValue({
       id: "org-1",
       name: "Test Org",
       planCode: "free",

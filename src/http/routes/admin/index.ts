@@ -7,30 +7,20 @@ import {
   renderDashboardPage,
   renderUsersPage,
   renderUserDetailPage,
-  renderOrganizationDetailPage,
   renderErrorPage,
   type UserSearchResult,
   type UserDetail,
-  type OrganizationDetail,
   type BillingFlash,
   type BillingFormOverrides,
 } from "./templates.js";
 import { adminOperatorSource, redactManualBillingForLog } from "../../../billing/audit.js";
-import {
-  grantManualOrganizationPlan,
-  type ManualSubscriptionStatus,
-} from "../../../billing/manual.js";
+import { grantManualUserPlan, type ManualSubscriptionStatus } from "../../../billing/manual.js";
 import type { PlanCode } from "../../../billing/plans.js";
 import { getDb } from "../../../db/client.js";
 import { findUserById } from "../../../db/repos/users.js";
-import { findOrganizationById } from "../../../db/repos/organizations.js";
-import {
-  listOrganizationMembers,
-  listOrganizationMembershipsForUser,
-} from "../../../db/repos/organizationMembers.js";
-import { countActiveAliasesByOrganization } from "../../../db/repos/aliases.js";
-import { getOrganizationUsageMonth, usageMonthForDate } from "../../../db/repos/usage.js";
-import { listManualBillingEventsForOrganization } from "../../../db/repos/manualBillingEvents.js";
+import { countActiveAliasesByUser } from "../../../db/repos/aliases.js";
+import { getUserUsageMonth, usageMonthForDate } from "../../../db/repos/usage.js";
+import { listManualBillingEventsForUser } from "../../../db/repos/manualBillingEvents.js";
 import { users } from "../../../db/schema.js";
 import { eq, ilike } from "drizzle-orm";
 import cookie from "@fastify/cookie";
@@ -40,8 +30,6 @@ type AdminConfig = Pick<
   AppConfig,
   "adminEnabled" | "adminSecret" | "adminSessionSecret" | "adminSessionTtlMinutes" | "nodeEnv"
 >;
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Promise<void> {
   if (!config.adminEnabled || !config.adminSecret) return;
@@ -65,7 +53,6 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
     saveUninitialized: false,
   });
 
-  // Prevent browsers and intermediaries from caching admin HTML
   app.addHook("onSend", async (_req, reply) => {
     const ct = reply.getHeader("content-type");
     if (typeof ct === "string" && ct.startsWith("text/html")) {
@@ -74,10 +61,6 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
     }
   });
 
-  // CSRF check must be registered before route handlers.
-  // Use routeOptions.url (the matched, decoded pattern) not req.url (raw, percent-encoded)
-  // to avoid bypasses like POST /%61dmin/action skipping the check.
-  // Login is excluded — no session exists yet, so there is no token to bind.
   app.addHook("preHandler", async (req, reply) => {
     if (req.method === "POST" && req.routeOptions.url !== "/admin/login") {
       if (!verifyCsrfToken(req)) {
@@ -87,9 +70,6 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
     }
   });
 
-  // req.ip is sourced from X-Forwarded-For (trustProxy: true) which Caddy sets to the real
-  // client IP. Caddy must be configured to strip/overwrite X-Forwarded-For on ingress so
-  // clients cannot spoof their way around this limit.
   const loginRateLimit = { max: 5, timeWindow: "15 minutes" };
 
   app.get("/admin/login", async (_req, reply) => {
@@ -141,17 +121,12 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         .where(isNumeric ? eq(users.id, BigInt(query)) : ilike(users.username, `%${query}%`))
         .limit(50);
 
-      results = await Promise.all(
-        rows.map(async (u) => {
-          const memberships = await listOrganizationMembershipsForUser(db, u.id);
-          return {
-            id: u.id.toString(),
-            username: u.username,
-            isAllowed: u.isAllowed,
-            organizationCount: memberships.length,
-          };
-        }),
-      );
+      results = rows.map((u) => ({
+        id: u.id.toString(),
+        username: u.username,
+        isAllowed: u.isAllowed,
+        planCode: u.planCode,
+      }));
     }
 
     await reply.type("text/html").send(renderUsersPage(csrfToken, query, results));
@@ -162,59 +137,13 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
     { preHandler: guard },
     async (req, reply) => {
       const csrfToken = req.session.admin?.csrfToken ?? "";
-      const userId = req.params.id;
+      const userIdRaw = req.params.id;
 
-      if (!/^-?\d+$/.test(userId)) {
+      if (!/^-?\d+$/.test(userIdRaw)) {
         await reply
           .status(400)
           .type("text/html")
           .send(renderErrorPage("Bad Request", "Invalid user ID."));
-        return;
-      }
-
-      const db = getDb();
-      const user = await findUserById(db, BigInt(userId));
-      if (!user) {
-        await reply.status(404).send();
-        return;
-      }
-
-      const memberships = await listOrganizationMembershipsForUser(db, user.id);
-      const organizations: OrganizationDetail[] = await Promise.all(
-        memberships.map((m) => buildOrganizationDetail(m.organizationId)),
-      );
-
-      const detail: UserDetail = {
-        id: user.id.toString(),
-        username: user.username,
-        isAllowed: user.isAllowed,
-        createdAt: user.createdAt.toISOString(),
-        organizations,
-      };
-
-      await reply.type("text/html").send(renderUserDetailPage(csrfToken, detail));
-    },
-  );
-
-  app.get<{ Params: { id: string } }>(
-    "/admin/organizations/:id",
-    { preHandler: guard },
-    async (req, reply) => {
-      const csrfToken = req.session.admin?.csrfToken ?? "";
-      const orgId = req.params.id;
-
-      if (!UUID_RE.test(orgId)) {
-        await reply
-          .status(400)
-          .type("text/html")
-          .send(renderErrorPage("Bad Request", "Invalid organization ID."));
-        return;
-      }
-
-      const db = getDb();
-      const org = await findOrganizationById(db, orgId);
-      if (!org) {
-        await reply.status(404).send();
         return;
       }
 
@@ -231,12 +160,16 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         flash = {
           type: "success",
           message:
-            "Billing state reconciled: payment reference already exists and org state was restored.",
+            "Billing state reconciled: payment reference already exists and user state was restored.",
         };
       }
 
-      const detail = await buildOrganizationDetail(orgId, org);
-      await reply.type("text/html").send(renderOrganizationDetailPage(csrfToken, detail, flash));
+      const detail = await buildUserDetail(BigInt(userIdRaw));
+      if (!detail) {
+        await reply.status(404).send();
+        return;
+      }
+      await reply.type("text/html").send(renderUserDetailPage(csrfToken, detail, flash));
     },
   );
 
@@ -244,23 +177,23 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
   const VALID_STATUSES: readonly string[] = ["free", "active", "canceled"];
 
   app.post<{ Params: { id: string } }>(
-    "/admin/organizations/:id/billing",
+    "/admin/users/:id/billing",
     { preHandler: guard },
     async (req, reply) => {
-      const orgId = req.params.id;
+      const userIdRaw = req.params.id;
       const csrfToken = req.session.admin?.csrfToken ?? "";
 
-      if (!UUID_RE.test(orgId)) {
+      if (!/^-?\d+$/.test(userIdRaw)) {
         await reply
           .status(400)
           .type("text/html")
-          .send(renderErrorPage("Bad Request", "Invalid organization ID."));
+          .send(renderErrorPage("Bad Request", "Invalid user ID."));
         return;
       }
 
+      const userId = BigInt(userIdRaw);
       const body = req.body as Record<string, unknown> | undefined;
 
-      // Reject array-valued fields — repeated keys would bypass length/idempotency checks.
       const getString = (key: string): string | null => {
         const v = body?.[key];
         if (Array.isArray(v)) return null;
@@ -272,10 +205,8 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
       const paidThroughRaw = getString("paid_through") ?? "";
       const paymentReferenceRaw = getString("payment_reference") ?? "";
       const noteRaw = getString("note") ?? "";
-      const orgVersionRaw = getString("_org_version") ?? "";
+      const userVersionRaw = getString("_user_version") ?? "";
 
-      // Checkboxes send their form `value` attribute when checked, nothing when unchecked.
-      // Parsed early so renderError can preserve the submitted checkbox state on re-render.
       const keepStripeLinkRaw = body?.["keep_stripe_link"];
       const confirmDowngradeRaw = body?.["_confirm_downgrade"];
       const keptStripeLink = keepStripeLinkRaw === "on";
@@ -287,7 +218,7 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         paidThrough: paidThroughRaw,
         paymentReference: paymentReferenceRaw,
         note: noteRaw,
-        orgVersion: orgVersionRaw,
+        userVersion: userVersionRaw,
       };
 
       const renderError = async (
@@ -295,12 +226,16 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         preserveCheckbox = true,
         preserveSubmitted = true,
       ): Promise<void> => {
-        const detail = await buildOrganizationDetail(orgId);
+        const detail = await buildUserDetail(userId);
+        if (!detail) {
+          await reply.status(404).send();
+          return;
+        }
         const flash: BillingFlash = { type: "error", message };
         await reply
           .type("text/html")
           .send(
-            renderOrganizationDetailPage(
+            renderUserDetailPage(
               csrfToken,
               detail,
               flash,
@@ -318,14 +253,13 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         "note",
         "keep_stripe_link",
         "_confirm_downgrade",
-        "_org_version",
+        "_user_version",
       ];
       if (allFields.some((k) => Array.isArray(body?.[k]))) {
         await renderError("Invalid request: duplicate form fields are not allowed.");
         return;
       }
 
-      // Reject any scalar checkbox value that isn't the expected sentinel — fail closed.
       if (keepStripeLinkRaw !== undefined && keepStripeLinkRaw !== "on") {
         await renderError("Invalid request: unexpected value for keep_stripe_link.");
         return;
@@ -366,8 +300,7 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         return;
       }
 
-      // _org_version is required: omitting it would bypass the concurrency guard.
-      if (!orgVersionRaw) {
+      if (!userVersionRaw) {
         await renderError("Missing page version token. Please reload and resubmit.");
         return;
       }
@@ -375,7 +308,6 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
       const paymentReference = paymentReferenceRaw;
       const note = noteRaw || null;
 
-      // Free plan always clears paid-through regardless of what the form submits.
       let paidThroughAt: Date | null = null;
       if (planRaw !== "free" && paidThroughRaw) {
         const dateOnlyRe = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -398,8 +330,8 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
       }
 
       const db = getDb();
-      const result = await grantManualOrganizationPlan(db, {
-        organizationId: orgId,
+      const result = await grantManualUserPlan(db, {
+        telegramUserId: userId,
         planCode: planRaw as PlanCode,
         subscriptionStatus: statusRaw as ManualSubscriptionStatus,
         paidThroughAt,
@@ -407,12 +339,12 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         note,
         keptStripeLink,
         operatorSource: adminOperatorSource(loginSecret),
-        expectedUpdatedAt: orgVersionRaw,
+        expectedUpdatedAt: userVersionRaw,
       });
 
       if (!result.ok) {
         const errorMessages: Record<string, string> = {
-          organization_not_found: "Organization not found.",
+          user_not_found: "User not found.",
           invalid_plan: "Invalid plan selected.",
           invalid_status: "Invalid subscription status.",
           free_status_required: 'Free plan requires "free" subscription status.',
@@ -424,15 +356,18 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
             "Business plan cannot be set to canceled. Downgrade to a lower plan instead.",
           keep_stripe_link_not_allowed: "Keep Stripe link is only allowed for the Business plan.",
           payment_reference_conflict:
-            "Payment reference already used for a different organization or with different billing details.",
+            "Payment reference already used for a different user or with different billing details.",
           payment_reference_required: "Payment reference is required.",
           payment_reference_too_long: "Payment reference must be 255 characters or fewer.",
           note_too_long: "Note must be 1000 characters or fewer.",
           concurrent_update:
-            "Organization billing state was updated since this page was loaded. Please reload and review before resubmitting.",
+            "User billing state was updated since this page was loaded. Please reload and review before resubmitting.",
         };
         const isConcurrentUpdate = result.code === "concurrent_update";
-        logger.warn({ organizationId: orgId, failureCode: result.code }, "admin.billing.rejected");
+        logger.warn(
+          { userId: userId.toString(), failureCode: result.code },
+          "admin.billing.rejected",
+        );
         await renderError(
           errorMessages[result.code] ?? result.code,
           !isConcurrentUpdate,
@@ -446,71 +381,39 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
       } else if (result.reconciled) {
         logger.info(redactManualBillingForLog(result), "admin.billing.reconciled");
       } else {
-        logger.info({ organizationId: orgId }, "admin.billing.idempotent");
+        logger.info({ userId: userId.toString() }, "admin.billing.idempotent");
       }
       const flashParam = !result.idempotent
         ? "granted"
         : result.reconciled
           ? "reconciled"
           : "idempotent";
-      await reply.redirect(`/admin/organizations/${orgId}?billing=${flashParam}`);
+      await reply.redirect(`/admin/users/${userId.toString()}?billing=${flashParam}`);
     },
   );
 }
 
-async function buildOrganizationDetail(
-  orgId: string,
-  prefetched?: NonNullable<Awaited<ReturnType<typeof findOrganizationById>>>,
-): Promise<OrganizationDetail> {
+async function buildUserDetail(userId: bigint): Promise<UserDetail | null> {
   const db = getDb();
-  const org = prefetched ?? (await findOrganizationById(db, orgId));
-  if (!org) {
-    return {
-      id: orgId,
-      name: "(not found)",
-      planCode: "-",
-      subscriptionStatus: "-",
-      paidThroughAt: null,
-      createdAt: "-",
-      updatedAt: "-",
-      hasStripeLink: false,
-      aliasCount: 0,
-      memberCount: 0,
-      members: [],
-      currentMonthUsage: null,
-      latestBillingEvents: [],
-    };
-  }
+  const user = await findUserById(db, userId);
+  if (!user) return null;
 
-  const members = await listOrganizationMembers(db, orgId);
-  const aliasCount = await countActiveAliasesByOrganization(db, orgId);
+  const aliasCount = await countActiveAliasesByUser(db, userId);
   const currentMonth = usageMonthForDate();
-  const usage = await getOrganizationUsageMonth(db, orgId, currentMonth);
-  const billingEvents = await listManualBillingEventsForOrganization(db, orgId);
-
-  const memberDetails = await Promise.all(
-    members.map(async (m) => {
-      const u = await findUserById(db, m.userId);
-      return {
-        userId: m.userId.toString(),
-        role: m.role,
-        username: u?.username ?? null,
-      };
-    }),
-  );
+  const usage = await getUserUsageMonth(db, userId, currentMonth);
+  const billingEvents = await listManualBillingEventsForUser(db, userId);
 
   return {
-    id: org.id,
-    name: org.name,
-    planCode: org.planCode,
-    subscriptionStatus: org.subscriptionStatus,
-    paidThroughAt: org.paidThroughAt?.toISOString() ?? null,
-    createdAt: org.createdAt.toISOString(),
-    updatedAt: org.updatedAt.toISOString(),
-    hasStripeLink: org.stripeCustomerId != null || org.stripeSubscriptionId != null,
+    id: user.id.toString(),
+    username: user.username,
+    isAllowed: user.isAllowed,
+    createdAt: user.createdAt.toISOString(),
+    updatedAt: user.updatedAt.toISOString(),
+    planCode: user.planCode,
+    subscriptionStatus: user.subscriptionStatus,
+    paidThroughAt: user.paidThroughAt?.toISOString() ?? null,
+    hasStripeLink: user.stripeCustomerId != null || user.stripeSubscriptionId != null,
     aliasCount,
-    memberCount: members.length,
-    members: memberDetails,
     currentMonthUsage: usage
       ? { delivered: usage.deliveredCount, rejected: usage.rejectedCount }
       : null,

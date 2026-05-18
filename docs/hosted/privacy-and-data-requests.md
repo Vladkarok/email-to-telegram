@@ -52,8 +52,8 @@ support. Use Stripe-hosted checkout and portal pages.
 
 ## Data Export
 
-Hosted workspace owners can request a basic export of organization metadata,
-aliases, usage, storage counters, and delivery-log summaries.
+Hosted account owners can request a basic export of account metadata, aliases,
+usage, storage counters, and delivery-log summaries.
 
 Target handling time:
 
@@ -65,8 +65,8 @@ Export requests should be sent to `<privacy@example.com>`.
 
 ## Erasure
 
-Hosted workspace owners can request deletion of hosted organization records and
-stored raw email/attachment files known to delivery logs.
+Hosted account owners can request deletion of hosted account records and stored
+raw email/attachment files known to delivery logs.
 
 Target handling time:
 
@@ -81,8 +81,7 @@ Erasure requests should be sent to `<privacy@example.com>`.
 ## Ownership Verification
 
 Before exporting or deleting workspace data, we may require proof that the
-requester controls the Telegram account or organization role associated with
-the hosted workspace.
+requester controls the Telegram account associated with the hosted workspace.
 
 If ownership is unclear, export or deletion will not proceed until ownership is
 verified.

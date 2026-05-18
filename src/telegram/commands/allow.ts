@@ -12,8 +12,8 @@ import {
 } from "../../db/repos/allowRules.js";
 import {
   checkAllowRuleCreateLimit,
-  hasActiveHostedOrganization,
-  withOrganizationQuotaLock,
+  hasActiveHostedUser,
+  withUserQuotaLock,
 } from "../../billing/limits.js";
 import { canManageAlias } from "../authorization.js";
 import { parseAllowValue } from "../allowValue.js";
@@ -49,7 +49,7 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
     return;
   }
 
-  if (!(await hasActiveHostedOrganization(db, alias.organizationId ?? null))) {
+  if (!(await hasActiveHostedUser(db, alias.createdBy))) {
     await replyForAllowRuleLimitFailure(ctx, alias.localPart, {
       ok: false,
       code: "subscription_inactive",
@@ -115,7 +115,7 @@ async function findAliasForAllowCommand(
 export async function addAllowRuleForAlias(
   ctx: Context,
   db: ReturnType<typeof getDb>,
-  alias: Pick<EmailAddress, "id" | "localPart" | "organizationId">,
+  alias: Pick<EmailAddress, "id" | "localPart" | "createdBy">,
   value: string,
 ): Promise<boolean> {
   const locale = await resolveLocale(ctx, db);
@@ -129,7 +129,7 @@ export async function addAllowRuleForAlias(
   let duplicateRule = false;
 
   try {
-    await withOrganizationQuotaLock(db, alias.organizationId ?? null, async (tx) => {
+    await withUserQuotaLock(db, alias.createdBy, async (tx) => {
       const existingRule = await findAllowRuleByMatch(tx, {
         emailAddressId: alias.id,
         matchType: parsedValue.matchType,
@@ -140,7 +140,7 @@ export async function addAllowRuleForAlias(
         return;
       }
 
-      const lockedLimit = await checkAllowRuleCreateLimit(tx, alias.organizationId ?? null);
+      const lockedLimit = await checkAllowRuleCreateLimit(tx, alias.createdBy);
       if (!lockedLimit.ok) {
         blockedLimit = lockedLimit;
         throw new Error("quota-blocked");
