@@ -61,4 +61,5 @@ export async function startHandler(ctx: Context): Promise<void> {
   });
 
   await sendChatSelectionMenu(ctx, db, { welcome: true });
+  await ctx.reply(messages.start.privacyDisclaimer);
 }

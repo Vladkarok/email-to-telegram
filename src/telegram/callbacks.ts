@@ -182,3 +182,9 @@ export const CB_LANGUAGE_SET = {
 
 /** Close (dismiss) the language menu */
 export const CB_LANGUAGE_CLOSE = "lang:close";
+
+/** /delete_me confirmation — delete account */
+export const CB_DELETE_ME_CONFIRM = "delme:c";
+
+/** /delete_me confirmation — cancel */
+export const CB_DELETE_ME_CANCEL = "delme:x";

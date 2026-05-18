@@ -126,6 +126,7 @@ const envSchema = z.object({
   BILLING_CANCEL_URL: optionalTrimmedUrlSchema,
   DONATION_URL: optionalTrimmedUrlSchema,
   SUPPORT_CONTACT: z.string().trim().min(1).optional(),
+  PRIVACY_POLICY_URL: optionalTrimmedUrlSchema,
   ADMIN_ENABLED: optionalBooleanSchema,
   ADMIN_SECRET: z.string().optional(),
   ADMIN_SESSION_SECRET: z.string().optional(),
@@ -181,6 +182,7 @@ export interface AppConfig {
   billingCancelUrl: string | undefined;
   donationUrl: string | undefined;
   supportContact: string | undefined;
+  privacyPolicyUrl: string | undefined;
   adminEnabled: boolean;
   adminSecret: string | undefined;
   adminSessionSecret: string | undefined;
@@ -346,6 +348,7 @@ export function loadConfig(): AppConfig {
     billingCancelUrl: env.BILLING_CANCEL_URL,
     donationUrl: env.DONATION_URL,
     supportContact: env.SUPPORT_CONTACT,
+    privacyPolicyUrl: env.PRIVACY_POLICY_URL,
     adminEnabled: env.ADMIN_ENABLED,
     adminSecret: env.ADMIN_SECRET,
     adminSessionSecret: env.ADMIN_SESSION_SECRET,
