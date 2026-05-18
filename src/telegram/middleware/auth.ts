@@ -26,15 +26,15 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
   }
 
   const db = getDb();
-  const user = await upsertUser(db, {
+  const userData = {
     id: BigInt(ctx.from.id),
     username: ctx.from.username ?? null,
     locale: localeFromTelegram(ctx.from.language_code),
-  });
+  };
 
   if (loadConfig().appMode === "hosted") {
     try {
-      await ensureUserWithOnboardingLimit(db, user);
+      await ensureUserWithOnboardingLimit(db, userData);
     } catch (err: unknown) {
       if (err instanceof HostedOnboardingRateLimitError) {
         await ctx.reply(HOSTED_ONBOARDING_RATE_LIMIT_MESSAGE);
@@ -53,6 +53,7 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
     return;
   }
 
+  const user = await upsertUser(db, userData);
   if (!user.isAllowed) {
     await ctx.reply("⛔ Access denied. You are not authorized to use this bot.");
     return;
