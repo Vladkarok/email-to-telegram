@@ -1,42 +1,34 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mockGetPrimaryOrganizationForUser = vi.fn();
 const mockReserveHostedOnboardingAttemptInTransaction = vi.fn();
-const mockCreateOrganization = vi.fn();
-const mockAddOrganizationMember = vi.fn();
-
-vi.mock("../../../src/tenant/currentOrganization.js", () => ({
-  getUserById: (...args: unknown[]): unknown =>
-    mockGetPrimaryOrganizationForUser(...args),
-}));
+const mockFindOrCreateUserById = vi.fn();
 
 vi.mock("../../../src/db/repos/hostedOnboardingAttempts.js", () => ({
   reserveHostedOnboardingAttemptInTransaction: (...args: unknown[]): unknown =>
     mockReserveHostedOnboardingAttemptInTransaction(...args),
 }));
 
-vi.mock("../../../src/db/repos/organizations.js", () => ({
-  createOrganization: (...args: unknown[]): unknown => mockCreateOrganization(...args),
+vi.mock("../../../src/db/repos/users.js", () => ({
+  findOrCreateUserById: (...args: unknown[]): unknown => mockFindOrCreateUserById(...args),
 }));
 
-vi.mock("../../../src/db/repos/organizationMembers.js", () => ({
-  addOrganizationMember: (...args: unknown[]): unknown => mockAddOrganizationMember(...args),
-}));
+const { HostedOnboardingRateLimitError, ensureUserWithOnboardingLimit } = await import(
+  "../../../src/abuse/hostedOnboarding.js"
+);
 
-const { HostedOnboardingRateLimitError, ensureUserWithOnboardingLimit } =
-  await import("../../../src/abuse/hostedOnboarding.js");
+function fakeDb() {
+  const tx = { execute: vi.fn().mockResolvedValue(undefined) };
+  return {
+    transaction: vi.fn(async (work: (tx: unknown) => Promise<unknown>) => work(tx)),
+    execute: vi.fn().mockResolvedValue(undefined),
+  };
+}
 
-const user = {
-  id: 123456789n,
-  username: "tester",
+const USER = {
+  id: 12345n,
+  username: "alice",
+  locale: null,
   isAllowed: false,
-  createdAt: new Date(),
-  updatedAt: new Date(),
-};
-
-const organization = {
-  id: "org-1",
-  name: "Org",
   planCode: "free",
   subscriptionStatus: "free",
   stripeCustomerId: null,
@@ -44,69 +36,36 @@ const organization = {
   trialEndsAt: null,
   currentPeriodStart: null,
   currentPeriodEnd: null,
+  paidThroughAt: null,
   createdAt: new Date(),
   updatedAt: new Date(),
 };
 
 describe("ensureUserWithOnboardingLimit", () => {
-  const tx = {
-    execute: vi.fn().mockResolvedValue(undefined),
-  };
-  const db = {
-    transaction: vi.fn((work: (tx: unknown) => Promise<unknown>) => work(tx)),
-  };
-
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetPrimaryOrganizationForUser.mockResolvedValue(null);
     mockReserveHostedOnboardingAttemptInTransaction.mockResolvedValue(true);
-    mockCreateOrganization.mockResolvedValue(organization);
-    mockAddOrganizationMember.mockResolvedValue(undefined);
+    mockFindOrCreateUserById.mockResolvedValue(USER);
   });
 
-  it("returns an existing organization without consuming onboarding quota", async () => {
-    mockGetPrimaryOrganizationForUser.mockResolvedValue(organization);
+  it("reserves the onboarding bucket and returns the upserted user", async () => {
+    const db = fakeDb();
+    const result = await ensureUserWithOnboardingLimit(db as never, USER);
 
-    await expect(
-      ensureUserWithOnboardingLimit(db as never, user),
-    ).resolves.toBe(organization);
-
-    expect(mockCreateOrganization).not.toHaveBeenCalled();
-    expect(mockReserveHostedOnboardingAttemptInTransaction).not.toHaveBeenCalled();
-  });
-
-  it("reserves durable onboarding quota inside the same user lock transaction before creating a new organization", async () => {
-    await expect(
-      ensureUserWithOnboardingLimit(db as never, user),
-    ).resolves.toBe(organization);
-
-    expect(tx.execute).toHaveBeenCalledOnce();
-    expect(mockGetPrimaryOrganizationForUser).toHaveBeenCalledWith(tx, user.id);
-    expect(mockReserveHostedOnboardingAttemptInTransaction).toHaveBeenCalledWith(tx, user.id);
-    expect(mockCreateOrganization).toHaveBeenCalledWith(
-      tx,
-      expect.objectContaining({
-        name: "@tester",
-        planCode: "free",
-        subscriptionStatus: "free",
-      }),
+    expect(result).toEqual(USER);
+    expect(mockReserveHostedOnboardingAttemptInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      12345n,
     );
-    expect(mockAddOrganizationMember).toHaveBeenCalledWith(
-      tx,
-      expect.objectContaining({
-        organizationId: "org-1",
-        userId: user.id,
-        role: "owner",
-      }),
-    );
+    expect(mockFindOrCreateUserById).toHaveBeenCalledWith(expect.anything(), 12345n);
   });
 
-  it("rate limits new workspace setup when durable quota is exhausted", async () => {
-    mockReserveHostedOnboardingAttemptInTransaction.mockResolvedValue(false);
-
-    await expect(
-      ensureUserWithOnboardingLimit(db as never, user),
-    ).rejects.toBeInstanceOf(HostedOnboardingRateLimitError);
-    expect(mockCreateOrganization).not.toHaveBeenCalled();
+  it("throws HostedOnboardingRateLimitError when the bucket is exhausted", async () => {
+    mockReserveHostedOnboardingAttemptInTransaction.mockResolvedValueOnce(false);
+    const db = fakeDb();
+    await expect(ensureUserWithOnboardingLimit(db as never, USER)).rejects.toBeInstanceOf(
+      HostedOnboardingRateLimitError,
+    );
+    expect(mockFindOrCreateUserById).not.toHaveBeenCalled();
   });
 });

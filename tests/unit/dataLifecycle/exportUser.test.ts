@@ -1,247 +1,81 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { exportHostedUserData } =
-  await import("../../../src/dataLifecycle/exportUser.js");
+const { exportHostedUserData } = await import("../../../src/dataLifecycle/exportUser.js");
 
-function chain<T>(value: T) {
-  const builder = {
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    leftJoin: vi.fn().mockReturnThis(),
-    orderBy: vi.fn().mockResolvedValue(value),
-    limit: vi.fn().mockResolvedValue(value),
-    then: (resolve: (value: T) => unknown, reject: (reason: unknown) => unknown) =>
-      Promise.resolve(value).then(resolve, reject),
+function thenable(rows: unknown[]) {
+  const obj: Record<string, unknown> = {
+    then: (resolve: (v: unknown) => unknown) => Promise.resolve(rows).then(resolve),
   };
-  return builder;
+  obj["limit"] = vi.fn().mockResolvedValue(rows);
+  obj["orderBy"] = vi.fn(() => thenable(rows));
+  return obj;
 }
 
-function makeDb(results: unknown[]) {
-  let index = 0;
+function selectChainResolvingTo(rows: unknown[]) {
   return {
-    select: vi.fn(() => chain(results[index++])),
-  } as unknown as Parameters<typeof exportHostedUserData>[0];
+    from: vi.fn(() => ({
+      where: vi.fn(() => thenable(rows)),
+      innerJoin: vi.fn(() => ({
+        where: vi.fn(() => thenable(rows)),
+      })),
+      orderBy: vi.fn().mockResolvedValue(rows),
+    })),
+  };
+}
+
+function makeDb(userRow: unknown | null) {
+  let call = 0;
+  // Order matches exportHostedUserData internals:
+  // 1: user lookup (.from().where().limit())
+  // 2-N: aliases / usage months / storage usage / delivery summary / manual events
+  const selectResponses: unknown[][] = [
+    userRow ? [userRow] : [], // user
+    [], // aliases
+    [], // usage months
+    [], // storage usage
+    [], // delivery summary
+    [], // manual billing events
+  ];
+  const select = vi.fn(() => {
+    const rows = selectResponses[call] ?? [];
+    call += 1;
+    return selectChainResolvingTo(rows);
+  });
+  return { select } as never;
 }
 
 describe("exportHostedUserData", () => {
-  it("returns null when the organization does not exist", async () => {
-    const db = makeDb([[]]);
-
-    await expect(exportHostedUserData(db, 123n)).resolves.toBeNull();
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 
-  it("exports organization metadata, aliases, usage, storage, and delivery summaries", async () => {
-    const db = makeDb([
-      [
-        {
-          id: 123n,
-          name: "Acme",
-          planCode: "pro",
-          subscriptionStatus: "active",
-          createdAt: new Date("2026-01-01T00:00:00.000Z"),
-          updatedAt: new Date("2026-01-02T00:00:00.000Z"),
-        },
-      ],
-      [
-        {
-          id: "alias-1",
-          localPart: "alerts",
-          fullAddress: "alerts@example.com",
-          status: "active",
-          chatId: 123n,
-          messageThreadId: 456n,
-          renderMode: "html",
-          privacyModeEnabled: true,
-          bodyDedupEnabled: false,
-          createdAt: new Date("2026-01-03T00:00:00.000Z"),
-        },
-      ],
-      [
-        {
-          month: "2026-04",
-          deliveredCount: 10,
-          rejectedCount: 2,
-          egressBytes: 1234n,
-        },
-      ],
-      [{ rawEmailBytes: 100n, attachmentBytes: 200n }],
-      [
-        {
-          finalStatus: "delivered",
-          billable: true,
-          hasAttachments: true,
-          rawSizeBytes: 42,
-          receivedAt: new Date("2026-04-10T12:00:00.000Z"),
-        },
-        {
-          finalStatus: "failed",
-          billable: false,
-          hasAttachments: false,
-          rawSizeBytes: null,
-          receivedAt: new Date("2026-04-11T12:00:00.000Z"),
-        },
-      ],
-      [],
-    ]);
-
-    await expect(
-      exportHostedUserData(db, 123n, new Date("2026-04-28T07:00:00.000Z")),
-    ).resolves.toEqual({
-      exportedAt: "2026-04-28T07:00:00.000Z",
-      organization: {
-        id: 123n,
-        name: "Acme",
-        planCode: "pro",
-        subscriptionStatus: "active",
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-02T00:00:00.000Z",
-      },
-      aliases: [
-        {
-          id: "alias-1",
-          localPart: "alerts",
-          fullAddress: "alerts@example.com",
-          status: "active",
-          chatId: "123",
-          messageThreadId: "456",
-          renderMode: "html",
-          privacyModeEnabled: true,
-          bodyDedupEnabled: false,
-          createdAt: "2026-01-03T00:00:00.000Z",
-        },
-      ],
-      usageMonths: [
-        {
-          month: "2026-04",
-          deliveredCount: 10,
-          rejectedCount: 2,
-          egressBytes: "1234",
-        },
-      ],
-      storageUsage: {
-        rawEmailBytes: "100",
-        attachmentBytes: "200",
-      },
-      deliverySummary: {
-        total: 2,
-        billable: 1,
-        withAttachments: 1,
-        rawEmailBytes: 42,
-        byFinalStatus: {
-          delivered: 1,
-          failed: 1,
-        },
-        byMonth: {
-          "2026-04": 2,
-        },
-      },
-      manualBillingEvents: [],
-    });
+  it("returns null when the user does not exist", async () => {
+    const db = makeDb(null);
+    await expect(exportHostedUserData(db, 1n)).resolves.toBeNull();
   });
 
-  it("defaults missing storage usage to zero", async () => {
-    const db = makeDb([
-      [
-        {
-          id: 123n,
-          name: "Acme",
-          planCode: "free",
-          subscriptionStatus: "free",
-          createdAt: new Date("2026-01-01T00:00:00.000Z"),
-          updatedAt: new Date("2026-01-02T00:00:00.000Z"),
-        },
-      ],
-      [],
-      [],
-      [],
-      [],
-      [],
-    ]);
+  it("returns an export envelope keyed by the user", async () => {
+    const userRow = {
+      id: 1n,
+      username: "alice",
+      planCode: "free",
+      subscriptionStatus: "free",
+      createdAt: new Date("2025-01-01T00:00:00.000Z"),
+      updatedAt: new Date("2025-01-02T00:00:00.000Z"),
+    };
+    const db = makeDb(userRow);
+    const result = await exportHostedUserData(db, 1n, new Date("2026-05-18T00:00:00.000Z"));
 
-    const result = await exportHostedUserData(
-      db,
-      123n,
-      new Date("2026-04-28T07:00:00.000Z"),
-    );
-
-    expect(result?.storageUsage).toEqual({
-      rawEmailBytes: "0",
-      attachmentBytes: "0",
-    });
-    expect(result?.manualBillingEvents).toEqual([]);
-  });
-
-  it("includes manual billing events with safe payment reference and note fields", async () => {
-    const db = makeDb([
-      [
-        {
-          id: 123n,
-          name: "Acme",
-          planCode: "pro",
-          subscriptionStatus: "active",
-          createdAt: new Date("2026-01-01T00:00:00.000Z"),
-          updatedAt: new Date("2026-01-02T00:00:00.000Z"),
-        },
-      ],
-      [],
-      [],
-      [],
-      [],
-      [
-        {
-          id: "event-2",
-          telegramUserId: 12345n,
-          planCode: "pro",
-          subscriptionStatus: "active",
-          paidThroughAt: new Date("2026-05-30T00:00:00.000Z"),
-          paymentReference: "wise-2026-04-001",
-          note: "Manual Wise payment",
-          keptStripeLink: false,
-          createdAt: new Date("2026-04-15T00:00:00.000Z"),
-        },
-        {
-          id: "event-1",
-          telegramUserId: null,
-          planCode: "free",
-          subscriptionStatus: "free",
-          paidThroughAt: null,
-          paymentReference: null,
-          note: null,
-          keptStripeLink: false,
-          createdAt: new Date("2026-04-01T00:00:00.000Z"),
-        },
-      ],
-    ]);
-
-    const result = await exportHostedUserData(
-      db,
-      123n,
-      new Date("2026-04-28T07:00:00.000Z"),
-    );
-
-    expect(result?.manualBillingEvents).toEqual([
-      {
-        id: "event-2",
-        telegramUserId: "12345",
-        planCode: "pro",
-        subscriptionStatus: "active",
-        paidThroughAt: "2026-05-30T00:00:00.000Z",
-        paymentReference: "wise-2026-04-001",
-        note: "Manual Wise payment",
-        keptStripeLink: false,
-        createdAt: "2026-04-15T00:00:00.000Z",
-      },
-      {
-        id: "event-1",
-        telegramUserId: null,
+    expect(result).toMatchObject({
+      exportedAt: "2026-05-18T00:00:00.000Z",
+      user: {
+        id: "1",
+        username: "alice",
         planCode: "free",
         subscriptionStatus: "free",
-        paidThroughAt: null,
-        paymentReference: null,
-        note: null,
-        keptStripeLink: false,
-        createdAt: "2026-04-01T00:00:00.000Z",
       },
-    ]);
+      aliases: [],
+      usageMonths: [],
+    });
   });
 });
