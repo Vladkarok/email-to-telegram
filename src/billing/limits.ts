@@ -42,10 +42,7 @@ export function getEffectivePlan(
     case "active":
       return getPlanDefinition(user.planCode as PlanCode);
     case "past_due":
-      if (
-        user.paidThroughAt &&
-        Date.now() - user.paidThroughAt.getTime() <= PAST_DUE_GRACE_MS
-      ) {
+      if (user.paidThroughAt && Date.now() - user.paidThroughAt.getTime() <= PAST_DUE_GRACE_MS) {
         return getPlanDefinition(user.planCode as PlanCode);
       }
       return getPlanDefinition("free");
@@ -59,10 +56,7 @@ export function getEffectivePlan(
   }
 }
 
-export async function checkAliasCreateLimit(
-  db: Db,
-  userId: bigint | null,
-): Promise<LimitResult> {
+export async function checkAliasCreateLimit(db: Db, userId: bigint | null): Promise<LimitResult> {
   if (!shouldEnforceHostedLimits()) return { ok: true };
   if (userId == null) return { ok: false, code: "subscription_inactive" };
 
@@ -186,10 +180,7 @@ export async function checkEgressLimit(
   return { ok: true };
 }
 
-export async function hasActiveHostedUser(
-  db: Db,
-  userId: bigint | null,
-): Promise<boolean> {
+export async function hasActiveHostedUser(db: Db, userId: bigint | null): Promise<boolean> {
   if (!shouldEnforceHostedLimits()) return true;
   if (userId == null) return false;
 

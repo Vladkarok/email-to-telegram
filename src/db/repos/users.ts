@@ -87,10 +87,7 @@ export async function findUserByStripeCustomerId(
   db: Db,
   stripeCustomerId: string,
 ): Promise<User | null> {
-  const [user] = await db
-    .select()
-    .from(users)
-    .where(eq(users.stripeCustomerId, stripeCustomerId));
+  const [user] = await db.select().from(users).where(eq(users.stripeCustomerId, stripeCustomerId));
   return user ?? null;
 }
 

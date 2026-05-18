@@ -18,9 +18,9 @@ describe("hosted data lifecycle startup helpers", () => {
         }),
       ),
     ).toBe(true);
-    expect(
-      hasHostedDataLifecycleOperation(startupOptions({ hostedDeleteUserId: "123" })),
-    ).toBe(true);
+    expect(hasHostedDataLifecycleOperation(startupOptions({ hostedDeleteUserId: "123" }))).toBe(
+      true,
+    );
   });
 
   it("rejects hosted data lifecycle operations outside hosted mode", () => {

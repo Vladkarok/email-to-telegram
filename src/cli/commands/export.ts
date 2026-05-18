@@ -11,10 +11,7 @@ export const exportCommand: OperatorCommand = {
     const exportData = await exportHostedUserData(getDb(), userId);
 
     if (!exportData) {
-      logger.error(
-        { userId: userId.toString() },
-        "Hosted user export failed: user not found.",
-      );
+      logger.error({ userId: userId.toString() }, "Hosted user export failed: user not found.");
       process.exitCode = 1;
       return;
     }

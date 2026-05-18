@@ -10,34 +10,29 @@ vi.mock("../../../../src/config.js", () => ({
 
 const mockFindUserById = vi.fn();
 vi.mock("../../../../src/db/repos/users.js", () => ({
-  findUserById: (...args: unknown[]): unknown =>
-    mockFindUserById(...args),
+  findUserById: (...args: unknown[]): unknown => mockFindUserById(...args),
 }));
 
 const mockGetUserUsageMonth = vi.fn();
 const mockUsageMonthForDate = vi.fn(() => "2026-04");
 vi.mock("../../../../src/db/repos/usage.js", () => ({
-  getUserUsageMonth: (...args: unknown[]): unknown =>
-    mockGetUserUsageMonth(...args),
+  getUserUsageMonth: (...args: unknown[]): unknown => mockGetUserUsageMonth(...args),
   usageMonthForDate: (...args: unknown[]): unknown => mockUsageMonthForDate(...args),
 }));
 
 const mockGetUserStorageUsage = vi.fn();
 vi.mock("../../../../src/db/repos/storageUsage.js", () => ({
-  getUserStorageUsage: (...args: unknown[]): unknown =>
-    mockGetUserStorageUsage(...args),
+  getUserStorageUsage: (...args: unknown[]): unknown => mockGetUserStorageUsage(...args),
 }));
 
 const mockCountActiveAliasesByUser = vi.fn();
 vi.mock("../../../../src/db/repos/aliases.js", () => ({
-  countActiveAliasesByUser: (...args: unknown[]): unknown =>
-    mockCountActiveAliasesByUser(...args),
+  countActiveAliasesByUser: (...args: unknown[]): unknown => mockCountActiveAliasesByUser(...args),
 }));
 
 const mockCountAllowRulesByUser = vi.fn();
 vi.mock("../../../../src/db/repos/allowRules.js", () => ({
-  countAllowRulesByUser: (...args: unknown[]): unknown =>
-    mockCountAllowRulesByUser(...args),
+  countAllowRulesByUser: (...args: unknown[]): unknown => mockCountAllowRulesByUser(...args),
 }));
 
 const mockCountDeliveryLogsByUserInMonth = vi.fn();

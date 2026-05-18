@@ -13,8 +13,7 @@ vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 const mockCheckInboundLimit = vi.fn().mockResolvedValue({ ok: true });
 const mockCheckEgressLimit = vi.fn().mockResolvedValue({ ok: true });
 const mockWithOrganizationQuotaLock = vi.fn(
-  async (_db: unknown, _userId: bigint | null, work: (tx: unknown) => Promise<unknown>) =>
-    work({}),
+  async (_db: unknown, _userId: bigint | null, work: (tx: unknown) => Promise<unknown>) => work({}),
 );
 vi.mock("../../../src/billing/limits.js", () => ({
   checkInboundLimit: (...args: unknown[]): unknown => mockCheckInboundLimit(...args),

@@ -6,10 +6,7 @@ import { getStripeClient } from "./stripe.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
-export async function createCustomerPortalSession(
-  db: Db,
-  userId: bigint,
-): Promise<string | null> {
+export async function createCustomerPortalSession(db: Db, userId: bigint): Promise<string | null> {
   const config = loadConfig();
   if (config.billingProvider !== "stripe") {
     throw new Error("Stripe billing is not configured");

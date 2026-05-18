@@ -14,10 +14,7 @@ import {
   type BillingFormOverrides,
 } from "./templates.js";
 import { adminOperatorSource, redactManualBillingForLog } from "../../../billing/audit.js";
-import {
-  grantManualUserPlan,
-  type ManualSubscriptionStatus,
-} from "../../../billing/manual.js";
+import { grantManualUserPlan, type ManualSubscriptionStatus } from "../../../billing/manual.js";
 import type { PlanCode } from "../../../billing/plans.js";
 import { getDb } from "../../../db/client.js";
 import { findUserById } from "../../../db/repos/users.js";

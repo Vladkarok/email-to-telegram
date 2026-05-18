@@ -13,9 +13,8 @@ vi.mock("../../../src/db/repos/hostedOnboardingAttempts.js", () => ({
     mockReserveHostedRateLimitBucketsInTransaction(...args),
 }));
 
-const { HostedAliasCreateRateLimitError, reserveHostedAliasCreateAttempt } = await import(
-  "../../../src/abuse/hostedAliasCreation.js"
-);
+const { HostedAliasCreateRateLimitError, reserveHostedAliasCreateAttempt } =
+  await import("../../../src/abuse/hostedAliasCreation.js");
 
 describe("reserveHostedAliasCreateAttempt", () => {
   beforeEach(() => {

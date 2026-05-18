@@ -1,10 +1,6 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { and, eq, sql } from "drizzle-orm";
-import {
-  userUsageMonths,
-  type NewUserUsageMonth,
-  type UserUsageMonth,
-} from "../schema.js";
+import { userUsageMonths, type NewUserUsageMonth, type UserUsageMonth } from "../schema.js";
 import type * as schema from "../schema.js";
 
 type Db = NodePgDatabase<typeof schema>;

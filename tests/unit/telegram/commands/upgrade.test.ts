@@ -10,8 +10,7 @@ vi.mock("../../../../src/config.js", () => ({
 
 const mockFindUserById = vi.fn();
 vi.mock("../../../../src/db/repos/users.js", () => ({
-  findUserById: (...args: unknown[]): unknown =>
-    mockFindUserById(...args),
+  findUserById: (...args: unknown[]): unknown => mockFindUserById(...args),
 }));
 
 const mockCreateCheckoutSession = vi.fn();

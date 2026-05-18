@@ -267,9 +267,7 @@ function isExpiredByDeliveryLogRetention(
   globalRetentionDays: number,
   user: RetentionUser,
 ): boolean {
-  const retentionDays = user
-    ? getEffectivePlan(user).limits.retentionDays
-    : globalRetentionDays;
+  const retentionDays = user ? getEffectivePlan(user).limits.retentionDays : globalRetentionDays;
   return timestamp.getTime() < now - retentionDays * 24 * 3600 * 1000;
 }
 

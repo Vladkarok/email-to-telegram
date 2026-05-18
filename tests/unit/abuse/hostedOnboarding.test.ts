@@ -12,9 +12,8 @@ vi.mock("../../../src/db/repos/users.js", () => ({
   findOrCreateUserById: (...args: unknown[]): unknown => mockFindOrCreateUserById(...args),
 }));
 
-const { HostedOnboardingRateLimitError, ensureUserWithOnboardingLimit } = await import(
-  "../../../src/abuse/hostedOnboarding.js"
-);
+const { HostedOnboardingRateLimitError, ensureUserWithOnboardingLimit } =
+  await import("../../../src/abuse/hostedOnboarding.js");
 
 function fakeDb() {
   const tx = { execute: vi.fn().mockResolvedValue(undefined) };

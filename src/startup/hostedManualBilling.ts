@@ -1,9 +1,6 @@
 import type { StartupOptions } from "../cli.js";
 import type { AppConfig } from "../config.js";
-import type {
-  GrantManualUserPlanInput,
-  GrantManualUserPlanResult,
-} from "../billing/manual.js";
+import type { GrantManualUserPlanInput, GrantManualUserPlanResult } from "../billing/manual.js";
 export { redactManualBillingForLog } from "../billing/audit.js";
 
 export function hasHostedManualBillingOperation(startup: StartupOptions): boolean {
