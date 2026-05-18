@@ -33,6 +33,7 @@ import { processInboundEmail } from "../../../src/email/pipeline.js";
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
 const mockFindAlias = vi.fn();
+const mockFindAliasById = vi.fn();
 const mockCheckAllow = vi.fn();
 const mockIsDuplicate = vi.fn();
 const mockCreateLog = vi.fn();
@@ -44,6 +45,7 @@ const mockCreateDeliveryViewLink = vi.fn();
 const mockWriteAttachment = vi.fn();
 
 vi.mock("../../../src/db/repos/aliases.js", () => ({
+  findAliasById: (...a: unknown[]): unknown => mockFindAliasById(...a),
   findAliasByLocalPart: (...a: unknown[]): unknown => mockFindAlias(...a),
   findAliasByLocalPartAndDomainId: (...a: unknown[]): unknown => mockFindAlias(...a),
 }));
@@ -112,6 +114,7 @@ const baseAlias = {
   id: "alias-uuid",
   localPart: "alerts",
   fullAddress: "alerts@example.com",
+  createdBy: 1n,
   chatId: -100n,
   messageThreadId: null as bigint | null,
   status: "active",
@@ -128,7 +131,9 @@ const fakeDb = {
 const fakeApi = {} as NonNullable<Parameters<typeof processInboundEmail>[1]>;
 
 function setupHappyPath(logId = "log-1") {
-  mockFindAlias.mockResolvedValue(makeAlias());
+  const alias = makeAlias();
+  mockFindAlias.mockResolvedValue(alias);
+  mockFindAliasById.mockResolvedValue(alias);
   mockCheckAllow.mockResolvedValue(true);
   mockIsDuplicate.mockResolvedValue(false);
   mockCreateLog.mockResolvedValue({ id: logId });

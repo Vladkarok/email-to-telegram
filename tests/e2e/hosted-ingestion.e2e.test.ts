@@ -57,6 +57,9 @@ vi.mock("../../src/telegram/api.js", () => ({
 }));
 
 vi.mock("../../src/db/repos/aliases.js", () => ({
+  findAliasById: vi.fn((_db: unknown, id: string) =>
+    Promise.resolve(id === state.alias.id ? { ...state.alias } : null),
+  ),
   findAliasByLocalPart: vi.fn((_db: unknown, localPart: string) =>
     Promise.resolve(localPart === state.alias.localPart ? { ...state.alias } : null),
   ),

@@ -42,7 +42,7 @@ describe("hasLivePaidSubscription", () => {
     },
   );
 
-  it.each(["free", "canceled", "incomplete_expired"])(
+  it.each(["canceled", "incomplete_expired"])(
     "returns false for terminal status=%s even with stripe id",
     (status) => {
       expect(
@@ -52,6 +52,14 @@ describe("hasLivePaidSubscription", () => {
       ).toBe(false);
     },
   );
+
+  it("blocks deletion when a free user has a Stripe customer id from an open checkout", () => {
+    expect(
+      hasLivePaidSubscription(
+        makeUser({ stripeCustomerId: "cus_123", subscriptionStatus: "free" }),
+      ),
+    ).toBe(true);
+  });
 
   it("blocks deletion when only a stripeCustomerId exists with non-terminal status (mid-checkout)", () => {
     expect(
