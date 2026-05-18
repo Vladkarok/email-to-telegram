@@ -337,9 +337,19 @@ describe("admin logout", () => {
 });
 
 describe("admin user search", () => {
-  it("renders search page without results when no query", async () => {
+  it("renders recent users when no query", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
+    mockListRecentSignups.mockResolvedValue([
+      {
+        id: 12345n,
+        username: "recentuser",
+        isAllowed: true,
+        planCode: "free",
+        createdAt: new Date("2026-05-16T00:00:00.000Z"),
+      },
+    ]);
+
     const res = await app.inject({
       method: "GET",
       url: "/admin/users",
@@ -347,7 +357,10 @@ describe("admin user search", () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("User Search");
-    expect(res.body).not.toContain("No users found");
+    expect(res.body).toContain("Recent Users");
+    expect(res.body).toContain("recentuser");
+    expect(res.body).toContain("2026-05-16");
+    expect(mockListRecentSignups).toHaveBeenCalledWith(expect.anything(), 50);
   });
 
   it("returns search results for numeric query", async () => {
@@ -367,7 +380,7 @@ describe("admin user search", () => {
               isAllowed: true,
               planCode: "free",
               subscriptionStatus: "free",
-              createdAt: new Date(),
+              createdAt: new Date("2026-05-17T00:00:00.000Z"),
               updatedAt: new Date(),
             },
           ]),
@@ -382,7 +395,9 @@ describe("admin user search", () => {
       headers: { cookie },
     });
     expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("Search Results");
     expect(res.body).toContain("12345");
+    expect(res.body).toContain("2026-05-17");
   });
 });
 

@@ -125,7 +125,7 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
     const csrfToken = req.session.admin?.csrfToken ?? "";
     const query = (req.query as Record<string, string>).q?.trim() ?? "";
 
-    let results: UserSearchResult[] | null = null;
+    let results: UserSearchResult[];
     if (query) {
       const db = getDb();
       const isNumeric = /^-?\d+$/.test(query);
@@ -140,6 +140,17 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         username: u.username,
         isAllowed: u.isAllowed,
         planCode: u.planCode,
+        createdAt: u.createdAt.toISOString(),
+      }));
+    } else {
+      const db = getDb();
+      const rows = await listRecentSignups(db, 50);
+      results = rows.map((u) => ({
+        id: u.id.toString(),
+        username: u.username,
+        isAllowed: u.isAllowed,
+        planCode: u.planCode,
+        createdAt: u.createdAt.toISOString(),
       }));
     }
 
