@@ -12,23 +12,23 @@ const mockFindOrganizationByStripeCustomerId = vi.fn();
 const mockFindOrganizationByStripeSubscriptionId = vi.fn();
 const mockUpdateOrganizationBillingState = vi.fn();
 const mockUpdateOrganizationPaidThroughAtIfLater = vi.fn();
-vi.mock("../../../src/db/repos/organizations.js", () => ({
-  findOrganizationById: (...args: unknown[]): unknown => mockFindOrganizationById(...args),
-  findOrganizationByIdForUpdate: (...args: unknown[]): unknown =>
+vi.mock("../../../src/db/repos/users.js", () => ({
+  findUserById: (...args: unknown[]): unknown => mockFindOrganizationById(...args),
+  findUserByIdForUpdate: (...args: unknown[]): unknown =>
     mockFindOrganizationByIdForUpdate(...args),
-  findOrganizationByStripeCustomerId: (...args: unknown[]): unknown =>
+  findUserByStripeCustomerId: (...args: unknown[]): unknown =>
     mockFindOrganizationByStripeCustomerId(...args),
-  findOrganizationByStripeSubscriptionId: (...args: unknown[]): unknown =>
+  findUserByStripeSubscriptionId: (...args: unknown[]): unknown =>
     mockFindOrganizationByStripeSubscriptionId(...args),
-  updateOrganizationBillingState: (...args: unknown[]): unknown =>
+  updateUserBillingState: (...args: unknown[]): unknown =>
     mockUpdateOrganizationBillingState(...args),
-  updateOrganizationPaidThroughAtIfLater: (...args: unknown[]): unknown =>
+  updateUserPaidThroughAtIfLater: (...args: unknown[]): unknown =>
     mockUpdateOrganizationPaidThroughAtIfLater(...args),
 }));
 
 const mockFindLatestManualBillingEventForOrganization = vi.fn();
 vi.mock("../../../src/db/repos/manualBillingEvents.js", () => ({
-  findLatestManualBillingEventForOrganization: (...args: unknown[]): unknown =>
+  findLatestManualBillingEventForUser: (...args: unknown[]): unknown =>
     mockFindLatestManualBillingEventForOrganization(...args),
 }));
 
@@ -267,14 +267,14 @@ describe("processStripeWebhookEvent", () => {
   });
 
   it("processes checkout completion by linking the Stripe customer", async () => {
-    const org = {
-      id: "org-1",
+    const user = {
+      id: 1n,
       planCode: "free",
       stripeCustomerId: null,
       stripeSubscriptionId: null,
     };
-    mockFindOrganizationById.mockResolvedValue(org);
-    mockFindOrganizationByIdForUpdate.mockResolvedValue(org);
+    mockFindOrganizationById.mockResolvedValue(user);
+    mockFindOrganizationByIdForUpdate.mockResolvedValue(user);
 
     await expect(
       processStripeWebhookEvent(buildDb(), {
@@ -283,14 +283,14 @@ describe("processStripeWebhookEvent", () => {
         data: {
           object: {
             customer: "cus_123",
-            metadata: { organizationId: "org-1" },
-            client_reference_id: "org-1",
+            metadata: { telegramUserId: "1" },
+            client_reference_id: "1",
           },
         },
       } as never),
     ).resolves.toBe("processed");
 
-    expect(mockUpdateOrganizationBillingState).toHaveBeenCalledWith(expect.anything(), "org-1", {
+    expect(mockUpdateOrganizationBillingState).toHaveBeenCalledWith(expect.anything(), 1n, {
       stripeCustomerId: "cus_123",
     });
   });

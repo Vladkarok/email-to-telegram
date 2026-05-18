@@ -9,8 +9,8 @@ describe("buildBillingStatusText", () => {
   it("includes the organization name", () => {
     const text = buildBillingStatusText({
       plan: freePlan,
-      organization: {
-        name: "My Workspace",
+      user: {
+        displayName: "My Workspace",
         planCode: "free",
         subscriptionStatus: "free",
         currentPeriodEnd: null,
@@ -27,8 +27,8 @@ describe("buildBillingStatusText", () => {
   it("HTML-escapes the organization name to prevent injection", () => {
     const text = buildBillingStatusText({
       plan: freePlan,
-      organization: {
-        name: "<script>alert(1)</script>",
+      user: {
+        displayName: "<script>alert(1)</script>",
         planCode: "free",
         subscriptionStatus: "free",
         currentPeriodEnd: null,
@@ -46,8 +46,8 @@ describe("buildBillingStatusText", () => {
   it("shows the plan name and subscription status", () => {
     const text = buildBillingStatusText({
       plan: proPlan,
-      organization: {
-        name: "Acme Co",
+      user: {
+        displayName: "Acme Co",
         planCode: "pro",
         subscriptionStatus: "active",
         currentPeriodEnd: new Date("2030-01-01T00:00:00Z"),
@@ -65,8 +65,8 @@ describe("buildBillingStatusText", () => {
   it("renders this-month accepted/billable count", () => {
     const text = buildBillingStatusText({
       plan: freePlan,
-      organization: {
-        name: "Acme Co",
+      user: {
+        displayName: "Acme Co",
         planCode: "free",
         subscriptionStatus: "free",
         currentPeriodEnd: null,
@@ -84,8 +84,8 @@ describe("buildBillingStatusText", () => {
   it("renders alias quota and storage estimate", () => {
     const text = buildBillingStatusText({
       plan: freePlan,
-      organization: {
-        name: "Acme Co",
+      user: {
+        displayName: "Acme Co",
         planCode: "free",
         subscriptionStatus: "free",
         currentPeriodEnd: null,
@@ -103,8 +103,8 @@ describe("buildBillingStatusText", () => {
   it("escapes a tampered subscription status", () => {
     const text = buildBillingStatusText({
       plan: freePlan,
-      organization: {
-        name: "Acme Co",
+      user: {
+        displayName: "Acme Co",
         planCode: "free",
         subscriptionStatus: "<b>fake</b>" as never,
         currentPeriodEnd: null,

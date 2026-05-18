@@ -11,28 +11,28 @@ vi.mock("../../../src/config.js", () => ({
   loadConfig: (): unknown => mockLoadConfig(),
 }));
 
-vi.mock("../../../src/db/repos/organizations.js", () => ({
-  findOrganizationById: (...args: unknown[]): unknown => mockFindOrganizationById(...args),
+vi.mock("../../../src/db/repos/users.js", () => ({
+  findUserById: (...args: unknown[]): unknown => mockFindOrganizationById(...args),
 }));
 
 vi.mock("../../../src/db/repos/aliases.js", () => ({
-  countActiveAliasesByOrganization: (...args: unknown[]): unknown =>
+  countActiveAliasesByUser: (...args: unknown[]): unknown =>
     mockCountActiveAliasesByOrganization(...args),
 }));
 
 vi.mock("../../../src/db/repos/allowRules.js", () => ({
-  countAllowRulesByOrganization: (...args: unknown[]): unknown =>
+  countAllowRulesByUser: (...args: unknown[]): unknown =>
     mockCountAllowRulesByOrganization(...args),
 }));
 
 vi.mock("../../../src/db/repos/usage.js", () => ({
-  getOrganizationUsageMonth: (...args: unknown[]): unknown =>
+  getUserUsageMonth: (...args: unknown[]): unknown =>
     mockGetOrganizationUsageMonth(...args),
   usageMonthForDate: vi.fn(() => "2026-04"),
 }));
 
 vi.mock("../../../src/db/repos/storageUsage.js", () => ({
-  getOrganizationStorageUsage: (...args: unknown[]): unknown =>
+  getUserStorageUsage: (...args: unknown[]): unknown =>
     mockGetOrganizationStorageUsage(...args),
 }));
 
@@ -52,23 +52,23 @@ describe("billing limits", () => {
   });
 
   it("skips quota enforcement outside hosted mode", async () => {
-    await expect(checkAliasCreateLimit({} as never, "org-1")).resolves.toEqual({ ok: true });
-    await expect(checkAllowRuleCreateLimit({} as never, "org-1")).resolves.toEqual({ ok: true });
-    await expect(checkInboundLimit({} as never, "org-1")).resolves.toEqual({ ok: true });
+    await expect(checkAliasCreateLimit({} as never, 1n)).resolves.toEqual({ ok: true });
+    await expect(checkAllowRuleCreateLimit({} as never, 1n)).resolves.toEqual({ ok: true });
+    await expect(checkInboundLimit({} as never, 1n)).resolves.toEqual({ ok: true });
     expect(mockFindOrganizationById).not.toHaveBeenCalled();
   });
 
   it("enforces hosted alias limits from the effective plan", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
     mockFindOrganizationById.mockResolvedValue({
-      id: "org-1",
+      id: 1n,
       planCode: "free",
       subscriptionStatus: "free",
       currentPeriodEnd: null,
     });
     mockCountActiveAliasesByOrganization.mockResolvedValue(3);
 
-    await expect(checkAliasCreateLimit({} as never, "org-1")).resolves.toEqual({
+    await expect(checkAliasCreateLimit({} as never, 1n)).resolves.toEqual({
       ok: false,
       code: "alias_limit",
       limit: 3,
@@ -79,21 +79,21 @@ describe("billing limits", () => {
   it("allows hosted alias creation when usage is below the limit", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
     mockFindOrganizationById.mockResolvedValue({
-      id: "org-1",
+      id: 1n,
       planCode: "free",
       subscriptionStatus: "free",
       currentPeriodEnd: null,
     });
     mockCountActiveAliasesByOrganization.mockResolvedValue(2);
 
-    await expect(checkAliasCreateLimit({} as never, "org-1")).resolves.toEqual({ ok: true });
+    await expect(checkAliasCreateLimit({} as never, 1n)).resolves.toEqual({ ok: true });
   });
 
   it("returns subscription_inactive when the alias org row is missing", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
     mockFindOrganizationById.mockResolvedValue(null);
 
-    await expect(checkAliasCreateLimit({} as never, "org-1")).resolves.toEqual({
+    await expect(checkAliasCreateLimit({} as never, 1n)).resolves.toEqual({
       ok: false,
       code: "subscription_inactive",
     });
@@ -102,14 +102,14 @@ describe("billing limits", () => {
   it("enforces hosted allow-rule limits from the effective plan", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
     mockFindOrganizationById.mockResolvedValue({
-      id: "org-1",
+      id: 1n,
       planCode: "free",
       subscriptionStatus: "free",
       currentPeriodEnd: null,
     });
     mockCountAllowRulesByOrganization.mockResolvedValue(10);
 
-    await expect(checkAllowRuleCreateLimit({} as never, "org-1")).resolves.toEqual({
+    await expect(checkAllowRuleCreateLimit({} as never, 1n)).resolves.toEqual({
       ok: false,
       code: "allow_rule_limit",
       limit: 10,
@@ -120,14 +120,14 @@ describe("billing limits", () => {
   it("allows hosted allow-rule creation when usage is below the limit", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
     mockFindOrganizationById.mockResolvedValue({
-      id: "org-1",
+      id: 1n,
       planCode: "free",
       subscriptionStatus: "free",
       currentPeriodEnd: null,
     });
     mockCountAllowRulesByOrganization.mockResolvedValue(9);
 
-    await expect(checkAllowRuleCreateLimit({} as never, "org-1")).resolves.toEqual({ ok: true });
+    await expect(checkAllowRuleCreateLimit({} as never, 1n)).resolves.toEqual({ ok: true });
   });
 
   it("treats missing hosted organization ids as inactive subscription state", async () => {
@@ -155,7 +155,7 @@ describe("billing limits", () => {
   it("enforces hosted monthly inbound quota from the effective plan", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
     mockFindOrganizationById.mockResolvedValue({
-      id: "org-1",
+      id: 1n,
       planCode: "free",
       subscriptionStatus: "free",
       currentPeriodEnd: null,
@@ -165,7 +165,7 @@ describe("billing limits", () => {
       rejectedCount: 0,
     });
 
-    await expect(checkInboundLimit({} as never, "org-1")).resolves.toEqual({
+    await expect(checkInboundLimit({} as never, 1n)).resolves.toEqual({
       ok: false,
       code: "monthly_email_limit",
       limit: 100,
@@ -176,7 +176,7 @@ describe("billing limits", () => {
   it("rejects hosted inbound mail that exceeds the plan message size", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
     mockFindOrganizationById.mockResolvedValue({
-      id: "org-1",
+      id: 1n,
       planCode: "free",
       subscriptionStatus: "free",
       currentPeriodEnd: null,
@@ -186,7 +186,7 @@ describe("billing limits", () => {
       rejectedCount: 0,
     });
 
-    await expect(checkInboundLimit({} as never, "org-1", 6 * 1024 * 1024)).resolves.toEqual({
+    await expect(checkInboundLimit({} as never, 1n, 6 * 1024 * 1024)).resolves.toEqual({
       ok: false,
       code: "message_size_limit",
       limit: 5 * 1024 * 1024,
@@ -197,7 +197,7 @@ describe("billing limits", () => {
   it("allows hosted inbound mail when monthly usage is below the plan limit", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
     mockFindOrganizationById.mockResolvedValue({
-      id: "org-1",
+      id: 1n,
       planCode: "free",
       subscriptionStatus: "free",
       currentPeriodEnd: null,
@@ -207,13 +207,13 @@ describe("billing limits", () => {
       rejectedCount: 0,
     });
 
-    await expect(checkInboundLimit({} as never, "org-1")).resolves.toEqual({ ok: true });
+    await expect(checkInboundLimit({} as never, 1n)).resolves.toEqual({ ok: true });
   });
 
   it("rejects hosted egress when projected monthly bytes exceed the plan limit", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
     mockFindOrganizationById.mockResolvedValue({
-      id: "org-1",
+      id: 1n,
       planCode: "free",
       subscriptionStatus: "free",
       currentPeriodEnd: null,
@@ -224,7 +224,7 @@ describe("billing limits", () => {
       egressBytes: 1024n * 1024n * 1024n,
     });
 
-    await expect(checkEgressLimit({} as never, "org-1", 1n)).resolves.toEqual({
+    await expect(checkEgressLimit({} as never, 1n, 1n)).resolves.toEqual({
       ok: false,
       code: "egress_limit",
       limit: 1024 * 1024 * 1024,
@@ -235,7 +235,7 @@ describe("billing limits", () => {
   it("allows hosted egress when projected monthly bytes stay within the plan limit", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
     mockFindOrganizationById.mockResolvedValue({
-      id: "org-1",
+      id: 1n,
       planCode: "free",
       subscriptionStatus: "free",
       currentPeriodEnd: null,
@@ -246,13 +246,13 @@ describe("billing limits", () => {
       egressBytes: 1024n,
     });
 
-    await expect(checkEgressLimit({} as never, "org-1", 2048n)).resolves.toEqual({ ok: true });
+    await expect(checkEgressLimit({} as never, 1n, 2048n)).resolves.toEqual({ ok: true });
   });
 
   it("rejects hosted inbound mail when projected storage exceeds the plan limit", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
     mockFindOrganizationById.mockResolvedValue({
-      id: "org-1",
+      id: 1n,
       planCode: "free",
       subscriptionStatus: "free",
       currentPeriodEnd: null,
@@ -267,7 +267,7 @@ describe("billing limits", () => {
     });
 
     await expect(
-      checkInboundLimit({} as never, "org-1", undefined, 2n * 1024n * 1024n),
+      checkInboundLimit({} as never, 1n, undefined, 2n * 1024n * 1024n),
     ).resolves.toEqual({
       ok: false,
       code: "storage_limit",
