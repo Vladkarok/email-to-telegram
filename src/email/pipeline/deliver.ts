@@ -61,7 +61,7 @@ export async function deliverQueuedEmail(
   };
 
   try {
-    return await db.transaction(async (tx) => {
+    const prepared = await db.transaction(async (tx) => {
       const workDb = tx as Db;
       await tx.execute(sql`select pg_advisory_xact_lock(${alias.createdBy})`);
 
@@ -79,7 +79,7 @@ export async function deliverQueuedEmail(
           },
           "delivery.aborted_after_user_deletion",
         );
-        return { ok: false, reason: "user_deleted" };
+        return { ok: false as const };
       }
 
       await updateDeliveryLogStatus(workDb, deliveryLog.id, "processing");
@@ -184,17 +184,48 @@ export async function deliverQueuedEmail(
           )
         : renderEmail(parsed, renderMode, alias.fullAddress, attachmentLinks);
 
-      // 9. Send — parse_mode depends on render mode; plaintext uses none (avoids HTML metachar issues)
-      if (api) {
-        const { sendTelegramMessage, sendTelegramPhotos } =
-          await import("../../telegram/sender.js");
-        const parseMode = privacyMode ? "HTML" : parseModeForRenderMode(renderMode);
+      return {
+        ok: true as const,
+        imageAttachments,
+        parseMode: privacyMode ? "HTML" : parseModeForRenderMode(renderMode),
+        text,
+      };
+    });
+
+    if (!prepared.ok) {
+      return { ok: false, reason: "user_deleted" };
+    }
+
+    // 9. Send — parse_mode depends on render mode; plaintext uses none (avoids HTML metachar issues)
+    if (api) {
+      const { sendTelegramMessage, sendTelegramPhotos } = await import("../../telegram/sender.js");
+
+      return await db.transaction(async (tx) => {
+        const workDb = tx as Db;
+        await tx.execute(sql`select pg_advisory_xact_lock(${alias.createdBy})`);
+
+        const currentAlias = await findAliasById(workDb, alias.id);
+        if (
+          !currentAlias ||
+          currentAlias.status !== "active" ||
+          currentAlias.createdBy !== alias.createdBy
+        ) {
+          log.info(
+            {
+              deliveryLogId: deliveryLog.id,
+              aliasId: alias.id,
+              userId: alias.createdBy.toString(),
+            },
+            "delivery.aborted_after_user_deletion",
+          );
+          return { ok: false, reason: "user_deleted" };
+        }
 
         const result = await sendTelegramMessage(api, {
           chatId: alias.chatId,
           threadId: alias.messageThreadId ?? null,
-          text,
-          parseMode,
+          text: prepared.text,
+          parseMode: prepared.parseMode,
         });
 
         // Record attempt in DB
@@ -222,13 +253,13 @@ export async function deliverQueuedEmail(
         }
 
         // Send image attachments as Telegram photos (replied to the text message)
-        if (!privacyMode && imageAttachments.length > 0) {
+        if (!privacyMode && prepared.imageAttachments.length > 0) {
           try {
             const photoResult = await sendTelegramPhotos(api, {
               chatId: alias.chatId,
               threadId: alias.messageThreadId ?? null,
               replyToMessageId: result.telegramMessageId,
-              photos: imageAttachments.map(
+              photos: prepared.imageAttachments.map(
                 ({ id, storagePath, filename, encryptionMode, wrappedDek, kekKeyId }) => ({
                   id,
                   storagePath,
@@ -245,7 +276,7 @@ export async function deliverQueuedEmail(
                 photoResult.failedPhotos.map((photo) => photo.storagePath),
               );
               const fallbackLinks = await Promise.all(
-                imageAttachments
+                prepared.imageAttachments
                   .filter((attachment) => failedPaths.has(attachment.storagePath))
                   .map(async (attachment) => {
                     const { token, expiresAt } = generateDownloadToken(
@@ -282,10 +313,12 @@ export async function deliverQueuedEmail(
             );
           }
         }
-      }
 
-      return { ok: true };
-    });
+        return { ok: true };
+      });
+    }
+
+    return { ok: true };
   } catch (err: unknown) {
     await updateDeliveryLogStatus(db, deliveryLog.id, "failed").catch((statusErr: unknown) => {
       log.error(
