@@ -8,10 +8,14 @@ export async function privacyHandler(ctx: Context): Promise<void> {
   const locale = await resolvePrivacyLocale(ctx);
   const messages = getMessages(locale);
 
-  await ctx.reply(
-    messages.privacy.text(config.supportContact ?? null, config.privacyPolicyUrl ?? null),
-    { parse_mode: "HTML", link_preview_options: { is_disabled: true } },
+  const body = messages.privacy.text(
+    config.supportContact ?? null,
+    config.privacyPolicyUrl ?? null,
   );
+  await ctx.reply(`${body}\n\n${messages.common.languageHint}`, {
+    parse_mode: "HTML",
+    link_preview_options: { is_disabled: true },
+  });
 }
 
 async function resolvePrivacyLocale(ctx: Context) {

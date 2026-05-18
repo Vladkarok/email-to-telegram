@@ -24,6 +24,7 @@ export const en = {
     aliasNotFoundShort: "Alias not found.",
     chatNotFoundShort: "Chat not found.",
     ruleNotFoundShort: "Rule not found.",
+    languageHint: "🌐 Also available in Українська, Français, Italiano — use /language to switch.",
   },
   start: {
     openDmButton: "💬 Open DM",
@@ -381,8 +382,7 @@ Email bodies and attachments are stored only as long as your plan's retention al
 • <b>Erasure:</b> run /delete_me to remove your data
 • <b>Withdraw consent:</b> stop using the bot and run /delete_me
 
-${policyUrl ? `Full policy: ${policyUrl}\n` : ""}${supportContact ? `Contact: ${supportContact}\n` : ""}
-🌐 Also available in Українська, Français, Italiano — use /language to switch.`.trim(),
+${policyUrl ? `Full policy: ${policyUrl}\n` : ""}${supportContact ? `Contact: ${supportContact}` : ""}`.trim(),
   },
   deleteMe: {
     prompt: (aliasCount: number, deliveryCount: number, billingCount: number) =>
