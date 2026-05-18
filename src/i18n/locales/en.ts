@@ -406,8 +406,14 @@ This action <b>cannot be undone</b>. Confirm to proceed.`,
       "⚠️ Your account and database records were removed, but some stored email files could not be deleted. Please contact the operator to complete the erasure.",
   },
   exportMe: {
-    caption: "Your data export (JSON). Email bodies and attachments are not included.",
+    preparing: "⏳ Preparing your export… one moment.",
+    caption:
+      "Your data export (JSON). Raw email bodies and attachment bytes are not included — request them from the operator if you need them.",
     noData: "ℹ️ Nothing to export — there are no records for your account.",
+    rateLimited: (retryAfterSeconds: number) =>
+      `⏳ Please wait ${retryAfterSeconds}s before requesting another export.`,
+    tooLarge:
+      "⚠️ Your export is too large to send through Telegram. Please contact the operator to receive it another way.",
     failed: "❌ Export failed. Please try again or contact the operator.",
   },
   botCommands: [

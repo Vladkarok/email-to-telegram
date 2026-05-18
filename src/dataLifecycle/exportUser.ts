@@ -1,8 +1,13 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or } from "drizzle-orm";
 import {
+  allowRules,
+  attachments,
+  chats,
+  deliveryAttempts,
   deliveryLogs,
   emailAddresses,
+  inboundDomains,
   manualBillingEvents,
   userStorageUsage,
   userUsageMonths,
@@ -12,7 +17,10 @@ import type * as schema from "../db/schema.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
+export const EXPORT_SCHEMA_VERSION = 2;
+
 export interface UserExport {
+  schemaVersion: number;
   exportedAt: string;
   user: {
     id: string;
@@ -22,6 +30,13 @@ export interface UserExport {
     createdAt: string;
     updatedAt: string;
   };
+  chats: Array<{
+    id: string;
+    title: string;
+    type: string;
+    isActive: boolean;
+    createdAt: string;
+  }>;
   aliases: Array<{
     id: string;
     localPart: string;
@@ -29,9 +44,25 @@ export interface UserExport {
     status: string;
     chatId: string;
     messageThreadId: string | null;
+    label: string | null;
     renderMode: string;
     privacyModeEnabled: boolean;
     bodyDedupEnabled: boolean;
+    createdAt: string;
+  }>;
+  allowRules: Array<{
+    id: string;
+    emailAddressId: string;
+    matchType: string;
+    matchValue: string;
+    createdAt: string;
+  }>;
+  inboundDomains: Array<{
+    id: string;
+    domain: string;
+    kind: string;
+    status: string;
+    verifiedAt: string | null;
     createdAt: string;
   }>;
   usageMonths: Array<{
@@ -44,6 +75,40 @@ export interface UserExport {
     rawEmailBytes: string;
     attachmentBytes: string;
   };
+  deliveryLogs: Array<{
+    id: string;
+    emailAddressId: string;
+    messageIdHeader: string | null;
+    envelopeFrom: string | null;
+    headerFrom: string | null;
+    subject: string | null;
+    receivedAt: string;
+    rawSizeBytes: number | null;
+    hasAttachments: boolean;
+    bodyDedupApplied: boolean;
+    finalStatus: string;
+    billable: boolean;
+  }>;
+  deliveryAttempts: Array<{
+    id: string;
+    deliveryLogId: string;
+    attemptNo: number;
+    targetChatId: string;
+    targetThreadId: string | null;
+    telegramMessageId: string | null;
+    status: string;
+    errorText: string | null;
+    createdAt: string;
+  }>;
+  attachments: Array<{
+    id: string;
+    deliveryLogId: string;
+    originalFilename: string | null;
+    contentType: string | null;
+    sizeBytes: number | null;
+    sha256: string | null;
+    createdAt: string;
+  }>;
   deliverySummary: {
     total: number;
     billable: number;
@@ -85,15 +150,35 @@ export async function exportHostedUserData(
 
   if (!user) return null;
 
-  const [aliases, usageMonths, storageRows, deliveryRows, manualEventRows] = await Promise.all([
-    listAliases(db, userId),
+  // Aliases run first because the chats lookup depends on the set of chat
+  // ids they reference. Everything else fans out in parallel.
+  const aliases = await listAliases(db, userId);
+  const aliasChatIds = uniqueBigInts(aliases.map((alias) => alias.chatId));
+
+  const [
+    allowRuleRows,
+    inboundDomainRows,
+    chatRows,
+    usageMonths,
+    storageRows,
+    deliveryRows,
+    deliveryAttemptRows,
+    attachmentRows,
+    manualEventRows,
+  ] = await Promise.all([
+    listAllowRulesForUser(db, userId),
+    listInboundDomainsForUser(db, userId),
+    listChatsForUser(db, userId, aliasChatIds),
     listUsageMonths(db, userId),
     listStorageUsage(db, userId),
-    listDeliverySummaryRows(db, userId),
+    listDeliveryLogsForUser(db, userId),
+    listDeliveryAttemptsForUser(db, userId),
+    listAttachmentsForUser(db, userId),
     listManualBillingEvents(db, userId),
   ]);
 
   return {
+    schemaVersion: EXPORT_SCHEMA_VERSION,
     exportedAt: now.toISOString(),
     user: {
       id: user.id.toString(),
@@ -103,6 +188,13 @@ export async function exportHostedUserData(
       createdAt: user.createdAt.toISOString(),
       updatedAt: user.updatedAt.toISOString(),
     },
+    chats: chatRows.map((chat) => ({
+      id: chat.id.toString(),
+      title: chat.title,
+      type: chat.type,
+      isActive: chat.isActive,
+      createdAt: chat.createdAt.toISOString(),
+    })),
     aliases: aliases.map((alias) => ({
       id: alias.id,
       localPart: alias.localPart,
@@ -110,10 +202,26 @@ export async function exportHostedUserData(
       status: alias.status,
       chatId: alias.chatId.toString(),
       messageThreadId: alias.messageThreadId?.toString() ?? null,
+      label: alias.label,
       renderMode: alias.renderMode,
       privacyModeEnabled: alias.privacyModeEnabled,
       bodyDedupEnabled: alias.bodyDedupEnabled,
       createdAt: alias.createdAt.toISOString(),
+    })),
+    allowRules: allowRuleRows.map((rule) => ({
+      id: rule.id,
+      emailAddressId: rule.emailAddressId,
+      matchType: rule.matchType,
+      matchValue: rule.matchValue,
+      createdAt: rule.createdAt.toISOString(),
+    })),
+    inboundDomains: inboundDomainRows.map((row) => ({
+      id: row.id,
+      domain: row.domain,
+      kind: row.kind,
+      status: row.status,
+      verifiedAt: row.verifiedAt ? row.verifiedAt.toISOString() : null,
+      createdAt: row.createdAt.toISOString(),
     })),
     usageMonths: usageMonths.map((usage) => ({
       month: usage.month,
@@ -125,6 +233,40 @@ export async function exportHostedUserData(
       rawEmailBytes: (storageRows[0]?.rawEmailBytes ?? 0n).toString(),
       attachmentBytes: (storageRows[0]?.attachmentBytes ?? 0n).toString(),
     },
+    deliveryLogs: deliveryRows.map((row) => ({
+      id: row.id,
+      emailAddressId: row.emailAddressId,
+      messageIdHeader: row.messageIdHeader,
+      envelopeFrom: row.envelopeFrom,
+      headerFrom: row.headerFrom,
+      subject: row.subject,
+      receivedAt: row.receivedAt.toISOString(),
+      rawSizeBytes: row.rawSizeBytes,
+      hasAttachments: row.hasAttachments,
+      bodyDedupApplied: row.bodyDedupApplied,
+      finalStatus: row.finalStatus,
+      billable: row.billable,
+    })),
+    deliveryAttempts: deliveryAttemptRows.map((row) => ({
+      id: row.id,
+      deliveryLogId: row.deliveryLogId,
+      attemptNo: row.attemptNo,
+      targetChatId: row.targetChatId.toString(),
+      targetThreadId: row.targetThreadId?.toString() ?? null,
+      telegramMessageId: row.telegramMessageId?.toString() ?? null,
+      status: row.status,
+      errorText: row.errorText,
+      createdAt: row.createdAt.toISOString(),
+    })),
+    attachments: attachmentRows.map((row) => ({
+      id: row.id,
+      deliveryLogId: row.deliveryLogId,
+      originalFilename: row.originalFilename,
+      contentType: row.contentType,
+      sizeBytes: row.sizeBytes,
+      sha256: row.sha256,
+      createdAt: row.createdAt.toISOString(),
+    })),
     deliverySummary: buildDeliverySummary(deliveryRows),
     manualBillingEvents: manualEventRows.map((row) => ({
       id: row.id,
@@ -167,6 +309,7 @@ async function listAliases(db: Db, userId: bigint) {
       status: emailAddresses.status,
       chatId: emailAddresses.chatId,
       messageThreadId: emailAddresses.messageThreadId,
+      label: emailAddresses.label,
       renderMode: emailAddresses.renderMode,
       privacyModeEnabled: emailAddresses.privacyModeEnabled,
       bodyDedupEnabled: emailAddresses.bodyDedupEnabled,
@@ -175,6 +318,64 @@ async function listAliases(db: Db, userId: bigint) {
     .from(emailAddresses)
     .where(eq(emailAddresses.createdBy, userId))
     .orderBy(asc(emailAddresses.createdAt));
+}
+
+async function listAllowRulesForUser(db: Db, userId: bigint) {
+  return db
+    .select({
+      id: allowRules.id,
+      emailAddressId: allowRules.emailAddressId,
+      matchType: allowRules.matchType,
+      matchValue: allowRules.matchValue,
+      createdAt: allowRules.createdAt,
+    })
+    .from(allowRules)
+    .innerJoin(emailAddresses, eq(emailAddresses.id, allowRules.emailAddressId))
+    .where(eq(emailAddresses.createdBy, userId))
+    .orderBy(asc(allowRules.createdAt));
+}
+
+async function listInboundDomainsForUser(db: Db, userId: bigint) {
+  return db
+    .select({
+      id: inboundDomains.id,
+      domain: inboundDomains.domain,
+      kind: inboundDomains.kind,
+      status: inboundDomains.status,
+      verifiedAt: inboundDomains.verifiedAt,
+      createdAt: inboundDomains.createdAt,
+    })
+    .from(inboundDomains)
+    .where(eq(inboundDomains.userId, userId))
+    .orderBy(asc(inboundDomains.createdAt));
+}
+
+async function listChatsForUser(db: Db, userId: bigint, aliasChatIds: bigint[]) {
+  // The DM chat row shares the user's id; include it whenever it exists, even
+  // if the user has no aliases pointed there. Group/supergroup chats are only
+  // included when the user has at least one alias targeting them.
+  const idsToFetch = uniqueBigInts([...aliasChatIds, userId]);
+  if (idsToFetch.length === 0) return [];
+
+  return db
+    .select({
+      id: chats.id,
+      title: chats.title,
+      type: chats.type,
+      isActive: chats.isActive,
+      createdAt: chats.createdAt,
+    })
+    .from(chats)
+    .where(
+      or(
+        inArray(
+          chats.id,
+          idsToFetch.filter((id) => id !== userId),
+        ),
+        and(eq(chats.id, userId), eq(chats.type, "private")),
+      ),
+    )
+    .orderBy(asc(chats.createdAt));
 }
 
 async function listUsageMonths(db: Db, userId: bigint) {
@@ -201,21 +402,65 @@ async function listStorageUsage(db: Db, userId: bigint) {
     .limit(1);
 }
 
-async function listDeliverySummaryRows(db: Db, userId: bigint) {
+async function listDeliveryLogsForUser(db: Db, userId: bigint) {
   return db
     .select({
+      id: deliveryLogs.id,
+      emailAddressId: deliveryLogs.emailAddressId,
+      messageIdHeader: deliveryLogs.messageIdHeader,
+      envelopeFrom: deliveryLogs.envelopeFrom,
+      headerFrom: deliveryLogs.headerFrom,
+      subject: deliveryLogs.subject,
+      receivedAt: deliveryLogs.receivedAt,
+      rawSizeBytes: deliveryLogs.rawSizeBytes,
+      hasAttachments: deliveryLogs.hasAttachments,
+      bodyDedupApplied: deliveryLogs.bodyDedupApplied,
       finalStatus: deliveryLogs.finalStatus,
       billable: deliveryLogs.billable,
-      hasAttachments: deliveryLogs.hasAttachments,
-      rawSizeBytes: deliveryLogs.rawSizeBytes,
-      receivedAt: deliveryLogs.receivedAt,
     })
     .from(deliveryLogs)
-    .where(eq(deliveryLogs.userId, userId));
+    .where(eq(deliveryLogs.userId, userId))
+    .orderBy(asc(deliveryLogs.receivedAt));
+}
+
+async function listDeliveryAttemptsForUser(db: Db, userId: bigint) {
+  return db
+    .select({
+      id: deliveryAttempts.id,
+      deliveryLogId: deliveryAttempts.deliveryLogId,
+      attemptNo: deliveryAttempts.attemptNo,
+      targetChatId: deliveryAttempts.targetChatId,
+      targetThreadId: deliveryAttempts.targetThreadId,
+      telegramMessageId: deliveryAttempts.telegramMessageId,
+      status: deliveryAttempts.status,
+      errorText: deliveryAttempts.errorText,
+      createdAt: deliveryAttempts.createdAt,
+    })
+    .from(deliveryAttempts)
+    .innerJoin(deliveryLogs, eq(deliveryLogs.id, deliveryAttempts.deliveryLogId))
+    .where(eq(deliveryLogs.userId, userId))
+    .orderBy(asc(deliveryAttempts.createdAt));
+}
+
+async function listAttachmentsForUser(db: Db, userId: bigint) {
+  return db
+    .select({
+      id: attachments.id,
+      deliveryLogId: attachments.deliveryLogId,
+      originalFilename: attachments.originalFilename,
+      contentType: attachments.contentType,
+      sizeBytes: attachments.sizeBytes,
+      sha256: attachments.sha256,
+      createdAt: attachments.createdAt,
+    })
+    .from(attachments)
+    .innerJoin(deliveryLogs, eq(deliveryLogs.id, attachments.deliveryLogId))
+    .where(eq(deliveryLogs.userId, userId))
+    .orderBy(asc(attachments.createdAt));
 }
 
 function buildDeliverySummary(
-  rows: Awaited<ReturnType<typeof listDeliverySummaryRows>>,
+  rows: Awaited<ReturnType<typeof listDeliveryLogsForUser>>,
 ): UserExport["deliverySummary"] {
   const byFinalStatus: Record<string, number> = {};
   const byMonth: Record<string, number> = {};
@@ -240,4 +485,8 @@ function buildDeliverySummary(
     byFinalStatus,
     byMonth,
   };
+}
+
+function uniqueBigInts(values: bigint[]): bigint[] {
+  return [...new Set(values)];
 }
