@@ -297,8 +297,7 @@ https://mail.example.com/admin
 
 The app redirects to `/admin/login`. There is no username in the first admin
 version: paste `ADMIN_SECRET` into the login form. After login, the admin UI can
-search users, inspect organizations, and grant/renew/downgrade manual plans from
-the organization detail page.
+search users and grant/renew/downgrade manual plans from the user detail page.
 
 Operational notes:
 
@@ -406,8 +405,8 @@ Enable Prometheus scraping with `METRICS_ENABLED=true` and a random
 `METRICS_TOKEN` of at least 32 characters. Scrape `/metrics` with
 `Authorization: Bearer <token>`. The endpoint exports process/runtime metrics,
 HTTP route metrics, inbound pipeline counters, delivery/retry counters, manual
-billing grant counters, quota rejection counters, and active organizations by
-plan. Roll back by setting `METRICS_ENABLED=false` and restarting the app.
+billing grant counters, quota rejection counters, and active users by plan. Roll
+back by setting `METRICS_ENABLED=false` and restarting the app.
 
 ## Development
 
