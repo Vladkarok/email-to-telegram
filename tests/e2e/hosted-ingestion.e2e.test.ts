@@ -8,7 +8,7 @@ const state = {
     id: "alias-1",
     localPart: "alerts",
     fullAddress: "alerts@example.com",
-    organizationId: "org-1",
+    createdBy: 1n,
     domainId: "domain-1",
     chatId: 123n,
     messageThreadId: null,
@@ -152,7 +152,7 @@ vi.mock("../../src/db/repos/usage.js", async () => {
   const actual = await vi.importActual<object>("../../src/db/repos/usage.js");
   return {
     ...actual,
-    incrementOrganizationUsageMonth: vi.fn(
+    incrementUserUsageMonth: vi.fn(
       (_db: unknown, data: { deliveredCount?: number; rejectedCount?: number }) => {
         state.usage.deliveredCount += data.deliveredCount ?? 0;
         state.usage.rejectedCount += data.rejectedCount ?? 0;
@@ -175,7 +175,7 @@ vi.mock("../../src/db/repos/storageUsage.js", () => ({
       attachmentBytes: state.storage.attachmentBytes,
     }),
   ),
-  incrementOrganizationStorageUsage: vi.fn(
+  incrementUserStorageUsage: vi.fn(
     (
       _db: unknown,
       _organizationId: string,
@@ -190,7 +190,7 @@ vi.mock("../../src/db/repos/storageUsage.js", () => ({
       });
     },
   ),
-  decrementOrganizationStorageUsage: vi.fn(
+  decrementUserStorageUsage: vi.fn(
     (
       _db: unknown,
       _organizationId: string,
