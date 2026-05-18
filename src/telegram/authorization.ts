@@ -23,7 +23,7 @@ const chatMemberCache = new Map<string, CacheEntry>();
  * Rules:
  * - A user always manages their own DM with the bot (chatId === BigInt(userId)).
  * - For groups/supergroups: checks Telegram membership via getChatMember.
- *   Allowed statuses: creator, administrator, member.
+ *   Allowed statuses: creator, administrator.
  * - Results are cached for 5 minutes to reduce Telegram API calls.
  * - Pass `fresh: true` for mutation paths to bypass the cache and get a live
  *   membership check, preventing a kicked user from acting during the TTL window.
@@ -47,7 +47,7 @@ export async function canManageChat(
   let result: boolean;
   try {
     const member = await api.getChatMember(chatId.toString(), userId);
-    result = ["creator", "administrator", "member"].includes(member.status);
+    result = ["creator", "administrator"].includes(member.status);
   } catch {
     result = false;
   }
@@ -79,9 +79,10 @@ export async function getAccessibleChats(db: Db, api: Api, userId: number): Prom
 /**
  * Returns true if the given user can manage the given alias.
  *
- * Rules (OR logic):
- * 1. The user created the alias (`alias.createdBy === BigInt(userId)`).
- * 2. The user can manage the alias's target chat (`canManageChat()`).
+ * Rules:
+ * - A user can manage aliases in their own DM.
+ * - Group aliases follow current Telegram admin status, even if the user
+ *   originally created the alias.
  */
 export async function canManageAlias(
   db: Db,
@@ -92,6 +93,5 @@ export async function canManageAlias(
 ): Promise<boolean> {
   const alias = await findAliasById(db, aliasId);
   if (!alias || alias.status === "deleted") return false;
-  if (alias.createdBy === BigInt(userId)) return true;
   return canManageChat(api, userId, alias.chatId, { fresh });
 }

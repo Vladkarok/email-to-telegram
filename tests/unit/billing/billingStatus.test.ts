@@ -6,7 +6,7 @@ describe("buildBillingStatusText", () => {
   const freePlan = getPlanDefinition("free");
   const proPlan = getPlanDefinition("pro");
 
-  it("includes the organization name", () => {
+  it("includes the user display name", () => {
     const text = buildBillingStatusText({
       plan: freePlan,
       user: {
@@ -24,7 +24,7 @@ describe("buildBillingStatusText", () => {
     expect(text).toContain("My Workspace");
   });
 
-  it("HTML-escapes the organization name to prevent injection", () => {
+  it("HTML-escapes the user display name to prevent injection", () => {
     const text = buildBillingStatusText({
       plan: freePlan,
       user: {

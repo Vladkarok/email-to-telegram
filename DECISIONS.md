@@ -3,23 +3,14 @@
 This file tracks pragmatic decisions made while removing the `organization`
 tenant concept. Delete or migrate as appropriate after the branch merges.
 
-## Test coverage gaps (follow-up tickets)
+## Test coverage notes
 
-- **`tests/unit/billing/manual.test.ts` deleted.** The original 1717-line
-  file tested three functions: `grantManualOrganizationPlan` (gone),
-  `addManualOrganizationMember` (gone), and `grantManualUserPlan` (kept).
-  The user-plan tests were structurally entangled with the org-creation
-  paths and would have required a full rewrite. Recommend writing a fresh,
-  targeted `manual.test.ts` covering `grantManualUserPlan` happy path,
-  idempotency via `payment_reference`, error codes (`user_not_found`,
-  `duplicate_payment_reference`, etc.), and the operator-source audit
-  field. ~150-300 LOC of new tests.
+- `tests/unit/billing/manual.test.ts` was replaced with focused
+  `grantManualUserPlan` coverage for user-keyed grants, idempotency,
+  payment-reference conflicts, stale-version rollback, and validation.
 
-- **`tests/unit/dataLifecycle/{deleteUser,exportUser}.test.ts` likely need
-  rewrite too.** Current versions were sed-renamed from the org tests but
-  the mock query shapes don't match the new `deleteHostedUser` /
-  `exportHostedUserData` implementations. Quick to redo from scratch since
-  the new functions are simpler.
+- `tests/unit/dataLifecycle/{deleteUser,exportUser}.test.ts` were rewritten
+  around the simpler user-keyed lifecycle primitives.
 
 ## Behavioral changes worth documenting
 

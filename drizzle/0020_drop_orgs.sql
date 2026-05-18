@@ -29,6 +29,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS "idx_user_stripe_subscription"
 -- ─── 2) email_addresses: drop organization_id ───────────────────────────────
 -- Aliases were already addressable by (chat_id, created_by). organization_id
 -- was redundant tenant metadata.
+DROP TRIGGER IF EXISTS "trg_email_address_tenant_consistency" ON "email_addresses";
+DROP FUNCTION IF EXISTS "enforce_email_address_tenant_consistency"();
 DROP INDEX IF EXISTS "idx_alias_org";
 ALTER TABLE "email_addresses" DROP COLUMN IF EXISTS "organization_id";
 -- Quota lookups now hit aliases by owning user; back this with an index.

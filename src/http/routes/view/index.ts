@@ -248,7 +248,7 @@ export function deliveryViewRoute(
           403,
           renderErrorPage(
             "Download unavailable",
-            "This organization has reached its monthly email view quota.",
+            "This account has reached its monthly email view quota.",
           ),
         );
         return;

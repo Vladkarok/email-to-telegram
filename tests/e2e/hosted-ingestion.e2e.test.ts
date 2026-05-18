@@ -157,10 +157,11 @@ vi.mock("../../src/db/repos/usage.js", async () => {
         state.usage.deliveredCount += data.deliveredCount ?? 0;
         state.usage.rejectedCount += data.rejectedCount ?? 0;
         return Promise.resolve({
-          organizationId: state.alias.organizationId,
+          userId: state.alias.createdBy,
           month: "2026-04",
           deliveredCount: state.usage.deliveredCount,
           rejectedCount: state.usage.rejectedCount,
+          egressBytes: 0n,
         });
       },
     ),
@@ -168,40 +169,32 @@ vi.mock("../../src/db/repos/usage.js", async () => {
 });
 
 vi.mock("../../src/db/repos/storageUsage.js", () => ({
-  getOrganizationStorageUsage: vi.fn(() =>
+  getUserStorageUsage: vi.fn(() =>
     Promise.resolve({
-      organizationId: state.alias.organizationId,
+      userId: state.alias.createdBy,
       rawEmailBytes: state.storage.rawEmailBytes,
       attachmentBytes: state.storage.attachmentBytes,
     }),
   ),
   incrementUserStorageUsage: vi.fn(
-    (
-      _db: unknown,
-      _organizationId: string,
-      data: { rawEmailBytes?: bigint; attachmentBytes?: bigint },
-    ) => {
+    (_db: unknown, _userId: bigint, data: { rawEmailBytes?: bigint; attachmentBytes?: bigint }) => {
       state.storage.rawEmailBytes += data.rawEmailBytes ?? 0n;
       state.storage.attachmentBytes += data.attachmentBytes ?? 0n;
       return Promise.resolve({
-        organizationId: state.alias.organizationId,
+        userId: state.alias.createdBy,
         rawEmailBytes: state.storage.rawEmailBytes,
         attachmentBytes: state.storage.attachmentBytes,
       });
     },
   ),
   decrementUserStorageUsage: vi.fn(
-    (
-      _db: unknown,
-      _organizationId: string,
-      data: { rawEmailBytes?: bigint; attachmentBytes?: bigint },
-    ) => {
+    (_db: unknown, _userId: bigint, data: { rawEmailBytes?: bigint; attachmentBytes?: bigint }) => {
       state.storage.rawEmailBytes -= data.rawEmailBytes ?? 0n;
       state.storage.attachmentBytes -= data.attachmentBytes ?? 0n;
       if (state.storage.rawEmailBytes < 0n) state.storage.rawEmailBytes = 0n;
       if (state.storage.attachmentBytes < 0n) state.storage.attachmentBytes = 0n;
       return Promise.resolve({
-        organizationId: state.alias.organizationId,
+        userId: state.alias.createdBy,
         rawEmailBytes: state.storage.rawEmailBytes,
         attachmentBytes: state.storage.attachmentBytes,
       });

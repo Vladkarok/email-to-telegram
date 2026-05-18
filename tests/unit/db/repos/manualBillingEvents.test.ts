@@ -40,7 +40,6 @@ describe("manual billing events repo", () => {
     it("inserts and returns a manual billing event", async () => {
       const created = {
         id: "event-1",
-        organizationId: 1n,
         telegramUserId: 123n,
         planCode: "pro",
         subscriptionStatus: "active",
@@ -54,7 +53,6 @@ describe("manual billing events repo", () => {
       const { db, mocks } = makeInsertingDb(created);
 
       const result = await createManualBillingEvent(db, {
-        organizationId: 1n,
         telegramUserId: 123n,
         planCode: "pro",
         subscriptionStatus: "active",
@@ -62,12 +60,12 @@ describe("manual billing events repo", () => {
         paymentReference: "wise-2026-04-001",
         note: "Manual Wise payment",
         keptStripeLink: false,
+        operatorSource: "cli",
       });
 
       expect(result).toBe(created);
       expect(mocks.values).toHaveBeenCalledWith(
         expect.objectContaining({
-          organizationId: 1n,
           telegramUserId: 123n,
           planCode: "pro",
           subscriptionStatus: "active",
@@ -81,14 +79,14 @@ describe("manual billing events repo", () => {
       const { db } = makeInsertingDb(undefined);
       await expect(
         createManualBillingEvent(db, {
-          organizationId: 1n,
-          telegramUserId: null,
+          telegramUserId: 123n,
           planCode: "free",
           subscriptionStatus: "free",
           paidThroughAt: null,
           paymentReference: null,
           note: null,
           keptStripeLink: false,
+          operatorSource: "cli",
         }),
       ).rejects.toThrow(/no row returned/i);
     });
@@ -96,21 +94,21 @@ describe("manual billing events repo", () => {
 
   describe("findOrCreateManualBillingEvent", () => {
     it("returns { created: true } when insert succeeds", async () => {
-      const row = { id: "event-1", organizationId: 1n, paymentReference: "ref-1" };
+      const row = { id: "event-1", telegramUserId: 1n, paymentReference: "ref-1" };
       const onConflictDoNothing = vi.fn(() => ({ returning: vi.fn().mockResolvedValue([row]) }));
       const values = vi.fn(() => ({ onConflictDoNothing }));
       const insert = vi.fn(() => ({ values }));
       const db = { insert } as unknown as Parameters<typeof findOrCreateManualBillingEvent>[0];
 
       const result = await findOrCreateManualBillingEvent(db, {
-        organizationId: 1n,
-        telegramUserId: null,
+        telegramUserId: 1n,
         planCode: "pro",
         subscriptionStatus: "active",
         paidThroughAt: null,
         paymentReference: "ref-1",
         note: null,
         keptStripeLink: false,
+        operatorSource: "cli",
       });
 
       expect(result).toEqual({ event: row, created: true });
@@ -142,6 +140,7 @@ describe("manual billing events repo", () => {
         paymentReference: "ref-1",
         note: null,
         keptStripeLink: false,
+        operatorSource: "cli",
       });
 
       expect(result).toEqual({ event: existing, created: false });
@@ -152,7 +151,7 @@ describe("manual billing events repo", () => {
     it("returns the row when one exists", async () => {
       const row = {
         id: "event-1",
-        organizationId: 1n,
+        telegramUserId: 1n,
         paymentReference: "wise-2026-04-001",
       };
       const { db } = makeSelectingDb([row]);
@@ -170,10 +169,10 @@ describe("manual billing events repo", () => {
   });
 
   describe("listManualBillingEventsForUser", () => {
-    it("returns events for an organization ordered by created_at desc", async () => {
+    it("returns events for a user ordered by created_at desc", async () => {
       const rows = [
-        { id: "event-2", organizationId: 1n, createdAt: new Date(2_000_000_000_000) },
-        { id: "event-1", organizationId: 1n, createdAt: new Date(1_000_000_000_000) },
+        { id: "event-2", telegramUserId: 1n, createdAt: new Date(2_000_000_000_000) },
+        { id: "event-1", telegramUserId: 1n, createdAt: new Date(1_000_000_000_000) },
       ];
       const { db, mocks } = makeSelectingDb(rows);
 
@@ -184,8 +183,8 @@ describe("manual billing events repo", () => {
   });
 
   describe("findLatestManualBillingEventForUser", () => {
-    it("returns the latest event for an organization", async () => {
-      const row = { id: "event-2", organizationId: 1n, createdAt: new Date() };
+    it("returns the latest event for a user", async () => {
+      const row = { id: "event-2", telegramUserId: 1n, createdAt: new Date() };
       const limit = vi.fn().mockResolvedValue([row]);
       const orderBy = vi.fn(() => ({ limit }));
       const where = vi.fn(() => ({ orderBy }));
@@ -196,7 +195,7 @@ describe("manual billing events repo", () => {
       await expect(findLatestManualBillingEventForUser(db, 1n)).resolves.toBe(row);
     });
 
-    it("returns null when the organization has no manual billing events", async () => {
+    it("returns null when the user has no manual billing events", async () => {
       const limit = vi.fn().mockResolvedValue([]);
       const orderBy = vi.fn(() => ({ limit }));
       const where = vi.fn(() => ({ orderBy }));
