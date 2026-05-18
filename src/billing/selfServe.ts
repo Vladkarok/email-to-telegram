@@ -1,7 +1,18 @@
 import type { AppConfig } from "../config.js";
+import type { Messages } from "../i18n/index.js";
 
-export const MANUAL_BILLING_MESSAGE =
-  "ℹ️ Self-serve payments are temporarily unavailable.\n\nHosted upgrades are handled manually for now. Contact support to upgrade, renew, cancel, or ask billing questions.";
+const DEFAULT_SUPPORT_CONTACT = "support";
+
+export function resolveSupportContact(config: Pick<AppConfig, "supportContact">): string {
+  return config.supportContact ?? DEFAULT_SUPPORT_CONTACT;
+}
+
+export function manualBillingMessage(
+  config: Pick<AppConfig, "supportContact">,
+  messages: Messages,
+): string {
+  return messages.billingCommands.manualBilling(resolveSupportContact(config));
+}
 
 export const MANUAL_BILLING_ALERT = "Self-serve payments are temporarily unavailable.";
 

@@ -11,7 +11,7 @@ import {
   isManualBillingUser,
   isSelfServeBillingEnabled,
   MANUAL_BILLING_ALERT,
-  MANUAL_BILLING_MESSAGE,
+  manualBillingMessage,
 } from "../../billing/selfServe.js";
 import { DEFAULT_LOCALE, getMessages, resolveLocale, type Locale } from "../../i18n/index.js";
 
@@ -41,7 +41,7 @@ export async function upgradeHandler(ctx: Context): Promise<void> {
     return;
   }
   if (!isSelfServeBillingEnabled(config)) {
-    await ctx.reply(MANUAL_BILLING_MESSAGE);
+    await ctx.reply(manualBillingMessage(config, messages));
     return;
   }
 
@@ -53,7 +53,7 @@ export async function upgradeHandler(ctx: Context): Promise<void> {
       return;
     }
     if (isManualBillingUser(user)) {
-      await ctx.reply(MANUAL_BILLING_MESSAGE);
+      await ctx.reply(manualBillingMessage(config, messages));
       return;
     }
 
@@ -83,7 +83,7 @@ export async function upgradeCallbackHandler(ctx: CallbackQueryContext<Context>)
   }
   if (!isSelfServeBillingEnabled(config)) {
     await ctx.answerCallbackQuery();
-    await ctx.reply(MANUAL_BILLING_MESSAGE);
+    await ctx.reply(manualBillingMessage(config, messages));
     return;
   }
 
@@ -96,7 +96,7 @@ export async function upgradeCallbackHandler(ctx: CallbackQueryContext<Context>)
     }
     if (isManualBillingUser(user)) {
       await ctx.answerCallbackQuery();
-      await ctx.reply(MANUAL_BILLING_MESSAGE);
+      await ctx.reply(manualBillingMessage(config, messages));
       return;
     }
 

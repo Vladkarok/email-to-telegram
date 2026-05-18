@@ -348,8 +348,8 @@ Examples:
     billingUnavailable: "❌ Billing data is temporarily unavailable. Please try again shortly.",
     upgradeButton: "⬆️ Upgrade",
     manageBillingButton: "🧾 Manage Billing",
-    manualBilling:
-      "ℹ️ Self-serve payments are temporarily unavailable.\n\nHosted upgrades are handled manually for now. Contact support to upgrade, renew, cancel, or ask billing questions.",
+    manualBilling: (contact: string) =>
+      `ℹ️ Self-serve payments are temporarily unavailable.\n\nHosted upgrades are handled manually for now. Contact ${contact} to upgrade, renew, cancel, or ask billing questions.`,
   },
   donate: {
     title: "☕ Support the project",

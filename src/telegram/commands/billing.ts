@@ -9,7 +9,7 @@ import { getUserStorageUsage } from "../../db/repos/storageUsage.js";
 import { getUserUsageMonth, usageMonthForDate } from "../../db/repos/usage.js";
 import { getLogger } from "../../utils/logger.js";
 import { CB_BILLING_UPGRADE, CB_BILLING_PORTAL } from "../callbacks.js";
-import { canUseSelfServeBilling } from "../../billing/selfServe.js";
+import { canUseSelfServeBilling, manualBillingMessage } from "../../billing/selfServe.js";
 import { getMessages, resolveLocale } from "../../i18n/index.js";
 
 export async function billingHandler(ctx: Context): Promise<void> {
@@ -58,7 +58,7 @@ export async function billingHandler(ctx: Context): Promise<void> {
     );
 
     if (!canUseSelfServeBilling(config, user)) {
-      await ctx.reply(`${text}\n\n${messages.billingCommands.manualBilling}`, {
+      await ctx.reply(`${text}\n\n${manualBillingMessage(config, messages)}`, {
         parse_mode: "HTML",
       });
       return;
