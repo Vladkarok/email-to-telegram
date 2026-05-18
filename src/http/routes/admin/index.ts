@@ -98,9 +98,11 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
     }
 
     const csrfToken = generateCsrfToken();
+    const now = Date.now();
     req.session.admin = {
       authenticated: true,
-      loginAt: Date.now(),
+      loginAt: now,
+      lastActivityAt: now,
       csrfToken,
     };
     await req.session.save();
