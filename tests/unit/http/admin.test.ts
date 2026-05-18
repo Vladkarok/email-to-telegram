@@ -4,42 +4,28 @@ import { parse as parseQs } from "querystring";
 import { registerRoutes } from "../../../src/http/routes/index.js";
 
 const mockFindUserById = vi.fn();
-const mockListOrganizationMembershipsForUser = vi.fn();
-const mockListOrganizationMembers = vi.fn();
-const mockFindOrganizationById = vi.fn();
-const mockCountActiveAliasesByOrganization = vi.fn();
-const mockGetOrganizationUsageMonth = vi.fn();
-const mockListManualBillingEventsForOrganization = vi.fn();
-const mockGrantManualOrganizationPlan = vi.fn();
+const mockCountActiveAliasesByUser = vi.fn();
+const mockGetUserUsageMonth = vi.fn();
+const mockListManualBillingEventsForUser = vi.fn();
+const mockGrantManualUserPlan = vi.fn();
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 vi.mock("../../../src/db/repos/users.js", () => ({
   findUserById: (...args: unknown[]): unknown => mockFindUserById(...args),
 }));
-vi.mock("../../../src/db/repos/organizationMembers.js", () => ({
-  listOrganizationMembershipsForUser: (...args: unknown[]): unknown =>
-    mockListOrganizationMembershipsForUser(...args),
-  listOrganizationMembers: (...args: unknown[]): unknown => mockListOrganizationMembers(...args),
-}));
-vi.mock("../../../src/db/repos/organizations.js", () => ({
-  findOrganizationById: (...args: unknown[]): unknown => mockFindOrganizationById(...args),
-}));
 vi.mock("../../../src/db/repos/aliases.js", () => ({
-  countActiveAliasesByOrganization: (...args: unknown[]): unknown =>
-    mockCountActiveAliasesByOrganization(...args),
+  countActiveAliasesByUser: (...args: unknown[]): unknown => mockCountActiveAliasesByUser(...args),
 }));
 vi.mock("../../../src/db/repos/usage.js", () => ({
-  getOrganizationUsageMonth: (...args: unknown[]): unknown =>
-    mockGetOrganizationUsageMonth(...args),
+  getUserUsageMonth: (...args: unknown[]): unknown => mockGetUserUsageMonth(...args),
   usageMonthForDate: () => "2026-05",
 }));
 vi.mock("../../../src/db/repos/manualBillingEvents.js", () => ({
-  listManualBillingEventsForOrganization: (...args: unknown[]): unknown =>
-    mockListManualBillingEventsForOrganization(...args),
+  listManualBillingEventsForUser: (...args: unknown[]): unknown =>
+    mockListManualBillingEventsForUser(...args),
 }));
 vi.mock("../../../src/billing/manual.js", () => ({
-  grantManualOrganizationPlan: (...args: unknown[]): unknown =>
-    mockGrantManualOrganizationPlan(...args),
+  grantManualUserPlan: (...args: unknown[]): unknown => mockGrantManualUserPlan(...args),
 }));
 vi.mock("../../../src/telegram/health.js", () => ({
   isBotHealthy: () => true,
@@ -123,9 +109,10 @@ const USER_ID = "12345";
 
 const MOCK_ORG_UPDATED_AT = new Date("2026-01-15T10:00:00.000Z");
 
-const MOCK_ORG = {
-  id: USER_ID,
-  name: "Test Org",
+const MOCK_USER = {
+  id: BigInt(USER_ID),
+  username: "testuser",
+  isAllowed: true,
   planCode: "personal",
   subscriptionStatus: "active",
   paidThroughAt: new Date("2026-06-01"),
@@ -133,6 +120,9 @@ const MOCK_ORG = {
   updatedAt: MOCK_ORG_UPDATED_AT,
   stripeCustomerId: null,
   stripeSubscriptionId: null,
+  trialEndsAt: null,
+  currentPeriodStart: null,
+  currentPeriodEnd: null,
 };
 
 function extractCsrfToken(html: string): string {
@@ -141,7 +131,7 @@ function extractCsrfToken(html: string): string {
 }
 
 function extractOrgVersion(html: string): string {
-  const match = html.match(/name="_org_version" value="([^"]+)"/);
+  const match = html.match(/name="_user_version" value="([^"]+)"/);
   return match?.[1] ?? "";
 }
 
@@ -150,8 +140,7 @@ function makeGrantSuccess(overrides: Record<string, unknown> = {}): Record<strin
     ok: true,
     idempotent: false,
     updated: true,
-    organizationId: USER_ID,
-    telegramUserId: null,
+    telegramUserId: BigInt(USER_ID),
     planCode: "pro",
     subscriptionStatus: "active",
     paidThroughAt: "2026-12-31T00:00:00.000Z",
@@ -166,13 +155,11 @@ function makeGrantSuccess(overrides: Record<string, unknown> = {}): Record<strin
 
 beforeEach(() => {
   mockFindUserById.mockReset();
-  mockListOrganizationMembershipsForUser.mockReset().mockResolvedValue([]);
-  mockListOrganizationMembers.mockReset().mockResolvedValue([]);
-  mockFindOrganizationById.mockReset();
-  mockCountActiveAliasesByOrganization.mockReset().mockResolvedValue(0);
-  mockGetOrganizationUsageMonth.mockReset().mockResolvedValue(null);
-  mockListManualBillingEventsForOrganization.mockReset().mockResolvedValue([]);
-  mockGrantManualOrganizationPlan.mockReset();
+
+  mockCountActiveAliasesByUser.mockReset().mockResolvedValue(0);
+  mockGetUserUsageMonth.mockReset().mockResolvedValue(null);
+  mockListManualBillingEventsForUser.mockReset().mockResolvedValue([]);
+  mockGrantManualUserPlan.mockReset();
 });
 
 describe("admin routes disabled", () => {
@@ -296,6 +283,8 @@ describe("admin user search", () => {
               id: 12345n,
               username: "testuser",
               isAllowed: true,
+              planCode: "free",
+              subscriptionStatus: "free",
               createdAt: new Date(),
               updatedAt: new Date(),
             },
@@ -336,10 +325,17 @@ describe("admin user detail", () => {
       id: 12345n,
       username: "testuser",
       isAllowed: true,
+      planCode: "free",
+      subscriptionStatus: "free",
+      stripeCustomerId: null,
+      stripeSubscriptionId: null,
+      trialEndsAt: null,
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
+      paidThroughAt: null,
       createdAt: new Date("2025-01-01"),
       updatedAt: new Date(),
     });
-    mockListOrganizationMembershipsForUser.mockResolvedValue([]);
 
     const res = await app.inject({
       method: "GET",
@@ -360,53 +356,6 @@ describe("admin user detail", () => {
       headers: { cookie },
     });
     expect(res.statusCode).toBe(400);
-  });
-});
-
-describe("admin organization detail", () => {
-  it("returns 404 for unknown organization", async () => {
-    const app = await buildApp();
-    const cookie = await loginSession(app);
-    mockFindOrganizationById.mockResolvedValue(null);
-    const res = await app.inject({
-      method: "GET",
-      url: "/admin/users/00000000-0000-0000-0000-000000000000",
-      headers: { cookie },
-    });
-    expect(res.statusCode).toBe(404);
-  });
-
-  it("renders organization detail page", async () => {
-    const app = await buildApp();
-    const cookie = await loginSession(app);
-
-    const userId = "12345";
-    mockFindOrganizationById.mockResolvedValue({
-      id: userId,
-      name: "Test Org",
-      planCode: "personal",
-      subscriptionStatus: "active",
-      paidThroughAt: new Date("2026-06-01"),
-      createdAt: new Date("2025-01-01"),
-      updatedAt: new Date(),
-    });
-    mockListOrganizationMembers.mockResolvedValue([]);
-    mockCountActiveAliasesByOrganization.mockResolvedValue(3);
-    mockGetOrganizationUsageMonth.mockResolvedValue({
-      deliveredCount: 42,
-      rejectedCount: 5,
-    });
-    mockListManualBillingEventsForOrganization.mockResolvedValue([]);
-
-    const res = await app.inject({
-      method: "GET",
-      url: `/admin/users/${userId}`,
-      headers: { cookie },
-    });
-    expect(res.statusCode).toBe(200);
-    expect(res.body).toContain("Test Org");
-    expect(res.body).toContain("personal");
-    expect(res.body).toContain("42 delivered");
   });
 });
 
@@ -470,14 +419,14 @@ describe("admin auth module", () => {
 async function getCsrfAndVersion(
   app: FastifyInstance,
   cookie: string,
-): Promise<{ csrf: string; orgVersion: string }> {
-  mockFindOrganizationById.mockResolvedValueOnce(MOCK_ORG);
+): Promise<{ csrf: string; userVersion: string }> {
+  mockFindUserById.mockResolvedValueOnce(MOCK_USER);
   const res = await app.inject({
     method: "GET",
     url: `/admin/users/${USER_ID}`,
     headers: { cookie },
   });
-  return { csrf: extractCsrfToken(res.body), orgVersion: extractOrgVersion(res.body) };
+  return { csrf: extractCsrfToken(res.body), userVersion: extractOrgVersion(res.body) };
 }
 
 async function getCsrfToken(app: FastifyInstance, cookie: string): Promise<string> {
@@ -489,23 +438,23 @@ describe("admin billing mutations", () => {
   it("grants a plan and redirects with billing=granted flash", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
-    const { csrf, orgVersion } = await getCsrfAndVersion(app, cookie);
+    const { csrf, userVersion } = await getCsrfAndVersion(app, cookie);
 
-    mockGrantManualOrganizationPlan.mockResolvedValue(makeGrantSuccess());
+    mockGrantManualUserPlan.mockResolvedValue(makeGrantSuccess());
 
     const res = await app.inject({
       method: "POST",
       url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-2026-001`,
+      payload: `_csrf=${csrf}&_user_version=${encodeURIComponent(userVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-2026-001`,
     });
 
     expect(res.statusCode).toBe(302);
     expect(res.headers["location"]).toBe(`/admin/users/${USER_ID}?billing=granted`);
-    expect(mockGrantManualOrganizationPlan).toHaveBeenCalledWith(
+    expect(mockGrantManualUserPlan).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        organizationId: USER_ID,
+        telegramUserId: BigInt(USER_ID),
         planCode: "pro",
         subscriptionStatus: "active",
         paymentReference: "wise-2026-001",
@@ -517,9 +466,9 @@ describe("admin billing mutations", () => {
   it("redirects with billing=idempotent when payment reference already exists", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
-    const { csrf, orgVersion } = await getCsrfAndVersion(app, cookie);
+    const { csrf, userVersion } = await getCsrfAndVersion(app, cookie);
 
-    mockGrantManualOrganizationPlan.mockResolvedValue(
+    mockGrantManualUserPlan.mockResolvedValue(
       makeGrantSuccess({ idempotent: true, updated: false }),
     );
 
@@ -527,7 +476,7 @@ describe("admin billing mutations", () => {
       method: "POST",
       url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-2026-001`,
+      payload: `_csrf=${csrf}&_user_version=${encodeURIComponent(userVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-2026-001`,
     });
 
     expect(res.statusCode).toBe(302);
@@ -537,7 +486,7 @@ describe("admin billing mutations", () => {
   it("shows success flash on GET after redirect", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
-    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    mockFindUserById.mockResolvedValue(MOCK_USER);
 
     const res = await app.inject({
       method: "GET",
@@ -552,7 +501,7 @@ describe("admin billing mutations", () => {
   it("shows idempotent flash on GET after redirect", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
-    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    mockFindUserById.mockResolvedValue(MOCK_USER);
 
     const res = await app.inject({
       method: "GET",
@@ -567,22 +516,24 @@ describe("admin billing mutations", () => {
   it("shows error when payment reference is already used for a different organization", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
-    const { csrf, orgVersion } = await getCsrfAndVersion(app, cookie);
+    const { csrf, userVersion } = await getCsrfAndVersion(app, cookie);
 
-    mockGrantManualOrganizationPlan.mockResolvedValue({
+    mockGrantManualUserPlan.mockResolvedValue({
       ok: false,
       code: "payment_reference_conflict",
     });
+    // POST flow re-renders the user detail page, which calls findUserById again.
+    mockFindUserById.mockResolvedValue(MOCK_USER);
 
     const res = await app.inject({
       method: "POST",
       url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-cross-org-001`,
+      payload: `_csrf=${csrf}&_user_version=${encodeURIComponent(userVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-cross-org-001`,
     });
 
     expect(res.statusCode).toBe(200);
-    expect(res.body).toContain("already used for a different organization");
+    expect(res.body).toContain("already used for a different user");
   });
 
   it("rejects POST without CSRF token with 403", async () => {
@@ -618,7 +569,7 @@ describe("admin billing mutations", () => {
     const cookie = await loginSession(app);
     const csrf = await getCsrfToken(app, cookie);
 
-    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    mockFindUserById.mockResolvedValue(MOCK_USER);
 
     const res = await app.inject({
       method: "POST",
@@ -629,7 +580,7 @@ describe("admin billing mutations", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("confirmation");
-    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+    expect(mockGrantManualUserPlan).not.toHaveBeenCalled();
   });
 
   it("shows error when canceling a paid plan without confirmation", async () => {
@@ -637,7 +588,7 @@ describe("admin billing mutations", () => {
     const cookie = await loginSession(app);
     const csrf = await getCsrfToken(app, cookie);
 
-    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    mockFindUserById.mockResolvedValue(MOCK_USER);
 
     const res = await app.inject({
       method: "POST",
@@ -648,15 +599,15 @@ describe("admin billing mutations", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("confirmation");
-    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+    expect(mockGrantManualUserPlan).not.toHaveBeenCalled();
   });
 
   it("allows cancellation when confirmation checkbox is checked", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
-    const { csrf, orgVersion } = await getCsrfAndVersion(app, cookie);
+    const { csrf, userVersion } = await getCsrfAndVersion(app, cookie);
 
-    mockGrantManualOrganizationPlan.mockResolvedValue(
+    mockGrantManualUserPlan.mockResolvedValue(
       makeGrantSuccess({ planCode: "pro", subscriptionStatus: "canceled", paidThroughAt: null }),
     );
 
@@ -664,11 +615,11 @@ describe("admin billing mutations", () => {
       method: "POST",
       url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=canceled&payment_reference=cancel-ref-001&_confirm_downgrade=yes`,
+      payload: `_csrf=${csrf}&_user_version=${encodeURIComponent(userVersion)}&plan=pro&status=canceled&payment_reference=cancel-ref-001&_confirm_downgrade=yes`,
     });
 
     expect(res.statusCode).toBe(302);
-    expect(mockGrantManualOrganizationPlan).toHaveBeenCalledWith(
+    expect(mockGrantManualUserPlan).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ planCode: "pro", subscriptionStatus: "canceled" }),
     );
@@ -677,9 +628,9 @@ describe("admin billing mutations", () => {
   it("allows downgrade to free when confirmation checkbox is checked", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
-    const { csrf, orgVersion } = await getCsrfAndVersion(app, cookie);
+    const { csrf, userVersion } = await getCsrfAndVersion(app, cookie);
 
-    mockGrantManualOrganizationPlan.mockResolvedValue(
+    mockGrantManualUserPlan.mockResolvedValue(
       makeGrantSuccess({ planCode: "free", subscriptionStatus: "free", paidThroughAt: null }),
     );
 
@@ -687,11 +638,11 @@ describe("admin billing mutations", () => {
       method: "POST",
       url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=free&status=free&payment_reference=downgrade-ref-001&_confirm_downgrade=yes`,
+      payload: `_csrf=${csrf}&_user_version=${encodeURIComponent(userVersion)}&plan=free&status=free&payment_reference=downgrade-ref-001&_confirm_downgrade=yes`,
     });
 
     expect(res.statusCode).toBe(302);
-    expect(mockGrantManualOrganizationPlan).toHaveBeenCalledWith(
+    expect(mockGrantManualUserPlan).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ planCode: "free", subscriptionStatus: "free" }),
     );
@@ -700,19 +651,19 @@ describe("admin billing mutations", () => {
   it("re-renders form with error on service validation failure", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
-    const { csrf, orgVersion } = await getCsrfAndVersion(app, cookie);
+    const { csrf, userVersion } = await getCsrfAndVersion(app, cookie);
 
-    mockGrantManualOrganizationPlan.mockResolvedValue({
+    mockGrantManualUserPlan.mockResolvedValue({
       ok: false,
       code: "paid_through_required",
     });
-    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    mockFindUserById.mockResolvedValue(MOCK_USER);
 
     const res = await app.inject({
       method: "POST",
       url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&payment_reference=wise-test-001`,
+      payload: `_csrf=${csrf}&_user_version=${encodeURIComponent(userVersion)}&plan=pro&status=active&payment_reference=wise-test-001`,
     });
 
     expect(res.statusCode).toBe(200);
@@ -722,18 +673,18 @@ describe("admin billing mutations", () => {
   it("uses operatorSource with admin: prefix when calling the billing service", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
-    const { csrf, orgVersion } = await getCsrfAndVersion(app, cookie);
+    const { csrf, userVersion } = await getCsrfAndVersion(app, cookie);
 
-    mockGrantManualOrganizationPlan.mockResolvedValue(makeGrantSuccess());
+    mockGrantManualUserPlan.mockResolvedValue(makeGrantSuccess());
 
     await app.inject({
       method: "POST",
       url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-2026-001`,
+      payload: `_csrf=${csrf}&_user_version=${encodeURIComponent(userVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-2026-001`,
     });
 
-    const callArgs = mockGrantManualOrganizationPlan.mock.calls[0][1] as Record<string, unknown>;
+    const callArgs = mockGrantManualUserPlan.mock.calls[0][1] as Record<string, unknown>;
     expect(typeof callArgs["operatorSource"]).toBe("string");
     expect((callArgs["operatorSource"] as string).startsWith("admin:")).toBe(true);
   });
@@ -741,9 +692,9 @@ describe("admin billing mutations", () => {
   it("clears paid_through when downgrading to free even if form submits a date", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
-    const { csrf, orgVersion } = await getCsrfAndVersion(app, cookie);
+    const { csrf, userVersion } = await getCsrfAndVersion(app, cookie);
 
-    mockGrantManualOrganizationPlan.mockResolvedValue(
+    mockGrantManualUserPlan.mockResolvedValue(
       makeGrantSuccess({ planCode: "free", subscriptionStatus: "free", paidThroughAt: null }),
     );
 
@@ -751,10 +702,10 @@ describe("admin billing mutations", () => {
       method: "POST",
       url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=free&status=free&paid_through=2026-06-01&payment_reference=downgrade-ref-001&_confirm_downgrade=yes`,
+      payload: `_csrf=${csrf}&_user_version=${encodeURIComponent(userVersion)}&plan=free&status=free&paid_through=2026-06-01&payment_reference=downgrade-ref-001&_confirm_downgrade=yes`,
     });
 
-    expect(mockGrantManualOrganizationPlan).toHaveBeenCalledWith(
+    expect(mockGrantManualUserPlan).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ planCode: "free", paidThroughAt: null }),
     );
@@ -763,39 +714,39 @@ describe("admin billing mutations", () => {
   it("rejects invalid calendar date like 2026-02-31", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
-    const { csrf, orgVersion } = await getCsrfAndVersion(app, cookie);
+    const { csrf, userVersion } = await getCsrfAndVersion(app, cookie);
 
-    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    mockFindUserById.mockResolvedValue(MOCK_USER);
 
     const res = await app.inject({
       method: "POST",
       url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&paid_through=2026-02-31&payment_reference=wise-test-001`,
+      payload: `_csrf=${csrf}&_user_version=${encodeURIComponent(userVersion)}&plan=pro&status=active&paid_through=2026-02-31&payment_reference=wise-test-001`,
     });
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("Invalid paid-through date");
-    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+    expect(mockGrantManualUserPlan).not.toHaveBeenCalled();
   });
 
   it("rejects non-YYYY-MM-DD paid_through format", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
-    const { csrf, orgVersion } = await getCsrfAndVersion(app, cookie);
+    const { csrf, userVersion } = await getCsrfAndVersion(app, cookie);
 
-    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    mockFindUserById.mockResolvedValue(MOCK_USER);
 
     const res = await app.inject({
       method: "POST",
       url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&paid_through=December+31+2026&payment_reference=wise-test-001`,
+      payload: `_csrf=${csrf}&_user_version=${encodeURIComponent(userVersion)}&plan=pro&status=active&paid_through=December+31+2026&payment_reference=wise-test-001`,
     });
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("Invalid paid-through date");
-    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+    expect(mockGrantManualUserPlan).not.toHaveBeenCalled();
   });
 
   it("rejects payment_reference exceeding 255 characters", async () => {
@@ -803,7 +754,7 @@ describe("admin billing mutations", () => {
     const cookie = await loginSession(app);
     const csrf = await getCsrfToken(app, cookie);
 
-    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    mockFindUserById.mockResolvedValue(MOCK_USER);
     const longRef = "x".repeat(256);
 
     const res = await app.inject({
@@ -815,7 +766,7 @@ describe("admin billing mutations", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("255 characters");
-    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+    expect(mockGrantManualUserPlan).not.toHaveBeenCalled();
   });
 
   it("rejects note exceeding 1000 characters", async () => {
@@ -823,7 +774,7 @@ describe("admin billing mutations", () => {
     const cookie = await loginSession(app);
     const csrf = await getCsrfToken(app, cookie);
 
-    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    mockFindUserById.mockResolvedValue(MOCK_USER);
     const longNote = "x".repeat(1001);
 
     const res = await app.inject({
@@ -835,7 +786,7 @@ describe("admin billing mutations", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("1000 characters");
-    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+    expect(mockGrantManualUserPlan).not.toHaveBeenCalled();
   });
 
   it("rejects missing payment_reference", async () => {
@@ -843,7 +794,7 @@ describe("admin billing mutations", () => {
     const cookie = await loginSession(app);
     const csrf = await getCsrfToken(app, cookie);
 
-    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    mockFindUserById.mockResolvedValue(MOCK_USER);
 
     const res = await app.inject({
       method: "POST",
@@ -854,7 +805,7 @@ describe("admin billing mutations", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("Payment reference is required");
-    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+    expect(mockGrantManualUserPlan).not.toHaveBeenCalled();
   });
 
   it("rejects duplicate form fields (array values)", async () => {
@@ -862,7 +813,7 @@ describe("admin billing mutations", () => {
     const cookie = await loginSession(app);
     const csrf = await getCsrfToken(app, cookie);
 
-    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    mockFindUserById.mockResolvedValue(MOCK_USER);
 
     const res = await app.inject({
       method: "POST",
@@ -873,7 +824,7 @@ describe("admin billing mutations", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("duplicate form fields");
-    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+    expect(mockGrantManualUserPlan).not.toHaveBeenCalled();
   });
 
   it("returns 403 (not 500) when _csrf field is duplicated", async () => {
@@ -888,7 +839,7 @@ describe("admin billing mutations", () => {
     });
 
     expect(res.statusCode).toBe(403);
-    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+    expect(mockGrantManualUserPlan).not.toHaveBeenCalled();
   });
 
   it("rejects paid plan with free subscription status", async () => {
@@ -896,7 +847,7 @@ describe("admin billing mutations", () => {
     const cookie = await loginSession(app);
     const csrf = await getCsrfToken(app, cookie);
 
-    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    mockFindUserById.mockResolvedValue(MOCK_USER);
 
     const res = await app.inject({
       method: "POST",
@@ -907,7 +858,7 @@ describe("admin billing mutations", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("Only the free plan can have");
-    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+    expect(mockGrantManualUserPlan).not.toHaveBeenCalled();
   });
 
   it("rejects malformed keep_stripe_link=1 instead of silently clearing Stripe link", async () => {
@@ -915,7 +866,7 @@ describe("admin billing mutations", () => {
     const cookie = await loginSession(app);
     const csrf = await getCsrfToken(app, cookie);
 
-    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    mockFindUserById.mockResolvedValue(MOCK_USER);
 
     const res = await app.inject({
       method: "POST",
@@ -926,7 +877,7 @@ describe("admin billing mutations", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("unexpected value for keep_stripe_link");
-    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+    expect(mockGrantManualUserPlan).not.toHaveBeenCalled();
   });
 
   it("rejects duplicate keep_stripe_link fields instead of silently clearing Stripe link", async () => {
@@ -934,7 +885,7 @@ describe("admin billing mutations", () => {
     const cookie = await loginSession(app);
     const csrf = await getCsrfToken(app, cookie);
 
-    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    mockFindUserById.mockResolvedValue(MOCK_USER);
 
     const res = await app.inject({
       method: "POST",
@@ -945,7 +896,7 @@ describe("admin billing mutations", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("duplicate form fields");
-    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+    expect(mockGrantManualUserPlan).not.toHaveBeenCalled();
   });
 
   it("preserves keep_stripe_link=checked state on validation error re-render", async () => {
@@ -953,7 +904,7 @@ describe("admin billing mutations", () => {
     const cookie = await loginSession(app);
     const csrf = await getCsrfToken(app, cookie);
 
-    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    mockFindUserById.mockResolvedValue(MOCK_USER);
 
     // Submit with keep_stripe_link=on but trigger a validation error (missing payment_reference)
     const res = await app.inject({
@@ -974,10 +925,10 @@ describe("admin billing mutations", () => {
     const cookie = await loginSession(app);
     const csrf = await getCsrfToken(app, cookie);
 
-    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    mockFindUserById.mockResolvedValue(MOCK_USER);
 
-    // Submit valid fields except note is too long (triggers server-side error after _org_version check)
-    // Use a simpler trigger: missing payment_reference (caught before _org_version)
+    // Submit valid fields except note is too long (triggers server-side error after _user_version check)
+    // Use a simpler trigger: missing payment_reference (caught before _user_version)
     const res = await app.inject({
       method: "POST",
       url: `/admin/users/${USER_ID}/billing`,
@@ -986,7 +937,7 @@ describe("admin billing mutations", () => {
     });
 
     expect(res.statusCode).toBe(200);
-    // Missing _org_version triggers re-render — submitted values should be preserved
+    // Missing _user_version triggers re-render — submitted values should be preserved
     expect(res.body).toContain("Missing page version token");
     expect(res.body).toContain('value="pro" selected');
     expect(res.body).toContain('value="active" selected');
@@ -1000,7 +951,7 @@ describe("admin billing mutations", () => {
     const cookie = await loginSession(app);
     const csrf = await getCsrfToken(app, cookie);
 
-    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    mockFindUserById.mockResolvedValue(MOCK_USER);
 
     const res = await app.inject({
       method: "POST",
@@ -1020,14 +971,14 @@ describe("admin billing mutations", () => {
     const cookie = await loginSession(app);
 
     const bizOrgWithStripe = {
-      ...MOCK_ORG,
+      ...MOCK_USER,
       planCode: "business",
       subscriptionStatus: "active",
       paidThroughAt: null,
       stripeCustomerId: "cus_abc123",
       stripeSubscriptionId: "sub_xyz",
     };
-    mockFindOrganizationById.mockResolvedValueOnce(bizOrgWithStripe);
+    mockFindUserById.mockResolvedValueOnce(bizOrgWithStripe);
 
     const res = await app.inject({
       method: "GET",
@@ -1045,11 +996,11 @@ describe("admin billing mutations", () => {
     const cookie = await loginSession(app);
 
     const nonBizOrgWithStripe = {
-      ...MOCK_ORG, // planCode: "personal"
+      ...MOCK_USER, // planCode: "personal"
       stripeCustomerId: "cus_abc123",
       stripeSubscriptionId: "sub_xyz",
     };
-    mockFindOrganizationById.mockResolvedValueOnce(nonBizOrgWithStripe);
+    mockFindUserById.mockResolvedValueOnce(nonBizOrgWithStripe);
 
     const res = await app.inject({
       method: "GET",
@@ -1066,7 +1017,7 @@ describe("admin billing mutations", () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
 
-    mockFindOrganizationById.mockResolvedValueOnce(MOCK_ORG); // stripeCustomerId: null
+    mockFindUserById.mockResolvedValueOnce(MOCK_USER); // stripeCustomerId: null
 
     const res = await app.inject({
       method: "GET",
@@ -1082,8 +1033,8 @@ describe("admin billing mutations", () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
 
-    mockFindOrganizationById.mockResolvedValueOnce({
-      ...MOCK_ORG,
+    mockFindUserById.mockResolvedValueOnce({
+      ...MOCK_USER,
       planCode: "pro",
       subscriptionStatus: "past_due",
     });
@@ -1102,12 +1053,12 @@ describe("admin billing mutations", () => {
     expect(res.body).toContain('value="canceled"');
   });
 
-  it("rejects POST when _org_version is missing", async () => {
+  it("rejects POST when _user_version is missing", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
     const csrf = await getCsrfToken(app, cookie);
 
-    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    mockFindUserById.mockResolvedValue(MOCK_USER);
 
     const res = await app.inject({
       method: "POST",
@@ -1118,23 +1069,23 @@ describe("admin billing mutations", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("Missing page version token");
-    expect(mockGrantManualOrganizationPlan).not.toHaveBeenCalled();
+    expect(mockGrantManualUserPlan).not.toHaveBeenCalled();
   });
 
   it("rejects POST when service returns concurrent_update (stale-page guard)", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
-    const { csrf, orgVersion } = await getCsrfAndVersion(app, cookie);
+    const { csrf, userVersion } = await getCsrfAndVersion(app, cookie);
 
     // Service detects updatedAt mismatch inside the transaction
-    mockGrantManualOrganizationPlan.mockResolvedValue({ ok: false, code: "concurrent_update" });
-    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    mockGrantManualUserPlan.mockResolvedValue({ ok: false, code: "concurrent_update" });
+    mockFindUserById.mockResolvedValue(MOCK_USER);
 
     const res = await app.inject({
       method: "POST",
       url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-test-001`,
+      payload: `_csrf=${csrf}&_user_version=${encodeURIComponent(userVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-test-001`,
     });
 
     expect(res.statusCode).toBe(200);
@@ -1144,16 +1095,16 @@ describe("admin billing mutations", () => {
   it("concurrent_update re-render does not preserve submitted keep_stripe_link", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
-    const { csrf, orgVersion } = await getCsrfAndVersion(app, cookie);
+    const { csrf, userVersion } = await getCsrfAndVersion(app, cookie);
 
-    mockGrantManualOrganizationPlan.mockResolvedValue({ ok: false, code: "concurrent_update" });
-    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    mockGrantManualUserPlan.mockResolvedValue({ ok: false, code: "concurrent_update" });
+    mockFindUserById.mockResolvedValue(MOCK_USER);
 
     const res = await app.inject({
       method: "POST",
       url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=business&status=active&payment_reference=wise-test-001&keep_stripe_link=on`,
+      payload: `_csrf=${csrf}&_user_version=${encodeURIComponent(userVersion)}&plan=business&status=active&payment_reference=wise-test-001&keep_stripe_link=on`,
     });
 
     expect(res.statusCode).toBe(200);
@@ -1165,17 +1116,17 @@ describe("admin billing mutations", () => {
   it("concurrent_update re-render shows org state, not submitted plan/payment_reference", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
-    const { csrf, orgVersion } = await getCsrfAndVersion(app, cookie);
+    const { csrf, userVersion } = await getCsrfAndVersion(app, cookie);
 
-    mockGrantManualOrganizationPlan.mockResolvedValue({ ok: false, code: "concurrent_update" });
-    // MOCK_ORG has planCode: "free" — submitted plan is "business"
-    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    mockGrantManualUserPlan.mockResolvedValue({ ok: false, code: "concurrent_update" });
+    // MOCK_USER has planCode: "free" — submitted plan is "business"
+    mockFindUserById.mockResolvedValue(MOCK_USER);
 
     const res = await app.inject({
       method: "POST",
       url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=business&status=active&payment_reference=wise-stale-ref&note=stale+note`,
+      payload: `_csrf=${csrf}&_user_version=${encodeURIComponent(userVersion)}&plan=business&status=active&payment_reference=wise-stale-ref&note=stale+note`,
     });
 
     expect(res.statusCode).toBe(200);
@@ -1188,22 +1139,22 @@ describe("admin billing mutations", () => {
   it("accepts POST when org version matches (no stale conflict)", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
-    const { csrf, orgVersion } = await getCsrfAndVersion(app, cookie);
+    const { csrf, userVersion } = await getCsrfAndVersion(app, cookie);
 
-    mockGrantManualOrganizationPlan.mockResolvedValue(makeGrantSuccess());
+    mockGrantManualUserPlan.mockResolvedValue(makeGrantSuccess());
 
     const res = await app.inject({
       method: "POST",
       url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-test-001`,
+      payload: `_csrf=${csrf}&_user_version=${encodeURIComponent(userVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-test-001`,
     });
 
     expect(res.statusCode).toBe(302);
     expect(res.headers["location"]).toBe(`/admin/users/${USER_ID}?billing=granted`);
   });
 
-  it("preserves submitted _org_version in re-rendered form on validation error (stale-guard regression)", async () => {
+  it("preserves submitted _user_version in re-rendered form on validation error (stale-guard regression)", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
     const csrf = await getCsrfToken(app, cookie);
@@ -1211,17 +1162,17 @@ describe("admin billing mutations", () => {
     // Stale version — different from MOCK_ORG_UPDATED_AT ("2026-01-15T10:00:00.000Z")
     const staleOrgVersion = "2025-03-01T00:00:00.000Z";
 
-    mockGrantManualOrganizationPlan.mockResolvedValue({
+    mockGrantManualUserPlan.mockResolvedValue({
       ok: false,
       code: "paid_through_required",
     });
-    mockFindOrganizationById.mockResolvedValue(MOCK_ORG);
+    mockFindUserById.mockResolvedValue(MOCK_USER);
 
     const res = await app.inject({
       method: "POST",
       url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(staleOrgVersion)}&plan=personal&status=active&payment_reference=wise-test-stale`,
+      payload: `_csrf=${csrf}&_user_version=${encodeURIComponent(staleOrgVersion)}&plan=personal&status=active&payment_reference=wise-test-stale`,
     });
 
     expect(res.statusCode).toBe(200);
@@ -1234,9 +1185,9 @@ describe("admin billing mutations", () => {
   it("does not log billing.mutated for idempotent replay (redirects with idempotent flash)", async () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
-    const { csrf, orgVersion } = await getCsrfAndVersion(app, cookie);
+    const { csrf, userVersion } = await getCsrfAndVersion(app, cookie);
 
-    mockGrantManualOrganizationPlan.mockResolvedValue(
+    mockGrantManualUserPlan.mockResolvedValue(
       makeGrantSuccess({ idempotent: true, updated: false }),
     );
 
@@ -1245,7 +1196,7 @@ describe("admin billing mutations", () => {
       method: "POST",
       url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
-      payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-2026-001`,
+      payload: `_csrf=${csrf}&_user_version=${encodeURIComponent(userVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-2026-001`,
     });
 
     expect(res.statusCode).toBe(302);
