@@ -45,7 +45,7 @@ vi.mock("../../../src/db/repos/attachmentLinks.js", () => ({
 const mockIncrementOrganizationUsageMonth = vi.fn();
 const mockDecrementOrganizationUsageMonth = vi.fn();
 vi.mock("../../../src/db/repos/usage.js", () => ({
-  incrementOrganizationUsageMonth: (...args: unknown[]): unknown =>
+  incrementUserUsageMonth: (...args: unknown[]): unknown =>
     mockIncrementOrganizationUsageMonth(...args),
   decrementOrganizationUsageMonth: (...args: unknown[]): unknown =>
     mockDecrementOrganizationUsageMonth(...args),

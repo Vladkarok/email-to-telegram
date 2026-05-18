@@ -92,7 +92,7 @@ describe("billing routes", () => {
     mockProcessStripeWebhookEvent.mockResolvedValue("processed");
   });
 
-  it("creates checkout sessions for owner/admin users", async () => {
+  it("creates checkout sessions for the authenticated user", async () => {
     const app = await buildApp();
     const res = await app.inject({
       method: "POST",
@@ -102,11 +102,7 @@ describe("billing routes", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ url: "https://checkout.stripe.test/session" });
-    expect(mockCreateCheckoutSession).toHaveBeenCalledWith(
-      expect.anything(),
-      "org-1",
-      "pro_monthly",
-    );
+    expect(mockCreateCheckoutSession).toHaveBeenCalledWith(expect.anything(), 123n, "pro_monthly");
   });
 
   it("rejects checkout when the token is invalid", async () => {
@@ -119,18 +115,6 @@ describe("billing routes", () => {
     });
 
     expect(res.statusCode).toBe(401);
-  });
-
-  it("rejects checkout when the user lacks org ownership", async () => {
-    mockUserHasOrganizationRole.mockResolvedValue(false);
-    const app = await buildApp();
-    const res = await app.inject({
-      method: "POST",
-      url: "/billing/checkout",
-      payload: { token: "signed-token", priceKey: "pro_monthly" },
-    });
-
-    expect(res.statusCode).toBe(403);
   });
 
   it("rejects checkout when the requested price key is invalid", async () => {
@@ -194,18 +178,6 @@ describe("billing routes", () => {
     });
 
     expect(res.statusCode).toBe(401);
-  });
-
-  it("rejects portal when the user lacks org ownership", async () => {
-    mockUserHasOrganizationRole.mockResolvedValue(false);
-    const app = await buildApp();
-    const res = await app.inject({
-      method: "POST",
-      url: "/billing/portal",
-      payload: { token: "signed-token" },
-    });
-
-    expect(res.statusCode).toBe(403);
   });
 
   it("verifies and processes Stripe webhooks from the raw body", async () => {

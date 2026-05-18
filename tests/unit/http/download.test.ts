@@ -38,11 +38,11 @@ vi.mock("../../../src/storage/disk.js", () => ({
   openAttachmentStream: (...args: unknown[]): unknown => mockOpenAttachment(...args),
 }));
 
-const mockIncrementOrganizationUsageMonth = vi.fn();
+const mockIncrementUserUsageMonth = vi.fn();
 const mockDecrementOrganizationUsageMonth = vi.fn();
 vi.mock("../../../src/db/repos/usage.js", () => ({
-  incrementOrganizationUsageMonth: (...args: unknown[]): unknown =>
-    mockIncrementOrganizationUsageMonth(...args),
+  incrementUserUsageMonth: (...args: unknown[]): unknown =>
+    mockIncrementUserUsageMonth(...args),
   decrementOrganizationUsageMonth: (...args: unknown[]): unknown =>
     mockDecrementOrganizationUsageMonth(...args),
   usageMonthForDate: vi.fn(() => "2026-04"),
@@ -83,8 +83,8 @@ describe("GET /dl/:token", () => {
     mockCheckEgressLimit.mockReset();
     mockCheckEgressLimit.mockResolvedValue({ ok: true });
     mockWithOrganizationQuotaLock.mockClear();
-    mockIncrementOrganizationUsageMonth.mockReset();
-    mockIncrementOrganizationUsageMonth.mockResolvedValue(undefined);
+    mockIncrementUserUsageMonth.mockReset();
+    mockIncrementUserUsageMonth.mockResolvedValue(undefined);
     mockDecrementOrganizationUsageMonth.mockReset();
     mockDecrementOrganizationUsageMonth.mockResolvedValue(undefined);
   });
@@ -168,7 +168,7 @@ describe("GET /dl/:token", () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers["content-type"]).toContain("application/pdf");
     expect(mockMarkDownloaded).toHaveBeenCalledOnce();
-    expect(mockIncrementOrganizationUsageMonth).toHaveBeenCalledWith(
+    expect(mockIncrementUserUsageMonth).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         organizationId: "org-1",
@@ -241,7 +241,7 @@ describe("GET /dl/:token", () => {
     expect(res.statusCode).toBe(403);
     expect(res.json()).toEqual({ error: "download quota exceeded" });
     expect(mockMarkDownloaded).not.toHaveBeenCalled();
-    expect(mockIncrementOrganizationUsageMonth).not.toHaveBeenCalled();
+    expect(mockIncrementUserUsageMonth).not.toHaveBeenCalled();
     expect(mockDisposeOpened).toHaveBeenCalledOnce();
   });
 

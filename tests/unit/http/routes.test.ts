@@ -305,7 +305,7 @@ describe("POST /inbound/preflight", () => {
       id: "uuid-1",
       status: "active",
       localPart: "alerts",
-      organizationId: "org-1",
+      createdBy: 1n,
     });
     mockCheckInboundLimit.mockResolvedValueOnce({
       ok: false,
@@ -339,7 +339,7 @@ describe("POST /inbound/preflight", () => {
       id: "uuid-1",
       status: "active",
       localPart: "alerts",
-      organizationId: "org-1",
+      createdBy: 1n,
     });
     mockFindHostedInboundBlock.mockResolvedValueOnce({
       id: "block-1",
@@ -373,7 +373,7 @@ describe("POST /inbound/preflight", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ accept: false });
     expect(mockFindHostedInboundBlock).toHaveBeenCalledWith(expect.anything(), {
-      organizationId: "org-1",
+      createdBy: 1n,
       localPart: "alerts",
       recipientDomain: "mail.example.com",
       envelopeFrom: "spam@attacker.com",
@@ -389,7 +389,7 @@ describe("POST /inbound/preflight", () => {
       id: "uuid-1",
       status: "active",
       localPart: "alerts",
-      organizationId: "org-1",
+      createdBy: 1n,
     });
 
     const body = Buffer.from(
@@ -460,7 +460,7 @@ describe("POST /inbound/preflight", () => {
       id: "uuid-1",
       status: "active",
       localPart: "alerts",
-      organizationId: "org-1",
+      createdBy: 1n,
     });
     mockFindHostedInboundBlock.mockResolvedValueOnce({
       id: "block-1",
@@ -501,7 +501,7 @@ describe("POST /inbound/preflight", () => {
       id: "uuid-1",
       status: "active",
       localPart: "alerts",
-      organizationId: "org-1",
+      createdBy: 1n,
     });
     mockCheckInboundLimit.mockResolvedValueOnce({
       ok: false,
@@ -669,7 +669,7 @@ describe("POST /inbound/raw", () => {
       id: "uuid-1",
       status: "active",
       localPart: "alerts",
-      organizationId: "org-1",
+      createdBy: 1n,
     });
     mockCheckInboundLimit.mockResolvedValueOnce({
       ok: false,
@@ -706,7 +706,7 @@ describe("POST /inbound/raw", () => {
       id: "uuid-1",
       status: "active",
       localPart: "alerts",
-      organizationId: "org-1",
+      createdBy: 1n,
     });
     mockFindHostedInboundBlock.mockResolvedValueOnce({
       id: "block-1",
@@ -735,7 +735,7 @@ describe("POST /inbound/raw", () => {
 
     expect(res.statusCode).toBe(403);
     expect(mockFindHostedInboundBlock).toHaveBeenCalledWith(expect.anything(), {
-      organizationId: "org-1",
+      createdBy: 1n,
       localPart: "alerts",
       recipientDomain: "mail.example.com",
       envelopeFrom: "sender@example.com",

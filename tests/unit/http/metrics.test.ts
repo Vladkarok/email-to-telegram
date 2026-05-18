@@ -16,8 +16,7 @@ vi.mock("../../../src/db/repos/organizations.js", async () => {
   );
   return {
     ...actual,
-    countUsersByPlan: (...args: unknown[]): unknown =>
-      mockCountOrganizationsByPlan(...args),
+    countUsersByPlan: (...args: unknown[]): unknown => mockCountOrganizationsByPlan(...args),
   };
 });
 vi.mock("../../../src/db/repos/users.js", async () => {
@@ -153,9 +152,9 @@ describe("GET /metrics", () => {
     expect(res.headers["content-type"]).toContain("text/plain");
     expect(res.body).toContain("email_to_telegram_http_requests_total");
     expect(res.body).toContain('route="/healthz"');
-    expect(res.body).toContain("email_to_telegram_active_organizations");
+    expect(res.body).toContain("email_to_telegram_active_users_by_plan");
     expect(res.body).toContain('plan="free"');
-    expect(res.body).toMatch(/email_to_telegram_organizations_total\{[^}]*\} 3/);
+    expect(res.body).toMatch(/email_to_telegram_users_total\{[^}]*\} 3/);
     expect(res.body).toMatch(/email_to_telegram_users\{[^}]*state="total"[^}]*\} 5/);
     expect(res.body).toMatch(/email_to_telegram_users\{[^}]*state="allowed"[^}]*\} 3/);
     expect(res.body).toMatch(/email_to_telegram_chats\{[^}]*state="active"[^}]*\} 4/);

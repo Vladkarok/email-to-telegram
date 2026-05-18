@@ -119,12 +119,12 @@ async function loginSession(app: FastifyInstance): Promise<string> {
   return Array.isArray(cookies) ? cookies.join("; ") : (cookies ?? "");
 }
 
-const ORG_ID = "00000000-0000-0000-0000-000000000001";
+const USER_ID = "12345";
 
 const MOCK_ORG_UPDATED_AT = new Date("2026-01-15T10:00:00.000Z");
 
 const MOCK_ORG = {
-  id: ORG_ID,
+  id: USER_ID,
   name: "Test Org",
   planCode: "personal",
   subscriptionStatus: "active",
@@ -150,7 +150,7 @@ function makeGrantSuccess(overrides: Record<string, unknown> = {}): Record<strin
     ok: true,
     idempotent: false,
     updated: true,
-    organizationId: ORG_ID,
+    organizationId: USER_ID,
     telegramUserId: null,
     planCode: "pro",
     subscriptionStatus: "active",
@@ -370,7 +370,7 @@ describe("admin organization detail", () => {
     mockFindOrganizationById.mockResolvedValue(null);
     const res = await app.inject({
       method: "GET",
-      url: "/admin/organizations/00000000-0000-0000-0000-000000000000",
+      url: "/admin/users/00000000-0000-0000-0000-000000000000",
       headers: { cookie },
     });
     expect(res.statusCode).toBe(404);
@@ -380,9 +380,9 @@ describe("admin organization detail", () => {
     const app = await buildApp();
     const cookie = await loginSession(app);
 
-    const orgId = "00000000-0000-0000-0000-000000000001";
+    const userId = "12345";
     mockFindOrganizationById.mockResolvedValue({
-      id: orgId,
+      id: userId,
       name: "Test Org",
       planCode: "personal",
       subscriptionStatus: "active",
@@ -400,7 +400,7 @@ describe("admin organization detail", () => {
 
     const res = await app.inject({
       method: "GET",
-      url: `/admin/organizations/${orgId}`,
+      url: `/admin/users/${userId}`,
       headers: { cookie },
     });
     expect(res.statusCode).toBe(200);
@@ -474,7 +474,7 @@ async function getCsrfAndVersion(
   mockFindOrganizationById.mockResolvedValueOnce(MOCK_ORG);
   const res = await app.inject({
     method: "GET",
-    url: `/admin/organizations/${ORG_ID}`,
+    url: `/admin/users/${USER_ID}`,
     headers: { cookie },
   });
   return { csrf: extractCsrfToken(res.body), orgVersion: extractOrgVersion(res.body) };
@@ -495,17 +495,17 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-2026-001`,
     });
 
     expect(res.statusCode).toBe(302);
-    expect(res.headers["location"]).toBe(`/admin/organizations/${ORG_ID}?billing=granted`);
+    expect(res.headers["location"]).toBe(`/admin/users/${USER_ID}?billing=granted`);
     expect(mockGrantManualOrganizationPlan).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        organizationId: ORG_ID,
+        organizationId: USER_ID,
         planCode: "pro",
         subscriptionStatus: "active",
         paymentReference: "wise-2026-001",
@@ -525,13 +525,13 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-2026-001`,
     });
 
     expect(res.statusCode).toBe(302);
-    expect(res.headers["location"]).toBe(`/admin/organizations/${ORG_ID}?billing=idempotent`);
+    expect(res.headers["location"]).toBe(`/admin/users/${USER_ID}?billing=idempotent`);
   });
 
   it("shows success flash on GET after redirect", async () => {
@@ -541,7 +541,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "GET",
-      url: `/admin/organizations/${ORG_ID}?billing=granted`,
+      url: `/admin/users/${USER_ID}?billing=granted`,
       headers: { cookie },
     });
 
@@ -556,7 +556,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "GET",
-      url: `/admin/organizations/${ORG_ID}?billing=idempotent`,
+      url: `/admin/users/${USER_ID}?billing=idempotent`,
       headers: { cookie },
     });
 
@@ -576,7 +576,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-cross-org-001`,
     });
@@ -591,7 +591,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: "plan=pro&status=active&paid_through=2026-12-31",
     });
@@ -604,7 +604,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded" },
       payload: "plan=pro&status=active",
     });
@@ -622,7 +622,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&plan=free&status=free`,
     });
@@ -641,7 +641,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&plan=pro&status=canceled`,
     });
@@ -662,7 +662,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=canceled&payment_reference=cancel-ref-001&_confirm_downgrade=yes`,
     });
@@ -685,7 +685,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=free&status=free&payment_reference=downgrade-ref-001&_confirm_downgrade=yes`,
     });
@@ -710,7 +710,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&payment_reference=wise-test-001`,
     });
@@ -728,7 +728,7 @@ describe("admin billing mutations", () => {
 
     await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-2026-001`,
     });
@@ -749,7 +749,7 @@ describe("admin billing mutations", () => {
 
     await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=free&status=free&paid_through=2026-06-01&payment_reference=downgrade-ref-001&_confirm_downgrade=yes`,
     });
@@ -769,7 +769,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&paid_through=2026-02-31&payment_reference=wise-test-001`,
     });
@@ -788,7 +788,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&paid_through=December+31+2026&payment_reference=wise-test-001`,
     });
@@ -808,7 +808,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=${longRef}`,
     });
@@ -828,7 +828,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-test-001&note=${longNote}`,
     });
@@ -847,7 +847,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-12-31`,
     });
@@ -866,7 +866,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=ref-a&payment_reference=ref-b`,
     });
@@ -882,7 +882,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: "_csrf=bad&_csrf=alsoBad&plan=pro&status=active",
     });
@@ -900,7 +900,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&plan=pro&status=free&payment_reference=wise-test-001`,
     });
@@ -919,7 +919,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&plan=business&status=active&payment_reference=ref-001&keep_stripe_link=1`,
     });
@@ -938,7 +938,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&plan=business&status=active&payment_reference=ref-001&keep_stripe_link=on&keep_stripe_link=on`,
     });
@@ -958,7 +958,7 @@ describe("admin billing mutations", () => {
     // Submit with keep_stripe_link=on but trigger a validation error (missing payment_reference)
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&plan=business&status=active&paid_through=2026-12-31&keep_stripe_link=on`,
     });
@@ -980,7 +980,7 @@ describe("admin billing mutations", () => {
     // Use a simpler trigger: missing payment_reference (caught before _org_version)
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-06-30&payment_reference=wise-rerender-test&note=my+note`,
     });
@@ -1004,7 +1004,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-12-31`,
     });
@@ -1031,7 +1031,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "GET",
-      url: `/admin/organizations/${ORG_ID}`,
+      url: `/admin/users/${USER_ID}`,
       headers: { cookie },
     });
 
@@ -1053,7 +1053,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "GET",
-      url: `/admin/organizations/${ORG_ID}`,
+      url: `/admin/users/${USER_ID}`,
       headers: { cookie },
     });
 
@@ -1070,7 +1070,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "GET",
-      url: `/admin/organizations/${ORG_ID}`,
+      url: `/admin/users/${USER_ID}`,
       headers: { cookie },
     });
 
@@ -1090,7 +1090,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "GET",
-      url: `/admin/organizations/${ORG_ID}`,
+      url: `/admin/users/${USER_ID}`,
       headers: { cookie },
     });
 
@@ -1111,7 +1111,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-test-001`,
     });
@@ -1132,7 +1132,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-test-001`,
     });
@@ -1151,7 +1151,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=business&status=active&payment_reference=wise-test-001&keep_stripe_link=on`,
     });
@@ -1173,7 +1173,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=business&status=active&payment_reference=wise-stale-ref&note=stale+note`,
     });
@@ -1194,13 +1194,13 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-test-001`,
     });
 
     expect(res.statusCode).toBe(302);
-    expect(res.headers["location"]).toBe(`/admin/organizations/${ORG_ID}?billing=granted`);
+    expect(res.headers["location"]).toBe(`/admin/users/${USER_ID}?billing=granted`);
   });
 
   it("preserves submitted _org_version in re-rendered form on validation error (stale-guard regression)", async () => {
@@ -1219,7 +1219,7 @@ describe("admin billing mutations", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(staleOrgVersion)}&plan=personal&status=active&payment_reference=wise-test-stale`,
     });
@@ -1243,12 +1243,12 @@ describe("admin billing mutations", () => {
     // Should redirect to idempotent flash without any error
     const res = await app.inject({
       method: "POST",
-      url: `/admin/organizations/${ORG_ID}/billing`,
+      url: `/admin/users/${USER_ID}/billing`,
       headers: { "content-type": "application/x-www-form-urlencoded", cookie },
       payload: `_csrf=${csrf}&_org_version=${encodeURIComponent(orgVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-2026-001`,
     });
 
     expect(res.statusCode).toBe(302);
-    expect(res.headers["location"]).toBe(`/admin/organizations/${ORG_ID}?billing=idempotent`);
+    expect(res.headers["location"]).toBe(`/admin/users/${USER_ID}?billing=idempotent`);
   });
 });
