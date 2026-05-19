@@ -80,6 +80,11 @@ Only senders matching an allow rule can deliver mail to an alias.
 /allow add &lt;alias&gt; &lt;email_or_domain&gt;
 /allow remove &lt;alias&gt; &lt;email_or_domain&gt;
 ${billingSection}
+<b>Privacy &amp; data</b>
+/privacy — view privacy info
+/export_me — export your data (GDPR)
+/delete_me — delete your account and data
+
 /donate — support the project
 /help — show this message
 

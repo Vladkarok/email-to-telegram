@@ -83,6 +83,11 @@ Solo i mittenti corrispondenti a un'allow rule possono consegnare posta a un ali
 /allow add &lt;alias&gt; &lt;email_or_domain&gt;
 /allow remove &lt;alias&gt; &lt;email_or_domain&gt;
 ${billingSection}
+<b>Privacy &amp; dati</b>
+/privacy — visualizza l'informativa sulla privacy
+/export_me — esporta i tuoi dati (GDPR)
+/delete_me — elimina il tuo account e i dati
+
 /donate — supporta il progetto
 /help — mostra questo messaggio
 

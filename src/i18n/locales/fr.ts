@@ -83,6 +83,11 @@ Seuls les expéditeurs correspondant à une allow rule peuvent envoyer du courri
 /allow add &lt;alias&gt; &lt;email_or_domain&gt;
 /allow remove &lt;alias&gt; &lt;email_or_domain&gt;
 ${billingSection}
+<b>Confidentialité &amp; données</b>
+/privacy — afficher les informations de confidentialité
+/export_me — exporter vos données (RGPD)
+/delete_me — supprimer votre compte et vos données
+
 /donate — soutenir le projet
 /help — afficher ce message
 
