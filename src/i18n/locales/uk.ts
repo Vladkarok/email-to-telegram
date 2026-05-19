@@ -80,6 +80,11 @@ ${settingsHelp}
 /allow add &lt;alias&gt; &lt;email_or_domain&gt;
 /allow remove &lt;alias&gt; &lt;email_or_domain&gt;
 ${billingSection}
+<b>Приватність і дані</b>
+/privacy — переглянути політику приватності
+/export_me — експортувати ваші дані (GDPR)
+/delete_me — видалити акаунт і всі дані
+
 /donate — підтримати проєкт
 /help — показати це повідомлення
 
