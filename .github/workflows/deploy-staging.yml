@@ -3,6 +3,10 @@ name: Deploy Staging
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "docs/agent/**"
+      - "AGENTS.md"
+      - "CLAUDE.md"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
