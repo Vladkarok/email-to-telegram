@@ -1,3 +1,0 @@
-ALTER TABLE "organizations" DROP CONSTRAINT "chk_org_subscription_status";--> statement-breakpoint
-ALTER TABLE "organization_usage_months" ALTER COLUMN "egress_bytes" SET DEFAULT 0;--> statement-breakpoint
-ALTER TABLE "organizations" ADD CONSTRAINT "chk_org_subscription_status" CHECK ("organizations"."subscription_status" in ('free', 'trialing', 'active', 'paused', 'past_due', 'canceled', 'unpaid', 'incomplete', 'incomplete_expired'));
