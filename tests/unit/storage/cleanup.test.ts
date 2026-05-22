@@ -393,9 +393,9 @@ describe("runCleanup", () => {
     expect(mockDecrementOrganizationStorageUsage).not.toHaveBeenCalled();
   });
 
-  it("commits the row deletion and usage decrement even when the file unlink fails afterwards", async () => {
-    // The cleanup orders DB-first, file-second so a failing unlink leaves an
-    // orphaned file rather than a row+counter that no longer reflects reality.
+  it("keeps attachment row and storage usage unchanged when file deletion fails", async () => {
+    // File-first ordering: a failed unlink skips the row, so the next run
+    // retries it (self-healing) rather than stranding the file.
     const db = makeDb([
       {
         id: "att-1",
@@ -412,8 +412,9 @@ describe("runCleanup", () => {
 
     await runCleanup(db, config);
 
-    expect(db._mocks.attachmentDeleteWhere).toHaveBeenCalled();
-    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalled();
+    expect(mockDecrementOrganizationStorageUsage).not.toHaveBeenCalled();
+    expect(db._mocks.attachmentDeleteWhere).not.toHaveBeenCalled();
+    expect(mockDeleteDir).not.toHaveBeenCalled();
   });
 
   it("keeps raw-email storage usage unchanged when raw email deletion fails", async () => {

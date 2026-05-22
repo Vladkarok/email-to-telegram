@@ -65,10 +65,16 @@ async function cleanAttachments(
       if (!isExpiredByRetention(row.createdAt, now, ttlHours, rowUser(row))) {
         continue;
       }
-      // Persist the row deletion (and usage decrement) first; only unlink the
-      // file after the DB commit succeeds. The reverse order can leave a missing
-      // file referenced by a still-present row, with the usage counter never
-      // decremented if the subsequent tx fails.
+      // Unlink the file first, then delete the row and decrement usage. This
+      // ordering is self-healing: deleteFile tolerates ENOENT, so if the
+      // transaction fails the next cleanup run re-lists the row, no-ops the
+      // already-gone file, and retries the transaction. The reverse order
+      // could permanently strand the file if the unlink later fails.
+      try {
+        await deleteFile(row.storagePath);
+      } catch {
+        continue;
+      }
       const rows = await db.transaction(async (tx) => {
         const result = await tx.delete(attachments).where(eq(attachments.id, row.id));
         const rowCount = (result as unknown as { rowCount?: number }).rowCount ?? 0;
@@ -79,15 +85,7 @@ async function cleanAttachments(
         }
         return rowCount;
       });
-      if (rows === 0) continue;
-      try {
-        await deleteFile(row.storagePath);
-        deletedFiles++;
-      } catch (err: unknown) {
-        // Row is already gone; a stranded file will be picked up by the
-        // orphaned-dir sweep eventually. Log but do not fail the loop.
-        log.warn({ err, storagePath: row.storagePath }, "cleanup: file unlink failed");
-      }
+      deletedFiles++;
       deletedRows += rows;
     }
     if (deletedRows > 0) {

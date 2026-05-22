@@ -89,7 +89,13 @@ export const deliveryAttempts = pgTable(
     errorText: text("error_text"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("idx_attempt_log").on(t.deliveryLogId)],
+  (t) => [
+    index("idx_attempt_log").on(t.deliveryLogId),
+    // One row per (log, attempt). Lets the post-send persistence retry be
+    // idempotent: a re-run of the same transaction conflicts instead of
+    // inserting a duplicate attempt row that would skew the retry budget.
+    uniqueIndex("idx_attempt_log_no").on(t.deliveryLogId, t.attemptNo),
+  ],
 );
 
 // ─── delivery_view_links ─────────────────────────────────────────────────────

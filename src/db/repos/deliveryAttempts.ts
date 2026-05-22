@@ -9,7 +9,15 @@ export async function insertDeliveryAttempt(
   db: Db,
   data: Omit<NewDeliveryAttempt, "id" | "createdAt">,
 ): Promise<void> {
-  await db.insert(deliveryAttempts).values(data);
+  // Idempotent on (deliveryLogId, attemptNo): if the post-send persistence
+  // transaction is retried after an ambiguous failure, the re-inserted row is
+  // skipped rather than duplicated (which would skew countAttemptsByLog).
+  await db
+    .insert(deliveryAttempts)
+    .values(data)
+    .onConflictDoNothing({
+      target: [deliveryAttempts.deliveryLogId, deliveryAttempts.attemptNo],
+    });
 }
 
 export async function countAttemptsByLog(db: Db, deliveryLogId: string): Promise<number> {

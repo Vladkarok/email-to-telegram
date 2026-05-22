@@ -199,17 +199,21 @@ export function rawRoute(
 
       const isTerminalRejection = !queued.queued && shouldDeletePendingMeta(queued.result.reason);
 
-      if (queued.queued || isTerminalRejection) {
-        await deletePendingRawEmailMeta(storedPath).catch((err: unknown) => {
-          getLogger().warn({ err, storedPath }, "failed to delete pending raw email metadata");
-        });
-      }
-
-      // For terminal rejections the email will never reach delivery_logs, so the
-      // raw .eml on disk has no lifecycle owner — delete it now to avoid orphaning.
+      // For terminal rejections the email never reaches delivery_logs, so the
+      // raw .eml on disk has no lifecycle owner — delete it now. Delete the
+      // file *before* the pending metadata: if the process dies between the
+      // two, a stale .pending.json is harmless and recoverable, whereas an
+      // orphaned .eml (carrying message content) would be invisible to all
+      // cleanup paths.
       if (isTerminalRejection) {
         await deleteFile(storedPath).catch((err: unknown) => {
           getLogger().warn({ err, storedPath }, "failed to delete rejected raw email");
+        });
+      }
+
+      if (queued.queued || isTerminalRejection) {
+        await deletePendingRawEmailMeta(storedPath).catch((err: unknown) => {
+          getLogger().warn({ err, storedPath }, "failed to delete pending raw email metadata");
         });
       }
 
