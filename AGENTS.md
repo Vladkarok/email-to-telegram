@@ -34,9 +34,9 @@ The user drives this with plain phrases. Each verb has a fixed behavior.
 2. Read the latest session file:
    `find docs/agent/sessions -maxdepth 1 -type f -name '*.md' | sort | tail -1`
 3. If `docs/agent/LOCAL.md` exists, read it.
-4. Verify live git state — run `git status`, `git log -10 --oneline`, then
-   compare HEAD against `STATE.md`'s **Code baseline SHA** ignoring
-   memory-only commits:
+4. Verify live git state — run `git status --porcelain=v1`,
+   `git log -10 --oneline`, then compare HEAD against `STATE.md`'s **Code
+   baseline SHA** ignoring memory-only commits:
    `git log <baseline>..HEAD --oneline -- ':!docs/agent' ':!AGENTS.md' ':!CLAUDE.md'`
 5. If real code/CI commits exist since the baseline, or the worktree is dirty,
    announce it explicitly:
@@ -56,10 +56,11 @@ The user drives this with plain phrases. Each verb has a fixed behavior.
 1. Run `verify-with:` commands for any facts that may have changed during
    the session.
 2. Rewrite `docs/agent/STATE.md` per the template below — updated timestamp,
-   branch, **Code baseline SHA** (latest commit that touches anything outside
-   `docs/agent/`, `AGENTS.md`, `CLAUDE.md`), worktree state, current focus,
-   environments with real `verify-with:` commands, in-flight, next steps,
-   blockers.
+   branch, **Code baseline SHA**, worktree state, current focus, environments
+   with real `verify-with:` commands, in-flight, next steps, blockers. Compute
+   the baseline mechanically (do not eyeball HEAD), excluding memory-only
+   paths:
+   `git log -1 --format=%h -- ':!docs/agent' ':!AGENTS.md' ':!CLAUDE.md'`
 3. Create `docs/agent/sessions/YYYY-MM-DD-HHMM-<slug>.md` (Europe/Rome local
    time, short kebab-case slug) per the template below. Include a resume
    prompt.

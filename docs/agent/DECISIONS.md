@@ -9,4 +9,5 @@ memory system link a commit SHA or tag instead of a session file.
 2026-05-22 · v2.5.0 shipped — delivery resilience (photo streaming, processing heartbeat) + engineering-review remediation · tag v2.5.0
 2026-05-23 · agent memory system bootstrapped — repo-committed Markdown under docs/agent/, AGENTS.md canonical, cross-tool · sessions/2026-05-23-0047-memory-bootstrap.md
 2026-05-23 · ECC reconciliation: convention over disable — the ECC SessionStart hook may fire (advisory only); AGENTS.md verbs supersede the colliding ECC skill names · sessions/2026-05-23-0101-ecc-reconciliation.md
+2026-05-23 · pass3 vendor-doc review applied: baseline corrected (bootstrap commit touched non-memory paths, so it is the correct baseline), `--porcelain=v1` + explicit baseline-computation command added to protocol · sessions/2026-05-23-0112-pass3-hardening.md
 ```

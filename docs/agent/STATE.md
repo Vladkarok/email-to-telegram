@@ -1,18 +1,19 @@
 # State
 
-**Updated:** 2026-05-23T01:01+02:00
+**Updated:** 2026-05-23T01:12+02:00
 **Branch:** main
-**Code baseline SHA:** a45111d
+**Code baseline SHA:** a216c92
 **Code worktree:** clean
 **Uncommitted code paths:** none
 
 ## Now
 
-Project is at **v2.5.0** on both staging and prod after the engineering-review
-remediation arc, the drizzle migration re-baseline, and the delivery-resilience
-release (photo-upload streaming, processing heartbeat). The agent memory system
-is bootstrapped and the ECC reconciliation is resolved (convention-based — see
-`DECISIONS.md`).
+Project at **v2.5.0** on both staging and prod. Agent memory system bootstrapped
+and reconciled with ECC (advisory-only). Pass3 vendor-doc-grounded review
+applied: small protocol refinements (`--porcelain=v1`, explicit baseline-
+computation command) and a baseline correction (the bootstrap commit `a216c92`
+touched `.gitignore` + the staging workflow, so it is the correct non-memory
+baseline — previously mis-set to the pre-bootstrap `a45111d`).
 
 ## Environments
 
@@ -28,23 +29,19 @@ is bootstrapped and the ECC reconciliation is resolved (convention-based — see
 
 ## In flight
 
-- Nothing — the memory bootstrap and the ECC reconciliation are both
-  committed locally (unpushed). Two memory commits await `publish session`
-  whenever the user wants them on the remote.
+- Three local memory commits await `publish session`: `a216c92` (bootstrap),
+  `132eb26` (ECC reconciliation), and the imminent commit for this pass3
+  hardening save.
 
 ## Next
 
-1. Open a fresh **Codex CLI** session in this repo and type `start session` —
-   confirm the protocol runs (file reads + git baseline-SHA diff +
-   `verify-with:` commands).
-2. Repeat in a fresh **Claude Code** session — confirm the ECC hook's
-   advisory summary is ignored in favour of the AGENTS.md protocol.
-3. `publish session` (push the bootstrap + ECC-reconciliation commits) once
-   verification passes.
-4. Next engineering thread is user-driven; nothing pending.
+1. Open a fresh Codex CLI session, type `start session` — confirm the
+   protocol runs and the corrected baseline `a216c92` reports zero drift.
+2. Same in a fresh Claude Code session.
+3. `publish session` once both verifications pass.
 
 ## Open questions / blockers
 
-- **Pre-rebaseline DB backups** on both servers
-  (`~/e2t-prerebaseline-20260522-*.sql.gz`) can be deleted once v2.5.0 has
-  soaked another day or two without incident. Not blocking.
+- Pre-rebaseline DB backups on both servers
+  (`~/e2t-prerebaseline-20260522-*.sql.gz`) — delete once v2.5.0 has soaked
+  another day or two. Not blocking.
