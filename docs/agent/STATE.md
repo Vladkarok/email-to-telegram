@@ -1,6 +1,6 @@
 # State
 
-**Updated:** 2026-05-23T01:12+02:00
+**Updated:** 2026-05-23T01:53+02:00
 **Branch:** main
 **Code baseline SHA:** a216c92
 **Code worktree:** clean
@@ -8,12 +8,9 @@
 
 ## Now
 
-Project at **v2.5.0** on both staging and prod. Agent memory system bootstrapped
-and reconciled with ECC (advisory-only). Pass3 vendor-doc-grounded review
-applied: small protocol refinements (`--porcelain=v1`, explicit baseline-
-computation command) and a baseline correction (the bootstrap commit `a216c92`
-touched `.gitignore` + the staging workflow, so it is the correct non-memory
-baseline — previously mis-set to the pre-bootstrap `a45111d`).
+Project at **v2.5.0** on staging and prod. Agent memory system operational with
+the pass3 + protocol-hardening refinements: mechanical baseline, `--porcelain=v1`,
+narrow staging, repo-root normalization, robust `sed` baseline parser.
 
 ## Environments
 
@@ -29,16 +26,16 @@ baseline — previously mis-set to the pre-bootstrap `a45111d`).
 
 ## In flight
 
-- Three local memory commits await `publish session`: `a216c92` (bootstrap),
-  `132eb26` (ECC reconciliation), and the imminent commit for this pass3
-  hardening save.
+- Five local memory commits await `publish session`: `a216c92` (bootstrap),
+  `132eb26` (ECC), `5ab3c6a` (pass3 hardening), the imminent commit for this
+  protocol hardening save, and whatever comes next.
 
 ## Next
 
-1. Open a fresh Codex CLI session, type `start session` — confirm the
-   protocol runs and the corrected baseline `a216c92` reports zero drift.
+1. Open a fresh Codex CLI session, type `start session` — confirm protocol
+   runs end-to-end with the new repo-root normalization.
 2. Same in a fresh Claude Code session.
-3. `publish session` once both verifications pass.
+3. `publish session` when convenient (CI ignores memory-only paths).
 
 ## Open questions / blockers
 

@@ -30,6 +30,8 @@ The user drives this with plain phrases. Each verb has a fixed behavior.
 
 ### start session
 
+0. **Normalize to repo root** so relative paths resolve regardless of CWD:
+   `cd "$(git rev-parse --show-toplevel)"`
 1. Read `docs/agent/STATE.md`.
 2. Read the latest session file:
    `find docs/agent/sessions -maxdepth 1 -type f -name '*.md' | sort | tail -1`
@@ -53,6 +55,7 @@ The user drives this with plain phrases. Each verb has a fixed behavior.
 
 ### save session
 
+0. **Normalize to repo root:** `cd "$(git rev-parse --show-toplevel)"`
 1. Run `verify-with:` commands for any facts that may have changed during
    the session.
 2. Rewrite `docs/agent/STATE.md` per the template below — updated timestamp,
@@ -66,9 +69,20 @@ The user drives this with plain phrases. Each verb has a fixed behavior.
    prompt.
 4. If a non-trivial decision was made, append a one-line entry to
    `docs/agent/DECISIONS.md`.
-5. Stage and commit locally:
-   `git add AGENTS.md CLAUDE.md docs/agent && \
-git commit -m "chore(agent): save session — <one-line summary>"`
+5. **Stage narrowly — never `git add docs/agent` wholesale.** Only the
+   three files this save actually touched:
+   ```bash
+   session_file="docs/agent/sessions/$(date +%F-%H%M)-<slug>.md"
+   git add -- docs/agent/STATE.md docs/agent/DECISIONS.md "$session_file"
+   ```
+   If root files were intentionally changed in the same save (a protocol
+   tweak, a workflow fix, etc.), stage them explicitly too — never
+   implicitly:
+   ```bash
+   git add -- AGENTS.md CLAUDE.md .gitignore .github/workflows/deploy-staging.yml
+   ```
+   Then commit:
+   `git commit -m "chore(agent): save session — <one-line summary>"`
 6. **Do not push automatically.** The staging workflow has `paths-ignore`
    for `docs/agent/**`, `AGENTS.md`, `CLAUDE.md`, so pushing memory commits
    is safe — but pushing is the explicit `publish session` step.
