@@ -39,3 +39,6 @@ caddy_config/
 attachments/
 rawemails/
 backups/
+
+# Agent memory: machine-specific notes are local only
+docs/agent/LOCAL.md
