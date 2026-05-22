@@ -38,6 +38,7 @@ const mockCheckAllow = vi.fn();
 const mockIsDuplicate = vi.fn();
 const mockCreateLog = vi.fn();
 const mockUpdateLogStatus = vi.fn();
+const mockMarkProcessing = vi.fn();
 const mockCountRecentDeliveries = vi.fn();
 const mockInsertAttempt = vi.fn();
 const mockSendTelegram = vi.fn();
@@ -58,6 +59,7 @@ vi.mock("../../../src/email/dedup.js", () => ({
 vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
   createDeliveryLog: (...a: unknown[]): unknown => mockCreateLog(...a),
   updateDeliveryLogStatus: (...a: unknown[]): unknown => mockUpdateLogStatus(...a),
+  markDeliveryLogProcessing: (...a: unknown[]): unknown => mockMarkProcessing(...a),
   countRecentDeliveriesByAlias: (...a: unknown[]): unknown => mockCountRecentDeliveries(...a),
 }));
 vi.mock("../../../src/db/repos/deliveryAttempts.js", () => ({

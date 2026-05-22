@@ -2,7 +2,7 @@ import { InputFile } from "grammy";
 import type { Api } from "grammy";
 import type { ParseMode } from "@grammyjs/types";
 import { getLogger } from "../utils/logger.js";
-import { readAttachmentBytes } from "../storage/disk.js";
+import { openAttachmentStream } from "../storage/disk.js";
 import { recordTelegramSendFailure } from "../observability/metrics.js";
 
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
@@ -100,22 +100,29 @@ export async function sendTelegramPhotos(
       other.reply_parameters = { message_id: opts.replyToMessageId };
     }
 
+    // Stream each attachment from disk rather than buffering the whole
+    // decrypted file in memory; sendMediaGroup of 10 photos would otherwise
+    // hold 10 full buffers at once. openAttachmentStream decrypts to a temp
+    // file and returns a read stream + dispose() for cleanup.
+    const opened = await Promise.allSettled(
+      chunk.map((p) => openAttachmentStream({ ...p, sizeBytes: null })),
+    );
+    const streams = opened.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
     try {
+      for (const r of opened) {
+        if (r.status === "rejected") throw r.reason;
+      }
       if (chunk.length === 1) {
-        const photo = chunk[0];
-        const buf = await readAttachmentBytes(photo);
         await withTimeout(
-          api.sendPhoto(chatId, new InputFile(buf, photo.filename), other),
+          api.sendPhoto(chatId, new InputFile(streams[0].stream, chunk[0].filename), other),
           TELEGRAM_API_TIMEOUT_MS,
           "sendPhoto timed out",
         );
       } else {
-        const media = await Promise.all(
-          chunk.map(async (p) => {
-            const buf = await readAttachmentBytes(p);
-            return { type: "photo" as const, media: new InputFile(buf, p.filename) };
-          }),
-        );
+        const media = streams.map((s, idx) => ({
+          type: "photo" as const,
+          media: new InputFile(s.stream, chunk[idx].filename),
+        }));
         await withTimeout(
           api.sendMediaGroup(chatId, media, other),
           TELEGRAM_API_TIMEOUT_MS,
@@ -126,6 +133,13 @@ export async function sendTelegramPhotos(
       recordTelegramSendFailure(err instanceof Error ? err.message : String(err));
       log.error({ err, chatId, chunk: chunk.map((p) => p.filename) }, "sendPhotos failed");
       failedPhotos.push(...chunk);
+    } finally {
+      // Release temp files. Idempotent with the stream's own close/error
+      // cleanup; covers the case the stream was never consumed (open failed
+      // mid-batch, or the send threw before reading).
+      for (const s of streams) {
+        await s.dispose?.().catch(() => {});
+      }
     }
   }
 

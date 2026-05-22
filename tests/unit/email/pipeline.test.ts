@@ -15,6 +15,7 @@ const mockCheckAllow = vi.fn();
 const mockIsDuplicate = vi.fn();
 const mockCreateLog = vi.fn();
 const mockUpdateLogStatus = vi.fn();
+const mockMarkProcessing = vi.fn();
 const mockCountRecentDeliveries = vi.fn();
 const mockCreateAttachment = vi.fn();
 const mockCreateAttachmentLink = vi.fn();
@@ -42,6 +43,7 @@ vi.mock("../../../src/email/dedup.js", () => ({
 vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
   createDeliveryLog: (...args: unknown[]): unknown => mockCreateLog(...args),
   updateDeliveryLogStatus: (...args: unknown[]): unknown => mockUpdateLogStatus(...args),
+  markDeliveryLogProcessing: (...args: unknown[]): unknown => mockMarkProcessing(...args),
   countRecentDeliveriesByAlias: (...args: unknown[]): unknown => mockCountRecentDeliveries(...args),
 }));
 vi.mock("../../../src/db/repos/deliveryAttempts.js", () => ({
@@ -536,7 +538,7 @@ describe("deliverQueuedEmail", () => {
       ),
     ).rejects.toThrow("telegram exploded");
 
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(expect.anything(), "log-failed", "processing");
+    expect(mockMarkProcessing).toHaveBeenCalledWith(expect.anything(), "log-failed");
     expect(mockUpdateLogStatus).toHaveBeenCalledWith(expect.anything(), "log-failed", "failed");
   });
 
