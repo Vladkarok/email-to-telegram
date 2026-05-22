@@ -39,6 +39,10 @@ type Db = NodePgDatabase<typeof schema>;
 
 const MAX_RETRIES = 3;
 const STALE_DELIVERY_MS = 2 * 60 * 1000;
+// A "processing" log is only retried once its processing_started_at is older
+// than this — well beyond any realistic delivery time (Telegram sends plus
+// flood-wait) — so the retry worker never races a live in-progress delivery.
+const PROCESSING_STALE_MS = 10 * 60 * 1000;
 
 // The Telegram send is irreversible; retry the persistence of its outcome a few
 // times so a transient DB blip cannot strand the record and cause a resend.
@@ -87,7 +91,12 @@ export async function runRetryWorker(
     });
   }
 
-  const retryableLogs = await findLogsNeedingRetry(db, new Date(Date.now() - STALE_DELIVERY_MS));
+  const now = Date.now();
+  const retryableLogs = await findLogsNeedingRetry(
+    db,
+    new Date(now - STALE_DELIVERY_MS),
+    new Date(now - PROCESSING_STALE_MS),
+  );
 
   if (retryableLogs.length === 0) return;
 

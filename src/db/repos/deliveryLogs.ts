@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { eq, and, isNotNull, inArray, lt, count, gte } from "drizzle-orm";
+import { eq, and, or, isNull, isNotNull, inArray, lt, count, gte } from "drizzle-orm";
 import { deliveryLogs, type DeliveryLog, type NewDeliveryLog } from "../schema.js";
 import type * as schema from "../schema.js";
 
@@ -107,7 +107,28 @@ export async function updateDeliveryLogStatus(
   await db.update(deliveryLogs).set({ finalStatus }).where(eq(deliveryLogs.id, id));
 }
 
-export async function findLogsNeedingRetry(db: Db, receivedBefore: Date): Promise<DeliveryLog[]> {
+/**
+ * Marks a delivery log as "processing" and stamps processing_started_at, so the
+ * retry worker can tell an in-progress delivery from a stranded one.
+ */
+export async function markDeliveryLogProcessing(db: Db, id: string): Promise<void> {
+  await db
+    .update(deliveryLogs)
+    .set({ finalStatus: "processing", processingStartedAt: new Date() })
+    .where(eq(deliveryLogs.id, id));
+}
+
+/**
+ * Finds delivery logs the retry worker should re-attempt. `failed`/`received`/
+ * `retrying` rows qualify once older than `receivedBefore`. A `processing` row
+ * additionally must have a stale (or absent) `processingStartedAt` — otherwise
+ * it is assumed to be an in-progress delivery owned by a live process.
+ */
+export async function findLogsNeedingRetry(
+  db: Db,
+  receivedBefore: Date,
+  processingStaleBefore: Date,
+): Promise<DeliveryLog[]> {
   return db
     .select()
     .from(deliveryLogs)
@@ -115,7 +136,16 @@ export async function findLogsNeedingRetry(db: Db, receivedBefore: Date): Promis
       and(
         isNotNull(deliveryLogs.rawEmailPath),
         lt(deliveryLogs.receivedAt, receivedBefore),
-        inArray(deliveryLogs.finalStatus, ["failed", "received", "processing", "retrying"]),
+        or(
+          inArray(deliveryLogs.finalStatus, ["failed", "received", "retrying"]),
+          and(
+            eq(deliveryLogs.finalStatus, "processing"),
+            or(
+              isNull(deliveryLogs.processingStartedAt),
+              lt(deliveryLogs.processingStartedAt, processingStaleBefore),
+            ),
+          ),
+        ),
       ),
     );
 }

@@ -41,6 +41,10 @@ export const deliveryLogs = pgTable(
     metadataKekKeyId: varchar("metadata_kek_key_id", { length: 255 }),
     metadataEncryptedAt: timestamp("metadata_encrypted_at", { withTimezone: true }),
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    // Set when the primary delivery path claims the log as "processing". Lets
+    // the retry worker tell an in-progress delivery from one stranded by a
+    // crashed process: a "processing" row is only retried once this is stale.
+    processingStartedAt: timestamp("processing_started_at", { withTimezone: true }),
     rawSizeBytes: integer("raw_size_bytes"),
     rawEmailPath: varchar("raw_email_path", { length: 512 }),
     rawEmailEncryptionMode: varchar("raw_email_encryption_mode", { length: 20 })

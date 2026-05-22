@@ -1,11 +1,28 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { Readable } from "node:stream";
 import { sendTelegramMessage, sendTelegramPhotos } from "../../../src/telegram/sender.js";
 import type { Api } from "grammy";
 
-const mockReadAttachmentBytes = vi.fn();
+const mockOpenAttachmentStream = vi.fn();
 vi.mock("../../../src/storage/disk.js", () => ({
-  readAttachmentBytes: (...args: unknown[]): unknown => mockReadAttachmentBytes(...args),
+  openAttachmentStream: (...args: unknown[]): unknown => mockOpenAttachmentStream(...args),
 }));
+
+// Each openAttachmentStream call yields a fresh stream + a dispose spy; the
+// spies are collected so tests can assert temp files are released.
+let disposeSpies: ReturnType<typeof vi.fn>[] = [];
+function stubAttachmentStreams(): void {
+  disposeSpies = [];
+  mockOpenAttachmentStream.mockImplementation(() => {
+    const dispose = vi.fn().mockResolvedValue(undefined);
+    disposeSpies.push(dispose);
+    return Promise.resolve({
+      stream: Readable.from(Buffer.from("decrypted-image")),
+      size: 15,
+      dispose,
+    });
+  });
+}
 
 interface MockApi extends Api {
   sendMessage: ReturnType<typeof vi.fn>;
@@ -156,16 +173,16 @@ describe("sendTelegramMessage", () => {
 
 describe("sendTelegramPhotos", () => {
   beforeEach(() => {
-    mockReadAttachmentBytes.mockReset();
+    mockOpenAttachmentStream.mockReset();
+    stubAttachmentStreams();
   });
 
-  it("reads decrypted attachment bytes before sending a single photo", async () => {
+  it("streams the decrypted attachment before sending a single photo", async () => {
     const api = {
       sendMessage: vi.fn(),
       sendPhoto: vi.fn(() => Promise.resolve({ message_id: 1 })),
       sendMediaGroup: vi.fn(),
     } as unknown as MockApi;
-    mockReadAttachmentBytes.mockResolvedValue(Buffer.from("decrypted-image"));
 
     const result = await sendTelegramPhotos(api, {
       chatId: 100n,
@@ -183,10 +200,13 @@ describe("sendTelegramPhotos", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(mockReadAttachmentBytes).toHaveBeenCalledWith(
+    expect(mockOpenAttachmentStream).toHaveBeenCalledWith(
       expect.objectContaining({ id: "att-1", encryptionMode: "local-v1" }),
     );
     expect(api.sendPhoto).toHaveBeenCalledOnce();
+    // Temp file released after the send.
+    expect(disposeSpies).toHaveLength(1);
+    expect(disposeSpies[0]).toHaveBeenCalledOnce();
   });
 
   it("sends multiple photos as a media group with thread and reply metadata", async () => {
@@ -195,7 +215,6 @@ describe("sendTelegramPhotos", () => {
       sendPhoto: vi.fn(),
       sendMediaGroup: vi.fn(() => Promise.resolve([{ message_id: 1 }])),
     } as unknown as MockApi;
-    mockReadAttachmentBytes.mockResolvedValue(Buffer.from("decrypted-image"));
 
     const result = await sendTelegramPhotos(api, {
       chatId: 100n,
@@ -238,7 +257,6 @@ describe("sendTelegramPhotos", () => {
       sendPhoto: vi.fn(() => Promise.reject(new Error("telegram down"))),
       sendMediaGroup: vi.fn(),
     } as unknown as MockApi;
-    mockReadAttachmentBytes.mockResolvedValue(Buffer.from("decrypted-image"));
 
     const result = await sendTelegramPhotos(api, {
       chatId: 100n,
@@ -258,5 +276,7 @@ describe("sendTelegramPhotos", () => {
     expect(result.ok).toBe(false);
     expect(result.failedPhotos).toHaveLength(1);
     expect(result.failedPhotos[0]?.id).toBe("att-1");
+    // Temp file released even when the send fails.
+    expect(disposeSpies[0]).toHaveBeenCalledOnce();
   });
 });

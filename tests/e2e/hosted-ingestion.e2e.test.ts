@@ -120,6 +120,14 @@ vi.mock("../../src/db/repos/deliveryLogs.js", async () => {
       }
       return Promise.resolve();
     }),
+    markDeliveryLogProcessing: vi.fn((_db: unknown, id: string) => {
+      const log = state.deliveryLogs.find((entry) => entry["id"] === id);
+      if (log) {
+        log["finalStatus"] = "processing";
+        log["processingStartedAt"] = new Date();
+      }
+      return Promise.resolve();
+    }),
     countRecentDeliveriesByAlias: vi.fn(() => Promise.resolve(0)),
   };
 });

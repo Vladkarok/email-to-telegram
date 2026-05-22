@@ -24,7 +24,7 @@ import { isInlinePhoto } from "../imageTypes.js";
 import type { PhotoItem } from "../../telegram/sender.js";
 import { findAliasById } from "../../db/repos/aliases.js";
 import { insertDeliveryAttempt } from "../../db/repos/deliveryAttempts.js";
-import { updateDeliveryLogStatus } from "../../db/repos/deliveryLogs.js";
+import { updateDeliveryLogStatus, markDeliveryLogProcessing } from "../../db/repos/deliveryLogs.js";
 import { createAttachment } from "../../db/repos/attachments.js";
 import { createAttachmentLink } from "../../db/repos/attachmentLinks.js";
 import { writeAttachment, deleteFile } from "../../storage/disk.js";
@@ -88,7 +88,7 @@ export async function deliverQueuedEmail(
         return { ok: false as const };
       }
 
-      await updateDeliveryLogStatus(workDb, deliveryLog.id, "processing");
+      await markDeliveryLogProcessing(workDb, deliveryLog.id);
 
       // 6. Clean body
       if (parsed.textBody) {
