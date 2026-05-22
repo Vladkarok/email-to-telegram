@@ -13,15 +13,22 @@ import { canManageChat, canManageAlias } from "../authorization.js";
 import { findAliasById } from "../../db/repos/aliases.js";
 import { hasActiveHostedUser } from "../../billing/limits.js";
 
+/**
+ * Callbacks that mutate state (delete/pause/resume/toggle/edit allow rules)
+ * MUST pass `{ fresh: true }` so a user removed as a chat admin can no longer
+ * mutate aliases during the 5-minute permission cache window. Read-only
+ * rendering paths may use the default (cached) check.
+ */
 export async function assertChatAccess(
   ctx: CallbackQueryContext<Context>,
   chatId: bigint,
+  { fresh = false }: { fresh?: boolean } = {},
 ): Promise<boolean> {
   if (!ctx.from) {
     await ctx.answerCallbackQuery("⛔ Access denied");
     return false;
   }
-  const allowed = await canManageChat(ctx.api, ctx.from.id, chatId);
+  const allowed = await canManageChat(ctx.api, ctx.from.id, chatId, { fresh });
   if (!allowed) await ctx.answerCallbackQuery("⛔ Access denied");
   return allowed;
 }
@@ -29,12 +36,13 @@ export async function assertChatAccess(
 export async function assertAliasAccess(
   ctx: CallbackQueryContext<Context>,
   aliasId: string,
+  { fresh = false }: { fresh?: boolean } = {},
 ): Promise<boolean> {
   if (!ctx.from) {
     await ctx.answerCallbackQuery("⛔ Access denied");
     return false;
   }
-  const allowed = await canManageAlias(getDb(), ctx.api, ctx.from.id, aliasId);
+  const allowed = await canManageAlias(getDb(), ctx.api, ctx.from.id, aliasId, { fresh });
   if (!allowed) await ctx.answerCallbackQuery("⛔ Access denied");
   return allowed;
 }

@@ -209,7 +209,7 @@ export function createBot(token: string): Bot {
   bot.callbackQuery(CB_NEW_EMAIL.pattern, async (ctx) => {
     const chatId = BigInt(ctx.match[1]);
     if (!(await assertHostedChatReady(ctx, chatId))) return;
-    if (!(await assertChatAccess(ctx, chatId))) return;
+    if (!(await assertChatAccess(ctx, chatId, { fresh: true }))) return;
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;
     const chat = await findChatById(getDb(), chatId);
@@ -222,7 +222,7 @@ export function createBot(token: string): Bot {
   bot.callbackQuery(CB_SKIP_ALIAS.pattern, async (ctx) => {
     const chatId = BigInt(ctx.match[1]);
     if (!(await assertHostedChatReady(ctx, chatId))) return;
-    if (!(await assertChatAccess(ctx, chatId))) return;
+    if (!(await assertChatAccess(ctx, chatId, { fresh: true }))) return;
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;
     clearPending(ctx.from.id);
@@ -249,7 +249,7 @@ export function createBot(token: string): Bot {
 
   // ap:{aliasId} — pause alias
   bot.callbackQuery(CB_ALIAS_PAUSE.pattern, async (ctx) => {
-    if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
+    if (!(await assertAliasAccess(ctx, ctx.match[1], { fresh: true }))) return;
     const messages = getMessages(await resolveLocale(ctx, getDb()));
     await ctx.answerCallbackQuery(messages.aliasActions.pausedToast);
     await updateAliasStatus(getDb(), ctx.match[1], "paused");
@@ -258,7 +258,7 @@ export function createBot(token: string): Bot {
 
   // ar:{aliasId} — resume alias
   bot.callbackQuery(CB_ALIAS_RESUME.pattern, async (ctx) => {
-    if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
+    if (!(await assertAliasAccess(ctx, ctx.match[1], { fresh: true }))) return;
     const messages = getMessages(await resolveLocale(ctx, getDb()));
     await ctx.answerCallbackQuery(messages.aliasActions.resumedToast);
     await updateAliasStatus(getDb(), ctx.match[1], "active");
@@ -282,7 +282,7 @@ export function createBot(token: string): Bot {
 
   // adc:{aliasId} — confirmed delete alias
   bot.callbackQuery(CB_ALIAS_DELETE_CONFIRM.pattern, async (ctx) => {
-    if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
+    if (!(await assertAliasAccess(ctx, ctx.match[1], { fresh: true }))) return;
     const messages = getMessages(await resolveLocale(ctx, getDb()));
     await ctx.answerCallbackQuery(messages.aliasActions.deletedToast);
     const alias = await findAliasById(getDb(), ctx.match[1]);
@@ -310,7 +310,7 @@ export function createBot(token: string): Bot {
   // set_mode:{aliasId}:{mode} — apply render mode
   bot.callbackQuery(CB_SET_MODE.pattern, async (ctx) => {
     const [, aliasId, mode] = ctx.match;
-    if (!(await assertAliasAccess(ctx, aliasId))) return;
+    if (!(await assertAliasAccess(ctx, aliasId, { fresh: true }))) return;
     const messages = getMessages(await resolveLocale(ctx, getDb()));
     const validModes = ["plaintext", "html", "markdown"];
     if (!validModes.includes(mode)) {
@@ -331,7 +331,7 @@ export function createBot(token: string): Bot {
   // toggle_body_dedup:{aliasId} — toggle body-hash dedup for an alias
   bot.callbackQuery(CB_TOGGLE_BODY_DEDUP.pattern, async (ctx) => {
     const aliasId = ctx.match[1];
-    if (!(await assertAliasAccess(ctx, aliasId))) return;
+    if (!(await assertAliasAccess(ctx, aliasId, { fresh: true }))) return;
     const messages = getMessages(await resolveLocale(ctx, getDb()));
     const alias = await findAliasById(getDb(), aliasId);
     if (!alias) {
@@ -355,7 +355,7 @@ export function createBot(token: string): Bot {
   // toggle_privacy_mode:{aliasId} — toggle privacy mode for an alias
   bot.callbackQuery(CB_TOGGLE_PRIVACY_MODE.pattern, async (ctx) => {
     const aliasId = ctx.match[1];
-    if (!(await assertAliasAccess(ctx, aliasId))) return;
+    if (!(await assertAliasAccess(ctx, aliasId, { fresh: true }))) return;
     const messages = getMessages(await resolveLocale(ctx, getDb()));
     const alias = await findAliasById(getDb(), aliasId);
     if (!alias) {
@@ -393,7 +393,7 @@ export function createBot(token: string): Bot {
     }
     // Answer Telegram promptly before the async access check (Telegram requires ≤10s)
     await ctx.answerCallbackQuery(messages.allowCommand.removedToast);
-    if (!(await assertAliasAccess(ctx, rule.emailAddressId))) return;
+    if (!(await assertAliasAccess(ctx, rule.emailAddressId, { fresh: true }))) return;
     await removeAllowRule(getDb(), {
       emailAddressId: rule.emailAddressId,
       matchValue: rule.matchValue,
@@ -404,7 +404,7 @@ export function createBot(token: string): Bot {
   // aa:{aliasId} — start add allow rule flow
   bot.callbackQuery(CB_ADD_RULE.pattern, async (ctx) => {
     if (!(await assertHostedAliasReady(ctx, ctx.match[1]))) return;
-    if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
+    if (!(await assertAliasAccess(ctx, ctx.match[1], { fresh: true }))) return;
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;
     const alias = await findAliasById(getDb(), ctx.match[1]);
@@ -441,7 +441,7 @@ export function createBot(token: string): Bot {
     const aliasId = ctx.match[1];
     const domain = ctx.match[2];
     if (!(await assertHostedAliasReady(ctx, aliasId))) return;
-    if (!(await assertAliasAccess(ctx, aliasId))) return;
+    if (!(await assertAliasAccess(ctx, aliasId, { fresh: true }))) return;
     const messages = getMessages(await resolveLocale(ctx, getDb()));
     const alias = await findAliasById(getDb(), aliasId);
     if (!alias) {
@@ -461,7 +461,7 @@ export function createBot(token: string): Bot {
     const aliasId = ctx.match[1];
     const domain = ctx.match[2];
     if (!(await assertHostedAliasReady(ctx, aliasId))) return;
-    if (!(await assertAliasAccess(ctx, aliasId))) return;
+    if (!(await assertAliasAccess(ctx, aliasId, { fresh: true }))) return;
     const messages = getMessages(await resolveLocale(ctx, getDb()));
     const alias = await findAliasById(getDb(), aliasId);
     if (!alias) {
@@ -478,7 +478,7 @@ export function createBot(token: string): Bot {
   // ale:{aliasId} — start label-edit flow
   bot.callbackQuery(CB_ALIAS_LABEL_EDIT.pattern, async (ctx) => {
     const aliasId = ctx.match[1];
-    if (!(await assertAliasAccess(ctx, aliasId))) return;
+    if (!(await assertAliasAccess(ctx, aliasId, { fresh: true }))) return;
     await ctx.answerCallbackQuery();
     if (!ctx.from) return;
     const alias = await findAliasById(getDb(), aliasId);
@@ -508,7 +508,7 @@ export function createBot(token: string): Bot {
   // alc:{aliasId} — clear label
   bot.callbackQuery(CB_ALIAS_LABEL_CLEAR.pattern, async (ctx) => {
     const aliasId = ctx.match[1];
-    if (!(await assertAliasAccess(ctx, aliasId))) return;
+    if (!(await assertAliasAccess(ctx, aliasId, { fresh: true }))) return;
     const messages = getMessages(await resolveLocale(ctx, getDb()));
     await updateAliasLabel(getDb(), aliasId, null);
     await ctx.answerCallbackQuery(messages.label.clearedToast);

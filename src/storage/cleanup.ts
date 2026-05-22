@@ -7,6 +7,8 @@ import type * as schema from "../db/schema.js";
 import { deleteFile, deleteDir } from "./disk.js";
 import { getLogger } from "../utils/logger.js";
 import { decrementUserStorageUsage } from "../db/repos/storageUsage.js";
+import { deleteExpiredDeliveryViewLinks } from "../db/repos/deliveryViewLinks.js";
+import { deleteExpiredAttachmentLinks } from "../db/repos/attachmentLinks.js";
 import { getEffectivePlan } from "../billing/limits.js";
 import { PLAN_DEFINITIONS } from "../billing/plans.js";
 
@@ -28,6 +30,7 @@ export async function runCleanup(db: Db, config: CleanupConfig): Promise<void> {
   await cleanAttachments(db, config.attachmentDir, config.attachmentTtlHours, now, log);
   await cleanRawEmails(db, config.rawEmailDir, config.rawEmailTtlHours, now, log);
   await cleanDeliveryLogs(db, config.deliveryLogRetentionDays, now, log);
+  await cleanExpiredLinks(db, now, log);
 }
 
 async function cleanAttachments(
@@ -62,11 +65,10 @@ async function cleanAttachments(
       if (!isExpiredByRetention(row.createdAt, now, ttlHours, rowUser(row))) {
         continue;
       }
-      try {
-        await deleteFile(row.storagePath);
-      } catch {
-        continue;
-      }
+      // Persist the row deletion (and usage decrement) first; only unlink the
+      // file after the DB commit succeeds. The reverse order can leave a missing
+      // file referenced by a still-present row, with the usage counter never
+      // decremented if the subsequent tx fails.
       const rows = await db.transaction(async (tx) => {
         const result = await tx.delete(attachments).where(eq(attachments.id, row.id));
         const rowCount = (result as unknown as { rowCount?: number }).rowCount ?? 0;
@@ -77,7 +79,15 @@ async function cleanAttachments(
         }
         return rowCount;
       });
-      deletedFiles++;
+      if (rows === 0) continue;
+      try {
+        await deleteFile(row.storagePath);
+        deletedFiles++;
+      } catch (err: unknown) {
+        // Row is already gone; a stranded file will be picked up by the
+        // orphaned-dir sweep eventually. Log but do not fail the loop.
+        log.warn({ err, storagePath: row.storagePath }, "cleanup: file unlink failed");
+      }
       deletedRows += rows;
     }
     if (deletedRows > 0) {
@@ -237,6 +247,32 @@ async function cleanDeliveryLogs(
     }
   } catch (err: unknown) {
     log.error({ err }, "cleanup: delivery log purge failed");
+  }
+}
+
+/**
+ * Deletes download/view link rows whose `expires_at` has passed. These rows are
+ * cascade-deleted when their parent attachment / delivery log is eventually
+ * purged, but link TTLs are far shorter than retention, so expired-dead rows
+ * would otherwise linger. Failure here is logged and isolated from other passes.
+ */
+async function cleanExpiredLinks(
+  db: Db,
+  now: number,
+  log: ReturnType<typeof getLogger>,
+): Promise<void> {
+  const cutoff = new Date(now);
+  try {
+    const viewLinks = await deleteExpiredDeliveryViewLinks(db, cutoff);
+    const downloadLinks = await deleteExpiredAttachmentLinks(db, cutoff);
+    if (viewLinks > 0 || downloadLinks > 0) {
+      log.info(
+        { deliveryViewLinks: viewLinks, attachmentLinks: downloadLinks },
+        "cleanup: removed expired download links",
+      );
+    }
+  } catch (err: unknown) {
+    log.error({ err }, "cleanup: expired link cleanup failed");
   }
 }
 

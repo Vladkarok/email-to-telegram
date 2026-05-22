@@ -10,7 +10,7 @@ import {
   renderPrivacyAlert,
   parseModeForRenderMode,
 } from "./renderer.js";
-import { isImageContentType } from "./imageTypes.js";
+import { isImageContentType, isInlinePhoto } from "./imageTypes.js";
 import { sendTelegramMessage, sendTelegramPhotos } from "../telegram/sender.js";
 import {
   findLogsNeedingRetry,
@@ -30,6 +30,7 @@ import {
 } from "../storage/disk.js";
 import { generateDownloadToken } from "../utils/tokens.js";
 import { getLogger } from "../utils/logger.js";
+import { retryAsync } from "../utils/retryAsync.js";
 import { pipelineTracker } from "../utils/inFlight.js";
 import { createPrivacyViewUrl } from "./privacy.js";
 import { recordRetryAttempt, recordTelegramSendFailure } from "../observability/metrics.js";
@@ -38,6 +39,10 @@ type Db = NodePgDatabase<typeof schema>;
 
 const MAX_RETRIES = 3;
 const STALE_DELIVERY_MS = 2 * 60 * 1000;
+
+// The Telegram send is irreversible; retry the persistence of its outcome a few
+// times so a transient DB blip cannot strand the record and cause a resend.
+const POST_SEND_PERSIST_RETRY = { attempts: 3, delaysMs: [200, 1000] } as const;
 
 function shouldDeletePendingRawEmail(reason: string | undefined): boolean {
   return (
@@ -269,7 +274,9 @@ async function retryDelivery(
     ? []
     : await Promise.all(
         storedAttachments
-          .filter((attachment) => !isImageContentType(attachment.contentType ?? ""))
+          .filter(
+            (attachment) => !isInlinePhoto(attachment.contentType ?? "", attachment.sizeBytes),
+          )
           .map(async (attachment) => {
             const { token, expiresAt } = generateDownloadToken(
               attachment.id,
@@ -284,7 +291,7 @@ async function retryDelivery(
           }),
       );
   const imageAttachments = storedAttachments
-    .filter((attachment) => isImageContentType(attachment.contentType ?? ""))
+    .filter((attachment) => isInlinePhoto(attachment.contentType ?? "", attachment.sizeBytes))
     .map((attachment) => ({
       id: attachment.id,
       storagePath: attachment.storagePath,
@@ -308,21 +315,36 @@ async function retryDelivery(
   });
 
   const newAttemptNo = attempts + 1;
+  const finalStatus = result.ok
+    ? "delivered"
+    : newAttemptNo >= MAX_RETRIES
+      ? "permanently_failed"
+      : "failed";
 
-  await insertDeliveryAttempt(db, {
-    deliveryLogId: deliveryLog.id,
-    attemptNo: newAttemptNo,
-    targetChatId: alias.chatId,
-    targetThreadId: alias.messageThreadId ?? null,
-    telegramMessageId: result.telegramMessageId ? BigInt(result.telegramMessageId) : null,
-    status: result.ok ? "succeeded" : "failed",
-    errorText: result.error ?? null,
-  });
+  // Persist the attempt row and the final status atomically, with bounded
+  // retries: the send already happened, so a failed write here would leave the
+  // log retryable and cause a duplicate send on the next worker cycle.
+  await retryAsync(
+    () =>
+      db.transaction(async (tx) => {
+        const workDb = tx as Db;
+        await insertDeliveryAttempt(workDb, {
+          deliveryLogId: deliveryLog.id,
+          attemptNo: newAttemptNo,
+          targetChatId: alias.chatId,
+          targetThreadId: alias.messageThreadId ?? null,
+          telegramMessageId: result.telegramMessageId ? BigInt(result.telegramMessageId) : null,
+          status: result.ok ? "succeeded" : "failed",
+          errorText: result.error ?? null,
+        });
+        await updateDeliveryLogStatus(workDb, deliveryLog.id, finalStatus);
+      }),
+    POST_SEND_PERSIST_RETRY,
+  );
 
   if (result.ok) {
     recordRetryAttempt("succeeded");
     log.info({ deliveryLogId: deliveryLog.id, attemptNo: newAttemptNo }, "retry worker: delivered");
-    await updateDeliveryLogStatus(db, deliveryLog.id, "delivered");
 
     if (!privacyMode && imageAttachments.length > 0) {
       try {
@@ -384,7 +406,6 @@ async function retryDelivery(
       { deliveryLogId: deliveryLog.id, error: result.error },
       "retry worker: permanently failed",
     );
-    await updateDeliveryLogStatus(db, deliveryLog.id, "permanently_failed");
   } else {
     recordRetryAttempt("failed");
     recordTelegramSendFailure(result.error);
@@ -392,7 +413,6 @@ async function retryDelivery(
       { deliveryLogId: deliveryLog.id, attemptNo: newAttemptNo, error: result.error },
       "retry worker: will retry again",
     );
-    await updateDeliveryLogStatus(db, deliveryLog.id, "failed");
   }
 }
 

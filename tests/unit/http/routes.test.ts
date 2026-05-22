@@ -63,6 +63,7 @@ const TEST_CONFIG = {
   rawEmailDir: "/tmp/rawemails",
   rawEmailTtlHours: 24,
   maxSizeBytes: 1024 * 1024,
+  maxInflightDeliveries: 100,
   adminEnabled: false,
   adminSecret: undefined,
   adminSessionSecret: undefined,
@@ -70,7 +71,7 @@ const TEST_CONFIG = {
   adminSessionTtlMinutes: 60,
 };
 
-async function buildApp(botHealthy = true) {
+async function buildApp(botHealthy = true, configOverride: Partial<typeof TEST_CONFIG> = {}) {
   if (botHealthy) {
     markBotHealthy();
   } else {
@@ -85,7 +86,7 @@ async function buildApp(botHealthy = true) {
       done(null, body);
     },
   );
-  await registerRoutes(app, TEST_CONFIG);
+  await registerRoutes(app, { ...TEST_CONFIG, ...configOverride });
   return app;
 }
 
@@ -978,6 +979,34 @@ describe("POST /inbound/raw", () => {
       payload: rawEmail,
     });
     expect(res.statusCode).toBe(401);
+  });
+
+  it("defers immediate delivery to the retry worker once the in-flight cap is reached", async () => {
+    // maxInflightDeliveries: 0 forces every accepted email past the cap, so the
+    // route still acks 202 but does not dispatch deliverQueuedEmail itself.
+    const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
+    const { signature, timestamp } = signWorkerRequest(rawEmail);
+
+    const app = await buildApp(true, { maxInflightDeliveries: 0 });
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/raw",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+        "x-local-part": "alerts",
+        "x-recipient-domain": "mail.example.com",
+      },
+      payload: rawEmail,
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
+    const metrics = await metricsRegistry.metrics();
+    expect(
+      findMetricLine(metrics, "email_to_telegram_deliveries_deferred_total", []),
+    ).toBeDefined();
   });
 });
 

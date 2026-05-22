@@ -100,7 +100,11 @@ const fakeLog = {
 
 const { runRetryWorker } = await import("../../../src/email/retry.js");
 
-const fakeDb = {} as Parameters<typeof runRetryWorker>[0];
+const fakeDb = {
+  // retryDelivery persists the attempt + final status inside a transaction.
+  // Pass fakeDb itself as the tx handle so repo calls keep the same first arg.
+  transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => fn(fakeDb),
+} as Parameters<typeof runRetryWorker>[0];
 const fakeApi = { sendMessage: vi.fn() } as unknown as Parameters<typeof runRetryWorker>[1];
 
 describe("runRetryWorker", () => {
@@ -242,7 +246,9 @@ describe("runRetryWorker", () => {
 
   it("resets the status to failed when retry crashes unexpectedly", async () => {
     mockFindFailedLogs.mockResolvedValue([fakeLog]);
-    mockInsertAttempt.mockRejectedValueOnce(new Error("db exploded"));
+    // Crash before the send, in a path not covered by the post-send persist
+    // retry, so the worker's catch-all safety net is what resets the status.
+    mockListAttachments.mockRejectedValueOnce(new Error("db exploded"));
 
     await runRetryWorker(fakeDb, fakeApi);
 

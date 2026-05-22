@@ -38,7 +38,8 @@ describe("parseEmail branch handling", () => {
     expect(parsed.textBody).toBeNull();
     expect(parsed.htmlBody).toBeNull();
     expect(parsed.attachments).toEqual([]);
-    expect(parsed.bodySha256).toBe(createHash("sha256").update("").digest("hex"));
+    // Empty body short-circuits dedup to avoid collapsing unrelated attachment-only emails.
+    expect(parsed.bodySha256).toBeNull();
   });
 
   it("fills attachment defaults and hashes html-only bodies", async () => {

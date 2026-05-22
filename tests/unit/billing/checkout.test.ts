@@ -5,12 +5,21 @@ vi.mock("../../../src/config.js", () => ({
   loadConfig: (): unknown => mockLoadConfig(),
 }));
 
-const mockFindUserById = vi.fn();
+const mockFindUserByIdForUpdate = vi.fn();
 const mockUpdateUserBillingState = vi.fn();
 vi.mock("../../../src/db/repos/users.js", () => ({
-  findUserById: (...args: unknown[]): unknown => mockFindUserById(...args),
+  findUserByIdForUpdate: (...args: unknown[]): unknown => mockFindUserByIdForUpdate(...args),
   updateUserBillingState: (...args: unknown[]): unknown => mockUpdateUserBillingState(...args),
 }));
+
+interface MockTx {
+  execute: (...args: unknown[]) => Promise<void>;
+}
+function makeDb(): { transaction: (fn: (tx: MockTx) => Promise<unknown>) => Promise<unknown> } {
+  return {
+    transaction: async (fn) => fn({ execute: () => Promise.resolve() }),
+  };
+}
 
 const mockCreateCustomer = vi.fn();
 const mockCreateCheckoutSessionApi = vi.fn();
@@ -52,14 +61,14 @@ describe("createCheckoutSession", () => {
   });
 
   it("creates a customer first when the user is not yet linked", async () => {
-    mockFindUserById.mockResolvedValue({
+    mockFindUserByIdForUpdate.mockResolvedValue({
       id: 1n,
       username: "alice",
       stripeCustomerId: null,
     });
     mockCreateCustomer.mockResolvedValue({ id: "cus_123" });
 
-    await expect(createCheckoutSession({} as never, 1n, "pro_monthly")).resolves.toBe(
+    await expect(createCheckoutSession(makeDb() as never, 1n, "pro_monthly")).resolves.toBe(
       "https://checkout.stripe.test/session",
     );
 
@@ -69,13 +78,13 @@ describe("createCheckoutSession", () => {
   });
 
   it("reuses an existing customer when the user is already linked", async () => {
-    mockFindUserById.mockResolvedValue({
+    mockFindUserByIdForUpdate.mockResolvedValue({
       id: 1n,
       username: "alice",
       stripeCustomerId: "cus_existing",
     });
 
-    await createCheckoutSession({} as never, 1n, "pro_monthly");
+    await createCheckoutSession(makeDb() as never, 1n, "pro_monthly");
 
     expect(mockCreateCustomer).not.toHaveBeenCalled();
     expect(mockCreateCheckoutSessionApi).toHaveBeenCalledWith(
@@ -84,7 +93,7 @@ describe("createCheckoutSession", () => {
   });
 
   it("rejects duplicate checkout for a user with an active Stripe subscription", async () => {
-    mockFindUserById.mockResolvedValue({
+    mockFindUserByIdForUpdate.mockResolvedValue({
       id: 1n,
       username: "alice",
       stripeCustomerId: "cus_existing",
@@ -92,9 +101,9 @@ describe("createCheckoutSession", () => {
       subscriptionStatus: "active",
     });
 
-    await expect(createCheckoutSession({} as never, 1n, "pro_monthly")).rejects.toBeInstanceOf(
-      BillingCheckoutConflictError,
-    );
+    await expect(
+      createCheckoutSession(makeDb() as never, 1n, "pro_monthly"),
+    ).rejects.toBeInstanceOf(BillingCheckoutConflictError);
 
     expect(mockCreateCheckoutSessionApi).not.toHaveBeenCalled();
   });

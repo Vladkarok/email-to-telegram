@@ -18,6 +18,7 @@ export type RouteConfig = Pick<
   | "rawEmailDir"
   | "rawEmailTtlHours"
   | "maxSizeBytes"
+  | "maxInflightDeliveries"
   | "adminEnabled"
   | "adminSecret"
   | "adminSessionSecret"

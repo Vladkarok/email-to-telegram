@@ -54,6 +54,12 @@ const deliveryAttemptsTotal = new Counter({
   registers: [metricsRegistry],
 });
 
+const deliveriesDeferredTotal = new Counter({
+  name: "email_to_telegram_deliveries_deferred_total",
+  help: "Inbound deliveries deferred to the retry worker because the in-flight cap was reached.",
+  registers: [metricsRegistry],
+});
+
 const retryAttemptsTotal = new Counter({
   name: "email_to_telegram_retry_attempts_total",
   help: "Retry delivery attempts by result.",
@@ -153,6 +159,10 @@ export function recordRawInbound(result: "accepted" | "rejected", reason: string
 
 export function recordDeliveryAttempt(result: "succeeded" | "failed"): void {
   deliveryAttemptsTotal.inc({ result });
+}
+
+export function recordDeliveryDeferred(): void {
+  deliveriesDeferredTotal.inc();
 }
 
 export function recordRetryAttempt(result: "succeeded" | "failed" | "permanently_failed"): void {

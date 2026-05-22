@@ -125,13 +125,29 @@ function clampToMaxLen(parts: string[], mode: RenderMode): string {
   return finalizeTruncatedRichText(result.slice(0, MAX_LEN), mode);
 }
 
+// Strip newlines/CR, ASCII control characters, and Unicode BiDi overrides so
+// a crafted Subject/From cannot inject a forged second header block or flip
+// the apparent direction of the rendered header.
+function sanitizeHeaderField(value: string): string {
+  return (
+    value
+      .replace(/[\r\n]+/g, " ")
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "")
+      .replace(/[‪-‮⁦-⁩]/g, "")
+  );
+}
+
 function buildHeader(mode: RenderMode, from: string, to: string, subject: string): string {
+  const f = sanitizeHeaderField(from);
+  const t = sanitizeHeaderField(to);
+  const s = sanitizeHeaderField(subject);
   if (mode === "html" || mode === "markdown") {
     const e = escapeHtml;
-    return `From: ${e(from)}\nTo: ${e(to)}\nSubject: ${e(subject)}`;
+    return `From: ${e(f)}\nTo: ${e(t)}\nSubject: ${e(s)}`;
   }
   // plaintext — no parse_mode, no escaping needed
-  return `From: ${from}\nTo: ${to}\nSubject: ${subject}`;
+  return `From: ${f}\nTo: ${t}\nSubject: ${s}`;
 }
 
 function extractBody(email: ParsedEmail, mode: RenderMode): string {

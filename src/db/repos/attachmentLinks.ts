@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { eq, isNull, and } from "drizzle-orm";
+import { eq, isNull, and, lt } from "drizzle-orm";
 import { attachmentLinks, attachments, deliveryLogs } from "../schema.js";
 import type * as schema from "../schema.js";
 
@@ -93,4 +93,15 @@ export async function createAttachmentLink(
   expiresAt: Date,
 ): Promise<void> {
   await db.insert(attachmentLinks).values({ attachmentId, token, expiresAt });
+}
+
+/**
+ * Deletes attachment links whose `expires_at` is in the past. Expired links are
+ * already non-functional (the /dl route rejects them); retried fallback links
+ * also accumulate distinct rows that would otherwise linger until the parent
+ * attachment is purged. Returns the row count.
+ */
+export async function deleteExpiredAttachmentLinks(db: Db, now: Date): Promise<number> {
+  const result = await db.delete(attachmentLinks).where(lt(attachmentLinks.expiresAt, now));
+  return (result as unknown as { rowCount?: number }).rowCount ?? 0;
 }

@@ -6,7 +6,7 @@ type Db = NodePgDatabase<typeof schema>;
 
 interface DedupInput {
   messageId: string | null;
-  bodySha256: string;
+  bodySha256: string | null;
   aliasId: string;
   bodyDedupEnabled: boolean;
 }
@@ -17,7 +17,7 @@ export async function isDuplicate(db: Db, input: DedupInput): Promise<boolean> {
     if (existing) return true;
   }
 
-  if (!input.bodyDedupEnabled) return false;
+  if (!input.bodyDedupEnabled || input.bodySha256 === null) return false;
 
   const existing = await findDeliveryLogByBodyHash(db, input.bodySha256, input.aliasId);
   return existing !== null;

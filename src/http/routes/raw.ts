@@ -17,7 +17,11 @@ import {
 import { getLogger } from "../../utils/logger.js";
 import { pipelineTracker } from "../../utils/inFlight.js";
 import type { AppConfig } from "../../config.js";
-import { recordQuotaRejection, recordRawInbound } from "../../observability/metrics.js";
+import {
+  recordDeliveryDeferred,
+  recordQuotaRejection,
+  recordRawInbound,
+} from "../../observability/metrics.js";
 
 function rawEmailPath(rawEmailDir: string): string {
   const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
@@ -63,6 +67,7 @@ export function rawRoute(
     | "rawEmailDir"
     | "rawEmailTtlHours"
     | "maxSizeBytes"
+    | "maxInflightDeliveries"
   >,
 ): void {
   app.post(
@@ -192,9 +197,19 @@ export function rawRoute(
         rawEmailTtlHours: config.rawEmailTtlHours,
       });
 
-      if (queued.queued || shouldDeletePendingMeta(queued.result.reason)) {
+      const isTerminalRejection = !queued.queued && shouldDeletePendingMeta(queued.result.reason);
+
+      if (queued.queued || isTerminalRejection) {
         await deletePendingRawEmailMeta(storedPath).catch((err: unknown) => {
           getLogger().warn({ err, storedPath }, "failed to delete pending raw email metadata");
+        });
+      }
+
+      // For terminal rejections the email will never reach delivery_logs, so the
+      // raw .eml on disk has no lifecycle owner — delete it now to avoid orphaning.
+      if (isTerminalRejection) {
+        await deleteFile(storedPath).catch((err: unknown) => {
+          getLogger().warn({ err, storedPath }, "failed to delete rejected raw email");
         });
       }
 
@@ -203,9 +218,6 @@ export function rawRoute(
         recordRawInbound("rejected", reason);
         const rejectionStatus = statusForQueueRejection(reason);
         if (rejectionStatus) {
-          await deleteFile(storedPath).catch((err: unknown) => {
-            getLogger().warn({ err, storedPath }, "failed to delete rejected raw email");
-          });
           await reply.status(rejectionStatus).send({ error: "rejected" });
           return;
         }
@@ -217,6 +229,22 @@ export function rawRoute(
       await reply.status(202).send({ status: "accepted" });
 
       if (!queued.queued) {
+        return;
+      }
+
+      // Bound immediate post-202 delivery fan-out. Over the cap, leave the log
+      // in "received" — the (sequential) retry worker drains it within minutes —
+      // so an inbound flood cannot exhaust the DB pool or memory.
+      if (pipelineTracker.inFlight >= config.maxInflightDeliveries) {
+        recordDeliveryDeferred();
+        getLogger().warn(
+          {
+            deliveryLogId: queued.job.deliveryLog.id,
+            inFlight: pipelineTracker.inFlight,
+            cap: config.maxInflightDeliveries,
+          },
+          "delivery deferred to retry worker: in-flight cap reached",
+        );
         return;
       }
 

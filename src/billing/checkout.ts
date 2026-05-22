@@ -1,7 +1,8 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import { sql } from "drizzle-orm";
 import type * as schema from "../db/schema.js";
 import { loadConfig } from "../config.js";
-import { findUserById, updateUserBillingState } from "../db/repos/users.js";
+import { findUserByIdForUpdate, updateUserBillingState } from "../db/repos/users.js";
 import { getStripeClient, resolveStripePrice, type StripePriceKey } from "./stripe.js";
 
 type Db = NodePgDatabase<typeof schema>;
@@ -23,35 +24,46 @@ export async function createCheckoutSession(
     throw new Error("Stripe billing is not configured");
   }
 
-  const user = await findUserById(db, userId);
-  if (!user) {
-    throw new Error("User not found");
-  }
-  if (
-    user.stripeSubscriptionId &&
-    user.subscriptionStatus !== "canceled" &&
-    user.subscriptionStatus !== "free" &&
-    user.subscriptionStatus !== "incomplete_expired"
-  ) {
-    throw new BillingCheckoutConflictError();
-  }
-
   const stripe = getStripeClient(config);
   const resolvedPrice = resolveStripePrice(config.stripePriceIds, priceKey);
-  let customerId = user.stripeCustomerId ?? null;
-  const userIdStr = user.id.toString();
-  const displayName = user.username ? `@${user.username}` : `Telegram ${userIdStr}`;
+  const userIdStr = userId.toString();
 
-  if (!customerId) {
-    const customer = await stripe.customers.create({
-      name: displayName,
-      metadata: { telegramUserId: userIdStr },
+  // Serialize per-user checkout creation so two concurrent calls cannot each
+  // create a distinct Stripe customer (the losing one would orphan, and any
+  // subsequent paid subscription on that customer would be rejected by the
+  // webhook's customer-id mismatch guard). The advisory lock matches the one
+  // used by the manual billing path.
+  const customerId = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${userId})`);
+    const user = await findUserByIdForUpdate(tx as Db, userId);
+    if (!user) {
+      throw new Error("User not found");
+    }
+    if (
+      user.stripeSubscriptionId &&
+      user.subscriptionStatus !== "canceled" &&
+      user.subscriptionStatus !== "free" &&
+      user.subscriptionStatus !== "incomplete_expired"
+    ) {
+      throw new BillingCheckoutConflictError();
+    }
+    if (user.stripeCustomerId) {
+      return user.stripeCustomerId;
+    }
+
+    const name = user.username ? `@${user.username}` : `Telegram ${userIdStr}`;
+    const customer = await stripe.customers.create(
+      {
+        name,
+        metadata: { telegramUserId: userIdStr },
+      },
+      { idempotencyKey: `customer-create:${userIdStr}` },
+    );
+    await updateUserBillingState(tx as Db, user.id, {
+      stripeCustomerId: customer.id,
     });
-    customerId = customer.id;
-    await updateUserBillingState(db, user.id, {
-      stripeCustomerId: customerId,
-    });
-  }
+    return customer.id;
+  });
 
   const session = await stripe.checkout.sessions.create({
     mode: "subscription",

@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, eq, gt, isNull, lt } from "drizzle-orm";
 import { deliveryLogs, deliveryViewLinks } from "../schema.js";
 import type * as schema from "../schema.js";
 
@@ -110,6 +110,16 @@ export async function findDeliveryViewLinkByTokenHash(
       rawEmailKekKeyId: row.rawEmailKekKeyId,
     },
   };
+}
+
+/**
+ * Deletes delivery view links whose `expires_at` is in the past. Expired links
+ * are already non-functional (the /view route rejects them) and would otherwise
+ * linger until the parent delivery log is purged. Returns the row count.
+ */
+export async function deleteExpiredDeliveryViewLinks(db: Db, now: Date): Promise<number> {
+  const result = await db.delete(deliveryViewLinks).where(lt(deliveryViewLinks.expiresAt, now));
+  return (result as unknown as { rowCount?: number }).rowCount ?? 0;
 }
 
 export async function markDeliveryViewLinkViewed(db: Db, id: string, now: Date): Promise<boolean> {

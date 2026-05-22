@@ -44,6 +44,24 @@ describe("cleanEmailBody", () => {
     expect(result).toContain("Result: > 5");
   });
 
+  it("preserves a benign mid-body sentence containing 'wrote:'", () => {
+    // A real sentence that starts a line with "On " and contains "wrote:" with
+    // inline text after the colon must NOT be treated as a quoted-reply marker.
+    const text =
+      "Reply text here.\nOn Monday Sarah wrote: please check the attached file.\nThanks, see you soon.";
+    const result = cleanEmailBody(text);
+    expect(result).toContain("Thanks, see you soon.");
+    expect(result).toContain("On Monday Sarah wrote: please check");
+  });
+
+  it("strips a two-line 'On ... wrote:' attribution block", () => {
+    const text =
+      "My answer.\nOn Wed, 6 May 2026 at 09:00\nBob <bob@example.com> wrote:\n> original message\n> more quoted";
+    const result = cleanEmailBody(text);
+    expect(result.trim()).toBe("My answer.");
+    expect(result).not.toContain("original message");
+  });
+
   it("handles empty string", () => {
     expect(cleanEmailBody("")).toBe("");
   });

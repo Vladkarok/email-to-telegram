@@ -13,7 +13,10 @@ export interface ParsedEmail {
   headerFrom: string | null;
   textBody: string | null;
   htmlBody: string | null;
-  bodySha256: string;
+  // null when the parsed email has no text/html body content (attachment-only
+  // mail). Body-hash dedup is skipped in that case to avoid collapsing
+  // unrelated emails that would all hash the empty string.
+  bodySha256: string | null;
   attachments: ParsedEmailAttachment[];
   rawSizeBytes: number;
 }
