@@ -100,10 +100,14 @@ export function downloadRoute(app: FastifyInstance): void {
         return;
       }
 
-      const safeFilename = (link.attachment.originalFilename ?? "attachment").replace(
-        /["\\\r\n]/g,
-        "_",
-      );
+      const originalFilename = link.attachment.originalFilename ?? "attachment";
+      // ASCII fallback for legacy clients: strip control chars and quote/backslash.
+      const asciiFilename =
+        // eslint-disable-next-line no-control-regex
+        originalFilename.replace(/[\x00-\x1f\x7f"\\]/g, "_").replace(/[^\x20-\x7e]/g, "_") ||
+        "attachment";
+      const encodedFilename = encodeURIComponent(originalFilename);
+      const contentDisposition = `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodedFilename}`;
 
       const rawMime = (link.attachment.contentType ?? "").toLowerCase().trim();
       const contentType = isSafeMime(rawMime) ? rawMime : "application/octet-stream";
@@ -117,7 +121,7 @@ export function downloadRoute(app: FastifyInstance): void {
 
       await reply
         .header("Content-Type", contentType)
-        .header("Content-Disposition", `attachment; filename="${safeFilename}"`)
+        .header("Content-Disposition", contentDisposition)
         .header("Content-Length", size)
         .header("Cache-Control", "no-store")
         .send(trackedStream);

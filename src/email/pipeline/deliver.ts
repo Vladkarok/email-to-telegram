@@ -20,7 +20,7 @@ import {
   parseModeForRenderMode,
   type AttachmentLink,
 } from "../renderer.js";
-import { isImageContentType } from "../imageTypes.js";
+import { isInlinePhoto } from "../imageTypes.js";
 import type { PhotoItem } from "../../telegram/sender.js";
 import { findAliasById } from "../../db/repos/aliases.js";
 import { insertDeliveryAttempt } from "../../db/repos/deliveryAttempts.js";
@@ -30,6 +30,7 @@ import { createAttachmentLink } from "../../db/repos/attachmentLinks.js";
 import { writeAttachment, deleteFile } from "../../storage/disk.js";
 import { generateDownloadToken } from "../../utils/tokens.js";
 import { getLogger } from "../../utils/logger.js";
+import { retryAsync } from "../../utils/retryAsync.js";
 import { createPrivacyViewUrl } from "../privacy.js";
 import { decrementUserStorageUsage } from "../../db/repos/storageUsage.js";
 import type { DeliveryLog } from "../../db/schema.js";
@@ -41,6 +42,11 @@ interface StoredImageAttachment extends PhotoItem {
   attachmentId: string;
   sizeBytes: number;
 }
+
+// The Telegram send is irreversible; if persisting its outcome fails the retry
+// worker would resend (a duplicate). Retry the persistence a few times before
+// giving up so a transient DB blip cannot strand the record.
+const POST_SEND_PERSIST_RETRY = { attempts: 3, delaysMs: [200, 1000] } as const;
 
 function getPipelineLogger(correlationId?: string) {
   return correlationId ? getLogger().child({ correlationId }) : getLogger();
@@ -117,7 +123,7 @@ export async function deliverQueuedEmail(
           });
           attachmentStored = true;
 
-          if (isImageContentType(att.contentType)) {
+          if (isInlinePhoto(att.contentType, att.sizeBytes)) {
             imageAttachments.push({
               id: dbAtt.id,
               storagePath,
@@ -256,21 +262,27 @@ export async function deliverQueuedEmail(
       });
 
       try {
-        await db.transaction(async (tx) => {
-          const workDb = tx as Db;
-          await insertDeliveryAttempt(workDb, {
-            deliveryLogId: deliveryLog.id,
-            attemptNo: 1,
-            targetChatId: alias.chatId,
-            targetThreadId: alias.messageThreadId ?? null,
-            telegramMessageId: result.telegramMessageId ? BigInt(result.telegramMessageId) : null,
-            status: result.ok ? "succeeded" : "failed",
-            errorText: result.error ?? null,
-          });
+        await retryAsync(
+          () =>
+            db.transaction(async (tx) => {
+              const workDb = tx as Db;
+              await insertDeliveryAttempt(workDb, {
+                deliveryLogId: deliveryLog.id,
+                attemptNo: 1,
+                targetChatId: alias.chatId,
+                targetThreadId: alias.messageThreadId ?? null,
+                telegramMessageId: result.telegramMessageId
+                  ? BigInt(result.telegramMessageId)
+                  : null,
+                status: result.ok ? "succeeded" : "failed",
+                errorText: result.error ?? null,
+              });
 
-          const finalStatus = result.ok ? "delivered" : "failed";
-          await updateDeliveryLogStatus(workDb, deliveryLog.id, finalStatus);
-        });
+              const finalStatus = result.ok ? "delivered" : "failed";
+              await updateDeliveryLogStatus(workDb, deliveryLog.id, finalStatus);
+            }),
+          POST_SEND_PERSIST_RETRY,
+        );
       } catch (logErr: unknown) {
         // The Telegram send already happened. If we can't persist the outcome,
         // the retry worker will redeliver and the user sees a duplicate. Log

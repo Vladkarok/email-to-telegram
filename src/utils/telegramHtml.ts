@@ -31,6 +31,8 @@ export function sanitizeTelegramHtml(html: string): string {
   return sanitizeHtml(normalizeTelegramHtmlInput(html), {
     allowedTags: TELEGRAM_ALLOWED_TAGS,
     allowedAttributes: { a: ["href"] },
+    allowedSchemes: ["http", "https", "mailto"],
+    allowedSchemesAppliedToAttributes: ["href"],
     exclusiveFilter: TELEGRAM_EXCLUSIVE_FILTER,
   });
 }

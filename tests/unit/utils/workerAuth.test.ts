@@ -57,6 +57,26 @@ describe("workerAuth", () => {
     expect(() => signWorkerRequest(Buffer.from("data"))).toThrow(/WORKER_SECRET not set/);
   });
 
+  it("rejects a request whose timestamp is more than 30s in the future", () => {
+    const body = Buffer.from("raw email content");
+    const futureTimestamp = (Date.now() + 60 * 1000).toString();
+    const futureSig = createHmac("sha256", SECRET)
+      .update(futureTimestamp + ".")
+      .update(body)
+      .digest("hex");
+    expect(verifyWorkerRequest(body, futureSig, futureTimestamp)).toBe(false);
+  });
+
+  it("accepts a slight future-skew within the tolerance", () => {
+    const body = Buffer.from("raw email content");
+    const skewedTimestamp = (Date.now() + 5 * 1000).toString();
+    const skewedSig = createHmac("sha256", SECRET)
+      .update(skewedTimestamp + ".")
+      .update(body)
+      .digest("hex");
+    expect(verifyWorkerRequest(body, skewedSig, skewedTimestamp)).toBe(true);
+  });
+
   it("rejects a request with a non-numeric timestamp", () => {
     const body = Buffer.from("raw email content");
     const { signature } = signWorkerRequest(body);

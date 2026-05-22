@@ -12,8 +12,11 @@ export async function parseEmail(raw: Buffer, rawSizeBytes: number): Promise<Par
   const textBody = parsed.text ?? null;
   const htmlBody = parsed.html !== false ? parsed.html || null : null;
 
-  const bodyContent = textBody ?? htmlBody ?? "";
-  const bodySha256 = createHash("sha256").update(bodyContent).digest("hex");
+  const bodyContent = textBody ?? htmlBody ?? null;
+  const bodySha256 =
+    bodyContent !== null && bodyContent.length > 0
+      ? createHash("sha256").update(bodyContent).digest("hex")
+      : null;
 
   const attachments: ParsedEmailAttachment[] = (parsed.attachments ?? []).map((att) => ({
     filename: att.filename ?? "attachment",

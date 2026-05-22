@@ -82,6 +82,10 @@ const envSchema = z.object({
   MASTER_ENCRYPTION_KEY_ID: z.string().default("local-env-v1"),
   MASTER_ENCRYPTION_KEYRING: z.string().optional(),
   MAX_SIZE_BYTES: z.coerce.number().int().positive().default(10485760),
+  // Upper bound on deliveries dispatched immediately after the inbound 202.
+  // Over this, the email is left for the (sequential) retry worker to drain,
+  // protecting the DB pool and memory under an inbound flood.
+  MAX_INFLIGHT_DELIVERIES: z.coerce.number().int().positive().default(30),
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "silent"]).default("info"),
   NODE_ENV: z.enum(["development", "production", "test"]).default("production"),
   // Comma-separated Telegram user IDs; validated as integers here so bad values
@@ -164,6 +168,7 @@ export interface AppConfig {
   attachmentTtlHours: number;
   rawEmailTtlHours: number;
   deliveryLogRetentionDays: number;
+  maxInflightDeliveries: number;
   storageEncryptionMode: StorageEncryptionMode;
   masterEncryptionKey: string | undefined;
   masterEncryptionKeyId: string;
@@ -336,6 +341,7 @@ export function loadConfig(): AppConfig {
     masterEncryptionKeyId: env.MASTER_ENCRYPTION_KEY_ID,
     masterEncryptionKeyring,
     maxSizeBytes: env.MAX_SIZE_BYTES,
+    maxInflightDeliveries: env.MAX_INFLIGHT_DELIVERIES,
     logLevel: env.LOG_LEVEL,
     nodeEnv: env.NODE_ENV,
     initialAllowedUsers: env.INITIAL_ALLOWED_USERS,

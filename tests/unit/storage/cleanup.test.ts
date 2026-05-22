@@ -33,6 +33,19 @@ vi.mock("../../../src/db/repos/storageUsage.js", () => ({
     mockDecrementOrganizationStorageUsage(...args),
 }));
 
+const mockDeleteExpiredDeliveryViewLinks = vi.fn().mockResolvedValue(0);
+const mockDeleteExpiredAttachmentLinks = vi.fn().mockResolvedValue(0);
+
+vi.mock("../../../src/db/repos/deliveryViewLinks.js", () => ({
+  deleteExpiredDeliveryViewLinks: (...args: unknown[]): unknown =>
+    mockDeleteExpiredDeliveryViewLinks(...args),
+}));
+
+vi.mock("../../../src/db/repos/attachmentLinks.js", () => ({
+  deleteExpiredAttachmentLinks: (...args: unknown[]): unknown =>
+    mockDeleteExpiredAttachmentLinks(...args),
+}));
+
 const { runCleanup } = await import("../../../src/storage/cleanup.js");
 
 function makeDb(
@@ -192,6 +205,8 @@ describe("runCleanup", () => {
     mockDecrementOrganizationStorageUsage.mockResolvedValue(undefined);
     mockReaddir.mockResolvedValue([]);
     mockStat.mockResolvedValue({ mtime: new Date(0) }); // very old
+    mockDeleteExpiredDeliveryViewLinks.mockResolvedValue(0);
+    mockDeleteExpiredAttachmentLinks.mockResolvedValue(0);
   });
 
   it("runs without error when there is nothing to clean", async () => {
@@ -378,7 +393,9 @@ describe("runCleanup", () => {
     expect(mockDecrementOrganizationStorageUsage).not.toHaveBeenCalled();
   });
 
-  it("keeps attachment row and storage usage unchanged when attachment file deletion fails", async () => {
+  it("commits the row deletion and usage decrement even when the file unlink fails afterwards", async () => {
+    // The cleanup orders DB-first, file-second so a failing unlink leaves an
+    // orphaned file rather than a row+counter that no longer reflects reality.
     const db = makeDb([
       {
         id: "att-1",
@@ -395,9 +412,8 @@ describe("runCleanup", () => {
 
     await runCleanup(db, config);
 
-    expect(mockDecrementOrganizationStorageUsage).not.toHaveBeenCalled();
-    expect(db._mocks.attachmentDeleteWhere).not.toHaveBeenCalled();
-    expect(mockDeleteDir).not.toHaveBeenCalled();
+    expect(db._mocks.attachmentDeleteWhere).toHaveBeenCalled();
+    expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalled();
   });
 
   it("keeps raw-email storage usage unchanged when raw email deletion fails", async () => {
@@ -568,5 +584,32 @@ describe("runCleanup", () => {
     await runCleanup(db, config);
 
     expect(db._mocks.deliveryLogDeleteWhere).not.toHaveBeenCalled();
+  });
+
+  it("sweeps expired delivery-view and attachment links each run", async () => {
+    const db = makeDb();
+    mockDeleteExpiredDeliveryViewLinks.mockResolvedValue(3);
+    mockDeleteExpiredAttachmentLinks.mockResolvedValue(5);
+
+    await runCleanup(db, config);
+
+    expect(mockDeleteExpiredDeliveryViewLinks).toHaveBeenCalledTimes(1);
+    expect(mockDeleteExpiredAttachmentLinks).toHaveBeenCalledTimes(1);
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      { deliveryViewLinks: 3, attachmentLinks: 5 },
+      "cleanup: removed expired download links",
+    );
+  });
+
+  it("isolates an expired-link cleanup failure from the rest of the run", async () => {
+    const db = makeDb();
+    mockDeleteExpiredDeliveryViewLinks.mockRejectedValueOnce(new Error("db down"));
+
+    await expect(runCleanup(db, config)).resolves.toBeUndefined();
+
+    const loggedLinkFailure = mockLogger.error.mock.calls.some(
+      (call) => call[1] === "cleanup: expired link cleanup failed",
+    );
+    expect(loggedLinkFailure).toBe(true);
   });
 });

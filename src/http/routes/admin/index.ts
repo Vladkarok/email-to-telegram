@@ -97,6 +97,7 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
       return;
     }
 
+    await req.session.regenerate();
     const csrfToken = generateCsrfToken();
     const now = Date.now();
     req.session.admin = {
@@ -123,16 +124,18 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
 
   app.get("/admin/users", { preHandler: guard }, async (req, reply) => {
     const csrfToken = req.session.admin?.csrfToken ?? "";
-    const query = (req.query as Record<string, string>).q?.trim() ?? "";
+    const rawQuery = (req.query as Record<string, string>).q?.trim() ?? "";
+    const query = rawQuery.slice(0, 64);
 
     let results: UserSearchResult[];
     if (query) {
       const db = getDb();
       const isNumeric = /^-?\d+$/.test(query);
+      const escapedQuery = query.replace(/[\\%_]/g, (c) => `\\${c}`);
       const rows = await db
         .select()
         .from(users)
-        .where(isNumeric ? eq(users.id, BigInt(query)) : ilike(users.username, `%${query}%`))
+        .where(isNumeric ? eq(users.id, BigInt(query)) : ilike(users.username, `%${escapedQuery}%`))
         .limit(50);
 
       results = rows.map((u) => ({
@@ -351,7 +354,10 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
           await renderError("Invalid paid-through date. Use YYYY-MM-DD format.");
           return;
         }
-        paidThroughAt = new Date(`${paidThroughRaw}T00:00:00.000Z`);
+        // Operator picks a calendar day; intent is "paid through the end of
+        // this day". Storing UTC midnight would silently downgrade users up
+        // to ~24h before the grace boundary the operator chose.
+        paidThroughAt = new Date(`${paidThroughRaw}T23:59:59.999Z`);
       }
 
       const db = getDb();
