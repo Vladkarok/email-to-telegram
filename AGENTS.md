@@ -67,7 +67,7 @@ The user drives this with plain phrases. Each verb has a fixed behavior.
    `docs/agent/DECISIONS.md`.
 5. Stage and commit locally:
    `git add AGENTS.md CLAUDE.md docs/agent && \
- git commit -m "chore(agent): save session — <one-line summary>"`
+git commit -m "chore(agent): save session — <one-line summary>"`
 6. **Do not push automatically.** The staging workflow has `paths-ignore`
    for `docs/agent/**`, `AGENTS.md`, `CLAUDE.md`, so pushing memory commits
    is safe — but pushing is the explicit `publish session` step.
@@ -186,10 +186,15 @@ the first concrete step, what to verify first.>
    opens, it must `git pull` and re-read `STATE.md` before any write.
 3. **One thread per coherent unit of work.** External memory is what keeps
    threads short — don't run a single mega-thread per project.
-4. **Repo memory is canonical.** The Claude ECC `save-session` /
-   `resume-session` skill and its `SessionStart` hook must either be disabled
-   for this project or operate purely as adapters over the files under
-   `docs/agent/` (read the same files; write the same files; commit locally;
-   no separate state). The Claude per-project memory at
-   `~/.claude/projects/.../memory/MEMORY.md` should hold a one-line pointer
-   to `docs/agent/STATE.md`, not project facts.
+4. **Repo memory is canonical.** The Claude ECC `SessionStart` hook (defined
+   in a global marketplace plugin and therefore not per-project disablable
+   without fragile surgery) may fire at session start and inject a
+   "previous session summary" from `~/.claude/sessions/`. Treat that summary
+   as **advisory only** — it is machine-local, Claude-only, and may be
+   stale. Always follow the `start session` protocol in this file.
+   Likewise, the ECC `save-session` / `resume-session` skill names collide
+   with the verbs defined above: when the user uses one of those verbs,
+   execute the protocol in this file (which writes to `docs/agent/`), not
+   the ECC skill (which writes machine-local Claude-only state). The Claude
+   per-project memory at `~/.claude/projects/.../memory/MEMORY.md` holds a
+   one-line pointer to `docs/agent/STATE.md`, not project facts.

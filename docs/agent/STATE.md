@@ -1,19 +1,18 @@
 # State
 
-**Updated:** 2026-05-23T00:47+02:00
+**Updated:** 2026-05-23T01:01+02:00
 **Branch:** main
 **Code baseline SHA:** a45111d
-**Code worktree:** dirty
-**Uncommitted code paths:** `.github/workflows/deploy-staging.yml` (added
-`paths-ignore` for `docs/agent/**`, `AGENTS.md`, `CLAUDE.md` so memory commits
-don't bounce staging — being committed together with this bootstrap)
+**Code worktree:** clean
+**Uncommitted code paths:** none
 
 ## Now
 
 Project is at **v2.5.0** on both staging and prod after the engineering-review
 remediation arc, the drizzle migration re-baseline, and the delivery-resilience
-release (photo-upload streaming, processing heartbeat). The agent memory
-system has just been bootstrapped — this is the first `STATE.md`.
+release (photo-upload streaming, processing heartbeat). The agent memory system
+is bootstrapped and the ECC reconciliation is resolved (convention-based — see
+`DECISIONS.md`).
 
 ## Environments
 
@@ -29,27 +28,23 @@ system has just been bootstrapped — this is the first `STATE.md`.
 
 ## In flight
 
-- Agent memory bootstrap (this file, the first session file, `DECISIONS.md`,
-  `AGENTS.md`, `CLAUDE.md`, plus the `deploy-staging.yml` `paths-ignore`
-  change) is about to be committed.
+- Nothing — the memory bootstrap and the ECC reconciliation are both
+  committed locally (unpushed). Two memory commits await `publish session`
+  whenever the user wants them on the remote.
 
 ## Next
 
-1. Open a fresh **Codex CLI** session in this repo, say `start session`, and
-   confirm the protocol runs end-to-end (file reads + git check + the
-   staging/prod `verify-with:` commands above).
-2. Repeat in a fresh **Claude Code** session.
-3. Resolve the open ECC reconciliation question below.
-4. No other engineering work is pending; the next thread will be user-driven.
+1. Open a fresh **Codex CLI** session in this repo and type `start session` —
+   confirm the protocol runs (file reads + git baseline-SHA diff +
+   `verify-with:` commands).
+2. Repeat in a fresh **Claude Code** session — confirm the ECC hook's
+   advisory summary is ignored in favour of the AGENTS.md protocol.
+3. `publish session` (push the bootstrap + ECC-reconciliation commits) once
+   verification passes.
+4. Next engineering thread is user-driven; nothing pending.
 
 ## Open questions / blockers
 
-- **ECC reconciliation.** The Claude-only ECC `save-session` /
-  `resume-session` skill and its `SessionStart` hook still write to
-  `~/.claude/sessions/` (machine-local). Per `AGENTS.md` standing rule #4,
-  they must either be disabled for this project or rewritten as thin adapters
-  over `docs/agent/*`. Decision pending from the user — both choices are
-  fine; "disable" is the simpler default.
-- **Stale pre-rebaseline DB backups.** Both servers carry
-  `~/e2t-prerebaseline-20260522-*.sql.gz`. Safe to delete once v2.5.0 has
-  soaked another day or two without incident.
+- **Pre-rebaseline DB backups** on both servers
+  (`~/e2t-prerebaseline-20260522-*.sql.gz`) can be deleted once v2.5.0 has
+  soaked another day or two without incident. Not blocking.
