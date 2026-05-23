@@ -16,4 +16,5 @@ memory system link a commit SHA or tag instead of a session file.
 2026-05-23 · three-tier worktree rule — tracked code = drift gate, memory = advisory only, untracked = advisory with relevance check (source/test/config paths flagged as possible drift; scratch like tmp/ ignored). New acceptance Test 3c. · sessions/2026-05-23-0916-untracked-relevance.md
 2026-05-23 · multi-session task plans formalized — `docs/agent/tasks/<slug>.md` holds the durable plan + checkbox state + per-step findings for work spanning sessions/compactions/limits; STATE.md "Now" links to it; new standing rule for compaction/limit resilience · sessions/2026-05-23-0924-multi-session-tasks.md
 2026-05-23 · recovery rule reconciled with three-tier worktree rule — untracked files are surfaced but never trigger reconstruction (they don't exist in git); bootstrap step 2 now covers `docs/agent/tasks/` · sessions/2026-05-23-1119-recovery-rule-tasks-bootstrap.md
+2026-05-23 · `tmp/` gitignored as scratch — agent plan drafts and research dumps stay machine-local · sessions/2026-05-23-1127-tmp-gitignore-cleanup.md
 ```
