@@ -131,7 +131,7 @@ _"reconstructed from git; please verify"_ before doing any work.
 
 **Updated:** <ISO 8601 with offset, Europe/Rome>
 **Branch:** <name>
-**Code baseline SHA:** <latest commit not under docs/agent or AGENTS/CLAUDE.md>
+**Code baseline SHA:** <git log -1 --format=%h -- ':!docs/agent' ':!AGENTS.md' ':!CLAUDE.md'>
 **Code worktree:** clean | dirty
 **Uncommitted code paths:** <none, or short list>
 
@@ -158,6 +158,15 @@ _"reconstructed from git; please verify"_ before doing any work.
 ## Open questions / blockers
 
 - ...
+```
+
+### `DECISIONS.md`
+
+One line per durable decision, append-only. Reversals add a superseding
+line; reasoning lives in the linked session file, never inline.
+
+```
+YYYY-MM-DD · <one-line decision> · <sessions/file.md or commit SHA>
 ```
 
 ### Session file

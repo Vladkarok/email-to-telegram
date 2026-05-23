@@ -1,6 +1,6 @@
 # State
 
-**Updated:** 2026-05-23T02:20+02:00
+**Updated:** 2026-05-23T02:08+02:00
 **Branch:** main
 **Code baseline SHA:** a216c92
 **Code worktree:** clean
@@ -8,12 +8,11 @@
 
 ## Now
 
-Project at **v2.5.0** on staging and prod. Agent memory protocol now
-distinguishes **code drift** (the gate that triggers reconstruction) from
-**memory in flight** (advisory only) in the worktree check — symmetric with
-the same split that's been in place for the baseline-SHA commit comparison.
-Drift gate uses `git status --porcelain=v1 --untracked-files=no --` with the
-memory pathspec exclusion.
+Project at **v2.5.0** on staging and prod. Agent memory protocol stable and
+fully aligned across `AGENTS.md` (live), `tmp/agent-memory-plan-final.md`
+(reproducible plan), and the actual `docs/agent/` files. Cosmetic
+template-alignment tweaks just applied so the plan and the live protocol are
+syntactically as well as semantically identical.
 
 ## Environments
 
@@ -29,16 +28,13 @@ memory pathspec exclusion.
 
 ## In flight
 
-- Six local memory commits await `publish session`: bootstrap → ECC → pass3
-  hardening → narrow staging + cd-to-root + sed parser → this code-vs-memory
-  worktree split.
+- Seven local memory commits await `publish session`: bootstrap → ECC →
+  pass3 → narrow-staging → worktree-split → this template alignment.
 
 ## Next
 
-1. Fresh Codex CLI session, `start session` — confirm the new dual status
-   output (full advisory + drift gate) renders correctly.
-2. Fresh Claude Code session, `start session` — same.
-3. `publish session` when convenient.
+1. Fresh Codex CLI / Claude Code session, `start session` — end-to-end test.
+2. `publish session` when convenient.
 
 ## Open questions / blockers
 
