@@ -1,6 +1,6 @@
 # State
 
-**Updated:** 2026-05-23T02:08+02:00
+**Updated:** 2026-05-23T09:16+02:00
 **Branch:** main
 **Code baseline SHA:** a216c92
 **Code worktree:** clean
@@ -8,11 +8,11 @@
 
 ## Now
 
-Project at **v2.5.0** on staging and prod. Agent memory protocol stable and
-fully aligned across `AGENTS.md` (live), `tmp/agent-memory-plan-final.md`
-(reproducible plan), and the actual `docs/agent/` files. Cosmetic
-template-alignment tweaks just applied so the plan and the live protocol are
-syntactically as well as semantically identical.
+Project at **v2.5.0** on staging and prod. Agent memory protocol stable.
+Just refined the worktree-drift rule into an explicit three-tier model
+(tracked code = gate / memory = advisory only / untracked = advisory with
+relevance check) so a new untracked source file isn't silently lost as
+noise alongside `tmp/`.
 
 ## Environments
 
@@ -28,13 +28,11 @@ syntactically as well as semantically identical.
 
 ## In flight
 
-- Seven local memory commits await `publish session`: bootstrap → ECC →
-  pass3 → narrow-staging → worktree-split → this template alignment.
+- One local memory commit will land with this save (`untracked-relevance`).
 
 ## Next
 
-1. Fresh Codex CLI / Claude Code session, `start session` — end-to-end test.
-2. `publish session` when convenient.
+1. `publish session` when convenient.
 
 ## Open questions / blockers
 

@@ -45,14 +45,22 @@ The user drives this with plain phrases. Each verb has a fixed behavior.
    - `git log -10 --oneline` — recent history.
    - Drift commits since baseline (memory-only commits excluded):
      `git log <baseline>..HEAD --oneline -- ':!docs/agent' ':!AGENTS.md' ':!CLAUDE.md'`
-5. If real code/CI commits exist since the baseline, **or the code-filtered
-   worktree is dirty**, announce it explicitly:
-   _"STATE.md is N code commits behind / code worktree dirty in <paths>;
-   reconstructing from git + latest session before trusting memory."_
-   If only memory files (`docs/agent/**`, `AGENTS.md`, `CLAUDE.md`) or
-   untracked scratch are dirty, **mention them as advisory** — e.g.
-   "STATE.md is dirty in flight; will be committed by the next save" — and
-   proceed with memory as-trusted. Do not reconstruct.
+5. Apply this three-tier rule to what the status commands surfaced:
+   - **Tracked code drift** — code/CI commits since the baseline, OR the
+     code-filtered tracked status is non-empty. Announce explicitly:
+     _"STATE.md is N code commits behind / code worktree dirty in <paths>;
+     reconstructing from git + latest session before trusting memory."_
+   - **Memory in flight** — only `docs/agent/**`, `AGENTS.md`, `CLAUDE.md`
+     are dirty. Advisory only ("STATE.md dirty in flight; will be committed
+     by the next save"). **Never reconstruct.**
+   - **Untracked files** (from the full advisory status) — advisory **by
+     default**, with a relevance check. Scratch paths (`tmp/`, build
+     outputs, nested dependency caches) are noise — ignore. An untracked
+     file under a source/test/config path (`src/**`, `tests/**`, root
+     TS/JSON configs, etc.) is **possible code drift** — flag it
+     explicitly as a probable in-progress new file the previous session
+     didn't commit. Surface for the user's decision; do not automatically
+     reconstruct.
 6. For volatile facts that matter to the current task, run the corresponding
    `verify-with:` command from `STATE.md` (deploy state, image tag, migration
    head).

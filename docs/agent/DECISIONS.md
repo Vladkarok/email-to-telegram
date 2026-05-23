@@ -13,4 +13,5 @@ memory system link a commit SHA or tag instead of a session file.
 2026-05-23 · protocol hardening: narrow `save session` staging (no `git add docs/agent` wholesale), repo-root normalization (`cd "$(git rev-parse --show-toplevel)"`), robust `sed`-based baseline parser in the acceptance test · sessions/2026-05-23-0153-protocol-hardening.md
 2026-05-23 · code-vs-memory worktree split — drift gate uses `git status --porcelain=v1 --untracked-files=no --` with memory paths excluded; memory-in-flight dirtiness is advisory only and never triggers reconstruction · sessions/2026-05-23-0220-worktree-split.md
 2026-05-23 · plan/AGENTS.md template alignment — STATE.md SHA placeholder shows the literal computation command; `DECISIONS.md` template added to AGENTS.md so both docs match · sessions/2026-05-23-0208-template-alignment.md
+2026-05-23 · three-tier worktree rule — tracked code = drift gate, memory = advisory only, untracked = advisory with relevance check (source/test/config paths flagged as possible drift; scratch like tmp/ ignored). New acceptance Test 3c. · sessions/2026-05-23-0916-untracked-relevance.md
 ```
