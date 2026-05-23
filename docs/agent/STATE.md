@@ -1,6 +1,6 @@
 # State
 
-**Updated:** 2026-05-23T11:27+02:00
+**Updated:** 2026-05-23T11:46+02:00
 **Branch:** main
 **Code baseline SHA:** d20cf26
 **Code worktree:** clean
@@ -8,11 +8,9 @@
 
 ## Now
 
-Project at **v2.5.0** on staging and prod. Agent memory protocol fully
-aligned with `tmp/agent-memory-plan-final.md` (now untracked — `tmp/` is
-gitignored). Recovery rule consistent with the three-tier worktree rule.
-Bootstrap step 2 covers `docs/agent/tasks/`. No active multi-session
-task in flight.
+Project at **v2.5.0** on staging and prod. No active multi-session task.
+Pre-rebaseline DB backups located on both servers but kept (user chose
+to soak longer).
 
 ## Environments
 
@@ -32,10 +30,11 @@ task in flight.
 
 ## Next
 
-1. Exercise the multi-session task model on a real deep review/refactor —
+1. Delete pre-rebaseline DB backups once v2.5.0 has soaked another day:
+   - staging: `ssh kc-vprojects 'rm /home/vladkarok/e2t-prerebaseline-20260522-200658.sql.gz'`
+   - prod: `ssh emails-tg-prod 'rm /home/vladkarok/e2t-prerebaseline-20260522-201231.sql.gz'`
+2. Exercise the multi-session task model on a real deep review/refactor —
    create the first `docs/agent/tasks/<slug>.md`.
-2. Delete pre-rebaseline DB backups on both servers once v2.5.0 has
-   soaked another day or two.
 
 ## Open questions / blockers
 
