@@ -129,10 +129,13 @@ of work.
 
 ### Recovery rule
 
-If `STATE.md` can't be trusted (its baseline SHA is missing, the branch
-differs, real code commits exist since the baseline, the worktree is
-unexpectedly dirty), treat it as partially stale. Reconstruct from `git
-log` since the pinned baseline plus the latest session file. Announce
+If the branch differs, the baseline SHA is missing, tracked code commits
+exist since the baseline, or the tracked code worktree is unexpectedly
+dirty, treat `STATE.md` as partially stale and reconstruct from `git log`
+and `git diff --stat` since the pinned baseline plus the latest session
+file. If relevant untracked source/test/config files are present, surface
+them as possible in-progress work and inspect only if they matter to the
+current task — they cannot be reconstructed from git. Announce
 _"reconstructed from git; please verify"_ before doing any work.
 
 ## Multi-session tasks

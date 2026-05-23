@@ -1,6 +1,6 @@
 # State
 
-**Updated:** 2026-05-23T11:04+02:00
+**Updated:** 2026-05-23T11:19+02:00
 **Branch:** main
 **Code baseline SHA:** a216c92
 **Code worktree:** clean
@@ -9,10 +9,10 @@
 ## Now
 
 Project at **v2.5.0** on staging and prod. Agent memory protocol fully
-specced, implemented, and audited against the canonical plan
-(`tmp/agent-memory-plan-final.md`) — no gaps. `AGENTS.md` step 4 now
-includes the `git diff <baseline>..HEAD --stat` drift-summary command,
-matching the plan. No active multi-session task in flight.
+aligned with `tmp/agent-memory-plan-final.md`. Recovery rule now matches
+the three-tier worktree rule (untracked files surfaced but never
+reconstructed — they don't exist in git). Bootstrap step 2 now mentions
+`docs/agent/tasks/`. No active multi-session task in flight.
 
 ## Environments
 
@@ -28,13 +28,12 @@ matching the plan. No active multi-session task in flight.
 
 ## In flight
 
-- This save lands the `AGENTS.md` mirror + a session file; will be
-  published immediately.
+- None.
 
 ## Next
 
-1. Use the protocol on real work — the first multi-session task to
-   exercise `docs/agent/tasks/<slug>.md` end-to-end is still pending.
+1. Exercise the multi-session task model on a real deep review/refactor —
+   create the first `docs/agent/tasks/<slug>.md`.
 
 ## Open questions / blockers
 
