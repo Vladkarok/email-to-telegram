@@ -14,4 +14,5 @@ memory system link a commit SHA or tag instead of a session file.
 2026-05-23 · code-vs-memory worktree split — drift gate uses `git status --porcelain=v1 --untracked-files=no --` with memory paths excluded; memory-in-flight dirtiness is advisory only and never triggers reconstruction · sessions/2026-05-23-0220-worktree-split.md
 2026-05-23 · plan/AGENTS.md template alignment — STATE.md SHA placeholder shows the literal computation command; `DECISIONS.md` template added to AGENTS.md so both docs match · sessions/2026-05-23-0208-template-alignment.md
 2026-05-23 · three-tier worktree rule — tracked code = drift gate, memory = advisory only, untracked = advisory with relevance check (source/test/config paths flagged as possible drift; scratch like tmp/ ignored). New acceptance Test 3c. · sessions/2026-05-23-0916-untracked-relevance.md
+2026-05-23 · multi-session task plans formalized — `docs/agent/tasks/<slug>.md` holds the durable plan + checkbox state + per-step findings for work spanning sessions/compactions/limits; STATE.md "Now" links to it; new standing rule for compaction/limit resilience · sessions/2026-05-23-0924-multi-session-tasks.md
 ```

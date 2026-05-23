@@ -19,8 +19,9 @@ Codex CLI use it.
 
 - **Auto-loaded every session:** `AGENTS.md`, `CLAUDE.md`. Keep both tiny.
 - **Read when the user says "start session":** `docs/agent/STATE.md`, the
-  latest session file (sort by filename — see protocol), and
-  `docs/agent/LOCAL.md` if present.
+  latest session file (sort by filename — see protocol),
+  `docs/agent/LOCAL.md` if present, **and the active task file under
+  `docs/agent/tasks/` if `STATE.md`'s "Now" section points to one**.
 - **Read on demand:** `docs/agent/DECISIONS.md`, `README.md`,
   `docs/operations/`, `docs/plans/`, `.github/workflows/`, code.
 
@@ -118,9 +119,11 @@ cross-machine continuity is wanted before the next code push.
 
 ### checkpoint (optional, mid-session)
 
-Rewrite `docs/agent/STATE.md` only. No session file, no `DECISIONS.md`
-update, no commit. A safety net for long sessions — promote to a full
-`save session` at end of work.
+Rewrite `docs/agent/STATE.md` only. **If a multi-session task file is
+active** (see "Multi-session tasks" below), also update it — that's where
+checkbox progress and per-step findings live. No session file, no
+`DECISIONS.md` update, no commit. Promote to a full `save session` at end
+of work.
 
 ### Recovery rule
 
@@ -129,6 +132,38 @@ differs, real code commits exist since the baseline, the worktree is
 unexpectedly dirty), treat it as partially stale. Reconstruct from `git
 log` since the pinned baseline plus the latest session file. Announce
 _"reconstructed from git; please verify"_ before doing any work.
+
+## Multi-session tasks
+
+For work likely to span multiple `checkpoint`/`save session` cycles —
+deep reviews, refactors, multi-step plans — use a task plan file:
+
+1. **Create `docs/agent/tasks/<slug>.md`** at task start (template
+   below). Checkbox conventions: `[ ]` not started · `[~]` in progress ·
+   `[x]` completed.
+2. **STATE.md "Now"** links to the task file (e.g. "working on
+   billing-refactor; see `docs/agent/tasks/billing-refactor.md`"); "Next"
+   is the next checkbox.
+3. **`checkpoint`** keeps STATE.md _and_ the task file aligned. Update
+   after every meaningful unit of work — especially before approaching a
+   context limit or compaction (see standing rule #5).
+4. **`save session`** at session end writes a session file that
+   **links** the task file rather than duplicating its findings. Include
+   the task file in the narrow staging:
+   ```bash
+   git add -- docs/agent/STATE.md docs/agent/DECISIONS.md \
+              docs/agent/tasks/<slug>.md "$session_file"
+   ```
+5. **Fresh session resumes** by reading `STATE.md` → the linked task
+   file → the last `[x]`/`[~]` markers. Context compaction and
+   usage-limit interruptions are handled the same way: in-context memory
+   is disposable; the task file is the durable plan.
+6. **On completion:** all `[x]`, add `**Completed:** <date>` at the
+   top, link from `DECISIONS.md` if a durable decision came out of it.
+   Task files stay for history; no archive shuffle needed.
+
+In Claude Code, the in-session `TodoWrite` tool is a fast in-context
+working draft; mirror durable steps to the task file at each `checkpoint`.
 
 ## Templates
 
@@ -177,6 +212,43 @@ line; reasoning lives in the linked session file, never inline.
 YYYY-MM-DD · <one-line decision> · <sessions/file.md or commit SHA>
 ```
 
+### Task file (`docs/agent/tasks/<slug>.md`)
+
+```markdown
+# Task: <one-line goal>
+
+**Status:** in progress | completed | abandoned
+**Started:** YYYY-MM-DD
+**Completed:** YYYY-MM-DD | —
+**Slug:** <kebab-case>
+
+## Goal
+
+<1–3 paragraphs: what and why>
+
+## Plan
+
+- [x] Step 1: <description>
+- [~] Step 2: <description>
+- [ ] Step 3: <description>
+
+## Findings
+
+### Step 1
+
+<what surfaced>
+### Step 2
+<in-progress notes>
+
+## Decisions
+
+- <non-trivial; also indexed in DECISIONS.md>
+
+## Open questions
+
+- <pending>
+```
+
 ### Session file
 
 ```markdown
@@ -213,6 +285,7 @@ the first concrete step, what to verify first.>
 
 - `docs/agent/STATE.md` — current snapshot. Read on every `start session`.
 - `docs/agent/sessions/` — dated handoffs. Read the latest at `start session`.
+- `docs/agent/tasks/` — multi-session task plans (optional; see protocol).
 - `docs/agent/DECISIONS.md` — one-line index of durable decisions; each entry
   links the session file (or commit SHA, for entries pre-dating the memory
   system) that holds the reasoning.
@@ -233,7 +306,14 @@ the first concrete step, what to verify first.>
    opens, it must `git pull` and re-read `STATE.md` before any write.
 3. **One thread per coherent unit of work.** External memory is what keeps
    threads short — don't run a single mega-thread per project.
-4. **Repo memory is canonical.** The Claude ECC `SessionStart` hook (defined
+4. **Compaction and limit resilience.** Treat any approach to a context
+   limit, any imminent compaction, or any end-of-session as a forced
+   `checkpoint`: flush in-context working memory to `STATE.md` and the
+   active task file (if any) **before** further work. The next agent reads
+   from disk, not from chat history. Long tasks should use a task plan
+   file (see "Multi-session tasks") so a single in-context summary loss
+   never destroys plan state.
+5. **Repo memory is canonical.** The Claude ECC `SessionStart` hook (defined
    in a global marketplace plugin and therefore not per-project disablable
    without fragile surgery) may fire at session start and inject a
    "previous session summary" from `~/.claude/sessions/`. Treat that summary

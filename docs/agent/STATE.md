@@ -1,6 +1,6 @@
 # State
 
-**Updated:** 2026-05-23T09:16+02:00
+**Updated:** 2026-05-23T09:24+02:00
 **Branch:** main
 **Code baseline SHA:** a216c92
 **Code worktree:** clean
@@ -8,11 +8,15 @@
 
 ## Now
 
-Project at **v2.5.0** on staging and prod. Agent memory protocol stable.
-Just refined the worktree-drift rule into an explicit three-tier model
-(tracked code = gate / memory = advisory only / untracked = advisory with
-relevance check) so a new untracked source file isn't silently lost as
-noise alongside `tmp/`.
+Project at **v2.5.0** on staging and prod. Agent memory protocol now formalizes
+**multi-session task plans** under `docs/agent/tasks/<slug>.md` — for work
+spanning checkpoints, compactions, or usage-limit interruptions. STATE.md "Now"
+links to the active task; checkpoint keeps STATE.md + task file aligned; fresh
+sessions resume by reading the task's checkboxes.
+
+No active task in flight right now — the agent-memory iteration arc itself was
+short enough to live in session files. The first real multi-session task will
+exercise the new model.
 
 ## Environments
 
@@ -28,11 +32,13 @@ noise alongside `tmp/`.
 
 ## In flight
 
-- One local memory commit will land with this save (`untracked-relevance`).
+- One local memory commit will land with this save (`multi-session-tasks`).
 
 ## Next
 
 1. `publish session` when convenient.
+2. Next real multi-session task: create the first `docs/agent/tasks/<slug>.md`
+   to exercise the new model end-to-end.
 
 ## Open questions / blockers
 
