@@ -36,14 +36,23 @@ The user drives this with plain phrases. Each verb has a fixed behavior.
 2. Read the latest session file:
    `find docs/agent/sessions -maxdepth 1 -type f -name '*.md' | sort | tail -1`
 3. If `docs/agent/LOCAL.md` exists, read it.
-4. Verify live git state — run `git status --porcelain=v1`,
-   `git log -10 --oneline`, then compare HEAD against `STATE.md`'s **Code
-   baseline SHA** ignoring memory-only commits:
-   `git log <baseline>..HEAD --oneline -- ':!docs/agent' ':!AGENTS.md' ':!CLAUDE.md'`
-5. If real code/CI commits exist since the baseline, or the worktree is dirty,
-   announce it explicitly:
-   _"STATE.md is N code commits behind / worktree dirty in <paths>;
+4. Verify live git state. Run, in order:
+   - `git status --porcelain=v1` — full status, **advisory only** (catches
+     memory files in flight, untracked scratch like `tmp/`, etc.).
+   - `git status --porcelain=v1 --untracked-files=no -- ':!docs/agent' ':!AGENTS.md' ':!CLAUDE.md'` —
+     **tracked-code-only status; this is what drives the drift gate**
+     (untracked files are caught by the advisory line above, not here).
+   - `git log -10 --oneline` — recent history.
+   - Drift commits since baseline (memory-only commits excluded):
+     `git log <baseline>..HEAD --oneline -- ':!docs/agent' ':!AGENTS.md' ':!CLAUDE.md'`
+5. If real code/CI commits exist since the baseline, **or the code-filtered
+   worktree is dirty**, announce it explicitly:
+   _"STATE.md is N code commits behind / code worktree dirty in <paths>;
    reconstructing from git + latest session before trusting memory."_
+   If only memory files (`docs/agent/**`, `AGENTS.md`, `CLAUDE.md`) or
+   untracked scratch are dirty, **mention them as advisory** — e.g.
+   "STATE.md is dirty in flight; will be committed by the next save" — and
+   proceed with memory as-trusted. Do not reconstruct.
 6. For volatile facts that matter to the current task, run the corresponding
    `verify-with:` command from `STATE.md` (deploy state, image tag, migration
    head).
@@ -59,11 +68,17 @@ The user drives this with plain phrases. Each verb has a fixed behavior.
 1. Run `verify-with:` commands for any facts that may have changed during
    the session.
 2. Rewrite `docs/agent/STATE.md` per the template below — updated timestamp,
-   branch, **Code baseline SHA**, worktree state, current focus, environments
-   with real `verify-with:` commands, in-flight, next steps, blockers. Compute
-   the baseline mechanically (do not eyeball HEAD), excluding memory-only
-   paths:
-   `git log -1 --format=%h -- ':!docs/agent' ':!AGENTS.md' ':!CLAUDE.md'`
+   branch, **Code baseline SHA**, **Code worktree** (clean/dirty),
+   **Uncommitted code paths**, current focus, environments with real
+   `verify-with:` commands, in-flight, next steps, blockers. Both the SHA and
+   the worktree fields are about **code only** — compute mechanically,
+   excluding memory-only paths:
+   ```bash
+   # Code baseline SHA (latest non-memory commit):
+   git log -1 --format=%h -- ':!docs/agent' ':!AGENTS.md' ':!CLAUDE.md'
+   # Code worktree state (the input to "clean"/"dirty" + the paths list):
+   git status --porcelain=v1 --untracked-files=no -- ':!docs/agent' ':!AGENTS.md' ':!CLAUDE.md'
+   ```
 3. Create `docs/agent/sessions/YYYY-MM-DD-HHMM-<slug>.md` (Europe/Rome local
    time, short kebab-case slug) per the template below. Include a resume
    prompt.

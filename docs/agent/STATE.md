@@ -1,6 +1,6 @@
 # State
 
-**Updated:** 2026-05-23T01:53+02:00
+**Updated:** 2026-05-23T02:20+02:00
 **Branch:** main
 **Code baseline SHA:** a216c92
 **Code worktree:** clean
@@ -8,9 +8,12 @@
 
 ## Now
 
-Project at **v2.5.0** on staging and prod. Agent memory system operational with
-the pass3 + protocol-hardening refinements: mechanical baseline, `--porcelain=v1`,
-narrow staging, repo-root normalization, robust `sed` baseline parser.
+Project at **v2.5.0** on staging and prod. Agent memory protocol now
+distinguishes **code drift** (the gate that triggers reconstruction) from
+**memory in flight** (advisory only) in the worktree check — symmetric with
+the same split that's been in place for the baseline-SHA commit comparison.
+Drift gate uses `git status --porcelain=v1 --untracked-files=no --` with the
+memory pathspec exclusion.
 
 ## Environments
 
@@ -26,19 +29,18 @@ narrow staging, repo-root normalization, robust `sed` baseline parser.
 
 ## In flight
 
-- Five local memory commits await `publish session`: `a216c92` (bootstrap),
-  `132eb26` (ECC), `5ab3c6a` (pass3 hardening), the imminent commit for this
-  protocol hardening save, and whatever comes next.
+- Six local memory commits await `publish session`: bootstrap → ECC → pass3
+  hardening → narrow staging + cd-to-root + sed parser → this code-vs-memory
+  worktree split.
 
 ## Next
 
-1. Open a fresh Codex CLI session, type `start session` — confirm protocol
-   runs end-to-end with the new repo-root normalization.
-2. Same in a fresh Claude Code session.
-3. `publish session` when convenient (CI ignores memory-only paths).
+1. Fresh Codex CLI session, `start session` — confirm the new dual status
+   output (full advisory + drift gate) renders correctly.
+2. Fresh Claude Code session, `start session` — same.
+3. `publish session` when convenient.
 
 ## Open questions / blockers
 
-- Pre-rebaseline DB backups on both servers
-  (`~/e2t-prerebaseline-20260522-*.sql.gz`) — delete once v2.5.0 has soaked
+- Pre-rebaseline DB backups on both servers — delete once v2.5.0 has soaked
   another day or two. Not blocking.

@@ -11,4 +11,5 @@ memory system link a commit SHA or tag instead of a session file.
 2026-05-23 · ECC reconciliation: convention over disable — the ECC SessionStart hook may fire (advisory only); AGENTS.md verbs supersede the colliding ECC skill names · sessions/2026-05-23-0101-ecc-reconciliation.md
 2026-05-23 · pass3 vendor-doc review applied: baseline corrected (bootstrap commit touched non-memory paths, so it is the correct baseline), `--porcelain=v1` + explicit baseline-computation command added to protocol · sessions/2026-05-23-0112-pass3-hardening.md
 2026-05-23 · protocol hardening: narrow `save session` staging (no `git add docs/agent` wholesale), repo-root normalization (`cd "$(git rev-parse --show-toplevel)"`), robust `sed`-based baseline parser in the acceptance test · sessions/2026-05-23-0153-protocol-hardening.md
+2026-05-23 · code-vs-memory worktree split — drift gate uses `git status --porcelain=v1 --untracked-files=no --` with memory paths excluded; memory-in-flight dirtiness is advisory only and never triggers reconstruction · sessions/2026-05-23-0220-worktree-split.md
 ```
