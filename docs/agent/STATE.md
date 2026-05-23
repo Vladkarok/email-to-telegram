@@ -1,6 +1,6 @@
 # State
 
-**Updated:** 2026-05-23T09:24+02:00
+**Updated:** 2026-05-23T11:04+02:00
 **Branch:** main
 **Code baseline SHA:** a216c92
 **Code worktree:** clean
@@ -8,15 +8,11 @@
 
 ## Now
 
-Project at **v2.5.0** on staging and prod. Agent memory protocol now formalizes
-**multi-session task plans** under `docs/agent/tasks/<slug>.md` — for work
-spanning checkpoints, compactions, or usage-limit interruptions. STATE.md "Now"
-links to the active task; checkpoint keeps STATE.md + task file aligned; fresh
-sessions resume by reading the task's checkboxes.
-
-No active task in flight right now — the agent-memory iteration arc itself was
-short enough to live in session files. The first real multi-session task will
-exercise the new model.
+Project at **v2.5.0** on staging and prod. Agent memory protocol fully
+specced, implemented, and audited against the canonical plan
+(`tmp/agent-memory-plan-final.md`) — no gaps. `AGENTS.md` step 4 now
+includes the `git diff <baseline>..HEAD --stat` drift-summary command,
+matching the plan. No active multi-session task in flight.
 
 ## Environments
 
@@ -32,13 +28,13 @@ exercise the new model.
 
 ## In flight
 
-- One local memory commit will land with this save (`multi-session-tasks`).
+- This save lands the `AGENTS.md` mirror + a session file; will be
+  published immediately.
 
 ## Next
 
-1. `publish session` when convenient.
-2. Next real multi-session task: create the first `docs/agent/tasks/<slug>.md`
-   to exercise the new model end-to-end.
+1. Use the protocol on real work — the first multi-session task to
+   exercise `docs/agent/tasks/<slug>.md` end-to-end is still pending.
 
 ## Open questions / blockers
 

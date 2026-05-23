@@ -46,6 +46,8 @@ The user drives this with plain phrases. Each verb has a fixed behavior.
    - `git log -10 --oneline` — recent history.
    - Drift commits since baseline (memory-only commits excluded):
      `git log <baseline>..HEAD --oneline -- ':!docs/agent' ':!AGENTS.md' ':!CLAUDE.md'`
+   - Drift diff summary, when reconstructing:
+     `git diff <baseline>..HEAD --stat -- ':!docs/agent' ':!AGENTS.md' ':!CLAUDE.md'`
 5. Apply this three-tier rule to what the status commands surfaced:
    - **Tracked code drift** — code/CI commits since the baseline, OR the
      code-filtered tracked status is non-empty. Announce explicitly:
