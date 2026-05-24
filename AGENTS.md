@@ -31,8 +31,13 @@ The user drives this with plain phrases. Each verb has a fixed behavior.
 
 ### start session
 
-0. **Normalize to repo root** so relative paths resolve regardless of CWD:
-   `cd "$(git rev-parse --show-toplevel)"`
+0. **Run protocol commands as bare `git <verb> …` from the inherited CWD.**
+   Both Claude Code and Codex CLI start in the repo root, so no `cd` is
+   needed. Do **not** wrap commands in `cd "$(git rev-parse --show-toplevel)"
+&& …` — the static permission matcher can't evaluate `$(...)`, so that
+   form triggers a permission prompt on every command. If a future harness
+   ever starts outside the repo, use a literal absolute `cd /abs/path && …`
+   instead (matches `cd:*`).
 1. Read `docs/agent/STATE.md`.
 2. Read the latest session file:
    `find docs/agent/sessions -maxdepth 1 -type f -name '*.md' | sort | tail -1`
@@ -75,7 +80,9 @@ The user drives this with plain phrases. Each verb has a fixed behavior.
 
 ### save session
 
-0. **Normalize to repo root:** `cd "$(git rev-parse --show-toplevel)"`
+0. **Same CWD rule as `start session` step 0** — bare git commands from the
+   inherited repo-root CWD. No `cd "$(git rev-parse --show-toplevel)"`
+   wrapper (prompts on every call).
 1. Run `verify-with:` commands for any facts that may have changed during
    the session.
 2. Rewrite `docs/agent/STATE.md` per the template below — updated timestamp,

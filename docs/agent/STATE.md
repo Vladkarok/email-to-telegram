@@ -1,6 +1,6 @@
 # State
 
-**Updated:** 2026-05-23T11:50+02:00
+**Updated:** 2026-05-24T13:45+02:00
 **Branch:** main
 **Code baseline SHA:** d20cf26
 **Code worktree:** clean
@@ -9,8 +9,10 @@
 ## Now
 
 Project at **v2.5.0** on staging and prod. No active multi-session task.
-Pre-rebaseline DB backups located on both servers but kept (user chose
-to soak longer).
+Pre-rebaseline DB backups still kept on both servers (longer soak).
+Protocol step 0 in AGENTS.md rewritten to drop the `cd "$(git rev-parse
+--show-toplevel)"` wrapper — bare git commands from inherited CWD now,
+no more permission prompt on every session start.
 
 ## Environments
 
