@@ -5,9 +5,18 @@ advice and is not a substitute for a reviewed privacy policy or DPA.
 
 > **Status:** The hosted instance currently runs in beta with no live billing.
 > Managed billing is **to be implemented**; billing-related processing
-> described below is forward-looking. Contact addresses
-> (`<privacy@example.com>`, `<abuse@example.com>`) are **to be configured**
-> before live public launch.
+> described below is forward-looking.
+
+## Who Runs This Service
+
+Hosted `email-to-telegram` is operated as a personal beta project by an
+individual operator (not a company). The operator is a Ukrainian citizen
+currently resident in Italy. The service is offered on a best-effort basis
+and is not a commercial product at this stage.
+
+Because the operator is resident in the EU, EU data protection law (GDPR)
+applies. See **International Data Transfers** below for how the EU→Ukraine
+hosting situation is handled.
 
 ## What The Hosted Service Processes
 
@@ -48,6 +57,66 @@ minimal alert and a browser view link instead of the full email body.
 
 Telegram is a separate service with its own terms and privacy practices.
 
+## Sub-processors
+
+The following third parties receive data from hosted `email-to-telegram` in
+the course of delivering the service:
+
+- **Cloudflare, Inc.** — receives inbound email at your alias addresses via
+  Cloudflare Email Routing, then forwards each message to the hosted backend
+  via a Cloudflare Worker. Cloudflare also provides DNS and TLS termination
+  for the hosted domain. Cloudflare may temporarily process message
+  envelopes and bodies as part of routing.
+- **Telegram FZ-LLC** — receives delivered message content (or, in privacy
+  mode, minimal delivery notifications) for the Telegram chats you configure.
+- **Healthchecks.io** — receives uptime ping signals (no message content, no
+  user PII) from the hosted backend at a fixed interval.
+
+There are no third-party error tracking, analytics, advertising, or session
+recording sub-processors. Application logs and metrics are stored on
+operator-controlled infrastructure (see **Data Location**) and are not
+shared with external observability vendors.
+
+## Data Location
+
+Application processing, the Postgres database, raw email storage,
+operational logs, and metrics are all hosted on operator-controlled hardware
+located in Ukraine. There is no third-party cloud database or managed
+backup service in the pipeline beyond the sub-processors listed above.
+
+Cloudflare's edge presence and Telegram's delivery infrastructure are
+globally distributed and operated by those vendors under their own terms.
+
+## International Data Transfers
+
+The operator is resident in the EU (Italy) and acts as the data controller.
+The hosting infrastructure is located in Ukraine. The European Commission
+has not issued a formal adequacy decision for Ukraine under GDPR Article 45.
+
+By creating an alias and accepting these terms, you provide explicit consent
+under GDPR Article 49(1)(a) to transfer your hosted account data and inbound
+email content to the Ukrainian hosting location for the purpose of providing
+the service. You can withdraw that consent at any time by requesting
+erasure (see **Erasure** below); the service will not be deliverable after
+withdrawal.
+
+Cloudflare and Telegram transfers are governed by those vendors' published
+data protection terms (Cloudflare DPA and Telegram terms of service); the
+operator does not control where Cloudflare or Telegram route or store data.
+
+## Logging
+
+The hosted backend writes structured application logs to local files on the
+operator-controlled hardware in Ukraine. Logs include request timing, error
+context, abuse-control events, delivery outcomes, and Telegram chat / user
+identifiers as needed for debugging. Log files are rotated and pruned on
+the same retention schedule as the corresponding plan's email retention
+where practical.
+
+Logs are not shipped to any third-party log aggregation, error tracking, or
+analytics service. Internal log aggregation (Prometheus / Grafana / Loki)
+runs on the same operator-controlled infrastructure.
+
 ## Billing
 
 Managed self-serve billing is **to be implemented**. When implemented, the
@@ -69,7 +138,7 @@ Target handling time:
 - complete the export within 14 calendar days when identity and ownership are
   clear
 
-Export requests should be sent to `<privacy@example.com>`.
+Export requests should be sent to `vladyslavkarpenko3@gmail.com`.
 
 ## Erasure
 
@@ -84,7 +153,7 @@ Target handling time:
 Some records may be retained when required for security, fraud prevention,
 accounting, dispute handling, legal compliance, or abuse investigation.
 
-Erasure requests should be sent to `<privacy@example.com>`.
+Erasure requests should be sent to `vladyslavkarpenko3@gmail.com`.
 
 ## Ownership Verification
 
@@ -97,7 +166,8 @@ verified.
 ## Security Contact
 
 For privacy, data access, or erasure requests, contact
-`<privacy@example.com>`.
+`vladyslavkarpenko3@gmail.com`.
 
 For abuse, phishing, malware, or shared-domain reputation issues, contact
-`<abuse@example.com>`.
+`vladyslavkarpenko3@gmail.com` (same address; mark the subject line
+`ABUSE:` to help triage).
