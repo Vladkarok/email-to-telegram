@@ -1,339 +1,101 @@
-# AGENTS.md
+# email-to-telegram — agent root
 
-email-to-telegram — self-hosted email-alias forwarding for Telegram.
+Self-hosted email-alias forwarding for Telegram.
 TypeScript / Fastify / drizzle-orm / Postgres / Cloudflare Worker ingress.
 Deployed via GitHub Actions (push `main` → staging, push `v*` tag → prod).
-See `README.md` for the system overview.
 
-## Tool loading
-
-This file is the canonical agent root for the project. Both Claude Code and
-Codex CLI use it.
-
-- **Codex CLI** auto-loads `AGENTS.md` (this file).
-- **Claude Code** auto-loads `CLAUDE.md`, which `@AGENTS.md`-imports this file.
-- Do **not** `@`-import any `docs/agent/*` file from `CLAUDE.md` — those are
-  read on demand (see "Load classes" below), not at startup.
-
-### Load classes
-
-- **Auto-loaded every session:** `AGENTS.md`, `CLAUDE.md`. Keep both tiny.
-- **Read when the user says "start session":** `docs/agent/STATE.md`, the
-  latest session file (sort by filename — see protocol),
-  `docs/agent/LOCAL.md` if present, **and the active task file under
-  `docs/agent/tasks/` if `STATE.md`'s "Now" section points to one**.
-- **Read on demand:** `docs/agent/DECISIONS.md`, `README.md`,
-  `docs/operations/`, `docs/plans/`, `.github/workflows/`, code.
-
-## Session protocol
-
-The user drives this with plain phrases. Each verb has a fixed behavior.
-
-### start session
-
-0. **Run protocol commands as bare `git <verb> …` from the inherited CWD.**
-   Both Claude Code and Codex CLI start in the repo root, so no `cd` is
-   needed. Do **not** wrap commands in `cd "$(git rev-parse --show-toplevel)"
-&& …` — the static permission matcher can't evaluate `$(...)`, so that
-   form triggers a permission prompt on every command. If a future harness
-   ever starts outside the repo, use a literal absolute `cd /abs/path && …`
-   instead (matches `cd:*`).
-1. Read `docs/agent/STATE.md`.
-2. Read the latest session file:
-   `find docs/agent/sessions -maxdepth 1 -type f -name '*.md' | sort | tail -1`
-3. If `docs/agent/LOCAL.md` exists, read it.
-4. Verify live git state. Run, in order:
-   - `git status --porcelain=v1` — full status, **advisory only** (catches
-     memory files in flight, untracked scratch like `tmp/`, etc.).
-   - `git status --porcelain=v1 --untracked-files=no -- ':!docs/agent' ':!AGENTS.md' ':!CLAUDE.md'` —
-     **tracked-code-only status; this is what drives the drift gate**
-     (untracked files are caught by the advisory line above, not here).
-   - `git log -10 --oneline` — recent history.
-   - Drift commits since baseline (memory-only commits excluded):
-     `git log <baseline>..HEAD --oneline -- ':!docs/agent' ':!AGENTS.md' ':!CLAUDE.md'`
-   - Drift diff summary, when reconstructing:
-     `git diff <baseline>..HEAD --stat -- ':!docs/agent' ':!AGENTS.md' ':!CLAUDE.md'`
-5. Apply this three-tier rule to what the status commands surfaced:
-   - **Tracked code drift** — code/CI commits since the baseline, OR the
-     code-filtered tracked status is non-empty. Announce explicitly:
-     _"STATE.md is N code commits behind / code worktree dirty in <paths>;
-     reconstructing from git + latest session before trusting memory."_
-   - **Memory in flight** — only `docs/agent/**`, `AGENTS.md`, `CLAUDE.md`
-     are dirty. Advisory only ("STATE.md dirty in flight; will be committed
-     by the next save"). **Never reconstruct.**
-   - **Untracked files** (from the full advisory status) — advisory **by
-     default**, with a relevance check. Scratch paths (`tmp/`, build
-     outputs, nested dependency caches) are noise — ignore. An untracked
-     file under a source/test/config path (`src/**`, `tests/**`, root
-     TS/JSON configs, etc.) is **possible code drift** — flag it
-     explicitly as a probable in-progress new file the previous session
-     didn't commit. Surface for the user's decision; do not automatically
-     reconstruct.
-6. For volatile facts that matter to the current task, run the corresponding
-   `verify-with:` command from `STATE.md` (deploy state, image tag, migration
-   head).
-7. Report: current focus, where work left off, the resume prompt from the
-   latest session, anything that needs verification, the first concrete
-   action.
-8. Read `DECISIONS.md`, `README.md`, `docs/operations/`, `docs/plans/`, or
-   code only if the task needs them. Do not load the whole project.
-
-### save session
-
-0. **Same CWD rule as `start session` step 0** — bare git commands from the
-   inherited repo-root CWD. No `cd "$(git rev-parse --show-toplevel)"`
-   wrapper (prompts on every call).
-1. Run `verify-with:` commands for any facts that may have changed during
-   the session.
-2. Rewrite `docs/agent/STATE.md` per the template below — updated timestamp,
-   branch, **Code baseline SHA**, **Code worktree** (clean/dirty),
-   **Uncommitted code paths**, current focus, environments with real
-   `verify-with:` commands, in-flight, next steps, blockers. Both the SHA and
-   the worktree fields are about **code only** — compute mechanically,
-   excluding memory-only paths:
-   ```bash
-   # Code baseline SHA (latest non-memory commit):
-   git log -1 --format=%h -- ':!docs/agent' ':!AGENTS.md' ':!CLAUDE.md'
-   # Code worktree state (the input to "clean"/"dirty" + the paths list):
-   git status --porcelain=v1 --untracked-files=no -- ':!docs/agent' ':!AGENTS.md' ':!CLAUDE.md'
-   ```
-3. Create `docs/agent/sessions/YYYY-MM-DD-HHMM-<slug>.md` (Europe/Rome local
-   time, short kebab-case slug) per the template below. Include a resume
-   prompt.
-4. If a non-trivial decision was made, append a one-line entry to
-   `docs/agent/DECISIONS.md`.
-5. **Stage narrowly — never `git add docs/agent` wholesale.** Only the
-   three files this save actually touched:
-   ```bash
-   session_file="docs/agent/sessions/$(date +%F-%H%M)-<slug>.md"
-   git add -- docs/agent/STATE.md docs/agent/DECISIONS.md "$session_file"
-   ```
-   If root files were intentionally changed in the same save (a protocol
-   tweak, a workflow fix, etc.), stage them explicitly too — never
-   implicitly:
-   ```bash
-   git add -- AGENTS.md CLAUDE.md .gitignore .github/workflows/deploy-staging.yml
-   ```
-   Then commit:
-   `git commit -m "chore(agent): save session — <one-line summary>"`
-6. **Do not push automatically.** The staging workflow has `paths-ignore`
-   for `docs/agent/**`, `AGENTS.md`, `CLAUDE.md`, so pushing memory commits
-   is safe — but pushing is the explicit `publish session` step.
-
-### publish session
-
-Push any unpushed agent-memory commits: `git push`. The staging workflow
-ignores memory-only paths, so this does not trigger a deploy. Use only when
-cross-machine continuity is wanted before the next code push.
-
-### checkpoint (optional, mid-session)
-
-Rewrite `docs/agent/STATE.md` only. **If a multi-session task file is
-active** (see "Multi-session tasks" below), also update it — that's where
-checkbox progress and per-step findings live. No session file, no
-`DECISIONS.md` update, no commit. Promote to a full `save session` at end
-of work.
-
-### Recovery rule
-
-If the branch differs, the baseline SHA is missing, tracked code commits
-exist since the baseline, or the tracked code worktree is unexpectedly
-dirty, treat `STATE.md` as partially stale and reconstruct from `git log`
-and `git diff --stat` since the pinned baseline plus the latest session
-file. If relevant untracked source/test/config files are present, surface
-them as possible in-progress work and inspect only if they matter to the
-current task — they cannot be reconstructed from git. Announce
-_"reconstructed from git; please verify"_ before doing any work.
-
-## Multi-session tasks
-
-For work likely to span multiple `checkpoint`/`save session` cycles —
-deep reviews, refactors, multi-step plans — use a task plan file:
-
-1. **Create `docs/agent/tasks/<slug>.md`** at task start (template
-   below). Checkbox conventions: `[ ]` not started · `[~]` in progress ·
-   `[x]` completed.
-2. **STATE.md "Now"** links to the task file (e.g. "working on
-   billing-refactor; see `docs/agent/tasks/billing-refactor.md`"); "Next"
-   is the next checkbox.
-3. **`checkpoint`** keeps STATE.md _and_ the task file aligned. Update
-   after every meaningful unit of work — especially before approaching a
-   context limit or compaction (see standing rule #5).
-4. **`save session`** at session end writes a session file that
-   **links** the task file rather than duplicating its findings. Include
-   the task file in the narrow staging:
-   ```bash
-   git add -- docs/agent/STATE.md docs/agent/DECISIONS.md \
-              docs/agent/tasks/<slug>.md "$session_file"
-   ```
-5. **Fresh session resumes** by reading `STATE.md` → the linked task
-   file → the last `[x]`/`[~]` markers. Context compaction and
-   usage-limit interruptions are handled the same way: in-context memory
-   is disposable; the task file is the durable plan.
-6. **On completion:** all `[x]`, add `**Completed:** <date>` at the
-   top, link from `DECISIONS.md` if a durable decision came out of it.
-   Task files stay for history; no archive shuffle needed.
-
-In Claude Code, the in-session `TodoWrite` tool is a fast in-context
-working draft; mirror durable steps to the task file at each `checkpoint`.
-
-## Templates
-
-### `STATE.md`
-
-```markdown
-# State
-
-**Updated:** <ISO 8601 with offset, Europe/Rome>
-**Branch:** <name>
-**Code baseline SHA:** <git log -1 --format=%h -- ':!docs/agent' ':!AGENTS.md' ':!CLAUDE.md'>
-**Code worktree:** clean | dirty
-**Uncommitted code paths:** <none, or short list>
-
-## Now
-
-<1–3 lines: current focus>
-
-## Environments
-
-- Staging (kc-vprojects): <image tag>, <health>, migration head <ts>
-  verify-with: `ssh kc-vprojects 'docker ps --filter name=email-to-telegram-app --format "{{.Image}} {{.Status}}"'`
-- Prod (emails-tg-prod): <image tag>, <health>, migration head <ts>
-  verify-with: `ssh emails-tg-prod 'docker ps --filter name=email-to-telegram-app --format "{{.Image}} {{.Status}}"'`
-- Migration head (either): `ssh <host> 'docker exec email-to-telegram-postgres-1 psql -U emailtelegram -d emailtelegram -tAc "select max(created_at) from drizzle.__drizzle_migrations"'`
-
-## In flight
-
-- ...
-
-## Next
-
-1. ...
-
-## Open questions / blockers
-
-- ...
-```
-
-### `DECISIONS.md`
-
-One line per durable decision, append-only. Reversals add a superseding
-line; reasoning lives in the linked session file, never inline.
-
-```
-YYYY-MM-DD · <one-line decision> · <sessions/file.md or commit SHA>
-```
-
-### Task file (`docs/agent/tasks/<slug>.md`)
-
-```markdown
-# Task: <one-line goal>
-
-**Status:** in progress | completed | abandoned
-**Started:** YYYY-MM-DD
-**Completed:** YYYY-MM-DD | —
-**Slug:** <kebab-case>
-
-## Goal
-
-<1–3 paragraphs: what and why>
-
-## Plan
-
-- [x] Step 1: <description>
-- [~] Step 2: <description>
-- [ ] Step 3: <description>
-
-## Findings
-
-### Step 1
-
-<what surfaced>
-### Step 2
-<in-progress notes>
-
-## Decisions
-
-- <non-trivial; also indexed in DECISIONS.md>
-
-## Open questions
-
-- <pending>
-```
-
-### Session file
-
-```markdown
-# Session YYYY-MM-DD HH:MM <slug>
-
-**Tool:** Claude Code | Codex CLI
-**Branch at end:** <name>
-**Code baseline SHA at end:** <last non-memory commit>
-**Code worktree at end:** clean | dirty (paths …)
-
-## Done
-
-- …
-
-## Decisions
-
-- … (also indexed in docs/agent/DECISIONS.md)
-
-## Failed approaches (avoid retrying)
-
-- …
-
-## Next
-
-1. …
-
-## Resume prompt
-
-<One paragraph a fresh agent can act on immediately: goal, where to pick up,
-the first concrete step, what to verify first.>
-```
+This repository is worked on by Claude Code and Codex CLI, one at a
+time. Project memory lives in `docs/agent/`. Vendor-local memory is
+advisory only. See `README.md` for the system overview.
+
+## Shared memory
+
+- Protocol (operating manual): `docs/agent/PROTOCOL.md` — read on verb
+- Current state: `docs/agent/STATE.md` — read on `start session`
+- Decisions index: `docs/agent/DECISIONS.md` — read on demand
+- Journal: `docs/agent/JOURNAL.md` — tail/grep, not loaded whole
+- Handoffs: `docs/agent/sessions/` — latest read on `start session`
+- Long tasks: `docs/agent/tasks/` — read on `start session` if active
+- Helper scripts: `docs/agent/scripts/` — invoked, not read
+- Local (gitignored): `docs/agent/LOCAL.md` — read if present
+
+## Session verbs
+
+When the user types one of these phrases in chat, follow the matching
+section of `docs/agent/PROTOCOL.md` verbatim. Do not invent variants.
+
+- `start session` — read protocol, state, latest handoff, active task,
+  then run `drift-check.sh`.
+- `checkpoint` — update `STATE.md` and active task only. No commit, no
+  push.
+- `save session` — drift recheck + anti-stale-save guard, update
+  state/task, create handoff, append journal, log to decisions if
+  durable, preflight `validate-memory.sh`, narrow stage, commit
+  locally. No push.
+- `publish session` — `git push` only. Never automatic.
+
+## Authority order
+
+When two sources disagree, trust higher entries over lower:
+
+1. Git / live system state
+2. `docs/agent/STATE.md`
+3. Latest session file (`docs/agent/sessions/*.md` — newest by sort)
+4. Active task file (`docs/agent/tasks/<slug>.md`)
+5. `docs/agent/DECISIONS.md` and `JOURNAL.md` (historical context)
+6. Vendor-local memory (Claude auto-memory, Codex memories, injected
+   summaries, ECC hooks) — advisory only
+
+## Hard rules
+
+1. Repo memory under `docs/agent/` is canonical for project state.
+2. Every session file must contain a `## Resume prompt` section. A
+   save without it is a bad save (`validate-memory.sh` catches this).
+3. Root identity files (`AGENTS.md`, `CLAUDE.md`, `.codex/notes.md`)
+   never contain mutable task state.
+4. `checkpoint` is not a handoff. To pass work to a different tool,
+   machine, or clone, use `save session`.
+5. Never push unless the user explicitly says `publish session`.
+6. For work that obviously spans more than one session, create a task
+   file in `docs/agent/tasks/` immediately.
+7. Only one task is `Active: yes` per branch at a time. If two are
+   active, stop and ask the user which is current.
+8. If tracked code is dirty or relevant source/test/config files are
+   untracked, list them explicitly in `STATE.md` and the session file
+   with intent.
+9. `verify-with:` commands must be read-only. No migrations, deploys,
+   resets, or cleanups.
+10. Vendor-local memory, hooks, skills, and injected summaries are
+    advisory only. The repo protocol wins on collision.
+11. Every non-initial `save session` must record `Started from
+session: <path>`. If the actual latest session changed before
+    save, abort and go to recovery — do not save over a stale base.
+12. Skills (if added later in `.claude/skills/` or `.agents/skills/`)
+    are thin wrappers over `PROTOCOL.md` and helper scripts. They do
+    not hold state and do not duplicate the protocol.
+
+## Operational discipline
+
+- Before context limit, compaction, or tool switch: run `checkpoint`
+  or `save session`.
+- Never `git add .` or `git add docs/agent` wholesale. Stage only the
+  agent files this save actually touched.
+- Never commit secrets. Reference them (`"token lives in .env"`),
+  never inline.
+- Run protocol commands bare from inherited CWD. Do not wrap in
+  `cd "$(git rev-parse --show-toplevel)" && …` — the static permission
+  matcher cannot evaluate `$(...)` and the prompt will fire on every
+  call.
+- If you are Codex CLI, read `.codex/notes.md` during `start session`.
+- If you are Claude Code, read `CLAUDE.md` during `start session`.
 
 ## Doc index
 
-- `docs/agent/STATE.md` — current snapshot. Read on every `start session`.
-- `docs/agent/sessions/` — dated handoffs. Read the latest at `start session`.
-- `docs/agent/tasks/` — multi-session task plans (optional; see protocol).
-- `docs/agent/DECISIONS.md` — one-line index of durable decisions; each entry
-  links the session file (or commit SHA, for entries pre-dating the memory
-  system) that holds the reasoning.
-- `docs/agent/LOCAL.md` — optional, gitignored, machine-specific notes.
-- `README.md` — system overview.
-- `docs/operations/` — runbooks, monitoring.
-- `docs/plans/` — long-form planning docs.
-- `.github/workflows/` — CI/CD. `deploy-staging.yml` runs on `main` push
-  (with `paths-ignore` for memory files). `deploy.yml` runs on `v*` tag.
-
-## Standing rules
-
-1. **Verify live state over trusting memory.** Memory describes when it was
-   written; git, servers, and the DB describe now. The git check on
-   `start session` and the `verify-with:` commands in `STATE.md` are the
-   mechanism — run them rather than quote memory.
-2. **Avoid concurrent sessions on the same branch.** If a second agent
-   opens, it must `git pull` and re-read `STATE.md` before any write.
-3. **One thread per coherent unit of work.** External memory is what keeps
-   threads short — don't run a single mega-thread per project.
-4. **Compaction and limit resilience.** Treat any approach to a context
-   limit, any imminent compaction, or any end-of-session as a forced
-   `checkpoint`: flush in-context working memory to `STATE.md` and the
-   active task file (if any) **before** further work. The next agent reads
-   from disk, not from chat history. Long tasks should use a task plan
-   file (see "Multi-session tasks") so a single in-context summary loss
-   never destroys plan state.
-5. **Repo memory is canonical.** The Claude ECC `SessionStart` hook (defined
-   in a global marketplace plugin and therefore not per-project disablable
-   without fragile surgery) may fire at session start and inject a
-   "previous session summary" from `~/.claude/sessions/`. Treat that summary
-   as **advisory only** — it is machine-local, Claude-only, and may be
-   stale. Always follow the `start session` protocol in this file.
-   Likewise, the ECC `save-session` / `resume-session` skill names collide
-   with the verbs defined above: when the user uses one of those verbs,
-   execute the protocol in this file (which writes to `docs/agent/`), not
-   the ECC skill (which writes machine-local Claude-only state). The Claude
-   per-project memory at `~/.claude/projects/.../memory/MEMORY.md` holds a
-   one-line pointer to `docs/agent/STATE.md`, not project facts.
+- `README.md` — system overview
+- `docs/agent/PROTOCOL.md` — the operating manual (the rest of this
+  file, expanded — read on verb, not at startup)
+- `docs/operations/` — runbooks, monitoring setup
+- `docs/plans/` — long-form planning docs
+- `.github/workflows/` — CI/CD. `deploy-staging.yml` runs on `main`
+  push (with `paths-ignore` for memory files). `deploy.yml` runs on
+  `v*` tag.
