@@ -7,6 +7,7 @@ on:
       - "docs/agent/**"
       - "AGENTS.md"
       - "CLAUDE.md"
+      - ".codex/**"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
