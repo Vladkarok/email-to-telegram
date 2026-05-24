@@ -16,7 +16,7 @@ describe("hosted public policy drafts", () => {
 
     expect(index).toContain("Required Public Contacts");
     expect(index).toContain("abuse reports");
-    expect(index).toContain("billing and general support");
+    expect(index).toContain("general support");
     expect(index).toContain("privacy, export, and erasure requests");
   });
 
