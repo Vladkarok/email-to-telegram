@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Vladkarok/email-to-telegram/security/advisories/new
+    about: |
+      Please do not file public issues for security vulnerabilities.
+      Use GitHub's private vulnerability reporting via Security Advisories.
+      See SECURITY.md for details.
+  - name: Question or discussion
+    url: https://github.com/Vladkarok/email-to-telegram/discussions
+    about: For usage questions, deployment help, or open discussion.

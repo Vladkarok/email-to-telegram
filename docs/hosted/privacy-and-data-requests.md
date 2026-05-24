@@ -3,6 +3,12 @@
 This is public-facing draft language for the hosted service. It is not legal
 advice and is not a substitute for a reviewed privacy policy or DPA.
 
+> **Status:** The hosted instance currently runs in beta with no live billing.
+> Managed billing is **to be implemented**; billing-related processing
+> described below is forward-looking. Contact addresses
+> (`<privacy@example.com>`, `<abuse@example.com>`) are **to be configured**
+> before live public launch.
+
 ## What The Hosted Service Processes
 
 Hosted `email-to-telegram` receives inbound email for aliases you create and
@@ -18,7 +24,8 @@ Depending on your settings and message content, the hosted service may process:
 - attachments and attachment download links while retention settings require
   them
 - privacy-view links and one-time view/download state
-- billing identifiers from Stripe, such as customer and subscription IDs
+- billing identifiers from the chosen payment provider, once managed billing
+  is implemented (to be implemented)
 - manual payment references and operator billing notes when a hosted plan is
   granted outside automated billing
 - operational logs, abuse blocks, rate-limit records, and usage counters
@@ -41,14 +48,15 @@ minimal alert and a browser view link instead of the full email body.
 
 Telegram is a separate service with its own terms and privacy practices.
 
-## Stripe Billing
+## Billing
 
-Hosted billing uses Stripe for self-serve subscriptions. Stripe receives the
-payment and billing data needed to process checkout, subscriptions, invoices,
-and the customer portal.
+Managed self-serve billing is **to be implemented**. When implemented, the
+chosen payment provider will receive the payment and billing data needed to
+process checkout, subscriptions, invoices, and the customer portal.
 
 Do not send payment card details directly to hosted `email-to-telegram`
-support. Use Stripe-hosted checkout and portal pages.
+support. When live billing exists, use the provider-hosted checkout and portal
+pages.
 
 ## Data Export
 

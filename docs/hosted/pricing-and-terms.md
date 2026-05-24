@@ -5,6 +5,11 @@ commercial terms. It is an operator/product draft, not legal advice. Review the
 final public version for tax, privacy, refund, and data-processing requirements
 before accepting live payments.
 
+> **Status:** The hosted instance currently runs in beta with no live billing.
+> Managed billing (checkout, customer portal, webhooks, refund flows, tax
+> handling) is **to be implemented.** The plans table below reflects the
+> planned shape; none of the paid flows are live yet.
+
 ## Positioning
 
 Hosted `email-to-telegram` gives you email aliases that deliver operational
@@ -12,12 +17,12 @@ emails, alerts, and low-volume workflow messages to Telegram without running
 mail infrastructure.
 
 Self-hosting remains free and MIT-licensed. Paid hosted plans charge for managed
-operation: hosted inbound routing, abuse controls, storage, retention, Stripe
-billing, backups, and support.
+operation: hosted inbound routing, abuse controls, storage, retention, managed
+billing (to be implemented), backups, and support.
 
 ## Plans
 
-This table reflects the billing limit model in code. It is not automatically
+This table reflects the planned plan limit model. It is not automatically
 publishable marketing copy. Before public launch, hide or qualify any capability
 that does not yet have a customer-facing flow.
 
@@ -46,26 +51,25 @@ The free hosted tier is for evaluation and small personal workflows. It may be
 rate-limited, blocked, or disabled for abuse, spam, phishing, high-volume file
 distribution, or shared-domain reputation risk.
 
-There is no public free trial in v1. Users start on Free and can upgrade through
-Stripe Checkout.
+There is no public free trial in v1. Users start on Free; self-serve upgrade
+flow is **to be implemented**.
 
 ## Billing
 
 - Prices are in USD.
-- Personal, Pro, and Team are self-serve Stripe subscriptions.
+- Self-serve subscriptions for Personal, Pro, and Team are **to be implemented**.
 - Business is manually priced and may use a separate agreement or invoice.
-- During early beta, any paid plan may be granted manually after direct payment
-  while automated Stripe billing remains disabled.
-- Annual plans are billed upfront.
-- Upgrades can apply after Stripe webhook delivery updates the account.
+- Hosted is currently donation-supported during beta. Paid plans are not yet
+  billable.
+- Annual plans (when implemented) will be billed upfront.
 - Downgrades and cancellations do not delete aliases or stored data
   automatically.
 
 ## Cancellation
 
-Customers can cancel self-serve subscriptions through the Stripe Customer
-Portal. When a subscription is canceled, the hosted app falls back to free
-effective limits immediately after the Stripe cancellation webhook is processed.
+Self-serve cancellation is **to be implemented** as part of managed billing.
+When implemented, canceling a subscription will fall back the workspace to free
+effective limits.
 
 If the workspace is over free limits after cancellation, existing aliases and
 data are not deleted automatically, but inbound acceptance and management
@@ -73,10 +77,10 @@ actions can be restricted until the user deletes data/aliases or upgrades again.
 
 ## Failed Payments
 
-For `past_due` subscriptions, paid effective limits remain only while the
-current hard-coded 7-day `paid_through_at` grace window allows them. `unpaid`,
-`incomplete`, and `incomplete_expired` states fall back to free effective limits
-immediately.
+Failed-payment handling is **to be implemented** as part of managed billing.
+The planned shape: a short grace window keeps paid limits for unintentionally
+failed payments, then falls back to free effective limits on harder failure
+states.
 
 ## Refunds
 
@@ -89,13 +93,13 @@ Refund policy must be reviewed before public launch. Proposed v1 policy:
 - Abuse, spam, phishing, or terms violations are not eligible for refunds.
 
 Do not publish the proposed refund language until it is reviewed for your
-jurisdiction and Stripe account setup.
+jurisdiction and the chosen payment provider's setup.
 
 ## Taxes
 
-Stripe is the first payment provider. You remain responsible for tax handling
-unless you enable Stripe Tax or move to a Merchant of Record provider. Do not
-launch live billing until the tax/accounting approach is reviewed.
+Tax handling is **to be implemented** as part of managed billing. Live billing
+will not launch until the tax approach is reviewed for the operator's
+jurisdiction.
 
 ## Data And Abuse
 
@@ -105,9 +109,6 @@ controls are described in:
 - [`README.md`](./README.md)
 - [`acceptable-use.md`](./acceptable-use.md)
 - [`privacy-and-data-requests.md`](./privacy-and-data-requests.md)
-- [`launch-checklist.md`](./launch-checklist.md)
-- [`../monetization/hosted-abuse-policy.md`](../monetization/hosted-abuse-policy.md)
-- [`../monetization/stripe-test-mode-runbook.md`](../monetization/stripe-test-mode-runbook.md)
 
 Public terms should include an abuse contact address and a privacy/data request
 contact path before public signup is enabled.

@@ -8,6 +8,15 @@ on:
       - "AGENTS.md"
       - "CLAUDE.md"
       - ".codex/**"
+      - "SECURITY.md"
+      - "CONTRIBUTING.md"
+      - "CHANGELOG.md"
+      - ".github/CODEOWNERS"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/PULL_REQUEST_TEMPLATE.md"
+      - "docs/operations/**"
+      - "docs/examples/**"
+      - "docs/hosted/**"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true

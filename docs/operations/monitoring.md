@@ -2,12 +2,12 @@
 
 ## Overview
 
-A self-hosted Prometheus + Grafana + Loki stack runs on the staging VM (`kc-vprojects`) alongside the application containers. Co-locating it with staging keeps cost and operational surface low while letting the same instance optionally scrape production. Grafana is reachable only through the WireGuard VPN; no monitoring port is published to the public internet.
+A self-hosted Prometheus + Grafana + Loki stack runs on the staging VM alongside the application containers. Co-locating it with staging keeps cost and operational surface low while letting the same instance optionally scrape production. Grafana is reachable only through the WireGuard VPN; no monitoring port is published to the public internet.
 
 ## Architecture
 
 ```
-                      kc-vprojects (staging VM)
+                            staging VM
  +-------------------------------------------------------------+
  |                                                             |
  |  docker compose: app                docker compose: monitoring
@@ -37,12 +37,12 @@ A self-hosted Prometheus + Grafana + Loki stack runs on the staging VM (`kc-vpro
                                         http://<VPN-IP>:3001
 
   # Optional, disabled by default:
-  # prometheus --scrape--> prod app (10.0.88.2:3000) over VPN
+  # prometheus --scrape--> prod app (<prod-private-ip>:3000) over VPN
 ```
 
 ## First-time setup on the VM
 
-Run once on `kc-vprojects` as the deploy user:
+Run once on the staging VM as the deploy user:
 
 ```sh
 docker network create monitoring_scrape
@@ -60,7 +60,7 @@ Required variables in `~/monitoring/.env` (read by docker compose at boot):
 
 - `MONITORING_BIND_IP` — private interface IP for Grafana publish (e.g. the VPN IP). Compose refuses to start if unset.
 - `GRAFANA_ADMIN_PASSWORD` — initial Grafana admin password. Required.
-- `GRAFANA_ROOT_URL` — full URL operators use to reach Grafana, including trailing slash (e.g. `http://10.0.88.3:3001/`). Required; Grafana uses this for redirects and shared links.
+- `GRAFANA_ROOT_URL` — full URL operators use to reach Grafana, including trailing slash (e.g. `http://<vm-private-ip>:3001/`). Required; Grafana uses this for redirects and shared links.
 - `GRAFANA_ADMIN_USER` — optional, defaults to `admin`.
 
 **Bearer tokens are not in `~/monitoring/.env`.** Scrape auth comes from the GitHub repository secrets `METRICS_BEARER_TOKEN_STAGING` / `METRICS_BEARER_TOKEN_PROD`. The deploy workflow writes them into `~/monitoring/prometheus/secrets/{staging_token,prod_token}` on the host. Each secret must exactly match `METRICS_TOKEN` in the corresponding app deployment's `.env`; if they drift, Prometheus targets go red with `401 Unauthorized`. Rotate via the GitHub secret UI and re-run the workflow.
@@ -80,7 +80,7 @@ Replace `<VPN-IP>` with the VM's VPN address. Log in as `admin` with the passwor
 Verify the port is not exposed publicly:
 
 ```sh
-ssh kc-vprojects 'ss -tlnp | grep 3001'
+ssh <staging-host> 'ss -tlnp | grep 3001'
 ```
 
 The output must bind to the VPN interface only (not `0.0.0.0`).
@@ -134,7 +134,7 @@ Add the bearer token to the `Deploy Monitoring` workflow so it lands at `~/monit
 
 1. Confirm prod is reachable from the staging VM over VPN:
    ```sh
-   ssh kc-vprojects 'curl -sS http://10.0.88.2:3000/healthz'
+   ssh <staging-host> 'curl -sS http://<prod-private-ip>:3000/healthz'
    ```
 2. Uncomment the `email_to_telegram_prod` job in `monitoring/prometheus/prometheus.yml`.
 3. Ensure the GitHub secret `METRICS_BEARER_TOKEN_PROD` matches prod's `METRICS_TOKEN` in its `.env`.
@@ -150,7 +150,7 @@ Add the bearer token to the `Deploy Monitoring` workflow so it lands at `~/monit
 Inspect volume disk usage:
 
 ```sh
-ssh kc-vprojects 'docker system df -v | grep -E "^(VOLUME|monitoring_)"'
+ssh <staging-host> 'docker system df -v | grep -E "^(VOLUME|monitoring_)"'
 ```
 
 Prune unused images when low on space:
@@ -165,7 +165,7 @@ Do not `docker volume prune` blindly — it can wipe Grafana dashboards if the v
 
 - **Grafana shows "no data"**: inspect the Prometheus targets endpoint from inside the container (port 9090 is not published on the host):
   ```sh
-  ssh kc-vprojects 'cd ~/monitoring && docker compose -f docker-compose.monitoring.yml --env-file .env exec prometheus wget -qO- http://127.0.0.1:9090/api/v1/targets' | jq
+  ssh <staging-host> 'cd ~/monitoring && docker compose -f docker-compose.monitoring.yml --env-file .env exec prometheus wget -qO- http://127.0.0.1:9090/api/v1/targets' | jq
   ```
 - **Promtail not shipping logs**: confirm the `docker_socket_proxy` container is healthy (`docker compose ... ps`) and that `/var/lib/docker/containers` is mounted read-only into promtail. Promtail talks to the proxy at `tcp://docker_socket_proxy:2375`, not the host docker socket directly.
 - **`bearer token authentication failed`**: the token file in `~/monitoring/prometheus/secrets/` does not match `METRICS_TOKEN` in the scraped app's `.env`. Rotate both sides via GitHub secrets and re-run `Deploy Monitoring`.

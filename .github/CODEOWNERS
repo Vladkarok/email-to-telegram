@@ -1,0 +1,14 @@
+# Code owners for email-to-telegram.
+#
+# Last matching pattern wins. Workflow files require an explicit owner
+# review on every change so CI/CD edits cannot land without sign-off.
+
+* @Vladkarok
+
+# CI/CD and release-sensitive paths
+.github/                @Vladkarok
+.github/workflows/      @Vladkarok
+Dockerfile              @Vladkarok
+docker-compose.yml      @Vladkarok
+SECURITY.md             @Vladkarok
+LICENSE                 @Vladkarok

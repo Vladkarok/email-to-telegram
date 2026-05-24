@@ -3,6 +3,11 @@
 This is public-facing draft language for the hosted service. It is not legal
 advice. Replace placeholders and review before publication.
 
+> **Status:** Hosted operates in beta with no live billing yet. The abuse
+> policy below applies to the current beta hosted service. Contact addresses
+> (`<abuse@example.com>` etc.) are **to be configured** before live public
+> launch.
+
 ## Intended Use
 
 Hosted `email-to-telegram` is for low-volume operational email workflows:
@@ -29,8 +34,8 @@ You may not use the hosted service for:
 - evading sender/domain blocks, rate limits, shared-domain controls, or abuse
   monitoring
 - high-volume attachment hosting, file sharing, hotlinking, or CDN-like traffic
-- traffic that intentionally overloads Telegram, Stripe, Cloudflare, the hosted
-  app, or the infrastructure behind it
+- traffic that intentionally overloads Telegram, Cloudflare, the hosted app,
+  or the infrastructure behind it
 - workflows that create material reputation risk for the shared hosted inbound
   domain
 
