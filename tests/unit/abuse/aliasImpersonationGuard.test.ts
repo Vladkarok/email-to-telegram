@@ -32,23 +32,21 @@ describe("assertAliasNotImpersonation (hosted mode)", () => {
       expect(() => assertAliasNotImpersonation(name)).toThrow(AliasImpersonationError);
     });
 
-    it("rejects exact-match case-insensitively (validation happens lowercased downstream, but defend in depth)", () => {
+    it("rejects exact-match case-insensitively (defense in depth — NAME_RE upstream is lowercase-only)", () => {
       expect(() => assertAliasNotImpersonation("ADMIN")).toThrow(AliasImpersonationError);
       expect(() => assertAliasNotImpersonation("Postmaster")).toThrow(AliasImpersonationError);
     });
   });
 
-  describe("brand-name substring list", () => {
+  describe("brand-name substring list (long, ≥6 chars)", () => {
     it.each([
       "paypal",
       "stripe-team",
       "amazonsupport",
       "google-help",
       "microsoft365",
-      "myapple",
       "github-noreply",
       "facebook",
-      "meta-billing",
       "instagram-help",
       "twitter",
       "tiktok",
@@ -57,22 +55,38 @@ describe("assertAliasNotImpersonation (hosted mode)", () => {
       "spotify",
       "dropbox",
       "gitlab",
-      "slack",
-      "notion",
-      "figma",
-      "adobe",
       "coinbase",
       "binance",
       "kraken",
       "revolut",
-      "wise",
-      "chase",
-      "bank",
       "barclays",
-      "hsbc",
       "wellsfargo",
       "bankofamerica",
-    ])("rejects brand substring: %s", (name) => {
+    ])("rejects long-brand substring: %s", (name) => {
+      expect(() => assertAliasNotImpersonation(name)).toThrow(AliasImpersonationError);
+    });
+  });
+
+  describe("brand-name short list (boundary-anchored)", () => {
+    it.each([
+      "meta",
+      "bank",
+      "wise",
+      "chase",
+      "apple",
+      "hsbc",
+      "slack",
+      "adobe",
+      "figma",
+      "notion",
+      "meta-help",
+      "bank.alert",
+      "wise.support",
+      "chase-news",
+      "apple-pie",
+      "data-meta",
+      "news.bank",
+    ])("rejects short brand at boundary: %s", (name) => {
       expect(() => assertAliasNotImpersonation(name)).toThrow(AliasImpersonationError);
     });
   });
@@ -93,6 +107,87 @@ describe("assertAliasNotImpersonation (hosted mode)", () => {
     });
   });
 
+  describe("separator-split bypass (CRITICAL — review finding)", () => {
+    it.each([
+      "pay.pal",
+      "pay-pal",
+      "p_aypal",
+      "str.ipe",
+      "g-oogle",
+      "app.le",
+      "b-a-n-k",
+      "m-e-t-a",
+      "git.hub",
+      "face.book",
+      "in_sta_gram",
+    ])("rejects separator-split: %s", (name) => {
+      expect(() => assertAliasNotImpersonation(name)).toThrow(AliasImpersonationError);
+    });
+  });
+
+  describe("dot-suffix bypass on prefix list (CRITICAL — review finding)", () => {
+    it.each([
+      "admin.x",
+      "support.x",
+      "noreply.service",
+      "no-reply.x",
+      "security.alert",
+      "billing.info",
+      "verify.me",
+      "account.info",
+      "payments.info",
+    ])("rejects dot-suffix prefix bypass: %s", (name) => {
+      expect(() => assertAliasNotImpersonation(name)).toThrow(AliasImpersonationError);
+    });
+  });
+
+  describe("leet-speak bypass (HIGH — review finding)", () => {
+    it.each([
+      "g00gle",
+      "adm1n",
+      "supp0rt",
+      "m1crosoft",
+      "p4ypal",
+      "stripe3", // trailing leet noise
+      "n0reply",
+      "amaz0n",
+      "f4cebook",
+      "m3ta-help", // leet + boundary
+      "app1e",
+    ])("rejects leet-speak: %s", (name) => {
+      expect(() => assertAliasNotImpersonation(name)).toThrow(AliasImpersonationError);
+    });
+  });
+
+  describe("false-positive prevention: legitimate names with brand-overlap survive", () => {
+    it.each([
+      "metabolism",
+      "metadata",
+      "metamorphic",
+      "metallica",
+      "banking",
+      "bankrupt",
+      "databank",
+      "riverbank",
+      "otherwise",
+      "likewise",
+      "clockwise",
+      "pineapple",
+      "appleton",
+      "snapple",
+      "myapple",
+      "chaser",
+      "purchase",
+      "slacker",
+      "slackline",
+      "configuration",
+      "notional",
+      "emotional",
+    ])("allows English word with brand overlap: %s", (name) => {
+      expect(() => assertAliasNotImpersonation(name)).not.toThrow();
+    });
+  });
+
   describe("safe names pass", () => {
     it.each([
       "inbox",
@@ -107,6 +202,8 @@ describe("assertAliasNotImpersonation (hosted mode)", () => {
       "test_box",
       "j",
       "a-very-long-but-fine-alias-32chars",
+      "ya_hoo", // yahoo is not on any blocklist
+      "linkedin", // not on the blocklist either
     ])("allows: %s", (name) => {
       expect(() => assertAliasNotImpersonation(name)).not.toThrow();
     });
@@ -136,12 +233,20 @@ describe("assertAliasNotImpersonation (self-hosted mode)", () => {
     expect(() => assertAliasNotImpersonation("admin")).not.toThrow();
     expect(() => assertAliasNotImpersonation("support-paypal")).not.toThrow();
     expect(() => assertAliasNotImpersonation("paypal")).not.toThrow();
+    expect(() => assertAliasNotImpersonation("pay.pal")).not.toThrow();
+    expect(() => assertAliasNotImpersonation("g00gle")).not.toThrow();
   });
 
-  it("honors APP_MODE env override (env wins over loadConfig)", () => {
+  it("honors APP_MODE=self-hosted env override (env wins over loadConfig=hosted)", () => {
     process.env["APP_MODE"] = "self-hosted";
     mockLoadConfig.mockReturnValue({ appMode: "hosted" });
     expect(() => assertAliasNotImpersonation("admin")).not.toThrow();
+  });
+
+  it("honors APP_MODE=hosted env override (env wins over loadConfig=self-hosted)", () => {
+    process.env["APP_MODE"] = "hosted";
+    mockLoadConfig.mockReturnValue({ appMode: "self-hosted" });
+    expect(() => assertAliasNotImpersonation("admin")).toThrow(AliasImpersonationError);
   });
 
   it("falls back to no-op when loadConfig throws", () => {
