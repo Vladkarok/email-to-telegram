@@ -27,7 +27,10 @@ Thumbs.db
 
 # Claude Code
 .claude/
-.codex
+# .codex/notes.md is the committed Codex adapter (mirror of CLAUDE.md).
+# Anything else under .codex/ (Codex CLI machine-local state) stays ignored.
+.codex/*
+!.codex/notes.md
 
 # Test coverage
 coverage/
