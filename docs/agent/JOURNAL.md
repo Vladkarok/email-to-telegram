@@ -27,3 +27,11 @@ at the v2 migration.
 - Found and fixed missing `.codex/**` in deploy-staging.yml paths-ignore
 - Cross-tool tests (1, 2, 6) deferred to a Codex CLI session
 - see: docs/agent/sessions/2026-05-24-152928-claude-v2-acceptance-and-codex-paths-ignore.md
+
+## 2026-05-24 15:39 codex cross-tool-handoff
+
+- Ran Codex CLI `start session` against the v2 memory protocol and
+  confirmed no code drift or untracked files
+- Corrected stale `STATE.md` baseline from `69f83cc` to `9fb9c57`
+- Saved the Codex → Claude handoff for cross-tool acceptance
+- see: docs/agent/sessions/2026-05-24-153936-codex-cross-tool-handoff.md

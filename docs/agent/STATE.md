@@ -1,10 +1,10 @@
 # State
 
 **Protocol version:** 2
-**Updated:** 2026-05-24T15:29:28+02:00
-**Tool last wrote:** Claude Code
+**Updated:** 2026-05-24T15:39:36+02:00
+**Tool last wrote:** Codex CLI
 **Branch:** main
-**Last code commit:** 69f83cc3f420041142cd41b887e912eaf84c23e5 chore(agent): bootstrap memory system v2 — lean root + on-demand protocol + scripts + JOURNAL, keep DECISIONS index
+**Last code commit:** 9fb9c5704308f0cf6ac3004c8f622465e2a000b6 chore(agent): save session — v2 acceptance tests (7, 8) pass; fix paths-ignore for .codex/\*\*
 **Code worktree:** clean
 **Tracked dirty code paths:** none
 **Relevant untracked code paths:** none
@@ -13,38 +13,31 @@
 
 ## Now
 
-Memory system v2 migration **complete**. Project at v2.5.0 on
-staging and prod, healthy. Local-only acceptance tests (Test 7 +
-Test 8) passed. Discovered and fixed a paths-ignore gap:
-`deploy-staging.yml` was missing `.codex/**` (memory pushes that
-touch the new Codex adapter would have triggered deploys). Fix
-staged; commit pending.
+Codex-side cross-tool acceptance is in progress. Codex successfully
+followed `start session`, read the v2 protocol/state/latest handoff,
+ran `drift-check.sh`, and checkpointed a stale `STATE.md` baseline
+from `69f83cc` to `9fb9c57`. No code drift or untracked files.
 
 ## Resume prompt
 
 Open `docs/agent/PROTOCOL.md` for the v2 manual. STATE.md and
-session files are now in v2 format with `validate-memory.sh`
-preflight. The `.github/workflows/deploy-staging.yml` change is
-in-flight: it adds `.codex/**` to `paths-ignore`. **This is a
-code-path change** — the next `publish session` that includes it
-will trigger a (no-op) staging deploy. Either commit + publish it
-now (intentional bounce, takes ~2 minutes), or bundle into the
-next real code push. Cross-tool acceptance (Tests 1, 2, 6) still
-outstanding: open Codex CLI in this clone, type `start session`,
-verify it follows the same v2 protocol; then do a `save session`
-from Codex and switch back to Claude to verify Claude reads
-Codex's handoff identically.
+session files are in v2 format with `validate-memory.sh` preflight.
+Codex CLI has completed the `start session` half of cross-tool
+acceptance and is saving a Codex handoff. Next, switch back to Claude
+Code in this clone and type `start session`; verify Claude reads the
+new Codex session and reports the same current goal, clean code
+worktree, no active task, and next step.
 
 ## In flight
 
-- Cross-tool acceptance tests (1, 2, 6) pending — needs Codex CLI
-  in this clone (user confirmed Codex CLI is installed).
+- Cross-tool acceptance tests (1, 2, 6) partially complete: Codex
+  `start session` succeeded and this `save session` provides the
+  Codex → Claude handoff to verify next.
 
 ## Next
 
-1. Cross-tool soak: open Codex CLI here, `start session`, then
-   `save session` from Codex; switch back to Claude, `start
-session`, verify Claude reads Codex's handoff correctly.
+1. Switch back to Claude Code and run `start session`; verify Claude
+   reads the Codex handoff correctly.
 2. Decide when to `publish session` — the workflow change will
    trigger one staging redeploy on push.
 3. Delete pre-rebaseline DB backups once v2.5.0 has soaked
