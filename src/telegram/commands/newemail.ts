@@ -30,6 +30,11 @@ import {
   HostedAliasCreateRateLimitError,
   reserveHostedAliasCreateAttempt,
 } from "../../abuse/hostedAliasCreation.js";
+import {
+  ALIAS_IMPERSONATION_MESSAGE,
+  AliasImpersonationError,
+  assertAliasNotImpersonation,
+} from "../../abuse/aliasImpersonationGuard.js";
 import { DEFAULT_LOCALE, getMessages, resolveLocale, type Locale } from "../../i18n/index.js";
 
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -212,6 +217,15 @@ export async function createEmailAlias(
     if (!NAME_RE.test(rawName)) {
       await ctx.reply(messages.newemail.invalidName);
       return;
+    }
+    try {
+      assertAliasNotImpersonation(rawName);
+    } catch (err) {
+      if (err instanceof AliasImpersonationError) {
+        await ctx.reply(ALIAS_IMPERSONATION_MESSAGE);
+        return;
+      }
+      throw err;
     }
   }
 
