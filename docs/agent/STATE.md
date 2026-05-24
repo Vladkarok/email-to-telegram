@@ -1,74 +1,60 @@
 # State
 
 **Protocol version:** 2
-**Updated:** 2026-05-24T15:20:46+02:00
+**Updated:** 2026-05-24T15:29:28+02:00
 **Tool last wrote:** Claude Code
 **Branch:** main
-**Last code commit:** d20cf2600a7402fa3c679c5e4bd5aa7c89ccf36b chore: gitignore tmp/, untrack scratch plan file
+**Last code commit:** 69f83cc3f420041142cd41b887e912eaf84c23e5 chore(agent): bootstrap memory system v2 — lean root + on-demand protocol + scripts + JOURNAL, keep DECISIONS index
 **Code worktree:** clean
 **Tracked dirty code paths:** none
 **Relevant untracked code paths:** none
-**Active task:** memory-system-v2-migration
-**Latest session read:** docs/agent/sessions/2026-05-24-1345-drop-cd-wrapper-from-protocol.md
+**Active task:** none
+**Latest session read:** docs/agent/sessions/2026-05-24-152046-claude-memory-system-v2-migration.md
 
 ## Now
 
-Migrating the agent memory system from v1 (heavy AGENTS.md inline
-protocol, DECISIONS.md-only) to **v2 hybrid** (lean AGENTS.md +
-on-demand `docs/agent/PROTOCOL.md` + scripts + JOURNAL.md, with
-DECISIONS.md retained as the email-to-telegram fork's addition).
-See `docs/agent/tasks/memory-system-v2-migration.md`.
-Project at **v2.5.0** on staging and prod, healthy.
+Memory system v2 migration **complete**. Project at v2.5.0 on
+staging and prod, healthy. Local-only acceptance tests (Test 7 +
+Test 8) passed. Discovered and fixed a paths-ignore gap:
+`deploy-staging.yml` was missing `.codex/**` (memory pushes that
+touch the new Codex adapter would have triggered deploys). Fix
+staged; commit pending.
 
 ## Resume prompt
 
-The migration is mid-flight. Files written so far:
-`docs/agent/scripts/{drift-check,latest-session,validate-memory}.sh`
-(allowlisted), `docs/agent/PROTOCOL.md` (full v2 manual with fork
-deltas documented), `docs/agent/JOURNAL.md` (seeded), `.codex/notes.md`
-(replaces previous gitignored empty `.codex` file — backup at
-`.codex.bak` pending removal), new lean `AGENTS.md`, new `CLAUDE.md`
-adapter, this `STATE.md` rewritten to v2 schema, `.gitignore` adjusted
-for `.codex/*` + `!.codex/notes.md`. **Next concrete step:** finish
-this `save session` — create the v2-format session file, run
-`docs/agent/scripts/validate-memory.sh` (must print `OK`), then narrow
-stage all migration files and commit. After that, mark task plan
-steps `[x]` and decide on the `.codex.bak` cleanup.
+Open `docs/agent/PROTOCOL.md` for the v2 manual. STATE.md and
+session files are now in v2 format with `validate-memory.sh`
+preflight. The `.github/workflows/deploy-staging.yml` change is
+in-flight: it adds `.codex/**` to `paths-ignore`. **This is a
+code-path change** — the next `publish session` that includes it
+will trigger a (no-op) staging deploy. Either commit + publish it
+now (intentional bounce, takes ~2 minutes), or bundle into the
+next real code push. Cross-tool acceptance (Tests 1, 2, 6) still
+outstanding: open Codex CLI in this clone, type `start session`,
+verify it follows the same v2 protocol; then do a `save session`
+from Codex and switch back to Claude to verify Claude reads
+Codex's handoff identically.
 
 ## In flight
 
-- Memory-system v2 migration commit not yet made; many files in
-  worktree.
-- `.codex.bak` (was the gitignored empty marker file before the
-  rename) — decision pending whether to delete or restore.
+- Cross-tool acceptance tests (1, 2, 6) pending — needs Codex CLI
+  in this clone (user confirmed Codex CLI is installed).
 
 ## Next
 
-1. Create v2-format session file
-   `docs/agent/sessions/2026-05-24-152046-claude-memory-system-v2-migration.md`.
-2. Update `docs/agent/tasks/memory-system-v2-migration.md`: mark
-   steps 1, 3, 4, 5, 6, 7 as `[x]`; step 9 (acceptance tests) as
-   `[~]` after `validate-memory.sh` passes.
-3. Append the v2-migration entry to `DECISIONS.md`.
-4. Run `docs/agent/scripts/validate-memory.sh` — must `OK`.
-5. Narrow-stage migration files (all under `docs/agent/`,
-   `AGENTS.md`, `CLAUDE.md`, `.codex/notes.md`, `.gitignore`,
-   `.claude/settings.local.json` is gitignored so won't appear),
-   commit as `chore(agent): bootstrap memory system v2 (lean root +
-on-demand protocol + scripts + JOURNAL, keep DECISIONS index)`.
-6. Run remaining acceptance tests (Test 7 + Test 8 are repo-local
-   and trivial; Tests 1, 2, 6 require cross-tool / cross-clone and
-   can be soaked later; Test 5 already proven on v1).
-7. After acceptance, delete `.codex.bak`.
-8. Pre-rebaseline DB backups: still pending soak — delete after
-   v2.5.0 has another day.
+1. Cross-tool soak: open Codex CLI here, `start session`, then
+   `save session` from Codex; switch back to Claude, `start
+session`, verify Claude reads Codex's handoff correctly.
+2. Decide when to `publish session` — the workflow change will
+   trigger one staging redeploy on push.
+3. Delete pre-rebaseline DB backups once v2.5.0 has soaked
+   another day (still in soak):
+   - staging: `ssh kc-vprojects 'rm /home/vladkarok/e2t-prerebaseline-20260522-200658.sql.gz'`
+   - prod: `ssh emails-tg-prod 'rm /home/vladkarok/e2t-prerebaseline-20260522-201231.sql.gz'`
 
 ## Open questions / blockers
 
-- `.codex.bak` was a 0-byte file with no git history. Likely a Codex
-  CLI marker from `~/Projects/email-to-telegram` of some kind. Safe to
-  delete after acceptance — but verify by running Codex CLI in this
-  repo once and confirming it doesn't recreate the file at root.
+- None blocking.
 
 ## Environments
 

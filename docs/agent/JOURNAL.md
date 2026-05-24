@@ -19,4 +19,11 @@ at the v2 migration.
   drift-check.sh, latest-session.sh, validate-memory.sh
 - Replaced gitignored .codex empty file with .codex/notes.md adapter;
   .gitignore narrowed from `.codex` to `.codex/*` + `!.codex/notes.md`
-- see: docs/agent/sessions/2026-05-24-153000-claude-memory-system-v2-migration.md
+- see: docs/agent/sessions/2026-05-24-152046-claude-memory-system-v2-migration.md
+
+## 2026-05-24 15:29 claude v2-acceptance-and-codex-paths-ignore
+
+- Ran reachable v2 acceptance tests (7, 8, and the inspection part of 5)
+- Found and fixed missing `.codex/**` in deploy-staging.yml paths-ignore
+- Cross-tool tests (1, 2, 6) deferred to a Codex CLI session
+- see: docs/agent/sessions/2026-05-24-152928-claude-v2-acceptance-and-codex-paths-ignore.md
