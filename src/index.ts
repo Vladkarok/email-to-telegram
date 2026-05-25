@@ -53,6 +53,12 @@ async function main() {
     isOperatorCommand ? stderrLoggerDestination() : undefined,
   );
   setLogger(logger);
+
+  if (config.storageEncryptionMode === "none" && config.nodeEnv === "production") {
+    logger.warn(
+      "STORAGE_ENCRYPTION_MODE=none: attachment and raw email files are not encrypted at rest",
+    );
+  }
   logger.info("Starting email-to-telegram");
   configureStorageEncryption({
     mode: config.storageEncryptionMode,

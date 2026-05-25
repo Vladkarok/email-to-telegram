@@ -22,6 +22,7 @@ function setRawBody(req: FastifyRequest, body: Buffer): void {
 }
 
 export async function createHttpServer(config: AppConfig): Promise<FastifyInstance> {
+  let warnedUntrustedProxyHeaders = false;
   const app = Fastify({
     logger: false,
     bodyLimit: config.maxSizeBytes,
@@ -34,6 +35,20 @@ export async function createHttpServer(config: AppConfig): Promise<FastifyInstan
   await app.register(helmet);
   await app.register(rateLimit, {
     global: false, // per-route limits only; apply explicitly on each route
+  });
+
+  app.addHook("onRequest", (req, _reply, done) => {
+    if (
+      !config.trustProxy &&
+      !warnedUntrustedProxyHeaders &&
+      req.headers["x-forwarded-for"] != null
+    ) {
+      warnedUntrustedProxyHeaders = true;
+      getLogger().warn(
+        "X-Forwarded-For received while TRUST_PROXY=false; reverse-proxy deployments should set TRUST_PROXY=true or client rate limits collapse to the proxy IP",
+      );
+    }
+    done();
   });
 
   app.addHook("onResponse", async (req, reply) => {

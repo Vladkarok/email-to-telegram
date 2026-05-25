@@ -1,7 +1,8 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { eq, isNull, and, lt } from "drizzle-orm";
+import { eq, isNull, and, lt, or } from "drizzle-orm";
 import { attachmentLinks, attachments, deliveryLogs } from "../schema.js";
 import type * as schema from "../schema.js";
+import { hashStoredToken } from "../../utils/tokens.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -48,7 +49,13 @@ export async function findAttachmentLinkByToken(
     .from(attachmentLinks)
     .innerJoin(attachments, eq(attachmentLinks.attachmentId, attachments.id))
     .innerJoin(deliveryLogs, eq(attachments.deliveryLogId, deliveryLogs.id))
-    .where(eq(attachmentLinks.token, token));
+    .where(
+      or(
+        eq(attachmentLinks.tokenHash, hashStoredToken(token)),
+        // Legacy fallback for links issued before token_hash was introduced.
+        eq(attachmentLinks.token, token),
+      ),
+    );
 
   if (!row) return null;
 
@@ -92,7 +99,12 @@ export async function createAttachmentLink(
   token: string,
   expiresAt: Date,
 ): Promise<void> {
-  await db.insert(attachmentLinks).values({ attachmentId, token, expiresAt });
+  const tokenHash = hashStoredToken(token);
+  await db
+    .insert(attachmentLinks)
+    // During the transition the legacy `token` column remains NOT NULL for old
+    // deployments, but new rows must not persist the bearer token in plaintext.
+    .values({ attachmentId, token: tokenHash, tokenHash, expiresAt });
 }
 
 /**

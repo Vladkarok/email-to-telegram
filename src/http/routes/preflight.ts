@@ -6,6 +6,7 @@ import { countRecentDeliveriesByAlias } from "../../db/repos/deliveryLogs.js";
 import { checkInboundLimit } from "../../billing/limits.js";
 import { findHostedInboundRejection } from "../../abuse/hostedInboundBlocklist.js";
 import { findAliasForInbound } from "../../email/inboundRouting.js";
+import { normalizeEnvelopeSender } from "../../email/envelopeSender.js";
 import { getLogger } from "../../utils/logger.js";
 import { recordInboundPreflight, recordQuotaRejection } from "../../observability/metrics.js";
 
@@ -37,11 +38,16 @@ export function preflightRoute(app: FastifyInstance): void {
         return;
       }
 
-      const { localPart, envelopeFrom, recipientDomain } = req.body as {
+      const {
+        localPart,
+        envelopeFrom: rawEnvelopeFrom,
+        recipientDomain,
+      } = req.body as {
         localPart: string;
         envelopeFrom?: string;
         recipientDomain?: string;
       };
+      const envelopeFrom = normalizeEnvelopeSender(rawEnvelopeFrom);
       if (!localPart) {
         logWorkerForwardFailed("missing_local_part");
         recordInboundPreflight("rejected", "missing_local_part");
@@ -95,15 +101,19 @@ export function preflightRoute(app: FastifyInstance): void {
         return;
       }
 
-      // When the worker supplies the SMTP envelope sender, enforce the allow list at the edge
-      // so blocked senders are rejected before raw email bytes are streamed to the VPS.
-      if (envelopeFrom) {
-        const allowed = await checkAllowRule(getDb(), alias.id, envelopeFrom);
-        if (!allowed) {
-          recordInboundPreflight("rejected", "sender_not_allowed");
-          await reply.send({ accept: false });
-          return;
-        }
+      // The allow list is an authorization check. If the trusted SMTP envelope
+      // sender is missing (for example MAIL FROM:<>), fail closed instead of
+      // falling through or trusting MIME From: later in the pipeline.
+      if (!envelopeFrom) {
+        recordInboundPreflight("rejected", "sender_missing");
+        await reply.send({ accept: false });
+        return;
+      }
+      const allowed = await checkAllowRule(getDb(), alias.id, envelopeFrom);
+      if (!allowed) {
+        recordInboundPreflight("rejected", "sender_not_allowed");
+        await reply.send({ accept: false });
+        return;
       }
 
       const recentDeliveries = await countRecentDeliveriesByAlias(

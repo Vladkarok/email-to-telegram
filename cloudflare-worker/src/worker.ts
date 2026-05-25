@@ -6,7 +6,9 @@
  *  2. If rejected, call message.setReject() so the sending MTA receives a 5xx bounce.
  *  3. If accepted, buffer the raw MIME bytes, sign the request, and POST to /inbound/raw.
  *
- * Authentication: HMAC-SHA256(timestamp + "." + body_bytes, WORKER_SECRET).
+ * Authentication:
+ * - preflight signs HMAC-SHA256(timestamp + "." + body_bytes, WORKER_SECRET)
+ * - raw upload signs HMAC-SHA256(canonical routing headers + body_bytes, WORKER_SECRET)
  * Must match the verifyWorkerRequest() implementation on the VPS.
  */
 
@@ -25,6 +27,11 @@ export default {
       return;
     }
     const { localPart, domain: recipientDomain } = recipient;
+
+    if (!hasSpfPass(message.headers)) {
+      message.setReject("550 SPF check failed");
+      return;
+    }
 
     // ── 1. Preflight — verify alias + sender before streaming raw bytes ──────
     const preflightBody = JSON.stringify({
@@ -74,7 +81,11 @@ export default {
     }
 
     // ── 3. POST raw bytes to VPS ──────────────────────────────────────────────
-    const { signature: rawSig, timestamp: rawTs } = await sign(rawBytes, env.WORKER_SECRET);
+    const { signature: rawSig, timestamp: rawTs } = await sign(rawBytes, env.WORKER_SECRET, {
+      localPart,
+      recipientDomain,
+      envelopeFrom: message.from,
+    });
 
     let rawResp: Response;
     try {
@@ -83,6 +94,7 @@ export default {
         headers: {
           "Content-Type": "application/octet-stream",
           "X-Worker-Sig": rawSig,
+          "X-Worker-Sig-V": "v2",
           "X-Worker-Ts": rawTs,
           "X-Local-Part": localPart,
           "X-Recipient-Domain": recipientDomain,
@@ -127,15 +139,24 @@ function isPermanentRawUploadFailure(status: number): boolean {
   return status === 402 || status === 403 || status === 413;
 }
 
+function hasSpfPass(headers: Headers): boolean {
+  const authResults = headers.get("Authentication-Results") ?? "";
+  return /\bspf=pass\b/i.test(authResults);
+}
+
 /**
- * Sign a request body using HMAC-SHA256 to match the VPS verifyWorkerRequest() scheme:
- *   HMAC-SHA256(timestamp + "." + body, secret)
+ * Sign a request body using HMAC-SHA256 to match the VPS verifyWorkerRequest() scheme.
  *
  * Uses the Web Crypto API available in the Cloudflare Workers runtime.
  */
 async function sign(
   body: Uint8Array,
   secret: string,
+  routingHeaders?: {
+    localPart: string;
+    recipientDomain?: string | null;
+    envelopeFrom?: string | null;
+  },
 ): Promise<{ signature: string; timestamp: string }> {
   const timestamp = Date.now().toString();
   const encoder = new TextEncoder();
@@ -148,7 +169,16 @@ async function sign(
     ["sign"],
   );
 
-  const prefix = encoder.encode(`${timestamp}.`);
+  const prefix = encoder.encode(
+    routingHeaders
+      ? `${JSON.stringify([
+          timestamp,
+          routingHeaders.localPart,
+          routingHeaders.recipientDomain ?? "",
+          routingHeaders.envelopeFrom ?? "",
+        ])}.`
+      : `${timestamp}.`,
+  );
   const combined = new Uint8Array(prefix.length + body.length);
   combined.set(prefix);
   combined.set(body, prefix.length);

@@ -172,6 +172,22 @@ describe("processInboundEmail", () => {
     );
   });
 
+  it("does not fall back to MIME From when envelopeFrom is missing", async () => {
+    mockFindAlias.mockResolvedValue(activeAlias);
+    mockCheckAllow.mockResolvedValue(true);
+    const result = await processInboundEmail(
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
+      null,
+      {
+        rawEmail: Buffer.from("From: allowed@example.com\r\nSubject: spoof\r\n\r\nbody"),
+        localPart: "alerts",
+        ...PIPELINE_CONFIG,
+      },
+    );
+    expect(result).toEqual({ ok: false, reason: "sender_not_allowed" });
+    expect(mockCheckAllow).not.toHaveBeenCalled();
+  });
+
   it("returns alias_not_found when alias is missing", async () => {
     mockFindAlias.mockResolvedValue(null);
     const result = await processInboundEmail(
@@ -194,6 +210,7 @@ describe("processInboundEmail", () => {
       {
         rawEmail: simpleEmail(),
         localPart: "alerts",
+        envelopeFrom: "sender@example.com",
         ...PIPELINE_CONFIG,
       },
     );
@@ -210,6 +227,7 @@ describe("processInboundEmail", () => {
       {
         rawEmail: simpleEmail(),
         localPart: "alerts",
+        envelopeFrom: "sender@example.com",
         ...PIPELINE_CONFIG,
       },
     );
@@ -300,6 +318,7 @@ describe("processInboundEmail", () => {
       rawEmail: simpleEmail(),
       rawEmailPath: "/tmp/raw/privacy.eml",
       localPart: "alerts",
+      envelopeFrom: "sender@example.com",
       ...PIPELINE_CONFIG,
     });
 
@@ -334,6 +353,7 @@ describe("processInboundEmail", () => {
       {
         rawEmail: simpleEmail(),
         localPart: "alerts",
+        envelopeFrom: "sender@example.com",
         ...PIPELINE_CONFIG,
       },
     );
@@ -355,6 +375,7 @@ describe("processInboundEmail", () => {
       {
         rawEmail: simpleEmail(),
         localPart: "alerts",
+        envelopeFrom: "sender@example.com",
         ...PIPELINE_CONFIG,
       },
     );
@@ -377,6 +398,7 @@ describe("processInboundEmail", () => {
       {
         rawEmail: simpleEmail(),
         localPart: "alerts",
+        envelopeFrom: "sender@example.com",
         ...PIPELINE_CONFIG,
       },
     );

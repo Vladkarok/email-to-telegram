@@ -281,7 +281,7 @@ describe("loadConfig", () => {
     process.env["APP_MODE"] = "hosted";
     process.env["HOSTED_MAIL_DOMAIN"] = "inbox.example.com";
     process.env["BILLING_PROVIDER"] = "stripe";
-    process.env["STRIPE_SECRET_KEY"] = " sk_test_123 ";
+    process.env["STRIPE_SECRET_KEY"] = " sk_live_123 ";
     process.env["STRIPE_WEBHOOK_SECRET"] = "whsec_123";
     process.env["STRIPE_PRICE_PERSONAL_MONTHLY"] = "price_personal_monthly";
     process.env["STRIPE_PRICE_PERSONAL_YEARLY"] = "price_personal_yearly";
@@ -295,7 +295,7 @@ describe("loadConfig", () => {
     const config = loadConfig();
 
     expect(config.billingProvider).toBe("stripe");
-    expect(config.stripeSecretKey).toBe("sk_test_123");
+    expect(config.stripeSecretKey).toBe("sk_live_123");
     expect(config.stripeWebhookSecret).toBe("whsec_123");
     expect(config.stripePriceIds).toEqual({
       personalMonthly: "price_personal_monthly",

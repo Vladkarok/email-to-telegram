@@ -3,11 +3,12 @@ import { randomUUID } from "crypto";
 import type { FastifyInstance } from "fastify";
 import { verifyWorkerRequest } from "../../utils/workerAuth.js";
 import { getDb } from "../../db/client.js";
+import { claimWorkerRequestNonce } from "../../db/repos/workerRequestNonces.js";
 import { getApi } from "../../telegram/api.js";
 import { queueInboundEmail, deliverQueuedEmail } from "../../email/pipeline.js";
 import { checkInboundLimit } from "../../billing/limits.js";
 import { findHostedInboundRejection } from "../../abuse/hostedInboundBlocklist.js";
-import { findAliasForInbound, shouldUseHostedDomainRouting } from "../../email/inboundRouting.js";
+import { findAliasForInbound } from "../../email/inboundRouting.js";
 import {
   writeRawEmail,
   writePendingRawEmailMeta,
@@ -80,6 +81,7 @@ export function rawRoute(
     async (req, reply) => {
       const sig = req.headers["x-worker-sig"] as string | undefined;
       const ts = req.headers["x-worker-ts"] as string | undefined;
+      const sigVersion = req.headers["x-worker-sig-v"] as string | undefined;
       const localPart = req.headers["x-local-part"] as string | undefined;
       // SMTP envelope sender supplied by the Cloudflare Worker (message.from = MAIL FROM).
       // Used as the authoritative sender for allow-rule enforcement.
@@ -103,9 +105,21 @@ export function rawRoute(
         return;
       }
 
-      if (!verifyWorkerRequest(body, sig, ts)) {
+      const routingHeaders =
+        sigVersion === "v2"
+          ? { localPart: localPart ?? "", recipientDomain, envelopeFrom }
+          : undefined;
+      if (!verifyWorkerRequest(body, sig, ts, routingHeaders)) {
         logWorkerForwardFailed("invalid_signature");
         recordRawInbound("rejected", "invalid_signature");
+        await reply.status(401).send({ error: "invalid signature" });
+        return;
+      }
+
+      const nonceClaimed = await claimWorkerRequestNonce(getDb(), sig, new Date(Number(ts)));
+      if (!nonceClaimed) {
+        logWorkerForwardFailed("replayed_signature");
+        recordRawInbound("rejected", "replayed_signature");
         await reply.status(401).send({ error: "invalid signature" });
         return;
       }
@@ -118,48 +132,46 @@ export function rawRoute(
       }
 
       const alias = await findAliasForInbound(getDb(), { localPart, recipientDomain });
-      if (shouldUseHostedDomainRouting() && alias?.status !== "active") {
+      if (!alias || alias.status !== "active") {
         recordRawInbound("rejected", "alias_not_found");
         await reply.status(403).send({ error: "rejected" });
         return;
       }
-      if (alias?.status === "active") {
-        const hostedBlock = await findHostedInboundRejection(getDb(), {
-          userId: alias.createdBy,
-          localPart,
-          recipientDomain,
-          envelopeFrom,
-        });
-        if (hostedBlock) {
-          getLogger().info(
-            {
-              localPart,
-              aliasId: alias.id,
-              userId: alias.createdBy.toString(),
-              blockType: hostedBlock.blockType,
-              blockValue: hostedBlock.value,
-            },
-            "inbound.raw.rejected",
-          );
-          recordRawInbound("rejected", "hosted_blocklist");
-          await reply.status(403).send({ error: "rejected" });
-          return;
-        }
-
-        const inboundLimit = await checkInboundLimit(
-          getDb(),
-          alias.createdBy,
-          body.length,
-          BigInt(body.length),
+      const hostedBlock = await findHostedInboundRejection(getDb(), {
+        userId: alias.createdBy,
+        localPart,
+        recipientDomain,
+        envelopeFrom,
+      });
+      if (hostedBlock) {
+        getLogger().info(
+          {
+            localPart,
+            aliasId: alias.id,
+            userId: alias.createdBy.toString(),
+            blockType: hostedBlock.blockType,
+            blockValue: hostedBlock.value,
+          },
+          "inbound.raw.rejected",
         );
-        if (!inboundLimit.ok) {
-          const rejectionStatus = statusForQueueRejection(inboundLimit.code);
-          if (rejectionStatus) {
-            recordRawInbound("rejected", inboundLimit.code);
-            recordQuotaRejection(inboundLimit.code);
-            await reply.status(rejectionStatus).send({ error: "rejected" });
-            return;
-          }
+        recordRawInbound("rejected", "hosted_blocklist");
+        await reply.status(403).send({ error: "rejected" });
+        return;
+      }
+
+      const inboundLimit = await checkInboundLimit(
+        getDb(),
+        alias.createdBy,
+        body.length,
+        BigInt(body.length),
+      );
+      if (!inboundLimit.ok) {
+        const rejectionStatus = statusForQueueRejection(inboundLimit.code);
+        if (rejectionStatus) {
+          recordRawInbound("rejected", inboundLimit.code);
+          recordQuotaRejection(inboundLimit.code);
+          await reply.status(rejectionStatus).send({ error: "rejected" });
+          return;
         }
       }
 

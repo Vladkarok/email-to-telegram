@@ -59,7 +59,10 @@ export function billingRoutes(app: FastifyInstance): void {
 
   app.post(
     "/billing/stripe/webhook",
-    { config: { rawBody: true }, bodyLimit: 256 * 1024 },
+    {
+      config: { rawBody: true, rateLimit: { max: 60, timeWindow: "1 minute" } },
+      bodyLimit: 256 * 1024,
+    },
     async (req, reply) => {
       const signature = req.headers["stripe-signature"];
       const rawBody = req.rawBody;

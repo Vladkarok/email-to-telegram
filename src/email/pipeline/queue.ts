@@ -18,6 +18,7 @@ import { incrementUserUsageMonth, usageMonthForDate } from "../../db/repos/usage
 import { incrementUserStorageUsage } from "../../db/repos/storageUsage.js";
 import type { Db, PipelineInput, QueueInboundResult } from "./types.js";
 import { recordQuotaRejection } from "../../observability/metrics.js";
+import { normalizeEnvelopeSender } from "../envelopeSender.js";
 
 export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<QueueInboundResult> {
   const {
@@ -41,15 +42,15 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
   // 2. Parse email
   const parsed = await parseEmail(rawEmail, rawEmail.length);
 
-  // 3. Allow-rule check — use the SMTP envelope sender from the HTTP header when available
-  // (it comes from Cloudflare's message.from and cannot be spoofed via email headers),
-  // falling back to the parsed From: address only when the worker doesn't supply it.
-  const envelopeFrom = input.envelopeFrom ?? parsed.envelopeFrom;
-  if (envelopeFrom) {
-    const allowed = await checkAllowRule(db, alias.id, envelopeFrom);
-    if (!allowed) {
-      return { queued: false, result: { ok: false, reason: "sender_not_allowed" } };
-    }
+  // 3. Allow-rule check — only the SMTP envelope sender supplied by the Worker
+  // is authoritative. MIME From: is attacker-controlled and must not authorize.
+  const envelopeFrom = normalizeEnvelopeSender(input.envelopeFrom);
+  if (!envelopeFrom) {
+    return { queued: false, result: { ok: false, reason: "sender_not_allowed" } };
+  }
+  const allowed = await checkAllowRule(db, alias.id, envelopeFrom);
+  if (!allowed) {
+    return { queued: false, result: { ok: false, reason: "sender_not_allowed" } };
   }
 
   const receivedSince = new Date(Date.now() - 60 * 60 * 1000);

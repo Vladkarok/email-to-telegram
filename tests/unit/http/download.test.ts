@@ -164,7 +164,7 @@ describe("GET /dl/:token", () => {
     const app = await buildApp();
     const res = await app.inject({ method: "GET", url: `/dl/${token}` });
     expect(res.statusCode).toBe(200);
-    expect(res.headers["content-type"]).toContain("application/pdf");
+    expect(res.headers["content-type"]).toContain("application/octet-stream");
     expect(mockMarkDownloaded).toHaveBeenCalledOnce();
     expect(mockIncrementUserUsageMonth).toHaveBeenCalledWith(
       expect.anything(),
@@ -204,7 +204,7 @@ describe("GET /dl/:token", () => {
     const app = await buildApp();
     const res = await app.inject({ method: "GET", url: `/dl/${token}` });
     expect(res.statusCode).toBe(410);
-    expect(mockDisposeOpened).toHaveBeenCalledOnce();
+    expect(mockOpenAttachment).not.toHaveBeenCalled();
   });
 
   it("returns 403 and keeps the link unused when the org egress limit is exhausted", async () => {
@@ -240,7 +240,7 @@ describe("GET /dl/:token", () => {
     expect(res.json()).toEqual({ error: "download quota exceeded" });
     expect(mockMarkDownloaded).not.toHaveBeenCalled();
     expect(mockIncrementUserUsageMonth).not.toHaveBeenCalled();
-    expect(mockDisposeOpened).toHaveBeenCalledOnce();
+    expect(mockOpenAttachment).not.toHaveBeenCalled();
   });
 
   it("returns 500 when attachment storage cannot be opened or decrypted", async () => {
@@ -273,7 +273,7 @@ describe("GET /dl/:token", () => {
 
     expect(res.statusCode).toBe(500);
     expect(res.json()).toEqual({ error: "download failed" });
-    expect(mockMarkDownloaded).not.toHaveBeenCalled();
+    expect(mockMarkDownloaded).toHaveBeenCalledOnce();
   });
 
   it("returns 403 when the token HMAC does not match the stored attachment", async () => {
@@ -331,7 +331,7 @@ describe("GET /dl/:token", () => {
     const res = await app.inject({ method: "GET", url: `/dl/${token}` });
 
     expect(res.statusCode).toBe(200);
-    expect(res.headers["content-type"]).toContain("text/plain; charset=iso-8859-1");
+    expect(res.headers["content-type"]).toContain("application/octet-stream");
     expect(res.headers["content-disposition"]).toContain(
       'attachment; filename="report___2026.txt"',
     );
@@ -365,7 +365,7 @@ describe("GET /dl/:token", () => {
     const res = await app.inject({ method: "GET", url: `/dl/${token}` });
 
     expect(res.statusCode).toBe(200);
-    expect(res.headers["content-type"]).toContain("text/csv; charset=utf-8");
+    expect(res.headers["content-type"]).toContain("application/octet-stream");
     expect(res.headers["content-disposition"]).toContain('attachment; filename="attachment"');
   });
 

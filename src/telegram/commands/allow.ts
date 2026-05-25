@@ -2,7 +2,6 @@ import { InlineKeyboard } from "grammy";
 import type { CommandContext, Context } from "grammy";
 import { CB_BILLING_UPGRADE } from "../callbacks.js";
 import { getDb } from "../../db/client.js";
-import { findAliasByFullAddress, findAliasByLocalPartAnyDomain } from "../../db/repos/aliases.js";
 import type { EmailAddress } from "../../db/schema.js";
 import {
   addAllowRule,
@@ -15,12 +14,12 @@ import {
   hasActiveHostedUser,
   withUserQuotaLock,
 } from "../../billing/limits.js";
-import { canManageAlias } from "../authorization.js";
 import { parseAllowValue } from "../allowValue.js";
 import { escapeHtml } from "../../utils/html.js";
 import { loadConfig } from "../../config.js";
 import { donateHintSuffix } from "../donateHint.js";
 import { getMessages, resolveLocale } from "../../i18n/index.js";
+import { aliasResolutionError, resolveManageableAlias } from "../aliasResolver.js";
 
 export async function allowHandler(ctx: CommandContext<Context>): Promise<void> {
   const parts = ctx.match.trim().split(/\s+/).filter(Boolean);
@@ -40,25 +39,30 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
     return;
   }
 
-  const alias = await findAliasForAllowCommand(db, aliasName);
-
-  if (!alias) {
-    await ctx.reply(messages.allowCommand.aliasNotFound(escapeHtml(aliasName)), {
-      parse_mode: "HTML",
-    });
+  if (!ctx.from || !ctx.chat) {
+    await ctx.reply(messages.common.accessDenied);
     return;
   }
+
+  const resolved = await resolveManageableAlias(
+    db,
+    ctx.api,
+    ctx.from.id,
+    BigInt(ctx.chat.id),
+    aliasName,
+    ctx.chat.type,
+  );
+  if (!resolved.ok) {
+    await ctx.reply(aliasResolutionError(resolved, aliasName, ctx.chat.type, locale));
+    return;
+  }
+  const alias = resolved.alias;
 
   if (!(await hasActiveHostedUser(db, alias.createdBy))) {
     await replyForAllowRuleLimitFailure(ctx, alias.localPart, {
       ok: false,
       code: "subscription_inactive",
     });
-    return;
-  }
-
-  if (!ctx.from || !(await canManageAlias(db, ctx.api, ctx.from.id, alias.id, { fresh: true }))) {
-    await ctx.reply(messages.common.accessDenied);
     return;
   }
 
@@ -100,16 +104,6 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
       parse_mode: "HTML",
     });
   }
-}
-
-async function findAliasForAllowCommand(
-  db: ReturnType<typeof getDb>,
-  aliasName: string,
-): Promise<EmailAddress | null> {
-  if (aliasName.includes("@")) {
-    return findAliasByFullAddress(db, aliasName.toLowerCase());
-  }
-  return findAliasByLocalPartAnyDomain(db, aliasName);
 }
 
 export async function addAllowRuleForAlias(

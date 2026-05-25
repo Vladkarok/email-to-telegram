@@ -105,6 +105,7 @@ import { canManageChat, canManageAlias } from "./authorization.js";
 import { aliasResolutionError, resolveManageableAlias } from "./aliasResolver.js";
 import { parseAllowValue } from "./allowValue.js";
 import { getLogger } from "../utils/logger.js";
+import { RateLimiter } from "../utils/rateLimit.js";
 import { InlineKeyboard } from "grammy";
 import { hasActiveHostedUser } from "../billing/limits.js";
 import { escapeHtml } from "../utils/html.js";
@@ -112,9 +113,14 @@ import { DEFAULT_LOCALE, SUPPORTED_LOCALES, getMessages, resolveLocale } from ".
 
 export { assertHostedChatReady, assertHostedAliasReady } from "./middleware/authorization.js";
 
+const PRE_AUTH_COMMANDS = new Set(["start", "privacy", "delete_me", "export_me"]);
+const PRE_AUTH_CALLBACKS = new Set([CB_DELETE_ME_CONFIRM, CB_DELETE_ME_CANCEL]);
+
 export function createBot(token: string): Bot {
   const bot = new Bot(token);
   const logger = getLogger();
+  const preAuthLimiter = new RateLimiter(5, 60_000);
+  preAuthLimiter.startSweep();
 
   // Global error handler
   bot.catch((err) => {
@@ -123,6 +129,17 @@ export function createBot(token: string): Bot {
 
   // ── Auto-register groups ────────────────────────────────────────────────────
   bot.on("my_chat_member", chatMemberHandler);
+
+  bot.use(async (ctx, next) => {
+    if (!ctx.from || !isPreAuthPublicEntryPoint(ctx)) {
+      await next();
+      return;
+    }
+    if (!preAuthLimiter.check(`pre:${ctx.from.id}`)) {
+      return;
+    }
+    await next();
+  });
 
   // ── Commands exempt from auth ───────────────────────────────────────────────
   // /start: onboarding entry point
@@ -526,6 +543,16 @@ export function createBot(token: string): Bot {
   });
 
   return bot;
+}
+
+function isPreAuthPublicEntryPoint(ctx: Context): boolean {
+  const text = ctx.message?.text?.trim();
+  if (text?.startsWith("/")) {
+    const command = text.slice(1).split(/\s+/, 1)[0]?.split("@", 1)[0];
+    return command ? PRE_AUTH_COMMANDS.has(command) : false;
+  }
+  const data = ctx.callbackQuery?.data;
+  return data ? PRE_AUTH_CALLBACKS.has(data) : false;
 }
 
 /**

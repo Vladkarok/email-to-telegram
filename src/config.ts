@@ -11,9 +11,14 @@ const portSchema = z.coerce
   .min(1)
   .max(65535, { message: "Port must be between 1 and 65535" });
 
-const secretSchema = z.string().min(16, {
-  message: "Secret must be at least 16 characters",
-});
+const secretSchema = z
+  .string()
+  .min(32, {
+    message: "Secret must be at least 32 characters",
+  })
+  .refine((value) => !/^(changeme|password|secret|admin)/i.test(value), {
+    message: "Secret must not start with a common weak pattern",
+  });
 
 const hostedMailDomainSchema = z
   .string()
@@ -115,6 +120,7 @@ const envSchema = z.object({
   /** Directory to store nightly DB backups (optional — skips backup if unset) */
   BACKUP_DIR: z.string().optional(),
   BACKUP_ARCHIVE_ENCRYPTION: z.enum(["off", "storage-key"]).default("off"),
+  ALLOW_PLAINTEXT_DB_BACKUPS: optionalBooleanSchema,
   APP_MODE: appModeSchema,
   BILLING_PROVIDER: billingProviderSchema,
   HOSTED_MAIL_DOMAIN: hostedMailDomainSchema,
@@ -181,6 +187,7 @@ export interface AppConfig {
   alertChatId: bigint | undefined;
   backupDir: string | undefined;
   backupArchiveEncryption: "off" | "storage-key";
+  allowPlaintextDbBackups: boolean;
   stripeSecretKey: string | undefined;
   stripeWebhookSecret: string | undefined;
   stripePriceIds: StripePriceIds | undefined;
@@ -245,6 +252,17 @@ export function loadConfig(): AppConfig {
     );
   }
 
+  if (
+    env.BACKUP_DIR &&
+    env.STORAGE_ENCRYPTION_MODE === "local-v1" &&
+    env.BACKUP_ARCHIVE_ENCRYPTION === "off" &&
+    !env.ALLOW_PLAINTEXT_DB_BACKUPS
+  ) {
+    throw new Error(
+      "Invalid configuration:\n  BACKUP_ARCHIVE_ENCRYPTION=storage-key is required when encrypted storage backups are enabled; set ALLOW_PLAINTEXT_DB_BACKUPS=true to opt in to plaintext DB dumps",
+    );
+  }
+
   if (env.APP_MODE === "hosted" && !env.HOSTED_MAIL_DOMAIN) {
     throw new Error(
       "Invalid configuration:\n  HOSTED_MAIL_DOMAIN is required when APP_MODE=hosted",
@@ -274,6 +292,12 @@ export function loadConfig(): AppConfig {
     if (missing.length > 0) {
       throw new Error(
         `Invalid configuration:\n  BILLING_PROVIDER=stripe requires ${missing.join(", ")}`,
+      );
+    }
+
+    if (env.NODE_ENV === "production" && env.STRIPE_SECRET_KEY?.startsWith("sk_test_")) {
+      throw new Error(
+        "Invalid configuration:\n  STRIPE_SECRET_KEY must use a live key in production",
       );
     }
   }
@@ -349,6 +373,7 @@ export function loadConfig(): AppConfig {
     alertChatId: env.ALERT_CHAT_ID,
     backupDir: env.BACKUP_DIR,
     backupArchiveEncryption: env.BACKUP_ARCHIVE_ENCRYPTION,
+    allowPlaintextDbBackups: env.ALLOW_PLAINTEXT_DB_BACKUPS,
     stripeSecretKey: env.STRIPE_SECRET_KEY,
     stripeWebhookSecret: env.STRIPE_WEBHOOK_SECRET,
     stripePriceIds,
