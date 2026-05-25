@@ -1,0 +1,22 @@
+title: email-to-telegram
+description: Self-hosted email alias forwarding for Telegram. Published documentation for the open-source project and the hosted instance.
+url: https://vladkarok.github.io
+baseurl: /email-to-telegram
+
+theme: jekyll-theme-cayman
+permalink: pretty
+
+# Cayman theme options
+show_downloads: false
+
+# Markdown
+markdown: kramdown
+kramdown:
+  input: GFM
+  hard_wrap: false
+
+# Build hygiene
+exclude:
+  - vendor
+  - Gemfile
+  - Gemfile.lock
