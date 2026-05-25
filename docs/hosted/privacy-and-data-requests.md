@@ -129,31 +129,52 @@ pages.
 
 ## Data Export
 
-Hosted account owners can request a basic export of account metadata, aliases,
-usage, storage counters, and delivery-log summaries.
+Hosted account owners can self-serve a basic export of account metadata,
+aliases, allow rules, custom domains, per-row delivery metadata, delivery
+attempts, attachment manifest, usage counters, storage usage, and manual
+billing events by running `/export_me` in a DM with the bot. The bot replies
+with a JSON file built from your live data. There is a 60-second cooldown
+per user.
 
-Target handling time:
+Raw email bodies and attachment bytes are intentionally excluded from the
+self-serve export — they would frequently exceed Telegram's 50 MiB bot upload
+limit. Email the operator if you need raw bytes.
+
+Email fallback at `vladyslavkarpenko3@gmail.com` is used for cases the bot
+cannot handle directly: requests for raw email bodies or attachment files,
+exports too large to deliver via Telegram, requests from a Telegram account
+you no longer control, or formal GDPR data-access requests.
+
+Target handling time for the email fallback:
 
 - acknowledge the request within 7 calendar days
 - complete the export within 14 calendar days when identity and ownership are
   clear
 
-Export requests should be sent to `vladyslavkarpenko3@gmail.com`.
-
 ## Erasure
 
-Hosted account owners can request deletion of hosted account records and stored
-raw email/attachment files known to delivery logs.
+Hosted account owners can self-serve deletion of hosted account records,
+aliases, allow rules, custom domains, delivery logs, and stored raw email and
+attachment files by running `/delete_me` in a DM with the bot. The bot shows
+a preview of what will be wiped and asks for inline confirmation. On confirm,
+deletion happens immediately.
 
-Target handling time:
+Self-serve deletion is refused while a paid subscription is active — cancel
+the subscription first to avoid orphaned billing state.
 
-- acknowledge the request within 7 calendar days
-- complete erasure within 30 calendar days unless retention is legally required
+Email fallback at `vladyslavkarpenko3@gmail.com` is used for cases the bot
+cannot handle directly: requests from a Telegram account you no longer
+control, partial-file-delete failures the bot surfaces, formal GDPR erasure
+requests, and any case where ownership requires manual verification.
 
 Some records may be retained when required for security, fraud prevention,
 accounting, dispute handling, legal compliance, or abuse investigation.
 
-Erasure requests should be sent to `vladyslavkarpenko3@gmail.com`.
+Target handling time for the email fallback:
+
+- acknowledge the request within 7 calendar days
+- complete erasure within 30 calendar days unless retention is legally
+  required
 
 ## Ownership Verification
 
