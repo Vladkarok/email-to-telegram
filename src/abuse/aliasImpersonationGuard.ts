@@ -50,6 +50,10 @@ const PREFIX_BLOCKLIST: readonly string[] = [
  * stripped + de-leet form catches pay.pal, p_aypal, g00gle.
  * Length ≥6 chars and no English-word collisions; short tokens go in
  * BRAND_SHORT_BOUNDED.
+ *
+ * Unicode homoglyph attacks (Cyrillic/Greek lookalikes) are not
+ * reachable here because upstream NAME_RE = /^[a-z0-9._-]{1,32}$/
+ * rejects non-ASCII before this guard is called.
  */
 const BRAND_SUBSTRINGS_LONG: readonly string[] = [
   "paypal",
@@ -74,6 +78,11 @@ const BRAND_SUBSTRINGS_LONG: readonly string[] = [
   "barclays",
   "wellsfargo",
   "bankofamerica",
+  "telegram",
+  "discord",
+  "whatsapp",
+  "shopify",
+  "cloudflare",
 ];
 
 /**
@@ -134,9 +143,10 @@ function leetVariants(lower: string): readonly string[] {
   }
 
   const results = new Set<string>();
-  const chars = base.split("");
+  const baseChars = base.split("");
   const total = 1 << ones.length;
   for (let mask = 0; mask < total; mask++) {
+    const chars = [...baseChars];
     for (let j = 0; j < ones.length; j++) {
       chars[ones[j]] = (mask >> j) & 1 ? "l" : "i";
     }

@@ -62,6 +62,12 @@ describe("assertAliasNotImpersonation (hosted mode)", () => {
       "barclays",
       "wellsfargo",
       "bankofamerica",
+      // added in review #3
+      "telegram-support",
+      "discord-alerts",
+      "whatsapp-noreply",
+      "shopify-billing",
+      "cloudflare-security",
     ])("rejects long-brand substring: %s", (name) => {
       expect(() => assertAliasNotImpersonation(name)).toThrow(AliasImpersonationError);
     });
@@ -105,6 +111,15 @@ describe("assertAliasNotImpersonation (hosted mode)", () => {
     ])("rejects prefix pattern: %s", (name) => {
       expect(() => assertAliasNotImpersonation(name)).toThrow(AliasImpersonationError);
     });
+  });
+
+  describe("leading/trailing separator edge cases in prefix matching", () => {
+    it.each(["admin.", "admin..", "no--reply"])(
+      "rejects prefix with edge-case separators: %s",
+      (name) => {
+        expect(() => assertAliasNotImpersonation(name)).toThrow(AliasImpersonationError);
+      },
+    );
   });
 
   describe("separator-split bypass (CRITICAL — review finding)", () => {
