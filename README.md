@@ -7,6 +7,8 @@ send to each alias, and forward accepted mail into a Telegram DM, group, or foru
 topic. Attachments are stored on disk and exposed through expiring download links;
 image attachments are also sent to Telegram directly when possible.
 
+![Demo: create alias, send email, receive in Telegram](docs/assets/demo.gif)
+
 ## Intended Use And Trust Model
 
 This project is intended for operational alerts, monitoring mail, and convenience
