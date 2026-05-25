@@ -118,4 +118,12 @@ describe("delivery view tokens", () => {
     expect(hashStoredToken(token)).toMatch(/^[a-f0-9]{64}$/);
     expect(hashStoredToken(token)).toBe(hashStoredToken(token));
   });
+
+  it("returns false when verifying without HMAC_SECRET set", () => {
+    const { token, expiresAt } = generateDeliveryViewToken("log-uuid-1");
+    const saved = process.env["HMAC_SECRET"];
+    delete process.env["HMAC_SECRET"];
+    expect(verifyDeliveryViewToken(token, "log-uuid-1", expiresAt)).toBe(false);
+    process.env["HMAC_SECRET"] = saved;
+  });
 });

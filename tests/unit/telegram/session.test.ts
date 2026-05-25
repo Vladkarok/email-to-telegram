@@ -1,5 +1,11 @@
-import { describe, it, expect } from "vitest";
-import { getPending, setPending, clearPending } from "../../../src/telegram/session.js";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  getPending,
+  setPending,
+  clearPending,
+  startSessionSweep,
+  destroySessionStore,
+} from "../../../src/telegram/session.js";
 
 describe("session", () => {
   it("returns undefined when no pending action is set", () => {
@@ -44,5 +50,42 @@ describe("session", () => {
     clearPending(40);
     expect(getPending(40)).toBeUndefined();
     expect(getPending(41)).toBeDefined();
+  });
+
+  describe("TTL eviction", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      destroySessionStore();
+    });
+
+    afterEach(() => {
+      destroySessionStore();
+      vi.useRealTimers();
+    });
+
+    it("evicts an expired session on read", () => {
+      setPending(50, { action: "newemail", chatId: -500n, chatTitle: "Z" });
+      vi.advanceTimersByTime(31 * 60 * 1000); // past 30-minute TTL
+      expect(getPending(50)).toBeUndefined();
+    });
+
+    it("startSessionSweep is idempotent (second call is a no-op)", () => {
+      startSessionSweep();
+      startSessionSweep(); // should not throw or add a second timer
+      destroySessionStore();
+    });
+
+    it("destroySessionStore clears pending and stops sweep", () => {
+      startSessionSweep();
+      setPending(60, { action: "newemail", chatId: -600n, chatTitle: "W" });
+      destroySessionStore();
+      expect(getPending(60)).toBeUndefined();
+    });
+
+    it("destroySessionStore is a no-op when sweep was never started", () => {
+      setPending(70, { action: "newemail", chatId: -700n, chatTitle: "V" });
+      destroySessionStore(); // sweepTimer is null here
+      expect(getPending(70)).toBeUndefined();
+    });
   });
 });
