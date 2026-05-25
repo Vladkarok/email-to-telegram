@@ -154,9 +154,22 @@ describe("assertAliasNotImpersonation (hosted mode)", () => {
       "f4cebook",
       "m3ta-help", // leet + boundary
       "app1e",
+      // multi-1 combos — git1ab / netf11x require 2^k expansion (HIGH from review #2)
+      "git1ab",
+      "g1t1ab",
+      "netf11x",
     ])("rejects leet-speak: %s", (name) => {
       expect(() => assertAliasNotImpersonation(name)).toThrow(AliasImpersonationError);
     });
+  });
+
+  describe("digit-boundary on short brands and prefix list", () => {
+    it.each(["admin1", "account9", "verify123", "apple1", "bank2025", "slack4"])(
+      "rejects digit immediately after match: %s",
+      (name) => {
+        expect(() => assertAliasNotImpersonation(name)).toThrow(AliasImpersonationError);
+      },
+    );
   });
 
   describe("false-positive prevention: legitimate names with brand-overlap survive", () => {
@@ -183,6 +196,15 @@ describe("assertAliasNotImpersonation (hosted mode)", () => {
       "configuration",
       "notional",
       "emotional",
+      // prefix false-positive prevention (MEDIUM from review #2)
+      // continuous English letters after the prefix = not blocked
+      "administrator",
+      "accountant",
+      "accounting",
+      "billings",
+      "adminx", // letter after prefix = English continuation
+      // app1ex: 1→l gives applex (not apple), 1→i gives appie (not apple) — intentionally allowed
+      "app1ex",
     ])("allows English word with brand overlap: %s", (name) => {
       expect(() => assertAliasNotImpersonation(name)).not.toThrow();
     });
