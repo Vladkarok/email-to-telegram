@@ -28,6 +28,7 @@ concurrency:
 jobs:
   build-and-push:
     name: Build and push :main image
+    if: github.repository == 'Vladkarok/email-to-telegram'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -52,6 +53,7 @@ jobs:
 
   deploy:
     name: Deploy to staging VPS
+    if: github.repository == 'Vladkarok/email-to-telegram'
     runs-on: [self-hosted, linux, x64, email-tg-staging]
     needs: build-and-push
 
