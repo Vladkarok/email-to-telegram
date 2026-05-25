@@ -18,6 +18,8 @@ advice for your jurisdiction, and revisit them when paid billing is enabled.
   reporting language
 - [`privacy-and-data-requests.md`](./privacy-and-data-requests.md): hosted
   privacy and data request language
+- [`support.md`](./support.md): common troubleshooting guide ("5 things that go
+  wrong")
 
 ## Required Public Contacts
 
