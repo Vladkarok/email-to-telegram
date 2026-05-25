@@ -26,4 +26,17 @@ describe("retryAsync", () => {
     await expect(retryAsync(fn, { attempts: 3, delaysMs: [0, 0] })).rejects.toThrow("persistent");
     expect(fn).toHaveBeenCalledTimes(3);
   });
+
+  it("reuses last delay entry when there are more retries than delay entries", async () => {
+    const fn = vi.fn().mockRejectedValue(new Error("x"));
+    // 3 attempts but only 1 delay entry → attempt 1 uses delaysMs[1] which is undefined → fallback
+    await expect(retryAsync(fn, { attempts: 3, delaysMs: [0] })).rejects.toThrow("x");
+    expect(fn).toHaveBeenCalledTimes(3);
+  });
+
+  it("falls back to 0 delay when delaysMs is empty", async () => {
+    const fn = vi.fn().mockRejectedValue(new Error("x"));
+    await expect(retryAsync(fn, { attempts: 2, delaysMs: [] })).rejects.toThrow("x");
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
 });

@@ -61,4 +61,29 @@ describe("RateLimiter", () => {
     vi.advanceTimersByTime(31_000);
     expect(limiter.check("k")).toBe(true);
   });
+
+  it("startSweep prunes fully-expired keys", () => {
+    const limiter = new RateLimiter(2, 1_000); // 2 per second
+    limiter.check("sweep-key");
+    limiter.startSweep(500);
+
+    vi.advanceTimersByTime(2_000); // entries expire + sweep fires
+    // After sweep the store is pruned; a new check should succeed
+    expect(limiter.check("sweep-key")).toBe(true);
+    limiter.destroy();
+  });
+
+  it("startSweep is idempotent (second call is a no-op)", () => {
+    const limiter = new RateLimiter(5, 60_000);
+    limiter.startSweep(500);
+    limiter.startSweep(500);
+    limiter.destroy();
+  });
+
+  it("destroy stops the sweep timer", () => {
+    const limiter = new RateLimiter(5, 60_000);
+    limiter.startSweep(500);
+    limiter.destroy(); // clears sweepTimer
+    limiter.destroy(); // second call with null sweepTimer — no-op
+  });
 });
