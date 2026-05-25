@@ -73,7 +73,10 @@ effective limits.
 
 If the workspace is over free limits after cancellation, existing aliases and
 data are not deleted automatically, but inbound acceptance and management
-actions can be restricted until the user deletes data/aliases or upgrades again.
+actions can be restricted until the user reduces their footprint or upgrades
+again. Users can delete individual aliases with `/deleteemail` or wipe their
+entire workspace with `/delete_me` (immediate, irreversible, no operator
+involvement).
 
 ## Failed Payments
 

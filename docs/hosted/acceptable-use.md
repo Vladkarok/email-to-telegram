@@ -4,9 +4,9 @@ This is public-facing draft language for the hosted service. It is not legal
 advice. Replace placeholders and review before publication.
 
 > **Status:** Hosted operates in beta with no live billing yet. The abuse
-> policy below applies to the current beta hosted service. Contact addresses
-> (`<abuse@example.com>` etc.) are **to be configured** before live public
-> launch.
+> policy below applies to the current beta hosted service. Abuse and privacy
+> contact: `vladyslavkarpenko3@gmail.com` (mark the subject line `ABUSE:`
+> for abuse reports to help triage).
 
 ## Intended Use
 
@@ -72,7 +72,8 @@ controls.
 ## Reporting Abuse
 
 Report suspected abuse, phishing, malware, spam, or shared-domain reputation
-issues to `<abuse@example.com>`.
+issues to `vladyslavkarpenko3@gmail.com` (mark the subject line `ABUSE:` to
+help triage).
 
 Include:
 
