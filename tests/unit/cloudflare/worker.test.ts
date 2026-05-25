@@ -38,7 +38,7 @@ function createMessage(): TestMessage {
   return {
     from: "sender@example.com",
     to: "alerts@example.com",
-    headers: new Headers(),
+    headers: new Headers({ "Authentication-Results": "mx.cloudflare.net; spf=pass" }),
     raw: new ReadableStream({
       start(controller) {
         controller.enqueue(new TextEncoder().encode("From: sender@example.com\r\n\r\nHello"));
@@ -91,6 +91,7 @@ describe("Cloudflare Email Worker", () => {
     });
 
     const rawInit = fetchMock.mock.calls[1][1] as RequestInit;
+    expect((rawInit.headers as Record<string, string>)["X-Worker-Sig-V"]).toBe("v2");
     expect((rawInit.headers as Record<string, string>)["X-Local-Part"]).toBe("alerts");
     expect((rawInit.headers as Record<string, string>)["X-Recipient-Domain"]).toBe("example.com");
     expect((rawInit.headers as Record<string, string>)["X-Envelope-From"]).toBe(

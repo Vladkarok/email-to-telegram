@@ -16,23 +16,6 @@ import type * as schema from "../../db/schema.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
-const SAFE_MIME_TYPES = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "image/bmp",
-  "image/tiff",
-  "application/pdf",
-]);
-
-function isSafeMime(mime: string): boolean {
-  if (SAFE_MIME_TYPES.has(mime)) return true;
-  if (mime === "text/plain" || mime.startsWith("text/plain;")) return true;
-  if (mime === "text/csv" || mime.startsWith("text/csv;")) return true;
-  return false;
-}
-
 export function downloadRoute(app: FastifyInstance): void {
   app.get(
     "/dl/:token",
@@ -57,19 +40,12 @@ export function downloadRoute(app: FastifyInstance): void {
         return;
       }
 
-      let opened;
-      try {
-        opened = await openAttachmentStream(link.attachment);
-      } catch {
-        await reply.status(500).send({ error: "download failed" });
-        return;
-      }
-      const { stream, size } = opened;
       const quotaMonth = usageMonthForDate();
       const ownerUserId = link.attachment.userId;
+      const reservedSize = BigInt(link.attachment.sizeBytes ?? 0);
 
       const claimResult = await withUserQuotaLock(getDb(), ownerUserId, async (tx: Db) => {
-        const egressLimit = await checkEgressLimit(tx, ownerUserId, BigInt(size), quotaMonth);
+        const egressLimit = await checkEgressLimit(tx, ownerUserId, reservedSize, quotaMonth);
         if (!egressLimit.ok) {
           return { status: "quota_exceeded" as const };
         }
@@ -79,26 +55,42 @@ export function downloadRoute(app: FastifyInstance): void {
           return { status: "already_claimed" as const };
         }
 
-        if (ownerUserId != null && size > 0) {
+        if (ownerUserId != null && reservedSize > 0n) {
           await incrementUserUsageMonth(tx, {
             userId: ownerUserId,
             month: quotaMonth,
-            egressBytes: BigInt(size),
+            egressBytes: reservedSize,
           });
         }
 
         return { status: "ok" as const };
       });
       if (claimResult.status === "quota_exceeded") {
-        await opened.dispose?.();
         await reply.status(403).send({ error: "download quota exceeded" });
         return;
       }
       if (claimResult.status === "already_claimed") {
-        await opened.dispose?.();
         await reply.status(410).send({ error: "link expired or already used" });
         return;
       }
+
+      let opened;
+      try {
+        opened = await openAttachmentStream(link.attachment);
+      } catch {
+        if (ownerUserId != null && reservedSize > 0n) {
+          await decrementUserUsageMonth(getDb(), {
+            userId: ownerUserId,
+            month: quotaMonth,
+            egressBytes: reservedSize,
+          }).catch((err: unknown) => {
+            getLogger().error({ err, userId: ownerUserId.toString() }, "failed to release egress");
+          });
+        }
+        await reply.status(500).send({ error: "download failed" });
+        return;
+      }
+      const { stream, size } = opened;
 
       const originalFilename = link.attachment.originalFilename ?? "attachment";
       // ASCII fallback for legacy clients: strip control chars and quote/backslash.
@@ -109,18 +101,16 @@ export function downloadRoute(app: FastifyInstance): void {
       const encodedFilename = encodeURIComponent(originalFilename);
       const contentDisposition = `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodedFilename}`;
 
-      const rawMime = (link.attachment.contentType ?? "").toLowerCase().trim();
-      const contentType = isSafeMime(rawMime) ? rawMime : "application/octet-stream";
       const trackedStream = trackReservedEgressUsage(
         stream,
         reply,
         ownerUserId,
         quotaMonth,
-        BigInt(size),
+        reservedSize,
       );
 
       await reply
-        .header("Content-Type", contentType)
+        .header("Content-Type", "application/octet-stream")
         .header("Content-Disposition", contentDisposition)
         .header("Content-Length", size)
         .header("Cache-Control", "no-store")

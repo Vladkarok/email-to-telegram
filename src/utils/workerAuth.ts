@@ -6,20 +6,37 @@ import { createHmac, timingSafeEqual } from "crypto";
 const MAX_AGE_MS = 5 * 60 * 1000;
 const MAX_FUTURE_SKEW_MS = 30 * 1000;
 
-export function signWorkerRequest(body: Buffer): { signature: string; timestamp: string } {
+export interface WorkerRoutingHeaders {
+  localPart: string;
+  recipientDomain?: string | null;
+  envelopeFrom?: string | null;
+}
+
+export function signWorkerRequest(
+  body: Buffer,
+  routingHeaders?: WorkerRoutingHeaders,
+): { signature: string; timestamp: string; signatureVersion: "v1" | "v2" } {
   const secret = process.env["WORKER_SECRET"];
   if (!secret) throw new Error("WORKER_SECRET not set");
 
   const timestamp = Date.now().toString();
-  const signature = createHmac("sha256", secret)
-    .update(timestamp + ".")
-    .update(body)
-    .digest("hex");
+  const hmac = createHmac("sha256", secret);
+  if (routingHeaders) {
+    hmac.update(canonicalRoutingPrefix(timestamp, routingHeaders));
+  } else {
+    hmac.update(timestamp + ".");
+  }
+  const signature = hmac.update(body).digest("hex");
 
-  return { signature, timestamp };
+  return { signature, timestamp, signatureVersion: routingHeaders ? "v2" : "v1" };
 }
 
-export function verifyWorkerRequest(body: Buffer, signature: string, timestamp: string): boolean {
+export function verifyWorkerRequest(
+  body: Buffer,
+  signature: string,
+  timestamp: string,
+  routingHeaders?: WorkerRoutingHeaders,
+): boolean {
   const secret = process.env["WORKER_SECRET"];
   if (!secret) return false;
 
@@ -31,10 +48,13 @@ export function verifyWorkerRequest(body: Buffer, signature: string, timestamp: 
   if (delta > MAX_AGE_MS) return false;
   if (delta < -MAX_FUTURE_SKEW_MS) return false;
 
-  const expected = createHmac("sha256", secret)
-    .update(timestamp + ".")
-    .update(body)
-    .digest("hex");
+  const hmac = createHmac("sha256", secret);
+  if (routingHeaders) {
+    hmac.update(canonicalRoutingPrefix(timestamp, routingHeaders));
+  } else {
+    hmac.update(timestamp + ".");
+  }
+  const expected = hmac.update(body).digest("hex");
 
   if (signature.length !== expected.length) return false;
 
@@ -43,4 +63,13 @@ export function verifyWorkerRequest(body: Buffer, signature: string, timestamp: 
   } catch {
     return false;
   }
+}
+
+function canonicalRoutingPrefix(timestamp: string, routingHeaders: WorkerRoutingHeaders): string {
+  return `${JSON.stringify([
+    timestamp,
+    routingHeaders.localPart,
+    routingHeaders.recipientDomain ?? "",
+    routingHeaders.envelopeFrom ?? "",
+  ])}.`;
 }

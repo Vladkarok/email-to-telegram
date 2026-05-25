@@ -22,6 +22,34 @@ describe("workerAuth", () => {
     expect(verifyWorkerRequest(body, signature, timestamp)).toBe(true);
   });
 
+  it("signed v2 request verifies with routing headers", () => {
+    const body = Buffer.from("raw email content");
+    const routing = {
+      localPart: "alerts",
+      recipientDomain: "example.com",
+      envelopeFrom: "sender@example.net",
+    };
+    const { signature, timestamp, signatureVersion } = signWorkerRequest(body, routing);
+    expect(signatureVersion).toBe("v2");
+    expect(verifyWorkerRequest(body, signature, timestamp, routing)).toBe(true);
+  });
+
+  it("rejects v2 request when routing headers are changed", () => {
+    const body = Buffer.from("raw email content");
+    const { signature, timestamp } = signWorkerRequest(body, {
+      localPart: "alerts",
+      recipientDomain: "example.com",
+      envelopeFrom: "sender@example.net",
+    });
+    expect(
+      verifyWorkerRequest(body, signature, timestamp, {
+        localPart: "billing",
+        recipientDomain: "example.com",
+        envelopeFrom: "sender@example.net",
+      }),
+    ).toBe(false);
+  });
+
   it("rejects a tampered body", () => {
     const body = Buffer.from("raw email content");
     const { signature, timestamp } = signWorkerRequest(body);

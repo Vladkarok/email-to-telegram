@@ -62,7 +62,6 @@ export async function exportMeHandler(ctx: Context): Promise<void> {
   try {
     const data = await exportHostedUserData(db, userId);
     if (!data) {
-      lastExportAt.delete(userId);
       await ctx.reply(messages.exportMe.noData);
       return;
     }

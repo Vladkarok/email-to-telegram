@@ -95,6 +95,10 @@ vi.mock("../../src/db/repos/hostedInboundBlocks.js", () => ({
   findHostedInboundBlock: vi.fn(() => Promise.resolve(state.hostedInboundBlock)),
 }));
 
+vi.mock("../../src/db/repos/workerRequestNonces.js", () => ({
+  claimWorkerRequestNonce: vi.fn(() => Promise.resolve(true)),
+}));
+
 vi.mock("../../src/email/dedup.js", () => ({
   isDuplicate: vi.fn(() => Promise.resolve(false)),
 }));
@@ -271,7 +275,7 @@ function createMessage(rawEmail: string): TestMessage {
   return {
     from: "sender@example.com",
     to: "alerts@example.com",
-    headers: new Headers(),
+    headers: new Headers({ "Authentication-Results": "mx.cloudflare.net; spf=pass" }),
     raw: new ReadableStream({
       start(controller) {
         controller.enqueue(bytes);

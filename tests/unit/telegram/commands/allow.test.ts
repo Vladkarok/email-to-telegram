@@ -9,6 +9,8 @@ vi.mock("../../../../src/config.js", () => ({
 
 const mockFindAliasByLocalPartAnyDomain = vi.fn();
 const mockFindAliasByFullAddress = vi.fn();
+const mockListAliasesByChat = vi.fn();
+const mockFindAliasesByCreator = vi.fn();
 const mockAddAllowRule = vi.fn();
 const mockFindAllowRuleByMatch = vi.fn();
 const mockRemoveAllowRule = vi.fn();
@@ -18,6 +20,8 @@ vi.mock("../../../../src/db/repos/aliases.js", () => ({
   findAliasByLocalPartAnyDomain: (...args: unknown[]): unknown =>
     mockFindAliasByLocalPartAnyDomain(...args),
   findAliasByFullAddress: (...args: unknown[]): unknown => mockFindAliasByFullAddress(...args),
+  listAliasesByChat: (...args: unknown[]): unknown => mockListAliasesByChat(...args),
+  findAliasesByCreator: (...args: unknown[]): unknown => mockFindAliasesByCreator(...args),
 }));
 
 vi.mock("../../../../src/db/repos/allowRules.js", () => ({
@@ -65,6 +69,8 @@ describe("/allow command", () => {
     mockFindAllowRuleByMatch.mockResolvedValue(null);
     mockFindAliasByLocalPartAnyDomain.mockResolvedValue(ALIAS);
     mockFindAliasByFullAddress.mockResolvedValue(ALIAS);
+    mockListAliasesByChat.mockResolvedValue([ALIAS]);
+    mockFindAliasesByCreator.mockResolvedValue([ALIAS]);
   });
 
   describe("add subcommand", () => {
@@ -194,7 +200,7 @@ describe("/allow command", () => {
       await allowHandler(ctx);
 
       expect(mockAddAllowRule).not.toHaveBeenCalled();
-      expect(mockCanManageAlias).not.toHaveBeenCalled();
+      expect(mockCanManageAlias).toHaveBeenCalledOnce();
       expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
         /account|active hosted account|not attached/i,
       );
