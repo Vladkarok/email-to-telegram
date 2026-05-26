@@ -28,10 +28,7 @@ export default {
     }
     const { localPart, domain: recipientDomain } = recipient;
 
-    if (!hasSpfPass(message.headers)) {
-      message.setReject("550 SPF check failed");
-      return;
-    }
+    logSpfObservation(message.headers);
 
     // ── 1. Preflight — verify alias + sender before streaming raw bytes ──────
     const preflightBody = JSON.stringify({
@@ -139,9 +136,13 @@ function isPermanentRawUploadFailure(status: number): boolean {
   return status === 402 || status === 403 || status === 413;
 }
 
-function hasSpfPass(headers: Headers): boolean {
+function logSpfObservation(headers: Headers): void {
   const authResults = headers.get("Authentication-Results") ?? "";
-  return /\bspf=pass\b/i.test(authResults);
+  if (!/\bspf=pass\b/i.test(authResults)) {
+    console.warn("spf pass not observed in worker headers", {
+      authenticationResultsPresent: authResults.length > 0,
+    });
+  }
 }
 
 /**
