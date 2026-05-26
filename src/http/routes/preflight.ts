@@ -101,15 +101,10 @@ export function preflightRoute(app: FastifyInstance): void {
         return;
       }
 
-      // The allow list is an authorization check. If the trusted SMTP envelope
-      // sender is missing (for example MAIL FROM:<>), fail closed instead of
-      // falling through or trusting MIME From: later in the pipeline.
-      if (!envelopeFrom) {
-        recordInboundPreflight("rejected", "sender_missing");
-        await reply.send({ accept: false });
-        return;
-      }
-      const allowed = await checkPreflightAllowRules(getDb(), alias.id, envelopeFrom);
+      // Preflight has no raw MIME, so it cannot verify DKIM/DMARC. It only
+      // rejects aliases with no allow rules; final sender authorization happens
+      // in the raw pipeline.
+      const allowed = await checkPreflightAllowRules(getDb(), alias.id);
       if (!allowed) {
         recordInboundPreflight("rejected", "sender_not_allowed");
         await reply.send({ accept: false });

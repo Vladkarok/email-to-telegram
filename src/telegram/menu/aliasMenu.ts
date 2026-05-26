@@ -115,7 +115,7 @@ async function buildAliasDetailMenu(
   const rules = await listAllowRules(db, alias.id);
   const rulesText =
     rules.length > 0
-      ? rules.map((r) => `• ${allowRuleIcon(r)} ${escapeHtml(r.matchValue)}`).join("\n")
+      ? rules.map((r) => `• ${allowRuleIcon()} ${escapeHtml(r.matchValue)}`).join("\n")
       : messages.aliasMenu.allowRulesEmpty;
 
   const text = messages.aliasMenu.detailLines({

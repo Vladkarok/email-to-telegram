@@ -5,28 +5,20 @@ import type * as schema from "../schema.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
-export type AllowAuthRequirement = "claimed" | "authenticated";
 export type AllowMatchType = "exact_email" | "domain";
 
 export async function addAllowRule(
   db: Db,
-  data: Pick<NewAllowRule, "emailAddressId" | "matchType" | "matchValue"> & {
-    authRequirement?: AllowAuthRequirement;
-  },
+  data: Pick<NewAllowRule, "emailAddressId" | "matchType" | "matchValue">,
 ): Promise<AllowRule> {
-  const [rule] = await db
-    .insert(allowRules)
-    .values({ ...data, authRequirement: data.authRequirement ?? "claimed" })
-    .returning();
+  const [rule] = await db.insert(allowRules).values(data).returning();
   if (!rule) throw new Error("addAllowRule: no row returned");
   return rule;
 }
 
 export async function findAllowRuleByMatch(
   db: Db,
-  data: Pick<NewAllowRule, "emailAddressId" | "matchType" | "matchValue"> & {
-    authRequirement?: AllowAuthRequirement;
-  },
+  data: Pick<NewAllowRule, "emailAddressId" | "matchType" | "matchValue">,
 ): Promise<AllowRule | null> {
   const [rule] = await db
     .select()
@@ -36,7 +28,6 @@ export async function findAllowRuleByMatch(
         eq(allowRules.emailAddressId, data.emailAddressId),
         eq(allowRules.matchType, data.matchType),
         eq(allowRules.matchValue, data.matchValue),
-        eq(allowRules.authRequirement, data.authRequirement ?? "claimed"),
       ),
     )
     .limit(1);
@@ -45,19 +36,16 @@ export async function findAllowRuleByMatch(
 
 export async function removeAllowRule(
   db: Db,
-  data: Pick<NewAllowRule, "emailAddressId" | "matchValue"> & {
-    authRequirement?: AllowAuthRequirement;
-  },
+  data: Pick<NewAllowRule, "emailAddressId" | "matchValue">,
 ): Promise<void> {
-  const conditions = [
-    eq(allowRules.emailAddressId, data.emailAddressId),
-    eq(allowRules.matchValue, data.matchValue),
-  ];
-  if (data.authRequirement) {
-    conditions.push(eq(allowRules.authRequirement, data.authRequirement));
-  }
-
-  await db.delete(allowRules).where(and(...conditions));
+  await db
+    .delete(allowRules)
+    .where(
+      and(
+        eq(allowRules.emailAddressId, data.emailAddressId),
+        eq(allowRules.matchValue, data.matchValue),
+      ),
+    );
 }
 
 export async function findAllowRuleById(db: Db, id: string): Promise<AllowRule | null> {
@@ -78,38 +66,7 @@ export async function countAllowRulesByUser(db: Db, userId: bigint): Promise<num
   return row?.count ?? 0;
 }
 
-export async function checkAllowRule(
-  db: Db,
-  emailAddressId: string,
-  senderEmail: string,
-): Promise<boolean> {
+export async function checkPreflightAllowRules(db: Db, emailAddressId: string): Promise<boolean> {
   const rules = await listAllowRules(db, emailAddressId);
-  return checkClaimedRules(rules, senderEmail);
-}
-
-export function checkClaimedRules(
-  rules: Pick<AllowRule, "matchType" | "matchValue" | "authRequirement">[],
-  senderEmail: string,
-): boolean {
-  if (rules.length === 0) return false;
-  const senderDomain = senderEmail.split("@")[1]?.toLowerCase() ?? "";
-  const senderNorm = senderEmail.toLowerCase();
-
-  return rules.some((r) => {
-    if (r.authRequirement !== "claimed") return false;
-    if (r.matchType === "exact_email") return r.matchValue.toLowerCase() === senderNorm;
-    if (r.matchType === "domain") return r.matchValue.toLowerCase() === senderDomain;
-    return false;
-  });
-}
-
-export async function checkPreflightAllowRules(
-  db: Db,
-  emailAddressId: string,
-  senderEmail: string,
-): Promise<boolean> {
-  const rules = await listAllowRules(db, emailAddressId);
-  if (rules.length === 0) return false;
-  if (checkClaimedRules(rules, senderEmail)) return true;
-  return rules.some((rule) => rule.authRequirement === "authenticated");
+  return rules.length > 0;
 }

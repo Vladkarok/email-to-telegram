@@ -68,7 +68,6 @@ export const allowRules = pgTable(
       .references(() => emailAddresses.id, { onDelete: "cascade" }),
     matchType: varchar("match_type", { length: 20 }).notNull(),
     matchValue: varchar("match_value", { length: 320 }).notNull(),
-    authRequirement: varchar("auth_requirement", { length: 20 }).notNull().default("claimed"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("idx_allow_alias").on(t.emailAddressId)],

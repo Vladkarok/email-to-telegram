@@ -34,8 +34,8 @@ import { processInboundEmail } from "../../../src/email/pipeline.js";
 
 const mockFindAlias = vi.fn();
 const mockFindAliasById = vi.fn();
-const mockCheckAllow = vi.fn();
 const mockListAllowRules = vi.fn();
+const mockAuthenticateSender = vi.fn();
 const mockIsDuplicate = vi.fn();
 const mockCreateLog = vi.fn();
 const mockUpdateLogStatus = vi.fn();
@@ -52,8 +52,10 @@ vi.mock("../../../src/db/repos/aliases.js", () => ({
   findAliasByLocalPartAndDomainId: (...a: unknown[]): unknown => mockFindAlias(...a),
 }));
 vi.mock("../../../src/db/repos/allowRules.js", () => ({
-  checkAllowRule: (...a: unknown[]): unknown => mockCheckAllow(...a),
   listAllowRules: (...a: unknown[]): unknown => mockListAllowRules(...a),
+}));
+vi.mock("../../../src/email/authenticateSender.js", () => ({
+  authenticateSender: (...a: unknown[]): unknown => mockAuthenticateSender(...a),
 }));
 vi.mock("../../../src/email/dedup.js", () => ({
   isDuplicate: (...a: unknown[]): unknown => mockIsDuplicate(...a),
@@ -128,6 +130,8 @@ const baseAlias = {
   maxEmailsHour: 60,
 };
 
+const authenticatedExampleRules = [{ matchType: "domain", matchValue: "example.com" }];
+
 const fakeDb = {
   transaction: async <T>(fn: (tx: { execute: ReturnType<typeof vi.fn> }) => Promise<T>) =>
     fn({ execute: vi.fn().mockResolvedValue(undefined) }),
@@ -138,8 +142,13 @@ function setupHappyPath(logId = "log-1") {
   const alias = makeAlias();
   mockFindAlias.mockResolvedValue(alias);
   mockFindAliasById.mockResolvedValue(alias);
-  mockCheckAllow.mockResolvedValue(true);
-  mockListAllowRules.mockResolvedValue([]);
+  mockListAllowRules.mockResolvedValue(authenticatedExampleRules);
+  mockAuthenticateSender.mockResolvedValue({
+    headerFromEmail: "sender@example.com",
+    headerFromDomain: "example.com",
+    authenticatedDomains: ["example.com"],
+    status: "pass",
+  });
   mockIsDuplicate.mockResolvedValue(false);
   mockCreateLog.mockResolvedValue({ id: logId });
   mockUpdateLogStatus.mockResolvedValue(undefined);
@@ -160,7 +169,13 @@ describe("pipeline integration matrix", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCountRecentDeliveries.mockResolvedValue(0);
-    mockListAllowRules.mockResolvedValue([]);
+    mockListAllowRules.mockResolvedValue(authenticatedExampleRules);
+    mockAuthenticateSender.mockResolvedValue({
+      headerFromEmail: "sender@example.com",
+      headerFromDomain: "example.com",
+      authenticatedDomains: ["example.com"],
+      status: "pass",
+    });
     process.env["HMAC_SECRET"] = "hmac-secret-test-32chars-abcdef";
   });
 
@@ -254,7 +269,6 @@ describe("pipeline integration matrix", () => {
 
   it("forum topic: message_thread_id passed to Telegram send", async () => {
     mockFindAlias.mockResolvedValue(makeAlias({ messageThreadId: 42n }));
-    mockCheckAllow.mockResolvedValue(true);
     mockIsDuplicate.mockResolvedValue(false);
     mockCreateLog.mockResolvedValue({ id: "log-topic" });
     mockUpdateLogStatus.mockResolvedValue(undefined);
@@ -274,7 +288,6 @@ describe("pipeline integration matrix", () => {
 
   it("privacy mode: sends a one-time web view link instead of message content", async () => {
     mockFindAlias.mockResolvedValue(makeAlias({ privacyModeEnabled: true }));
-    mockCheckAllow.mockResolvedValue(true);
     mockIsDuplicate.mockResolvedValue(false);
     mockCreateLog.mockResolvedValue({
       id: "log-privacy",
@@ -329,7 +342,7 @@ describe("pipeline integration matrix", () => {
 
   it("blocked sender: returns sender_not_allowed", async () => {
     mockFindAlias.mockResolvedValue(makeAlias());
-    mockCheckAllow.mockResolvedValue(false);
+    mockListAllowRules.mockResolvedValue([{ matchType: "domain", matchValue: "trusted.example" }]);
     const result = await processInboundEmail(fakeDb, fakeApi, {
       rawEmail: fixture("simple.eml"),
       localPart: "alerts",
@@ -342,7 +355,6 @@ describe("pipeline integration matrix", () => {
 
   it("duplicate Message-ID: returns duplicate, no send", async () => {
     mockFindAlias.mockResolvedValue(makeAlias());
-    mockCheckAllow.mockResolvedValue(true);
     mockIsDuplicate.mockResolvedValue(true);
     const result = await processInboundEmail(fakeDb, fakeApi, {
       rawEmail: fixture("simple.eml"),
@@ -357,7 +369,6 @@ describe("pipeline integration matrix", () => {
 
   it("duplicate body hash with body dedup enabled: returns duplicate", async () => {
     mockFindAlias.mockResolvedValue(makeAlias({ bodyDedupEnabled: true }));
-    mockCheckAllow.mockResolvedValue(true);
     mockIsDuplicate.mockResolvedValue(true);
     const result = await processInboundEmail(fakeDb, fakeApi, {
       rawEmail: fixture("unicode.eml"),
@@ -406,7 +417,6 @@ describe("pipeline integration matrix", () => {
 
   it("delivery_attempt recorded with failed status on send error", async () => {
     mockFindAlias.mockResolvedValue(makeAlias());
-    mockCheckAllow.mockResolvedValue(true);
     mockIsDuplicate.mockResolvedValue(false);
     mockCreateLog.mockResolvedValue({ id: "log-attempt-fail" });
     mockUpdateLogStatus.mockResolvedValue(undefined);
@@ -447,7 +457,6 @@ describe("pipeline integration matrix", () => {
 
   it("finalStatus = failed on send error", async () => {
     mockFindAlias.mockResolvedValue(makeAlias());
-    mockCheckAllow.mockResolvedValue(true);
     mockIsDuplicate.mockResolvedValue(false);
     mockCreateLog.mockResolvedValue({ id: "log-status-fail" });
     mockUpdateLogStatus.mockResolvedValue(undefined);

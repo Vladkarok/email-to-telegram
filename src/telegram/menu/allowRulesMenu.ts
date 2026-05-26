@@ -12,16 +12,14 @@ import { allowRuleIcon } from "../allowRuleDisplay.js";
 type Db = NodePgDatabase<typeof schema>;
 
 function buildAllowRulesKeyboard(
-  rules: { id: string; matchType: string; matchValue: string; authRequirement?: string | null }[],
+  rules: { id: string; matchValue: string }[],
   aliasId: string,
   locale: Locale,
 ): InlineKeyboard {
   const messages = getMessages(locale);
   const keyboard = new InlineKeyboard();
   for (const rule of rules) {
-    keyboard
-      .text(`❌ ${allowRuleIcon(rule)} ${rule.matchValue}`, CB_DELETE_RULE.build(rule.id))
-      .row();
+    keyboard.text(`❌ ${allowRuleIcon()} ${rule.matchValue}`, CB_DELETE_RULE.build(rule.id)).row();
   }
   keyboard.text(messages.allowRulesMenu.addRuleButton, CB_ADD_RULE.build(aliasId)).row();
   keyboard.text(messages.allowRulesMenu.backButton, CB_ALIAS_DETAIL.build(aliasId));
