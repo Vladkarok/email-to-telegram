@@ -9,12 +9,7 @@ export async function helpHandler(ctx: Context): Promise<void> {
   const config = loadConfig();
   const locale = await resolveHelpLocale(ctx);
   const messages = getMessages(locale);
-  const billingHelp =
-    config.appMode !== "hosted"
-      ? ""
-      : isSelfServeBillingEnabled(config)
-        ? messages.help.billingStripe
-        : messages.help.billingManual;
+  const billingHelp = isSelfServeBillingEnabled(config) ? messages.help.billingStripe : "";
   const billingSection = billingHelp ? `\n${billingHelp}\n` : "";
 
   const body = messages.help.text(

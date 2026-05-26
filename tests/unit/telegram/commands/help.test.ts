@@ -26,16 +26,15 @@ describe("/help command", () => {
     expect(text).toMatch(/Stripe checkout|billing portal/i);
   });
 
-  it("shows plan and usage only in hosted manual billing mode", async () => {
+  it("hides all billing commands in hosted mode without self-serve billing", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "hosted", billingProvider: "none" });
     const ctx = createMockCtx({ chatType: "private" });
 
     await helpHandler(ctx);
 
     const [text] = ctx.reply.mock.calls[0] as [string];
-    expect(text).toContain("/billing");
-    expect(text).toContain("/plan");
-    expect(text).toContain("/usage");
+    expect(text).not.toContain("/billing");
+    expect(text).not.toContain("/plan");
     expect(text).not.toContain("/upgrade");
     expect(text).not.toContain("/portal");
   });
