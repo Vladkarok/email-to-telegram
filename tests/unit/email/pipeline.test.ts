@@ -12,6 +12,8 @@ vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 const mockFindAlias = vi.fn();
 const mockFindAliasById = vi.fn();
 const mockCheckAllow = vi.fn();
+const mockListAllowRules = vi.fn();
+const mockAuthenticateSender = vi.fn();
 const mockIsDuplicate = vi.fn();
 const mockCreateLog = vi.fn();
 const mockUpdateLogStatus = vi.fn();
@@ -36,6 +38,10 @@ vi.mock("../../../src/db/repos/aliases.js", () => ({
 }));
 vi.mock("../../../src/db/repos/allowRules.js", () => ({
   checkAllowRule: (...args: unknown[]): unknown => mockCheckAllow(...args),
+  listAllowRules: (...args: unknown[]): unknown => mockListAllowRules(...args),
+}));
+vi.mock("../../../src/email/authenticateSender.js", () => ({
+  authenticateSender: (...args: unknown[]): unknown => mockAuthenticateSender(...args),
 }));
 vi.mock("../../../src/email/dedup.js", () => ({
   isDuplicate: (...args: unknown[]): unknown => mockIsDuplicate(...args),
@@ -131,6 +137,13 @@ describe("processInboundEmail", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mockCheckInboundLimit.mockResolvedValue({ ok: true });
+    mockListAllowRules.mockResolvedValue([]);
+    mockAuthenticateSender.mockResolvedValue({
+      headerFromEmail: "sender@example.com",
+      headerFromDomain: "example.com",
+      authenticatedDomains: ["example.com"],
+      status: "pass",
+    });
     mockFindAliasById.mockResolvedValue(activeAlias);
     mockIncrementOrganizationUsageMonth.mockResolvedValue(undefined);
     mockIncrementOrganizationStorageUsage.mockResolvedValue(undefined);
@@ -423,6 +436,13 @@ describe("queueInboundEmail", () => {
     mockDecrementOrganizationStorageUsage.mockResolvedValue(undefined);
     mockDeleteFile.mockResolvedValue(undefined);
     mockUsageMonthForDate.mockReturnValue("2026-04");
+    mockListAllowRules.mockResolvedValue([]);
+    mockAuthenticateSender.mockResolvedValue({
+      headerFromEmail: "sender@example.com",
+      headerFromDomain: "example.com",
+      authenticatedDomains: ["example.com"],
+      status: "pass",
+    });
   });
 
   it("queues a delivery log before async delivery begins", async () => {
@@ -512,6 +532,67 @@ describe("queueInboundEmail", () => {
 
     expect(result).toEqual({ queued: false, result: { ok: false, reason: "duplicate" } });
   });
+
+  it("queues authenticated allow-rule deliveries when DKIM/DMARC aligned identity passes", async () => {
+    mockFindAlias.mockResolvedValue(activeAlias);
+    mockCheckAllow.mockResolvedValue(false);
+    mockListAllowRules.mockResolvedValue([
+      {
+        matchType: "domain",
+        matchValue: "example.com",
+        authRequirement: "authenticated",
+      },
+    ]);
+    mockAuthenticateSender.mockResolvedValue({
+      headerFromEmail: "sender@example.com",
+      headerFromDomain: "example.com",
+      authenticatedDomains: ["example.com"],
+      status: "pass",
+    });
+    mockIsDuplicate.mockResolvedValue(false);
+    mockCountRecentDeliveries.mockResolvedValue(0);
+    mockCreateLog.mockResolvedValue({ id: "log-auth" });
+
+    const result = await queueInboundEmail(fakeDbHarness().db, {
+      rawEmail: simpleEmail(),
+      rawEmailPath: "/data/rawemails/auth.eml",
+      localPart: "alerts",
+      envelopeFrom: "bounce@mailer.example",
+      ...PIPELINE_CONFIG,
+    });
+
+    expect(result).toMatchObject({ queued: true });
+    expect(mockAuthenticateSender).toHaveBeenCalledWith(simpleEmail(), "bounce@mailer.example");
+  });
+
+  it("rejects authenticated allow-rule candidates when sender auth fails", async () => {
+    mockFindAlias.mockResolvedValue(activeAlias);
+    mockCheckAllow.mockResolvedValue(false);
+    mockListAllowRules.mockResolvedValue([
+      {
+        matchType: "domain",
+        matchValue: "example.com",
+        authRequirement: "authenticated",
+      },
+    ]);
+    mockAuthenticateSender.mockResolvedValue({
+      headerFromEmail: "sender@example.com",
+      headerFromDomain: "example.com",
+      authenticatedDomains: [],
+      status: "fail",
+    });
+
+    const result = await queueInboundEmail(fakeDbHarness().db, {
+      rawEmail: simpleEmail(),
+      rawEmailPath: "/data/rawemails/auth-fail.eml",
+      localPart: "alerts",
+      envelopeFrom: "bounce@mailer.example",
+      ...PIPELINE_CONFIG,
+    });
+
+    expect(result).toEqual({ queued: false, result: { ok: false, reason: "sender_auth_failed" } });
+    expect(mockCreateLog).not.toHaveBeenCalled();
+  });
 });
 
 describe("deliverQueuedEmail", () => {
@@ -547,6 +628,8 @@ describe("deliverQueuedEmail", () => {
             subject: "Hi",
             envelopeFrom: "sender@example.com",
             headerFrom: "Sender <sender@example.com>",
+            headerFromEmail: "sender@example.com",
+            headerFromDomain: "example.com",
             textBody: "hello",
             htmlBody: null,
             bodySha256: "hash",
@@ -577,6 +660,8 @@ describe("deliverQueuedEmail", () => {
           subject: "Hi",
           envelopeFrom: "sender@example.com",
           headerFrom: "Sender <sender@example.com>",
+          headerFromEmail: "sender@example.com",
+          headerFromDomain: "example.com",
           textBody: "hello",
           htmlBody: null,
           bodySha256: "hash",
@@ -616,6 +701,8 @@ describe("deliverQueuedEmail", () => {
           subject: "Markdown",
           envelopeFrom: "sender@example.com",
           headerFrom: "Sender <sender@example.com>",
+          headerFromEmail: "sender@example.com",
+          headerFromDomain: "example.com",
           textBody: "# Heading\n\n**Bold**",
           htmlBody: "<div># Heading</div><div>**Bold**</div>",
           bodySha256: "hash",
@@ -653,6 +740,8 @@ describe("deliverQueuedEmail", () => {
           subject: "Hi",
           envelopeFrom: "sender@example.com",
           headerFrom: "Sender <sender@example.com>",
+          headerFromEmail: "sender@example.com",
+          headerFromDomain: "example.com",
           textBody: "hello",
           htmlBody: null,
           bodySha256: "hash",
@@ -716,6 +805,8 @@ describe("deliverQueuedEmail", () => {
           subject: "Hi",
           envelopeFrom: "sender@example.com",
           headerFrom: "Sender <sender@example.com>",
+          headerFromEmail: "sender@example.com",
+          headerFromDomain: "example.com",
           textBody: "hello",
           htmlBody: null,
           bodySha256: "hash",
@@ -763,6 +854,8 @@ describe("deliverQueuedEmail", () => {
           subject: "Attachment failure",
           envelopeFrom: "sender@example.com",
           headerFrom: "Sender <sender@example.com>",
+          headerFromEmail: "sender@example.com",
+          headerFromDomain: "example.com",
           textBody: "hello",
           htmlBody: null,
           bodySha256: "hash",
@@ -806,6 +899,8 @@ describe("deliverQueuedEmail", () => {
           subject: "Attachment rollback failure",
           envelopeFrom: "sender@example.com",
           headerFrom: "Sender <sender@example.com>",
+          headerFromEmail: "sender@example.com",
+          headerFromDomain: "example.com",
           textBody: "hello",
           htmlBody: null,
           bodySha256: "hash",
@@ -849,6 +944,8 @@ describe("deliverQueuedEmail", () => {
           subject: "Attachment link failure",
           envelopeFrom: "sender@example.com",
           headerFrom: "Sender <sender@example.com>",
+          headerFromEmail: "sender@example.com",
+          headerFromDomain: "example.com",
           textBody: "hello",
           htmlBody: null,
           bodySha256: "hash",
@@ -892,6 +989,8 @@ describe("deliverQueuedEmail", () => {
           subject: "Encrypted attachment",
           envelopeFrom: "sender@example.com",
           headerFrom: "Sender <sender@example.com>",
+          headerFromEmail: "sender@example.com",
+          headerFromDomain: "example.com",
           textBody: "hello",
           htmlBody: null,
           bodySha256: "hash",
@@ -944,6 +1043,8 @@ describe("deliverQueuedEmail", () => {
           subject: "Hi",
           envelopeFrom: "sender@example.com",
           headerFrom: "Sender <sender@example.com>",
+          headerFromEmail: "sender@example.com",
+          headerFromDomain: "example.com",
           textBody: "hello",
           htmlBody: null,
           bodySha256: "hash",

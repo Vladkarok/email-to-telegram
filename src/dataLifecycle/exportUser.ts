@@ -55,6 +55,7 @@ export interface UserExport {
     emailAddressId: string;
     matchType: string;
     matchValue: string;
+    authRequirement: string;
     createdAt: string;
   }>;
   inboundDomains: Array<{
@@ -213,6 +214,7 @@ export async function exportHostedUserData(
       emailAddressId: rule.emailAddressId,
       matchType: rule.matchType,
       matchValue: rule.matchValue,
+      authRequirement: rule.authRequirement,
       createdAt: rule.createdAt.toISOString(),
     })),
     inboundDomains: inboundDomainRows.map((row) => ({
@@ -327,6 +329,7 @@ async function listAllowRulesForUser(db: Db, userId: bigint) {
       emailAddressId: allowRules.emailAddressId,
       matchType: allowRules.matchType,
       matchValue: allowRules.matchValue,
+      authRequirement: allowRules.authRequirement,
       createdAt: allowRules.createdAt,
     })
     .from(allowRules)

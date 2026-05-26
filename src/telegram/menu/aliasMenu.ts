@@ -8,6 +8,7 @@ import { listAllowRules } from "../../db/repos/allowRules.js";
 import { canManageAlias } from "../authorization.js";
 import { escapeHtml } from "../../utils/html.js";
 import { getMessages, resolveLocale } from "../../i18n/index.js";
+import { allowRuleIcon } from "../allowRuleDisplay.js";
 import {
   CB_NEW_EMAIL,
   CB_ALIAS_DETAIL,
@@ -114,9 +115,7 @@ async function buildAliasDetailMenu(
   const rules = await listAllowRules(db, alias.id);
   const rulesText =
     rules.length > 0
-      ? rules
-          .map((r) => `• ${r.matchType === "domain" ? "🌐" : "📧"} ${escapeHtml(r.matchValue)}`)
-          .join("\n")
+      ? rules.map((r) => `• ${allowRuleIcon(r)} ${escapeHtml(r.matchValue)}`).join("\n")
       : messages.aliasMenu.allowRulesEmpty;
 
   const text = messages.aliasMenu.detailLines({

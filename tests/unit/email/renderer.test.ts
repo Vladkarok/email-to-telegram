@@ -7,6 +7,8 @@ const BASE: ParsedEmail = {
   subject: "Test Subject",
   envelopeFrom: "sender@example.com",
   headerFrom: "Sender <sender@example.com>",
+  headerFromEmail: "sender@example.com",
+  headerFromDomain: "example.com",
   textBody: "Hello, this is the email body.",
   htmlBody: null,
   bodySha256: "abc123",

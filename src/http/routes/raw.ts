@@ -34,6 +34,8 @@ function shouldDeletePendingMeta(reason: string | undefined): boolean {
     reason === "duplicate" ||
     reason === "alias_not_found" ||
     reason === "sender_not_allowed" ||
+    reason === "sender_auth_failed" ||
+    reason === "sender_auth_temperror" ||
     reason === "subscription_inactive" ||
     reason === "monthly_email_limit" ||
     reason === "message_size_limit" ||
@@ -45,6 +47,9 @@ function statusForQueueRejection(reason: string | undefined): number | null {
   switch (reason) {
     case "message_size_limit":
       return 413;
+    case "sender_auth_temperror":
+      return 503;
+    case "sender_auth_failed":
     case "subscription_inactive":
     case "monthly_email_limit":
     case "storage_limit":

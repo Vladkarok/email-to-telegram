@@ -20,6 +20,8 @@ import { loadConfig } from "../../config.js";
 import { donateHintSuffix } from "../donateHint.js";
 import { getMessages, resolveLocale } from "../../i18n/index.js";
 import { aliasResolutionError, resolveManageableAlias } from "../aliasResolver.js";
+import { allowRuleIcon } from "../allowRuleDisplay.js";
+import type { AllowAuthRequirement } from "../../db/repos/allowRules.js";
 
 export async function allowHandler(ctx: CommandContext<Context>): Promise<void> {
   const parts = ctx.match.trim().split(/\s+/).filter(Boolean);
@@ -29,7 +31,7 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
   const locale = await resolveLocale(ctx, db);
   const messages = getMessages(locale);
 
-  if (!subcommand || !["add", "remove", "list"].includes(subcommand)) {
+  if (!subcommand || !["add", "add-claimed", "remove", "list"].includes(subcommand)) {
     await ctx.reply(messages.allowCommand.usage);
     return;
   }
@@ -74,9 +76,7 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
       });
       return;
     }
-    const lines = rules
-      .map((r) => `• ${r.matchType === "domain" ? "🌐" : "📧"} ${escapeHtml(r.matchValue)}`)
-      .join("\n");
+    const lines = rules.map((r) => `• ${allowRuleIcon(r)} ${escapeHtml(r.matchValue)}`).join("\n");
     await ctx.reply(messages.allowCommand.listHeader(escapeHtml(aliasName), lines), {
       parse_mode: "HTML",
     });
@@ -88,8 +88,10 @@ export async function allowHandler(ctx: CommandContext<Context>): Promise<void> 
     return;
   }
 
-  if (subcommand === "add") {
-    if (!(await addAllowRuleForAlias(ctx, db, alias, value))) {
+  if (subcommand === "add" || subcommand === "add-claimed") {
+    const authRequirement: AllowAuthRequirement =
+      subcommand === "add-claimed" ? "claimed" : "authenticated";
+    if (!(await addAllowRuleForAlias(ctx, db, alias, value, authRequirement))) {
       return;
     }
     return;
@@ -111,6 +113,7 @@ export async function addAllowRuleForAlias(
   db: ReturnType<typeof getDb>,
   alias: Pick<EmailAddress, "id" | "localPart" | "createdBy">,
   value: string,
+  authRequirement: AllowAuthRequirement = "authenticated",
 ): Promise<boolean> {
   const locale = await resolveLocale(ctx, db);
   const messages = getMessages(locale);
@@ -128,6 +131,7 @@ export async function addAllowRuleForAlias(
         emailAddressId: alias.id,
         matchType: parsedValue.matchType,
         matchValue: parsedValue.normalized,
+        authRequirement,
       });
       if (existingRule) {
         duplicateRule = true;
@@ -144,6 +148,7 @@ export async function addAllowRuleForAlias(
         emailAddressId: alias.id,
         matchType: parsedValue.matchType,
         matchValue: parsedValue.normalized,
+        authRequirement,
       });
     });
   } catch (err: unknown) {
@@ -155,7 +160,7 @@ export async function addAllowRuleForAlias(
     throw err;
   }
 
-  const icon = parsedValue.matchType === "domain" ? "🌐" : "📧";
+  const icon = allowRuleIcon({ matchType: parsedValue.matchType, authRequirement });
   const value_escaped = escapeHtml(parsedValue.normalized);
   const localPart_escaped = escapeHtml(alias.localPart);
 

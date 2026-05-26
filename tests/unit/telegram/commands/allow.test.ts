@@ -85,6 +85,7 @@ describe("/allow command", () => {
           emailAddressId: "uuid-1",
           matchType: "exact_email",
           matchValue: "user@github.com",
+          authRequirement: "authenticated",
         }),
       );
       expect(ctx.reply).toHaveBeenCalledOnce();
@@ -109,6 +110,7 @@ describe("/allow command", () => {
           emailAddressId: "uuid-1",
           matchType: "domain",
           matchValue: "github.com",
+          authRequirement: "authenticated",
         }),
       );
     });
@@ -123,6 +125,22 @@ describe("/allow command", () => {
         expect.objectContaining({
           matchType: "domain",
           matchValue: "github.com",
+          authRequirement: "authenticated",
+        }),
+      );
+    });
+
+    it("adds a claimed legacy allow rule explicitly", async () => {
+      const ctx = createMockCtx({ commandMatch: "add-claimed alerts-ab12cd github.com" });
+
+      await allowHandler(ctx);
+
+      expect(mockAddAllowRule).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          matchType: "domain",
+          matchValue: "github.com",
+          authRequirement: "claimed",
         }),
       );
     });
@@ -212,6 +230,7 @@ describe("/allow command", () => {
         emailAddressId: "uuid-1",
         matchType: "domain",
         matchValue: "github.com",
+        authRequirement: "authenticated",
       });
       const ctx = createMockCtx({ commandMatch: "add alerts-ab12cd github.com" });
 
@@ -242,8 +261,12 @@ describe("/allow command", () => {
   describe("list subcommand", () => {
     it("lists allow rules for an alias", async () => {
       mockListAllowRules.mockResolvedValue([
-        { matchType: "domain", matchValue: "github.com" },
-        { matchType: "exact_email", matchValue: "alerts@pagerduty.com" },
+        { matchType: "domain", matchValue: "github.com", authRequirement: "authenticated" },
+        {
+          matchType: "exact_email",
+          matchValue: "alerts@pagerduty.com",
+          authRequirement: "claimed",
+        },
       ]);
       const ctx = createMockCtx({ commandMatch: "list alerts-ab12cd" });
 

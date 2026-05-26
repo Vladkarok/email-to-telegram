@@ -11,6 +11,8 @@ export interface ParsedEmail {
   subject: string | null;
   envelopeFrom: string | null;
   headerFrom: string | null;
+  headerFromEmail: string | null;
+  headerFromDomain: string | null;
   textBody: string | null;
   htmlBody: string | null;
   // null when the parsed email has no text/html body content (attachment-only

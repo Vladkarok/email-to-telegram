@@ -53,6 +53,7 @@ function shouldDeletePendingRawEmail(reason: string | undefined): boolean {
     reason === "duplicate" ||
     reason === "alias_not_found" ||
     reason === "sender_not_allowed" ||
+    reason === "sender_auth_failed" ||
     reason === "subscription_inactive" ||
     reason === "monthly_email_limit" ||
     reason === "message_size_limit" ||

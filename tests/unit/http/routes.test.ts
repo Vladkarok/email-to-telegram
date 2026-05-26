@@ -44,6 +44,7 @@ const mockFindHostedInboundBlock = vi.fn().mockResolvedValue(null);
 const mockClaimWorkerRequestNonce = vi.fn().mockResolvedValue(true);
 vi.mock("../../../src/db/repos/allowRules.js", () => ({
   checkAllowRule: (...args: unknown[]): unknown => mockCheckAllow(...args),
+  checkPreflightAllowRules: (...args: unknown[]): unknown => mockCheckAllow(...args),
 }));
 vi.mock("../../../src/db/repos/workerRequestNonces.js", () => ({
   claimWorkerRequestNonce: (...args: unknown[]): unknown => mockClaimWorkerRequestNonce(...args),

@@ -89,6 +89,8 @@ vi.mock("../../src/db/repos/inboundDomains.js", () => ({
 
 vi.mock("../../src/db/repos/allowRules.js", () => ({
   checkAllowRule: vi.fn(() => Promise.resolve(state.allow)),
+  checkPreflightAllowRules: vi.fn(() => Promise.resolve(state.allow)),
+  listAllowRules: vi.fn(() => Promise.resolve([])),
 }));
 
 vi.mock("../../src/db/repos/hostedInboundBlocks.js", () => ({

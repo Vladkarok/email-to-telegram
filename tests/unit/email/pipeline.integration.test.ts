@@ -35,6 +35,7 @@ import { processInboundEmail } from "../../../src/email/pipeline.js";
 const mockFindAlias = vi.fn();
 const mockFindAliasById = vi.fn();
 const mockCheckAllow = vi.fn();
+const mockListAllowRules = vi.fn();
 const mockIsDuplicate = vi.fn();
 const mockCreateLog = vi.fn();
 const mockUpdateLogStatus = vi.fn();
@@ -52,6 +53,7 @@ vi.mock("../../../src/db/repos/aliases.js", () => ({
 }));
 vi.mock("../../../src/db/repos/allowRules.js", () => ({
   checkAllowRule: (...a: unknown[]): unknown => mockCheckAllow(...a),
+  listAllowRules: (...a: unknown[]): unknown => mockListAllowRules(...a),
 }));
 vi.mock("../../../src/email/dedup.js", () => ({
   isDuplicate: (...a: unknown[]): unknown => mockIsDuplicate(...a),
@@ -137,6 +139,7 @@ function setupHappyPath(logId = "log-1") {
   mockFindAlias.mockResolvedValue(alias);
   mockFindAliasById.mockResolvedValue(alias);
   mockCheckAllow.mockResolvedValue(true);
+  mockListAllowRules.mockResolvedValue([]);
   mockIsDuplicate.mockResolvedValue(false);
   mockCreateLog.mockResolvedValue({ id: logId });
   mockUpdateLogStatus.mockResolvedValue(undefined);
@@ -157,6 +160,7 @@ describe("pipeline integration matrix", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCountRecentDeliveries.mockResolvedValue(0);
+    mockListAllowRules.mockResolvedValue([]);
     process.env["HMAC_SECRET"] = "hmac-secret-test-32chars-abcdef";
   });
 

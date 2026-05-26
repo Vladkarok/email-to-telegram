@@ -7,19 +7,21 @@ import { listAllowRules } from "../../db/repos/allowRules.js";
 import { escapeHtml } from "../../utils/html.js";
 import { getMessages, resolveLocale, type Locale } from "../../i18n/index.js";
 import { CB_DELETE_RULE, CB_ADD_RULE, CB_ALIAS_DETAIL } from "../callbacks.js";
+import { allowRuleIcon } from "../allowRuleDisplay.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
 function buildAllowRulesKeyboard(
-  rules: { id: string; matchType: string; matchValue: string }[],
+  rules: { id: string; matchType: string; matchValue: string; authRequirement?: string | null }[],
   aliasId: string,
   locale: Locale,
 ): InlineKeyboard {
   const messages = getMessages(locale);
   const keyboard = new InlineKeyboard();
   for (const rule of rules) {
-    const icon = rule.matchType === "domain" ? "🌐" : "📧";
-    keyboard.text(`❌ ${icon} ${rule.matchValue}`, CB_DELETE_RULE.build(rule.id)).row();
+    keyboard
+      .text(`❌ ${allowRuleIcon(rule)} ${rule.matchValue}`, CB_DELETE_RULE.build(rule.id))
+      .row();
   }
   keyboard.text(messages.allowRulesMenu.addRuleButton, CB_ADD_RULE.build(aliasId)).row();
   keyboard.text(messages.allowRulesMenu.backButton, CB_ALIAS_DETAIL.build(aliasId));

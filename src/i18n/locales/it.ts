@@ -273,12 +273,14 @@ ${safetyNotes}
   allowCommand: {
     usage: `Uso:
   /allow add <alias_or_address> <email_or_domain>
+  /allow add-claimed <alias_or_address> <email_or_domain>
   /allow remove <alias_or_address> <email_or_domain>
   /allow list <alias_or_address>
 
 Esempi:
   /allow add alerts-ab12cd@example.com github.com
   /allow add alerts-ab12cd user@example.com
+  /allow add-claimed alerts-ab12cd legacy.example.com
   /allow list alerts-ab12cd`,
     aliasNotFound: (alias: string) => `❌ Alias <code>${alias}</code> non trovato.`,
     listEmpty: (alias: string) =>

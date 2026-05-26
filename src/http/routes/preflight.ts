@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { verifyWorkerRequest } from "../../utils/workerAuth.js";
 import { getDb } from "../../db/client.js";
-import { checkAllowRule } from "../../db/repos/allowRules.js";
+import { checkPreflightAllowRules } from "../../db/repos/allowRules.js";
 import { countRecentDeliveriesByAlias } from "../../db/repos/deliveryLogs.js";
 import { checkInboundLimit } from "../../billing/limits.js";
 import { findHostedInboundRejection } from "../../abuse/hostedInboundBlocklist.js";
@@ -109,7 +109,7 @@ export function preflightRoute(app: FastifyInstance): void {
         await reply.send({ accept: false });
         return;
       }
-      const allowed = await checkAllowRule(getDb(), alias.id, envelopeFrom);
+      const allowed = await checkPreflightAllowRules(getDb(), alias.id, envelopeFrom);
       if (!allowed) {
         recordInboundPreflight("rejected", "sender_not_allowed");
         await reply.send({ accept: false });

@@ -8,6 +8,9 @@ export async function parseEmail(raw: Buffer, rawSizeBytes: number): Promise<Par
   const fromAddr = parsed.from?.value[0];
   const envelopeFrom = fromAddr?.address ?? null;
   const headerFrom = parsed.from?.text ?? null;
+  const headerFromEmail =
+    parsed.from?.value.length === 1 ? (parsed.from.value[0]?.address?.toLowerCase() ?? null) : null;
+  const headerFromDomain = headerFromEmail?.split("@")[1] ?? null;
 
   const textBody = parsed.text ?? null;
   const htmlBody = parsed.html !== false ? parsed.html || null : null;
@@ -31,6 +34,8 @@ export async function parseEmail(raw: Buffer, rawSizeBytes: number): Promise<Par
     subject: parsed.subject ?? null,
     envelopeFrom,
     headerFrom,
+    headerFromEmail,
+    headerFromDomain,
     textBody,
     htmlBody,
     bodySha256,

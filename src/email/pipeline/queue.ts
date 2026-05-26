@@ -9,7 +9,7 @@ import { randomUUID } from "crypto";
 import { sql } from "drizzle-orm";
 import { parseEmail } from "../parser.js";
 import { isDuplicate } from "../dedup.js";
-import { checkAllowRule } from "../../db/repos/allowRules.js";
+import { checkAllowRule, listAllowRules } from "../../db/repos/allowRules.js";
 import { findAliasForInbound } from "../inboundRouting.js";
 import { countRecentDeliveriesByAlias, createDeliveryLog } from "../../db/repos/deliveryLogs.js";
 import { prepareDeliveryLogMetadataWrite } from "../../security/deliveryLogMetadata.js";
@@ -19,16 +19,15 @@ import { incrementUserStorageUsage } from "../../db/repos/storageUsage.js";
 import type { Db, PipelineInput, QueueInboundResult } from "./types.js";
 import { recordQuotaRejection } from "../../observability/metrics.js";
 import { normalizeEnvelopeSender } from "../envelopeSender.js";
+import {
+  evaluateAllowRules,
+  hasAuthenticatedRuleCandidate,
+  hasAuthenticatedRules,
+} from "../allowRuleEvaluator.js";
+import { authenticateSender } from "../authenticateSender.js";
 
 export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<QueueInboundResult> {
-  const {
-    rawEmail,
-    localPart,
-    publicBaseUrl,
-    attachmentDir,
-    attachmentTtlHours,
-    rawEmailTtlHours,
-  } = input;
+  const { rawEmail, localPart } = input;
 
   // 1. Resolve alias
   const alias = await findAliasForInbound(db, {
@@ -42,16 +41,42 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
   // 2. Parse email
   const parsed = await parseEmail(rawEmail, rawEmail.length);
 
-  // 3. Allow-rule check — only the SMTP envelope sender supplied by the Worker
-  // is authoritative. MIME From: is attacker-controlled and must not authorize.
+  // 3. Allow-rule check. Claimed rules use the SMTP envelope sender supplied by
+  // the Worker. Authenticated rules use DKIM/DMARC-aligned RFC5322 From.
   const envelopeFrom = normalizeEnvelopeSender(input.envelopeFrom);
   if (!envelopeFrom) {
     return { queued: false, result: { ok: false, reason: "sender_not_allowed" } };
   }
-  const allowed = await checkAllowRule(db, alias.id, envelopeFrom);
-  if (!allowed) {
-    return { queued: false, result: { ok: false, reason: "sender_not_allowed" } };
+  if (await checkAllowRule(db, alias.id, envelopeFrom)) {
+    return await queueAllowedInboundEmail(db, input, alias, parsed, envelopeFrom);
   }
+  const allowRules = await listAllowRules(db, alias.id);
+  let senderAuth;
+  if (
+    hasAuthenticatedRules(allowRules) &&
+    hasAuthenticatedRuleCandidate(allowRules, parsed.headerFromEmail, parsed.headerFromDomain)
+  ) {
+    senderAuth = await authenticateSender(rawEmail, envelopeFrom);
+  }
+  const allowEvaluation = evaluateAllowRules(allowRules, envelopeFrom, senderAuth);
+  if (!allowEvaluation.allowed) {
+    return {
+      queued: false,
+      result: { ok: false, reason: allowEvaluation.reason ?? "sender_not_allowed" },
+    };
+  }
+
+  return await queueAllowedInboundEmail(db, input, alias, parsed, envelopeFrom);
+}
+
+async function queueAllowedInboundEmail(
+  db: Db,
+  input: PipelineInput,
+  alias: NonNullable<Awaited<ReturnType<typeof findAliasForInbound>>>,
+  parsed: Awaited<ReturnType<typeof parseEmail>>,
+  envelopeFrom: string,
+): Promise<QueueInboundResult> {
+  const { rawEmail, publicBaseUrl, attachmentDir, attachmentTtlHours, rawEmailTtlHours } = input;
 
   const receivedSince = new Date(Date.now() - 60 * 60 * 1000);
   const reservedAttachmentBytes = parsed.attachments.reduce(

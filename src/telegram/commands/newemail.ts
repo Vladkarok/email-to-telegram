@@ -61,7 +61,7 @@ export function buildQuickAllowKeyboard(
       returnTo === "rules"
         ? CB_QUICK_ALLOW_RULES.build(aliasId, domain)
         : CB_QUICK_ALLOW.build(aliasId, domain);
-    keyboard.text(`✅ ${domain}`, callback);
+    keyboard.text(`🔐 ${domain}`, callback);
   }
   keyboard.row().text(messages.newemail.customDomainButton, CB_ADD_RULE.build(aliasId));
   return keyboard;
