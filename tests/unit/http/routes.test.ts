@@ -43,7 +43,6 @@ const mockCheckInboundLimit = vi.fn().mockResolvedValue({ ok: true });
 const mockFindHostedInboundBlock = vi.fn().mockResolvedValue(null);
 const mockClaimWorkerRequestNonce = vi.fn().mockResolvedValue(true);
 vi.mock("../../../src/db/repos/allowRules.js", () => ({
-  checkAllowRule: (...args: unknown[]): unknown => mockCheckAllow(...args),
   checkPreflightAllowRules: (...args: unknown[]): unknown => mockCheckAllow(...args),
 }));
 vi.mock("../../../src/db/repos/workerRequestNonces.js", () => ({
@@ -201,7 +200,7 @@ describe("POST /inbound/preflight", () => {
     expect(res.json()).toMatchObject({ accept: true });
   });
 
-  it("returns accept:false when envelopeFrom is empty", async () => {
+  it("returns accept:true when envelopeFrom is empty but the alias has allow rules", async () => {
     mockFindAlias.mockResolvedValue({ id: "uuid-1", status: "active", localPart: "alerts" });
 
     const body = Buffer.from(JSON.stringify({ localPart: "alerts", envelopeFrom: "" }));
@@ -219,8 +218,8 @@ describe("POST /inbound/preflight", () => {
       payload: body,
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ accept: false });
-    expect(mockCheckAllow).not.toHaveBeenCalled();
+    expect(res.json()).toMatchObject({ accept: true });
+    expect(mockCheckAllow).toHaveBeenCalledWith(expect.anything(), "uuid-1");
   });
 
   it("returns 200 with accept:false when alias is not found", async () => {
@@ -255,7 +254,7 @@ describe("POST /inbound/preflight", () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it("returns accept:false when envelopeFrom is not in allow list", async () => {
+  it("returns accept:false when the alias has no allow rules", async () => {
     mockFindAlias.mockResolvedValue({ id: "uuid-1", status: "active", localPart: "alerts" });
     mockCheckAllow.mockResolvedValue(false);
 
@@ -277,14 +276,10 @@ describe("POST /inbound/preflight", () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ accept: false });
-    expect(mockCheckAllow).toHaveBeenCalledWith(
-      expect.anything(),
-      "uuid-1",
-      "blocked@attacker.com",
-    );
+    expect(mockCheckAllow).toHaveBeenCalledWith(expect.anything(), "uuid-1");
   });
 
-  it("returns accept:true when envelopeFrom is in allow list", async () => {
+  it("returns accept:true when the alias has allow rules", async () => {
     mockFindAlias.mockResolvedValue({ id: "uuid-1", status: "active", localPart: "alerts" });
     mockCheckAllow.mockResolvedValue(true);
 

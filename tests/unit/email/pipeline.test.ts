@@ -11,7 +11,6 @@ vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
 const mockFindAlias = vi.fn();
 const mockFindAliasById = vi.fn();
-const mockCheckAllow = vi.fn();
 const mockListAllowRules = vi.fn();
 const mockAuthenticateSender = vi.fn();
 const mockIsDuplicate = vi.fn();
@@ -37,7 +36,6 @@ vi.mock("../../../src/db/repos/aliases.js", () => ({
   findAliasByLocalPartAndDomainId: (...args: unknown[]): unknown => mockFindAlias(...args),
 }));
 vi.mock("../../../src/db/repos/allowRules.js", () => ({
-  checkAllowRule: (...args: unknown[]): unknown => mockCheckAllow(...args),
   listAllowRules: (...args: unknown[]): unknown => mockListAllowRules(...args),
 }));
 vi.mock("../../../src/email/authenticateSender.js", () => ({
@@ -115,6 +113,8 @@ const activeAlias = {
   maxEmailsHour: 60,
 };
 
+const authenticatedExampleRules = [{ matchType: "domain", matchValue: "example.com" }];
+
 function fakeDb() {
   return {
     transaction: async <T>(fn: (tx: { execute: ReturnType<typeof vi.fn> }) => Promise<T>) =>
@@ -137,7 +137,7 @@ describe("processInboundEmail", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mockCheckInboundLimit.mockResolvedValue({ ok: true });
-    mockListAllowRules.mockResolvedValue([]);
+    mockListAllowRules.mockResolvedValue(authenticatedExampleRules);
     mockAuthenticateSender.mockResolvedValue({
       headerFromEmail: "sender@example.com",
       headerFromDomain: "example.com",
@@ -164,30 +164,26 @@ describe("processInboundEmail", () => {
     process.env["HMAC_SECRET"] = "hmac-secret-test-32chars-abcdef";
   });
 
-  it("returns sender_not_allowed when envelopeFrom from PipelineInput is blocked", async () => {
+  it("returns sender_not_allowed when RFC5322 From has no allow-rule candidate", async () => {
     mockFindAlias.mockResolvedValue(activeAlias);
-    mockCheckAllow.mockResolvedValue(false);
     const result = await processInboundEmail(
       fakeDb() as Parameters<typeof processInboundEmail>[0],
       null,
       {
-        rawEmail: simpleEmail(),
+        rawEmail: Buffer.from("From: blocked@attacker.com\r\nSubject: blocked\r\n\r\nbody"),
         localPart: "alerts",
         envelopeFrom: "blocked@attacker.com",
         ...PIPELINE_CONFIG,
       },
     );
     expect(result).toEqual({ ok: false, reason: "sender_not_allowed" });
-    expect(mockCheckAllow).toHaveBeenCalledWith(
-      expect.anything(),
-      activeAlias.id,
-      "blocked@attacker.com",
-    );
+    expect(mockAuthenticateSender).not.toHaveBeenCalled();
   });
 
-  it("does not fall back to MIME From when envelopeFrom is missing", async () => {
+  it("allows authenticated RFC5322 From when envelopeFrom is missing", async () => {
     mockFindAlias.mockResolvedValue(activeAlias);
-    mockCheckAllow.mockResolvedValue(true);
+    mockIsDuplicate.mockResolvedValue(false);
+    mockCreateLog.mockResolvedValue({ id: "log-no-envelope" });
     const result = await processInboundEmail(
       fakeDb() as Parameters<typeof processInboundEmail>[0],
       null,
@@ -197,8 +193,8 @@ describe("processInboundEmail", () => {
         ...PIPELINE_CONFIG,
       },
     );
-    expect(result).toEqual({ ok: false, reason: "sender_not_allowed" });
-    expect(mockCheckAllow).not.toHaveBeenCalled();
+    expect(result).toEqual({ ok: true });
+    expect(mockAuthenticateSender).toHaveBeenCalledWith(expect.any(Buffer), null);
   });
 
   it("returns alias_not_found when alias is missing", async () => {
@@ -232,7 +228,6 @@ describe("processInboundEmail", () => {
 
   it("returns duplicate when dedup check fails", async () => {
     mockFindAlias.mockResolvedValue(activeAlias);
-    mockCheckAllow.mockResolvedValue(true);
     mockIsDuplicate.mockResolvedValue(true);
     const result = await processInboundEmail(
       fakeDb() as Parameters<typeof processInboundEmail>[0],
@@ -249,7 +244,6 @@ describe("processInboundEmail", () => {
 
   it("returns rate_limited when alias hourly cap is reached", async () => {
     mockFindAlias.mockResolvedValue(activeAlias);
-    mockCheckAllow.mockResolvedValue(true);
     mockIsDuplicate.mockResolvedValue(false);
     mockCountRecentDeliveries.mockResolvedValue(60);
 
@@ -270,7 +264,6 @@ describe("processInboundEmail", () => {
 
   it("persists the authoritative envelopeFrom in the delivery log", async () => {
     mockFindAlias.mockResolvedValue(activeAlias);
-    mockCheckAllow.mockResolvedValue(true);
     mockIsDuplicate.mockResolvedValue(false);
     mockCreateLog.mockResolvedValue({ id: "log-uuid-audit" });
     mockUpdateLogStatus.mockResolvedValue(undefined);
@@ -293,7 +286,6 @@ describe("processInboundEmail", () => {
 
   it("passes the alias body dedup setting into the duplicate check and delivery log", async () => {
     mockFindAlias.mockResolvedValue({ ...activeAlias, bodyDedupEnabled: true });
-    mockCheckAllow.mockResolvedValue(true);
     mockIsDuplicate.mockResolvedValue(false);
     mockCreateLog.mockResolvedValue({ id: "log-dedup-enabled" });
     mockUpdateLogStatus.mockResolvedValue(undefined);
@@ -317,7 +309,6 @@ describe("processInboundEmail", () => {
 
   it("sends a privacy-mode alert with a one-time view link instead of the email body", async () => {
     mockFindAlias.mockResolvedValue({ ...activeAlias, privacyModeEnabled: true });
-    mockCheckAllow.mockResolvedValue(true);
     mockIsDuplicate.mockResolvedValue(false);
     mockCreateLog.mockResolvedValue({
       id: "log-privacy",
@@ -355,7 +346,6 @@ describe("processInboundEmail", () => {
 
   it("returns ok:true when api is null (no send)", async () => {
     mockFindAlias.mockResolvedValue(activeAlias);
-    mockCheckAllow.mockResolvedValue(true);
     mockIsDuplicate.mockResolvedValue(false);
     mockCreateLog.mockResolvedValue({ id: "log-uuid-1" });
     mockUpdateLogStatus.mockResolvedValue(undefined);
@@ -375,7 +365,6 @@ describe("processInboundEmail", () => {
 
   it("delivers and returns ok:true on successful send", async () => {
     mockFindAlias.mockResolvedValue(activeAlias);
-    mockCheckAllow.mockResolvedValue(true);
     mockIsDuplicate.mockResolvedValue(false);
     mockCreateLog.mockResolvedValue({ id: "log-uuid-2" });
     mockUpdateLogStatus.mockResolvedValue(undefined);
@@ -398,7 +387,6 @@ describe("processInboundEmail", () => {
 
   it("returns send_failed when Telegram delivery fails", async () => {
     mockFindAlias.mockResolvedValue(activeAlias);
-    mockCheckAllow.mockResolvedValue(true);
     mockIsDuplicate.mockResolvedValue(false);
     mockCreateLog.mockResolvedValue({ id: "log-uuid-3" });
     mockUpdateLogStatus.mockResolvedValue(undefined);
@@ -436,7 +424,7 @@ describe("queueInboundEmail", () => {
     mockDecrementOrganizationStorageUsage.mockResolvedValue(undefined);
     mockDeleteFile.mockResolvedValue(undefined);
     mockUsageMonthForDate.mockReturnValue("2026-04");
-    mockListAllowRules.mockResolvedValue([]);
+    mockListAllowRules.mockResolvedValue(authenticatedExampleRules);
     mockAuthenticateSender.mockResolvedValue({
       headerFromEmail: "sender@example.com",
       headerFromDomain: "example.com",
@@ -447,7 +435,6 @@ describe("queueInboundEmail", () => {
 
   it("queues a delivery log before async delivery begins", async () => {
     mockFindAlias.mockResolvedValue(activeAlias);
-    mockCheckAllow.mockResolvedValue(true);
     mockIsDuplicate.mockResolvedValue(false);
     mockCreateLog.mockResolvedValue({ id: "log-queued" });
     const harness = fakeDbHarness();
@@ -489,7 +476,6 @@ describe("queueInboundEmail", () => {
 
   it("returns the inbound limit reason before creating a delivery log", async () => {
     mockFindAlias.mockResolvedValue(activeAlias);
-    mockCheckAllow.mockResolvedValue(true);
     mockCheckInboundLimit.mockResolvedValueOnce({
       ok: false,
       code: "monthly_email_limit",
@@ -516,7 +502,6 @@ describe("queueInboundEmail", () => {
 
   it("returns duplicate when the delivery-log insert loses a DB race", async () => {
     mockFindAlias.mockResolvedValue(activeAlias);
-    mockCheckAllow.mockResolvedValue(true);
     mockIsDuplicate.mockResolvedValue(false);
     mockCountRecentDeliveries.mockResolvedValue(0);
     mockCreateLog.mockResolvedValue(null);
@@ -535,12 +520,10 @@ describe("queueInboundEmail", () => {
 
   it("queues authenticated allow-rule deliveries when DKIM/DMARC aligned identity passes", async () => {
     mockFindAlias.mockResolvedValue(activeAlias);
-    mockCheckAllow.mockResolvedValue(false);
     mockListAllowRules.mockResolvedValue([
       {
         matchType: "domain",
         matchValue: "example.com",
-        authRequirement: "authenticated",
       },
     ]);
     mockAuthenticateSender.mockResolvedValue({
@@ -567,12 +550,10 @@ describe("queueInboundEmail", () => {
 
   it("rejects authenticated allow-rule candidates when sender auth fails", async () => {
     mockFindAlias.mockResolvedValue(activeAlias);
-    mockCheckAllow.mockResolvedValue(false);
     mockListAllowRules.mockResolvedValue([
       {
         matchType: "domain",
         matchValue: "example.com",
-        authRequirement: "authenticated",
       },
     ]);
     mockAuthenticateSender.mockResolvedValue({

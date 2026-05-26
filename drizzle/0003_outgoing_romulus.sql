@@ -1,0 +1,1 @@
+ALTER TABLE "allow_rules" DROP COLUMN "auth_requirement";

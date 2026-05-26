@@ -1,9 +1,8 @@
-import type { AllowAuthRequirement, AllowMatchType } from "../db/repos/allowRules.js";
+import type { AllowMatchType } from "../db/repos/allowRules.js";
 
 export interface AllowRuleForEvaluation {
   matchType: string;
   matchValue: string;
-  authRequirement: string;
 }
 
 export interface SenderAuthForAllowRules {
@@ -21,19 +20,13 @@ export type AllowEvaluationReason =
 export interface AllowEvaluationResult {
   allowed: boolean;
   reason?: AllowEvaluationReason;
-  matchedAuthRequirement?: AllowAuthRequirement;
 }
 
 export function evaluateAllowRules(
   rules: AllowRuleForEvaluation[],
-  envelopeFrom: string,
   senderAuth?: SenderAuthForAllowRules,
 ): AllowEvaluationResult {
   if (rules.length === 0) return { allowed: false, reason: "sender_not_allowed" };
-  if (matchesClaimedRule(rules, envelopeFrom)) {
-    return { allowed: true, matchedAuthRequirement: "claimed" };
-  }
-
   if (!senderAuth) {
     return { allowed: false, reason: "sender_not_allowed" };
   }
@@ -49,14 +42,10 @@ export function evaluateAllowRules(
   }
 
   if (matchesAuthenticatedRule(rules, senderAuth)) {
-    return { allowed: true, matchedAuthRequirement: "authenticated" };
+    return { allowed: true };
   }
 
   return { allowed: false, reason: "sender_auth_failed" };
-}
-
-export function hasAuthenticatedRules(rules: AllowRuleForEvaluation[]): boolean {
-  return rules.some((rule) => normalizeAuthRequirement(rule.authRequirement) === "authenticated");
 }
 
 export function hasAuthenticatedRuleCandidate(
@@ -64,19 +53,7 @@ export function hasAuthenticatedRuleCandidate(
   headerFromEmail: string | null,
   headerFromDomain: string | null,
 ): boolean {
-  return rules.some((rule) => {
-    if (normalizeAuthRequirement(rule.authRequirement) !== "authenticated") return false;
-    return matchesRuleIdentity(rule, headerFromEmail, headerFromDomain);
-  });
-}
-
-function matchesClaimedRule(rules: AllowRuleForEvaluation[], envelopeFrom: string): boolean {
-  const senderEmail = normalizeEmail(envelopeFrom);
-  const senderDomain = domainFromEmail(senderEmail);
-  return rules.some((rule) => {
-    if (normalizeAuthRequirement(rule.authRequirement) !== "claimed") return false;
-    return matchesRuleIdentity(rule, senderEmail, senderDomain);
-  });
+  return rules.some((rule) => matchesRuleIdentity(rule, headerFromEmail, headerFromDomain));
 }
 
 function matchesAuthenticatedRule(
@@ -89,10 +66,7 @@ function matchesAuthenticatedRule(
   const authenticatedDomains = new Set(senderAuth.authenticatedDomains.map(normalizeDomain));
   if (!authenticatedDomains.has(headerFromDomain)) return false;
 
-  return rules.some((rule) => {
-    if (normalizeAuthRequirement(rule.authRequirement) !== "authenticated") return false;
-    return matchesRuleIdentity(rule, headerFromEmail, headerFromDomain);
-  });
+  return rules.some((rule) => matchesRuleIdentity(rule, headerFromEmail, headerFromDomain));
 }
 
 function matchesRuleIdentity(
@@ -101,14 +75,12 @@ function matchesRuleIdentity(
   domain: string | null,
 ): boolean {
   const matchValue = rule.matchValue.toLowerCase();
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedDomain = normalizeDomain(domain);
   const matchType = normalizeMatchType(rule.matchType);
-  if (matchType === "exact_email") return email === matchValue;
-  if (matchType === "domain") return domain === matchValue;
+  if (matchType === "exact_email") return normalizedEmail === matchValue;
+  if (matchType === "domain") return normalizedDomain === matchValue;
   return false;
-}
-
-function normalizeAuthRequirement(value: string): AllowAuthRequirement | null {
-  return value === "claimed" || value === "authenticated" ? value : null;
 }
 
 function normalizeMatchType(value: string): AllowMatchType | null {
@@ -123,8 +95,4 @@ function normalizeEmail(value: string | null | undefined): string | null {
 function normalizeDomain(value: string | null | undefined): string | null {
   const normalized = value?.trim().toLowerCase();
   return normalized && normalized.length > 0 ? normalized : null;
-}
-
-function domainFromEmail(email: string | null): string | null {
-  return email?.split("@")[1] ?? null;
 }

@@ -88,9 +88,21 @@ vi.mock("../../src/db/repos/inboundDomains.js", () => ({
 }));
 
 vi.mock("../../src/db/repos/allowRules.js", () => ({
-  checkAllowRule: vi.fn(() => Promise.resolve(state.allow)),
   checkPreflightAllowRules: vi.fn(() => Promise.resolve(state.allow)),
-  listAllowRules: vi.fn(() => Promise.resolve([])),
+  listAllowRules: vi.fn(() =>
+    Promise.resolve(state.allow ? [{ matchType: "domain", matchValue: "example.com" }] : []),
+  ),
+}));
+
+vi.mock("../../src/email/authenticateSender.js", () => ({
+  authenticateSender: vi.fn(() =>
+    Promise.resolve({
+      headerFromEmail: "sender@example.com",
+      headerFromDomain: "example.com",
+      authenticatedDomains: ["example.com"],
+      status: "pass",
+    }),
+  ),
 }));
 
 vi.mock("../../src/db/repos/hostedInboundBlocks.js", () => ({
