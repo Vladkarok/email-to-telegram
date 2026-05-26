@@ -25,8 +25,10 @@ Thumbs.db
 *.swp
 *.swo
 
-# Claude Code
-.claude/
+# Claude Code: machine-local state ignored, project skills tracked.
+# Mirrors the .codex/ pattern below (notes.md committed, rest ignored).
+.claude/*
+!.claude/skills/
 # .codex/notes.md is the committed Codex adapter (mirror of CLAUDE.md).
 # Anything else under .codex/ (Codex CLI machine-local state) stays ignored.
 .codex/*
