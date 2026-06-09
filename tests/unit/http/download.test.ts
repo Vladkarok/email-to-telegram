@@ -103,7 +103,6 @@ describe("GET /dl/:token", () => {
     const { token, expiresAt } = generateDownloadToken("attach-uuid-2");
     mockFindLink.mockResolvedValue({
       id: "link-1",
-      token,
       expiresAt,
       downloadedAt: new Date(), // already downloaded
       attachment: {
@@ -122,7 +121,6 @@ describe("GET /dl/:token", () => {
     const expiredAt = new Date(Date.now() - 1000);
     mockFindLink.mockResolvedValue({
       id: "link-1",
-      token,
       expiresAt: expiredAt,
       downloadedAt: null,
       attachment: {
@@ -143,7 +141,6 @@ describe("GET /dl/:token", () => {
 
     mockFindLink.mockResolvedValue({
       id: "link-1",
-      token,
       expiresAt,
       downloadedAt: null,
       attachmentId,
@@ -182,7 +179,6 @@ describe("GET /dl/:token", () => {
 
     mockFindLink.mockResolvedValue({
       id: "link-2",
-      token,
       expiresAt,
       downloadedAt: null,
       attachmentId,
@@ -213,7 +209,6 @@ describe("GET /dl/:token", () => {
 
     mockFindLink.mockResolvedValue({
       id: "link-egress",
-      token,
       expiresAt,
       downloadedAt: null,
       attachmentId,
@@ -249,7 +244,6 @@ describe("GET /dl/:token", () => {
 
     mockFindLink.mockResolvedValue({
       id: "link-3",
-      token,
       expiresAt,
       downloadedAt: null,
       attachmentId,
@@ -281,7 +275,6 @@ describe("GET /dl/:token", () => {
 
     mockFindLink.mockResolvedValue({
       id: "link-4",
-      token,
       expiresAt,
       downloadedAt: null,
       attachmentId: "different-attachment-id",
@@ -309,7 +302,6 @@ describe("GET /dl/:token", () => {
 
     mockFindLink.mockResolvedValue({
       id: "link-5",
-      token,
       expiresAt,
       downloadedAt: null,
       attachmentId,
@@ -344,7 +336,6 @@ describe("GET /dl/:token", () => {
 
     mockFindLink.mockResolvedValue({
       id: "link-6",
-      token,
       expiresAt,
       downloadedAt: null,
       attachmentId,
@@ -376,7 +367,6 @@ describe("GET /dl/:token", () => {
 
     mockFindLink.mockResolvedValue({
       id: "link-7",
-      token,
       expiresAt,
       downloadedAt: null,
       attachmentId,

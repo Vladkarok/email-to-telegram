@@ -100,6 +100,16 @@ export function rawRoute(
         return;
       }
 
+      // Only v2 signatures bind the routing headers into the HMAC. The legacy
+      // v1 scheme (body-only) was rollout compatibility and is no longer
+      // accepted: the deployed Worker always sends v2.
+      if (sigVersion !== "v2") {
+        logWorkerForwardFailed("unsupported_signature_version");
+        recordRawInbound("rejected", "unsupported_signature_version");
+        await reply.status(401).send({ error: "invalid signature" });
+        return;
+      }
+
       // rawBody captured by the JSON/octet-stream parsers in createHttpServer;
       // fall back to req.body directly for octet-stream in tests
       const body = req.rawBody ?? (Buffer.isBuffer(req.body) ? req.body : null);
@@ -110,10 +120,7 @@ export function rawRoute(
         return;
       }
 
-      const routingHeaders =
-        sigVersion === "v2"
-          ? { localPart: localPart ?? "", recipientDomain, envelopeFrom }
-          : undefined;
+      const routingHeaders = { localPart: localPart ?? "", recipientDomain, envelopeFrom };
       if (!verifyWorkerRequest(body, sig, ts, routingHeaders)) {
         logWorkerForwardFailed("invalid_signature");
         recordRawInbound("rejected", "invalid_signature");
