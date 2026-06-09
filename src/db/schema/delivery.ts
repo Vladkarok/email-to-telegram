@@ -91,6 +91,9 @@ export const deliveryAttempts = pgTable(
     telegramMessageId: bigint("telegram_message_id", { mode: "bigint" }),
     status: varchar("status", { length: 20 }).notNull(),
     errorText: text("error_text"),
+    // Coarse class of the send failure (see telegram/errorClassifier.ts).
+    // NULL on succeeded attempts and on rows from before the column existed.
+    errorClass: varchar("error_class", { length: 32 }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

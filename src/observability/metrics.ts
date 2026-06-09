@@ -5,6 +5,7 @@ import { countUsers, countUsersByPlan } from "../db/repos/users.js";
 import { countChats } from "../db/repos/chats.js";
 import { countAliasesByStatus } from "../db/repos/aliases.js";
 import { countAttachmentStorage } from "../db/repos/attachments.js";
+import { classifyTelegramError } from "../telegram/errorClassifier.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -244,20 +245,4 @@ function statusClass(statusCode: number): string {
 function normalizeRouteLabel(route: string): string {
   if (!route || route === "unknown") return "unknown";
   return route.replace(/:[^/]+/g, ":param");
-}
-
-function classifyTelegramError(error: string | null | undefined): string {
-  const normalized = (error ?? "").toLowerCase();
-  if (!normalized) return "unknown";
-  if (normalized.includes("flood")) return "flood_wait";
-  if (normalized.includes("forbidden") || normalized.includes("blocked")) return "forbidden";
-  if (normalized.includes("bad request")) return "bad_request";
-  if (normalized.includes("timeout") || normalized.includes("timed out")) return "timeout";
-  if (
-    normalized.includes("network") ||
-    normalized.includes("econn") ||
-    normalized.includes("fetch")
-  )
-    return "network";
-  return "other";
 }

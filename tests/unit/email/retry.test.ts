@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { markBotHealthy, markBotUnhealthy } from "../../../src/telegram/health.js";
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
@@ -7,6 +8,7 @@ const mockClaimLog = vi.fn();
 const mockUpdateLogStatus = vi.fn();
 const mockFindAliasById = vi.fn();
 const mockCountAttempts = vi.fn();
+const mockCountCountedFailed = vi.fn();
 const mockInsertAttempt = vi.fn();
 const mockReadRawEmail = vi.fn();
 const mockSendTelegramMessage = vi.fn();
@@ -44,6 +46,7 @@ vi.mock("../../../src/db/repos/deliveryViewLinks.js", () => ({
 }));
 vi.mock("../../../src/db/repos/deliveryAttempts.js", () => ({
   countAttemptsByLog: (...args: unknown[]): unknown => mockCountAttempts(...args),
+  countCountedFailedAttemptsByLog: (...args: unknown[]): unknown => mockCountCountedFailed(...args),
   insertDeliveryAttempt: (...args: unknown[]): unknown => mockInsertAttempt(...args),
 }));
 vi.mock("../../../src/storage/disk.js", () => ({
@@ -110,9 +113,11 @@ const fakeApi = { sendMessage: vi.fn() } as unknown as Parameters<typeof runRetr
 describe("runRetryWorker", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    markBotHealthy();
     mockFindAliasById.mockResolvedValue(fakeAlias);
     mockClaimLog.mockResolvedValue(true);
     mockCountAttempts.mockResolvedValue(0);
+    mockCountCountedFailed.mockResolvedValue(0);
     mockInsertAttempt.mockResolvedValue(undefined);
     mockUpdateLogStatus.mockResolvedValue(undefined);
     mockReadRawEmail.mockResolvedValue(RAW_EMAIL);
@@ -168,7 +173,8 @@ describe("runRetryWorker", () => {
 
   it("marks permanently_failed when max retries reached", async () => {
     mockFindFailedLogs.mockResolvedValue([fakeLog]);
-    mockCountAttempts.mockResolvedValue(3); // already at MAX_RETRIES
+    mockCountAttempts.mockResolvedValue(3);
+    mockCountCountedFailed.mockResolvedValue(3); // counted failures already at MAX_RETRIES
     await runRetryWorker(fakeDb, fakeApi);
 
     expect(mockSendTelegramMessage).not.toHaveBeenCalled();
@@ -218,7 +224,63 @@ describe("runRetryWorker", () => {
   it("marks permanently_failed on last failed attempt", async () => {
     mockFindFailedLogs.mockResolvedValue([fakeLog]);
     mockCountAttempts.mockResolvedValue(2); // attempt 3 of 3
+    mockCountCountedFailed.mockResolvedValue(2); // both prior failures counted
     mockSendTelegramMessage.mockResolvedValue({ ok: false, error: "Telegram error" });
+    await runRetryWorker(fakeDb, fakeApi);
+
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+  });
+
+  it("skips the whole cycle while the bot is unhealthy", async () => {
+    markBotUnhealthy();
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+
+    await runRetryWorker(fakeDb, fakeApi, { rawEmailDir: "/data/rawemails" });
+
+    expect(mockListPendingRawEmails).not.toHaveBeenCalled();
+    expect(mockFindFailedLogs).not.toHaveBeenCalled();
+    expect(mockSendTelegramMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not consume retry budget for transient network failures", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockCountAttempts.mockResolvedValue(10); // many prior transient attempts
+    mockCountCountedFailed.mockResolvedValue(0);
+    mockSendTelegramMessage.mockResolvedValue({ ok: false, error: "fetch failed" });
+
+    await runRetryWorker(fakeDb, fakeApi);
+
+    expect(mockInsertAttempt).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({ attemptNo: 11, status: "failed", errorClass: "network" }),
+    );
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
+    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+  });
+
+  it("fails permanently right away when the bot is blocked by the chat", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockSendTelegramMessage.mockResolvedValue({
+      ok: false,
+      error: "Call to 'sendMessage' failed! (403: Forbidden: bot was blocked by the user)",
+    });
+
+    await runRetryWorker(fakeDb, fakeApi);
+
+    expect(mockInsertAttempt).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({ status: "failed", errorClass: "forbidden" }),
+    );
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+  });
+
+  it("fails permanently right away when the chat no longer exists", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockSendTelegramMessage.mockResolvedValue({
+      ok: false,
+      error: "Call to 'sendMessage' failed! (400: Bad Request: chat not found)",
+    });
+
     await runRetryWorker(fakeDb, fakeApi);
 
     expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");

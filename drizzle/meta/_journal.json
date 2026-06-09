@@ -36,6 +36,13 @@
       "when": 1781030023617,
       "tag": "0004_drop-legacy-attachment-token",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1781031226955,
+      "tag": "0005_delivery-attempt-error-class",
+      "breakpoints": true
     }
   ]
 }
