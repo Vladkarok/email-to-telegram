@@ -578,6 +578,8 @@ describe("POST /inbound/raw", () => {
     savedAppMode = process.env["APP_MODE"];
     process.env["WORKER_SECRET"] = WORKER_SECRET;
     delete process.env["APP_MODE"];
+    mockClaimWorkerRequestNonce.mockReset();
+    mockClaimWorkerRequestNonce.mockResolvedValue(true);
     mockWriteRawEmail.mockReset();
     mockWriteRawEmail.mockResolvedValue({
       encryptionMode: "none",
@@ -745,9 +747,7 @@ describe("POST /inbound/raw", () => {
     expect(mockWriteRawEmail).not.toHaveBeenCalled();
   });
 
-  it("does not acknowledge raw mail before durable persistence succeeds", async () => {
-    mockWriteRawEmail.mockRejectedValueOnce(new Error("disk full"));
-
+  it("rejects raw uploads without the v2 signature version", async () => {
     const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
     const { signature, timestamp } = signWorkerRequest(rawEmail);
 
@@ -758,6 +758,39 @@ describe("POST /inbound/raw", () => {
       headers: {
         "content-type": "application/octet-stream",
         "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+        "x-envelope-from": "sender@example.com",
+        "x-local-part": "alerts",
+      },
+      payload: rawEmail,
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(mockClaimWorkerRequestNonce).not.toHaveBeenCalled();
+    expect(mockWriteRawEmail).not.toHaveBeenCalled();
+    const metrics = await metricsRegistry.metrics();
+    expect(
+      findMetricLine(metrics, "email_to_telegram_raw_inbound_total", [
+        'result="rejected"',
+        'reason="unsupported_signature_version"',
+      ]),
+    ).toBeDefined();
+  });
+
+  it("does not acknowledge raw mail before durable persistence succeeds", async () => {
+    mockWriteRawEmail.mockRejectedValueOnce(new Error("disk full"));
+
+    const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
+    const { signature, timestamp } = signWorkerRequest(rawEmail, { localPart: "alerts" });
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/raw",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-worker-sig": signature,
+        "x-worker-sig-v": "v2",
         "x-worker-ts": timestamp,
         "x-local-part": "alerts",
       },
@@ -783,7 +816,10 @@ describe("POST /inbound/raw", () => {
     });
 
     const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
-    const { signature, timestamp } = signWorkerRequest(rawEmail);
+    const { signature, timestamp } = signWorkerRequest(rawEmail, {
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+    });
 
     const app = await buildApp();
     const res = await app.inject({
@@ -792,6 +828,7 @@ describe("POST /inbound/raw", () => {
       headers: {
         "content-type": "application/octet-stream",
         "x-worker-sig": signature,
+        "x-worker-sig-v": "v2",
         "x-worker-ts": timestamp,
         "x-envelope-from": "sender@example.com",
         "x-local-part": "alerts",
@@ -820,7 +857,11 @@ describe("POST /inbound/raw", () => {
     });
 
     const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
-    const { signature, timestamp } = signWorkerRequest(rawEmail);
+    const { signature, timestamp } = signWorkerRequest(rawEmail, {
+      localPart: "alerts",
+      recipientDomain: "mail.example.com",
+      envelopeFrom: "sender@example.com",
+    });
 
     const app = await buildApp();
     const res = await app.inject({
@@ -829,6 +870,7 @@ describe("POST /inbound/raw", () => {
       headers: {
         "content-type": "application/octet-stream",
         "x-worker-sig": signature,
+        "x-worker-sig-v": "v2",
         "x-worker-ts": timestamp,
         "x-envelope-from": "sender@example.com",
         "x-local-part": "alerts",
@@ -859,7 +901,11 @@ describe("POST /inbound/raw", () => {
     });
 
     const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
-    const { signature, timestamp } = signWorkerRequest(rawEmail);
+    const { signature, timestamp } = signWorkerRequest(rawEmail, {
+      localPart: "alerts",
+      recipientDomain: "mail.example.com",
+      envelopeFrom: "sender@example.com",
+    });
 
     const app = await buildApp();
     const res = await app.inject({
@@ -868,6 +914,7 @@ describe("POST /inbound/raw", () => {
       headers: {
         "content-type": "application/octet-stream",
         "x-worker-sig": signature,
+        "x-worker-sig-v": "v2",
         "x-worker-ts": timestamp,
         "x-envelope-from": "sender@example.com",
         "x-local-part": "alerts",
@@ -890,7 +937,10 @@ describe("POST /inbound/raw", () => {
     });
 
     const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
-    const { signature, timestamp } = signWorkerRequest(rawEmail);
+    const { signature, timestamp } = signWorkerRequest(rawEmail, {
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+    });
 
     const app = await buildApp();
     const res = await app.inject({
@@ -899,6 +949,7 @@ describe("POST /inbound/raw", () => {
       headers: {
         "content-type": "application/octet-stream",
         "x-worker-sig": signature,
+        "x-worker-sig-v": "v2",
         "x-worker-ts": timestamp,
         "x-envelope-from": "sender@example.com",
         "x-local-part": "alerts",
@@ -919,7 +970,10 @@ describe("POST /inbound/raw", () => {
     });
 
     const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
-    const { signature, timestamp } = signWorkerRequest(rawEmail);
+    const { signature, timestamp } = signWorkerRequest(rawEmail, {
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+    });
 
     const app = await buildApp();
     const res = await app.inject({
@@ -928,6 +982,7 @@ describe("POST /inbound/raw", () => {
       headers: {
         "content-type": "application/octet-stream",
         "x-worker-sig": signature,
+        "x-worker-sig-v": "v2",
         "x-worker-ts": timestamp,
         "x-envelope-from": "sender@example.com",
         "x-local-part": "alerts",
@@ -947,7 +1002,10 @@ describe("POST /inbound/raw", () => {
     });
 
     const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
-    const { signature, timestamp } = signWorkerRequest(rawEmail);
+    const { signature, timestamp } = signWorkerRequest(rawEmail, {
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+    });
 
     const app = await buildApp();
     const res = await app.inject({
@@ -956,6 +1014,7 @@ describe("POST /inbound/raw", () => {
       headers: {
         "content-type": "application/octet-stream",
         "x-worker-sig": signature,
+        "x-worker-sig-v": "v2",
         "x-worker-ts": timestamp,
         "x-envelope-from": "sender@example.com",
         "x-local-part": "alerts",
@@ -973,7 +1032,7 @@ describe("POST /inbound/raw", () => {
     mockWritePendingRawEmailMeta.mockRejectedValueOnce(new Error("fs exploded"));
 
     const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
-    const { signature, timestamp } = signWorkerRequest(rawEmail);
+    const { signature, timestamp } = signWorkerRequest(rawEmail, { localPart: "alerts" });
 
     const app = await buildApp();
     const res = await app.inject({
@@ -982,6 +1041,7 @@ describe("POST /inbound/raw", () => {
       headers: {
         "content-type": "application/octet-stream",
         "x-worker-sig": signature,
+        "x-worker-sig-v": "v2",
         "x-worker-ts": timestamp,
         "x-local-part": "alerts",
       },
@@ -1000,7 +1060,7 @@ describe("POST /inbound/raw", () => {
     });
 
     const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
-    const { signature, timestamp } = signWorkerRequest(rawEmail);
+    const { signature, timestamp } = signWorkerRequest(rawEmail, { localPart: "alerts" });
 
     const app = await buildApp();
     const res = await app.inject({
@@ -1009,6 +1069,7 @@ describe("POST /inbound/raw", () => {
       headers: {
         "content-type": "application/octet-stream",
         "x-worker-sig": signature,
+        "x-worker-sig-v": "v2",
         "x-worker-ts": timestamp,
         "x-local-part": "alerts",
       },
@@ -1038,7 +1099,7 @@ describe("POST /inbound/raw", () => {
     });
 
     const rawEmail = Buffer.from("From: blocked@example.com\r\nSubject: Hi\r\n\r\nBody");
-    const { signature, timestamp } = signWorkerRequest(rawEmail);
+    const { signature, timestamp } = signWorkerRequest(rawEmail, { localPart: "alerts" });
 
     const app = await buildApp();
     const res = await app.inject({
@@ -1047,6 +1108,7 @@ describe("POST /inbound/raw", () => {
       headers: {
         "content-type": "application/octet-stream",
         "x-worker-sig": signature,
+        "x-worker-sig-v": "v2",
         "x-worker-ts": timestamp,
         "x-local-part": "alerts",
       },
@@ -1088,7 +1150,10 @@ describe("POST /inbound/raw", () => {
     // maxInflightDeliveries: 0 forces every accepted email past the cap, so the
     // route still acks 202 but does not dispatch deliverQueuedEmail itself.
     const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
-    const { signature, timestamp } = signWorkerRequest(rawEmail);
+    const { signature, timestamp } = signWorkerRequest(rawEmail, {
+      localPart: "alerts",
+      recipientDomain: "mail.example.com",
+    });
 
     const app = await buildApp(true, { maxInflightDeliveries: 0 });
     const res = await app.inject({
@@ -1097,6 +1162,7 @@ describe("POST /inbound/raw", () => {
       headers: {
         "content-type": "application/octet-stream",
         "x-worker-sig": signature,
+        "x-worker-sig-v": "v2",
         "x-worker-ts": timestamp,
         "x-local-part": "alerts",
         "x-recipient-domain": "mail.example.com",

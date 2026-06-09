@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { eq, isNull, and, lt, or } from "drizzle-orm";
+import { eq, isNull, and, lt } from "drizzle-orm";
 import { attachmentLinks, attachments, deliveryLogs } from "../schema.js";
 import type * as schema from "../schema.js";
 import { hashStoredToken } from "../../utils/tokens.js";
@@ -8,7 +8,6 @@ type Db = NodePgDatabase<typeof schema>;
 
 export interface AttachmentLinkWithAttachment {
   id: string;
-  token: string;
   expiresAt: Date;
   downloadedAt: Date | null;
   attachmentId: string;
@@ -32,7 +31,6 @@ export async function findAttachmentLinkByToken(
   const [row] = await db
     .select({
       id: attachmentLinks.id,
-      token: attachmentLinks.token,
       expiresAt: attachmentLinks.expiresAt,
       downloadedAt: attachmentLinks.downloadedAt,
       attachmentId: attachmentLinks.attachmentId,
@@ -49,19 +47,12 @@ export async function findAttachmentLinkByToken(
     .from(attachmentLinks)
     .innerJoin(attachments, eq(attachmentLinks.attachmentId, attachments.id))
     .innerJoin(deliveryLogs, eq(attachments.deliveryLogId, deliveryLogs.id))
-    .where(
-      or(
-        eq(attachmentLinks.tokenHash, hashStoredToken(token)),
-        // Legacy fallback for links issued before token_hash was introduced.
-        eq(attachmentLinks.token, token),
-      ),
-    );
+    .where(eq(attachmentLinks.tokenHash, hashStoredToken(token)));
 
   if (!row) return null;
 
   return {
     id: row.id,
-    token: row.token,
     expiresAt: row.expiresAt,
     downloadedAt: row.downloadedAt,
     attachmentId: row.attachmentId,
@@ -99,12 +90,10 @@ export async function createAttachmentLink(
   token: string,
   expiresAt: Date,
 ): Promise<void> {
+  // Only the SHA-256 of the bearer token is persisted; the raw token exists
+  // solely in the generated /dl URL.
   const tokenHash = hashStoredToken(token);
-  await db
-    .insert(attachmentLinks)
-    // During the transition the legacy `token` column remains NOT NULL for old
-    // deployments, but new rows must not persist the bearer token in plaintext.
-    .values({ attachmentId, token: tokenHash, tokenHash, expiresAt });
+  await db.insert(attachmentLinks).values({ attachmentId, tokenHash, expiresAt });
 }
 
 /**
