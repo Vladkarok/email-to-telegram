@@ -1,0 +1,1 @@
+ALTER TABLE "delivery_attempts" ADD COLUMN "error_class" varchar(32);

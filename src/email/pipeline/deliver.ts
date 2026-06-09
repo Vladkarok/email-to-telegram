@@ -37,6 +37,7 @@ import type { DeliveryLog } from "../../db/schema.js";
 import type { parseEmail } from "../parser.js";
 import type { Db, QueuedInboundEmail, PipelineResult } from "./types.js";
 import { recordDeliveryAttempt, recordTelegramSendFailure } from "../../observability/metrics.js";
+import { classifyTelegramError, retryDispositionForError } from "../../telegram/errorClassifier.js";
 
 interface StoredImageAttachment extends PhotoItem {
   attachmentId: string;
@@ -261,6 +262,15 @@ export async function deliverQueuedEmail(
         parseMode: prepared.parseMode,
       });
 
+      // A chat-level permanent error (bot blocked, chat deleted) can never
+      // succeed on retry; close the log immediately instead of burning retry
+      // cycles against an unreachable chat.
+      const sendErrorClass = result.ok ? null : classifyTelegramError(result.error);
+      const failedStatus =
+        !result.ok && retryDispositionForError(result.error) === "fail_permanently"
+          ? "permanently_failed"
+          : "failed";
+
       try {
         await retryAsync(
           () =>
@@ -276,9 +286,10 @@ export async function deliverQueuedEmail(
                   : null,
                 status: result.ok ? "succeeded" : "failed",
                 errorText: result.error ?? null,
+                errorClass: sendErrorClass,
               });
 
-              const finalStatus = result.ok ? "delivered" : "failed";
+              const finalStatus = result.ok ? "delivered" : failedStatus;
               await updateDeliveryLogStatus(workDb, deliveryLog.id, finalStatus);
             }),
           POST_SEND_PERSIST_RETRY,
@@ -303,8 +314,10 @@ export async function deliverQueuedEmail(
       if (!result.ok) {
         recordTelegramSendFailure(result.error);
         log.error(
-          { deliveryLogId: deliveryLog.id, error: result.error },
-          "delivery.telegram.failed",
+          { deliveryLogId: deliveryLog.id, error: result.error, errorClass: sendErrorClass },
+          failedStatus === "permanently_failed"
+            ? "delivery.telegram.permanently_failed"
+            : "delivery.telegram.failed",
         );
         return { ok: false, reason: "send_failed" };
       }

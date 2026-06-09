@@ -174,6 +174,9 @@ async function cleanRawEmails(
             rawEmailWrappedDek: null,
             rawEmailKekKeyId: null,
             rawEmailEncryptedAt: null,
+            // The raw file is the only retry source; once it expires an
+            // undelivered log can never deliver, so close it out.
+            finalStatus: sql`case when ${deliveryLogs.finalStatus} in ('failed', 'received', 'retrying', 'processing') then 'permanently_failed' else ${deliveryLogs.finalStatus} end`,
           })
           .where(eq(deliveryLogs.id, row.id));
         const rowCount = (result as unknown as { rowCount?: number }).rowCount ?? 0;

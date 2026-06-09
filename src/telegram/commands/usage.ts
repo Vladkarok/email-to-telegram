@@ -48,7 +48,7 @@ export async function usageHandler(ctx: Context): Promise<void> {
       countActiveAliasesByUser(db, userId),
       countAllowRulesByUser(db, userId),
       countDeliveryLogsByUserInMonth(db, userId, month, ["delivered"]),
-      countDeliveryLogsByUserInMonth(db, userId, month, ["failed"]),
+      countDeliveryLogsByUserInMonth(db, userId, month, ["failed", "permanently_failed"]),
       countDeliveryLogsByUserInMonth(db, userId, month, ["received", "processing", "retrying"]),
     ]);
 

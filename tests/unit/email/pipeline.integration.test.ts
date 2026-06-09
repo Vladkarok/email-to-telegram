@@ -455,13 +455,69 @@ describe("pipeline integration matrix", () => {
     );
   });
 
-  it("finalStatus = failed on send error", async () => {
+  it("finalStatus = failed on transient send error", async () => {
     mockFindAlias.mockResolvedValue(makeAlias());
     mockIsDuplicate.mockResolvedValue(false);
     mockCreateLog.mockResolvedValue({ id: "log-status-fail" });
     mockUpdateLogStatus.mockResolvedValue(undefined);
     mockInsertAttempt.mockResolvedValue(undefined);
-    mockSendTelegram.mockResolvedValue({ ok: false, error: "chat not found" });
+    mockSendTelegram.mockResolvedValue({ ok: false, error: "fetch failed" });
+
+    await processInboundEmail(fakeDb, fakeApi, {
+      rawEmail: fixture("simple.eml"),
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+      ...PIPELINE_CONFIG,
+    });
+    expect(mockInsertAttempt).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ status: "failed", errorClass: "network" }),
+    );
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(
+      expect.anything(),
+      "log-status-fail",
+      "failed",
+    );
+  });
+
+  it("finalStatus = permanently_failed when the chat is gone", async () => {
+    mockFindAlias.mockResolvedValue(makeAlias());
+    mockIsDuplicate.mockResolvedValue(false);
+    mockCreateLog.mockResolvedValue({ id: "log-status-gone" });
+    mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockInsertAttempt.mockResolvedValue(undefined);
+    mockSendTelegram.mockResolvedValue({
+      ok: false,
+      error: "Call to 'sendMessage' failed! (400: Bad Request: chat not found)",
+    });
+
+    await processInboundEmail(fakeDb, fakeApi, {
+      rawEmail: fixture("simple.eml"),
+      localPart: "alerts",
+      envelopeFrom: "sender@example.com",
+      ...PIPELINE_CONFIG,
+    });
+    expect(mockInsertAttempt).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ status: "failed", errorClass: "chat_not_found" }),
+    );
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(
+      expect.anything(),
+      "log-status-gone",
+      "permanently_failed",
+    );
+  });
+
+  it("finalStatus = permanently_failed when the bot is blocked", async () => {
+    mockFindAlias.mockResolvedValue(makeAlias());
+    mockIsDuplicate.mockResolvedValue(false);
+    mockCreateLog.mockResolvedValue({ id: "log-status-blocked" });
+    mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockInsertAttempt.mockResolvedValue(undefined);
+    mockSendTelegram.mockResolvedValue({
+      ok: false,
+      error: "Call to 'sendMessage' failed! (403: Forbidden: bot was blocked by the user)",
+    });
 
     await processInboundEmail(fakeDb, fakeApi, {
       rawEmail: fixture("simple.eml"),
@@ -471,8 +527,8 @@ describe("pipeline integration matrix", () => {
     });
     expect(mockUpdateLogStatus).toHaveBeenCalledWith(
       expect.anything(),
-      "log-status-fail",
-      "failed",
+      "log-status-blocked",
+      "permanently_failed",
     );
   });
 });

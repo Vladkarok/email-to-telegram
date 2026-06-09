@@ -18,7 +18,11 @@ import {
   findDeliveryLogByRawEmailPath,
   updateDeliveryLogStatus,
 } from "../db/repos/deliveryLogs.js";
-import { insertDeliveryAttempt, countAttemptsByLog } from "../db/repos/deliveryAttempts.js";
+import {
+  insertDeliveryAttempt,
+  countAttemptsByLog,
+  countCountedFailedAttemptsByLog,
+} from "../db/repos/deliveryAttempts.js";
 import { findAliasById } from "../db/repos/aliases.js";
 import { listAttachmentsByDeliveryLogId } from "../db/repos/attachments.js";
 import { createAttachmentLink } from "../db/repos/attachmentLinks.js";
@@ -34,9 +38,19 @@ import { retryAsync } from "../utils/retryAsync.js";
 import { pipelineTracker } from "../utils/inFlight.js";
 import { createPrivacyViewUrl } from "./privacy.js";
 import { recordRetryAttempt, recordTelegramSendFailure } from "../observability/metrics.js";
+import { isBotHealthy } from "../telegram/health.js";
+import {
+  classifyTelegramError,
+  retryDispositionForError,
+  UNCOUNTED_RETRY_ERROR_CLASSES,
+} from "../telegram/errorClassifier.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
+// Budget of *counted* failed attempts (chat/message-level errors) before a
+// delivery is closed as permanently_failed. Global-transient failures
+// (Telegram down, network, flood-wait) do not consume this budget — those
+// deliveries stay retryable until their raw email TTL expires.
 const MAX_RETRIES = 3;
 const STALE_DELIVERY_MS = 2 * 60 * 1000;
 // A "processing" log is only retried once its processing_started_at is older
@@ -81,6 +95,15 @@ export async function runRetryWorker(
   if (!api) return;
 
   const log = getLogger();
+
+  // The polling restart loop probes Telegram every few seconds while it is
+  // down; sending now would only burn the 30s API timeout per log. Nothing is
+  // lost by waiting: transient failures do not consume retry budget and the
+  // logs stay retryable until their raw email TTL expires.
+  if (!isBotHealthy()) {
+    log.info("retry worker: skipping cycle while the Telegram API is unreachable");
+    return;
+  }
 
   if (rawEmailDir) {
     await recoverPendingRawEmails(db, api, {
@@ -239,8 +262,16 @@ async function retryDelivery(
   }
 
   const attempts = await countAttemptsByLog(db, deliveryLog.id);
-  if (attempts >= MAX_RETRIES) {
-    log.warn({ deliveryLogId: deliveryLog.id, attempts }, "retry worker: max retries reached");
+  const countedFailures = await countCountedFailedAttemptsByLog(
+    db,
+    deliveryLog.id,
+    UNCOUNTED_RETRY_ERROR_CLASSES,
+  );
+  if (countedFailures >= MAX_RETRIES) {
+    log.warn(
+      { deliveryLogId: deliveryLog.id, attempts, countedFailures },
+      "retry worker: max retries reached",
+    );
     recordRetryAttempt("permanently_failed");
     await updateDeliveryLogStatus(db, deliveryLog.id, "permanently_failed");
     return;
@@ -325,9 +356,12 @@ async function retryDelivery(
   });
 
   const newAttemptNo = attempts + 1;
+  const sendErrorClass = result.ok ? null : classifyTelegramError(result.error);
+  const disposition = result.ok ? null : retryDispositionForError(result.error);
+  const countedAfterSend = disposition === "retry_counted" ? countedFailures + 1 : countedFailures;
   const finalStatus = result.ok
     ? "delivered"
-    : newAttemptNo >= MAX_RETRIES
+    : disposition === "fail_permanently" || countedAfterSend >= MAX_RETRIES
       ? "permanently_failed"
       : "failed";
 
@@ -346,6 +380,7 @@ async function retryDelivery(
           telegramMessageId: result.telegramMessageId ? BigInt(result.telegramMessageId) : null,
           status: result.ok ? "succeeded" : "failed",
           errorText: result.error ?? null,
+          errorClass: sendErrorClass,
         });
         await updateDeliveryLogStatus(workDb, deliveryLog.id, finalStatus);
       }),
@@ -409,18 +444,23 @@ async function retryDelivery(
         );
       }
     }
-  } else if (newAttemptNo >= MAX_RETRIES) {
+  } else if (finalStatus === "permanently_failed") {
     recordRetryAttempt("permanently_failed");
     recordTelegramSendFailure(result.error);
     log.warn(
-      { deliveryLogId: deliveryLog.id, error: result.error },
+      { deliveryLogId: deliveryLog.id, error: result.error, errorClass: sendErrorClass },
       "retry worker: permanently failed",
     );
   } else {
     recordRetryAttempt("failed");
     recordTelegramSendFailure(result.error);
     log.warn(
-      { deliveryLogId: deliveryLog.id, attemptNo: newAttemptNo, error: result.error },
+      {
+        deliveryLogId: deliveryLog.id,
+        attemptNo: newAttemptNo,
+        error: result.error,
+        errorClass: sendErrorClass,
+      },
       "retry worker: will retry again",
     );
   }

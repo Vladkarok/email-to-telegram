@@ -271,6 +271,9 @@ describe("runCleanup", () => {
       rawEmailWrappedDek: null,
       rawEmailKekKeyId: null,
       rawEmailEncryptedAt: null,
+      // SQL CASE closing undelivered logs as permanently_failed — the expired
+      // raw file was their only retry source.
+      finalStatus: expect.anything() as unknown,
     });
     expect(mockLogger.info).toHaveBeenCalledWith(
       { rows: 1 },
