@@ -144,6 +144,8 @@ ${safetyNotes}
     sharedDomainUnavailable: "⛔ Your hosted account is not ready for alias creation right now.",
     uniqueNameFailed: "❌ Could not pick a unique alias name. Try a different one.",
     nameTaken: "❌ That name is already taken. Try a different one.",
+    nameCooldown:
+      "❌ That name was recently deleted by another user and is cooling down. Try again later or pick a different name.",
     created: (fullAddress: string, chatNote: string) =>
       `✅ Email alias created!\n\n📧 <code>${fullAddress}</code>${chatNote}\n\n⚠️ All mail is rejected until you allow at least one sender.\nTap a quick pick or add a custom domain:`,
     deliveringTo: (chatTitle: string) => `\nDelivering to: <b>${chatTitle}</b>`,

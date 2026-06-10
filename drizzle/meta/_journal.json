@@ -43,6 +43,13 @@
       "when": 1781031226955,
       "tag": "0005_delivery-attempt-error-class",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1781097797890,
+      "tag": "0006_alias-tombstone-uniqueness",
+      "breakpoints": true
     }
   ]
 }

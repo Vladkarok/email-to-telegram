@@ -50,6 +50,9 @@ export const emailAddresses = pgTable(
     uniqueIndex("idx_alias_domain_local_part")
       .on(t.domainId, t.localPart)
       .where(sql`${t.domainId} is not null`),
+    // Global guard across the two disjoint partial indexes above: a legacy
+    // NULL-domain alias and a domain-scoped alias must not share an address.
+    uniqueIndex("idx_alias_full_address").on(sql`lower(${t.fullAddress})`),
     index("idx_alias_chat").on(t.chatId),
     index("idx_alias_created_by").on(t.createdBy),
   ],

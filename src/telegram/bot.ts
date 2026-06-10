@@ -92,6 +92,7 @@ import {
 import { sendAllowRulesMenu, editAllowRulesMenu } from "./menu/allowRulesMenu.js";
 import {
   findAliasById,
+  softDeleteAlias,
   updateAliasBodyDedup,
   updateAliasLabel,
   updateAliasPrivacyMode,
@@ -304,7 +305,7 @@ export function createBot(token: string): Bot {
     await ctx.answerCallbackQuery(messages.aliasActions.deletedToast);
     const alias = await findAliasById(getDb(), ctx.match[1]);
     if (alias) {
-      await updateAliasStatus(getDb(), alias.id, "deleted");
+      await softDeleteAlias(getDb(), alias.id);
       const chat = await findChatById(getDb(), alias.chatId);
       const title = chat?.title ?? alias.chatId.toString();
       await editAliasListMenu(ctx, getDb(), alias.chatId, title);

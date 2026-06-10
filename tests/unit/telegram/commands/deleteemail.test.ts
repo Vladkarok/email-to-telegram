@@ -4,9 +4,9 @@ import { createMockCtx } from "../../../helpers/mockContext.js";
 
 vi.mock("../../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
-const mockUpdateStatus = vi.fn();
+const mockSoftDeleteAlias = vi.fn();
 vi.mock("../../../../src/db/repos/aliases.js", () => ({
-  updateAliasStatus: (...args: unknown[]): unknown => mockUpdateStatus(...args),
+  softDeleteAlias: (...args: unknown[]): unknown => mockSoftDeleteAlias(...args),
 }));
 
 const mockResolve = vi.fn();
@@ -42,10 +42,10 @@ describe("/deleteemail command", () => {
       ok: true,
       alias: { id: "uuid-1", fullAddress: "alerts@example.com" },
     });
-    mockUpdateStatus.mockResolvedValue(undefined);
+    mockSoftDeleteAlias.mockResolvedValue(undefined);
     const ctx = createMockCtx({ commandMatch: "alerts" });
     await deleteemailHandler(ctx);
-    expect(mockUpdateStatus).toHaveBeenCalledWith(expect.anything(), "uuid-1", "deleted");
+    expect(mockSoftDeleteAlias).toHaveBeenCalledWith(expect.anything(), "uuid-1");
     expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("deleted"), expect.anything());
   });
 });

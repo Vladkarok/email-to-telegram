@@ -5,9 +5,11 @@ vi.mock("../../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
 const mockCreateAlias = vi.fn();
 const mockListAliasesByChat = vi.fn().mockResolvedValue([]);
+const mockFindRecentAliasTombstone = vi.fn().mockResolvedValue(null);
 vi.mock("../../../../src/db/repos/aliases.js", () => ({
   createAlias: (...args: unknown[]): unknown => mockCreateAlias(...args),
   listAliasesByChat: (...args: unknown[]): unknown => mockListAliasesByChat(...args),
+  findRecentAliasTombstone: (...args: unknown[]): unknown => mockFindRecentAliasTombstone(...args),
   findAliasByLocalPart: vi.fn().mockResolvedValue(null),
   findAliasById: vi.fn().mockResolvedValue(null),
   findAliasesByCreator: vi.fn().mockResolvedValue([]),
@@ -190,6 +192,42 @@ describe("/newemail command", () => {
     expect(mockCreateAlias).toHaveBeenCalledOnce();
     expect(ctx.reply).toHaveBeenCalledOnce();
     expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/already taken/i);
+  });
+
+  it("blocks reuse of a freshly deleted name by a different user", async () => {
+    mockFindRecentAliasTombstone.mockResolvedValueOnce({ id: "t-1", createdBy: 999n });
+    const ctx = createMockCtx({ commandMatch: "alerts" });
+
+    await newemailHandler(ctx);
+
+    expect(mockCreateAlias).not.toHaveBeenCalled();
+    expect(ctx.reply).toHaveBeenCalledOnce();
+    expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/recently deleted/i);
+  });
+
+  it("lets the same user reuse their own freshly deleted name", async () => {
+    mockFindRecentAliasTombstone.mockResolvedValueOnce({
+      id: "t-1",
+      createdBy: BigInt(123456789),
+    });
+    const ctx = createMockCtx({ commandMatch: "alerts" });
+
+    await newemailHandler(ctx);
+
+    expect(mockCreateAlias).toHaveBeenCalledOnce();
+    const [, aliasData] = mockCreateAlias.mock.calls[0] as [unknown, { localPart: string }];
+    expect(aliasData.localPart).toBe("alerts");
+  });
+
+  it("auto-name skips to a suffixed candidate while the default name cools down", async () => {
+    mockFindRecentAliasTombstone.mockResolvedValueOnce({ id: "t-1", createdBy: 999n });
+    const ctx = createMockCtx();
+
+    await createEmailAlias(ctx, "", 123n, null, "Test Chat");
+
+    expect(mockCreateAlias).toHaveBeenCalledOnce();
+    const [, aliasData] = mockCreateAlias.mock.calls[0] as [unknown, { localPart: string }];
+    expect(aliasData.localPart).toMatch(/^inbox-[a-z0-9]{6}$/);
   });
 
   it("'Add Allow Rule' button uses alias UUID not localPart", async () => {
