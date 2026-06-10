@@ -11,7 +11,11 @@ import {
 import type { CommandContext, Context } from "grammy";
 import { customAlphabet } from "nanoid";
 import { getDb } from "../../db/client.js";
-import { createAlias, listAliasesByChat } from "../../db/repos/aliases.js";
+import {
+  createAlias,
+  findRecentAliasTombstone,
+  listAliasesByChat,
+} from "../../db/repos/aliases.js";
 import type { EmailAddress } from "../../db/schema.js";
 import { findChatById } from "../../db/repos/chats.js";
 import { ensureSharedInboundDomain } from "../../db/repos/inboundDomains.js";
@@ -45,6 +49,12 @@ const NAME_RE = /^[a-z0-9._-]{1,32}$/;
 
 /** Maximum candidate-name attempts before giving up. */
 const MAX_NAME_ATTEMPTS = 5;
+
+/**
+ * How long a freshly deleted name is reserved against claims by a different
+ * user (anti name-squatting). The deleting user may reuse it immediately.
+ */
+const NAME_REUSE_COOLDOWN_HOURS = 24;
 
 /** Quick-pick allow-rule domains shown right after alias creation. */
 const QUICK_ALLOW_DOMAINS = ["gmail.com", "github.com", "stripe.com"] as const;
@@ -256,8 +266,19 @@ export async function createEmailAlias(
   let blockedLimit: Awaited<ReturnType<typeof checkAliasCreateLimit>> | null = null;
   let alias: EmailAddress | null = null;
 
+  const cooldownSince = new Date(Date.now() - NAME_REUSE_COOLDOWN_HOURS * 60 * 60 * 1000);
+
   for (let attempt = 0; attempt < MAX_NAME_ATTEMPTS; attempt++) {
     const candidate = attempt === 0 ? baseName : `${baseName}-${generateSuffix()}`;
+
+    const tombstone = await findRecentAliasTombstone(db, candidate, cooldownSince);
+    if (tombstone && tombstone.createdBy !== createdBy) {
+      if (rawName.length > 0) {
+        await ctx.reply(messages.newemail.nameCooldown);
+        return;
+      }
+      continue;
+    }
 
     try {
       alias = await withUserQuotaLock(db, createdBy, async (tx) => {

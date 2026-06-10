@@ -1,9 +1,28 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { eq, and, ne, isNull, count } from "drizzle-orm";
-import { emailAddresses, type EmailAddress, type NewEmailAddress } from "../schema.js";
+import { eq, and, ne, isNull, count, desc, gt, like, lt, notExists, sql } from "drizzle-orm";
+import { customAlphabet } from "nanoid";
+import {
+  deliveryLogs,
+  emailAddresses,
+  type EmailAddress,
+  type NewEmailAddress,
+} from "../schema.js";
 import type * as schema from "../schema.js";
 
 type Db = NodePgDatabase<typeof schema>;
+
+/**
+ * Tombstone marker appended to soft-deleted alias names. `~` is outside the
+ * alias NAME_RE alphabet, so tombstones can never collide with user input.
+ */
+export const ALIAS_TOMBSTONE_MARKER = "~del~";
+
+const tombstoneSuffix = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 8);
+
+/** Escapes `%`, `_` and `\` so a name can be embedded in a LIKE pattern. */
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, "\\$&");
+}
 
 export async function findAliasById(db: Db, id: string): Promise<EmailAddress | null> {
   const [alias] = await db.select().from(emailAddresses).where(eq(emailAddresses.id, id));
@@ -65,17 +84,6 @@ export async function findAliasByFullAddress(
   return alias ?? null;
 }
 
-export async function findAliasByLocalPartAnyDomain(
-  db: Db,
-  localPart: string,
-): Promise<EmailAddress | null> {
-  const [alias] = await db
-    .select()
-    .from(emailAddresses)
-    .where(and(eq(emailAddresses.localPart, localPart), ne(emailAddresses.status, "deleted")));
-  return alias ?? null;
-}
-
 export async function findAliasByLocalPartAndDomainId(
   db: Db,
   localPart: string,
@@ -86,23 +94,6 @@ export async function findAliasByLocalPartAndDomainId(
     .from(emailAddresses)
     .where(and(eq(emailAddresses.localPart, localPart), eq(emailAddresses.domainId, domainId)));
   return alias ?? null;
-}
-
-export async function findAliasesByLocalPartForUser(
-  db: Db,
-  localPart: string,
-  userId: bigint,
-): Promise<EmailAddress[]> {
-  return db
-    .select()
-    .from(emailAddresses)
-    .where(
-      and(
-        eq(emailAddresses.localPart, localPart),
-        eq(emailAddresses.createdBy, userId),
-        ne(emailAddresses.status, "deleted"),
-      ),
-    );
 }
 
 export async function listAliasesByChat(db: Db, chatId: bigint): Promise<EmailAddress[]> {
@@ -133,12 +124,76 @@ export async function countAliasesByStatus(
 export async function updateAliasStatus(
   db: Db,
   id: string,
-  status: "active" | "paused" | "deleted",
+  status: "active" | "paused",
 ): Promise<void> {
   await db
     .update(emailAddresses)
     .set({ status, updatedAt: new Date() })
     .where(eq(emailAddresses.id, id));
+}
+
+/**
+ * Soft-deletes an alias and frees its name: local_part and full_address are
+ * renamed with a `~del~<id>` tombstone suffix in the same UPDATE, so the
+ * unique indexes no longer reserve the original name.
+ */
+export async function softDeleteAlias(db: Db, id: string): Promise<void> {
+  const tombstoneTag = `${ALIAS_TOMBSTONE_MARKER}${tombstoneSuffix()}`;
+  await db
+    .update(emailAddresses)
+    .set({
+      localPart: sql`${emailAddresses.localPart} || ${tombstoneTag}`,
+      fullAddress: sql`${emailAddresses.localPart} || ${tombstoneTag} || '@' || split_part(${emailAddresses.fullAddress}, '@', 2)`,
+      status: "deleted",
+      updatedAt: new Date(),
+    })
+    .where(eq(emailAddresses.id, id));
+}
+
+/**
+ * Hard-deletes tombstones older than `cutoff` that no delivery log references
+ * anymore (log retention purges those on its own schedule). Until then the
+ * tombstone preserves delivery history and feeds the name-reuse cooldown.
+ * Returns the number of purged rows.
+ */
+export async function deleteExpiredAliasTombstones(db: Db, cutoff: Date): Promise<number> {
+  const result = await db.delete(emailAddresses).where(
+    and(
+      eq(emailAddresses.status, "deleted"),
+      like(emailAddresses.localPart, `%${ALIAS_TOMBSTONE_MARKER}%`),
+      lt(emailAddresses.updatedAt, cutoff),
+      // Parenthesized — drizzle's notExists() does not wrap raw SQL.
+      notExists(
+        sql`(select 1 from ${deliveryLogs} where ${deliveryLogs.emailAddressId} = ${emailAddresses.id})`,
+      ),
+    ),
+  );
+  return (result as unknown as { rowCount?: number }).rowCount ?? 0;
+}
+
+/**
+ * Newest tombstone whose original name matches `localPart`, deleted after
+ * `since`. Used for the cross-user name-reuse cooldown.
+ */
+export async function findRecentAliasTombstone(
+  db: Db,
+  localPart: string,
+  since: Date,
+): Promise<EmailAddress | null> {
+  const pattern = `${escapeLikePattern(localPart)}${ALIAS_TOMBSTONE_MARKER}%`;
+  const [alias] = await db
+    .select()
+    .from(emailAddresses)
+    .where(
+      and(
+        like(emailAddresses.localPart, pattern),
+        eq(emailAddresses.status, "deleted"),
+        gt(emailAddresses.updatedAt, since),
+      ),
+    )
+    .orderBy(desc(emailAddresses.updatedAt))
+    .limit(1);
+  return alias ?? null;
 }
 
 export async function updateAliasRenderMode(

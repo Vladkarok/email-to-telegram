@@ -9,6 +9,7 @@ import { getLogger } from "../utils/logger.js";
 import { decrementUserStorageUsage } from "../db/repos/storageUsage.js";
 import { deleteExpiredDeliveryViewLinks } from "../db/repos/deliveryViewLinks.js";
 import { deleteExpiredAttachmentLinks } from "../db/repos/attachmentLinks.js";
+import { deleteExpiredAliasTombstones } from "../db/repos/aliases.js";
 import { getEffectivePlan } from "../billing/limits.js";
 import { PLAN_DEFINITIONS } from "../billing/plans.js";
 
@@ -23,6 +24,13 @@ export interface CleanupConfig {
   deliveryLogRetentionDays: number;
 }
 
+/**
+ * Minimum tombstone age before hard deletion. Must comfortably exceed the
+ * 24h name-reuse cooldown in newemail.ts; delivery-log references are
+ * checked separately, so history is never cut short by this value.
+ */
+const TOMBSTONE_MIN_AGE_DAYS = 7;
+
 export async function runCleanup(db: Db, config: CleanupConfig): Promise<void> {
   const log = getLogger();
   const now = Date.now();
@@ -31,6 +39,28 @@ export async function runCleanup(db: Db, config: CleanupConfig): Promise<void> {
   await cleanRawEmails(db, config.rawEmailDir, config.rawEmailTtlHours, now, log);
   await cleanDeliveryLogs(db, config.deliveryLogRetentionDays, now, log);
   await cleanExpiredLinks(db, now, log);
+  await cleanAliasTombstones(db, now, log);
+}
+
+/**
+ * Hard-deletes alias tombstones that are past the min age and no longer
+ * referenced by any delivery log. Failure is logged and isolated from the
+ * other passes.
+ */
+async function cleanAliasTombstones(
+  db: Db,
+  now: number,
+  log: ReturnType<typeof getLogger>,
+): Promise<void> {
+  const cutoff = new Date(now - TOMBSTONE_MIN_AGE_DAYS * 24 * 60 * 60 * 1000);
+  try {
+    const rows = await deleteExpiredAliasTombstones(db, cutoff);
+    if (rows > 0) {
+      log.info({ rows }, "cleanup: purged alias tombstones");
+    }
+  } catch (err: unknown) {
+    log.error({ err }, "cleanup: alias tombstone purge failed");
+  }
 }
 
 async function cleanAttachments(

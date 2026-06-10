@@ -47,6 +47,13 @@ vi.mock("../../../src/db/repos/attachmentLinks.js", () => ({
     mockDeleteExpiredAttachmentLinks(...args),
 }));
 
+const mockDeleteExpiredAliasTombstones = vi.fn().mockResolvedValue(0);
+
+vi.mock("../../../src/db/repos/aliases.js", () => ({
+  deleteExpiredAliasTombstones: (...args: unknown[]): unknown =>
+    mockDeleteExpiredAliasTombstones(...args),
+}));
+
 const { runCleanup, deliveryLogHasNoAttachments } = await import("../../../src/storage/cleanup.js");
 
 function makeDb(
@@ -208,6 +215,7 @@ describe("runCleanup", () => {
     mockStat.mockResolvedValue({ mtime: new Date(0) }); // very old
     mockDeleteExpiredDeliveryViewLinks.mockResolvedValue(0);
     mockDeleteExpiredAttachmentLinks.mockResolvedValue(0);
+    mockDeleteExpiredAliasTombstones.mockResolvedValue(0);
   });
 
   it("runs without error when there is nothing to clean", async () => {
@@ -616,6 +624,33 @@ describe("runCleanup", () => {
       (call) => call[1] === "cleanup: expired link cleanup failed",
     );
     expect(loggedLinkFailure).toBe(true);
+  });
+
+  it("purges dead alias tombstones once per run with a min-age cutoff", async () => {
+    const db = makeDb();
+    mockDeleteExpiredAliasTombstones.mockResolvedValue(4);
+    const before = Date.now();
+
+    await runCleanup(db, config);
+
+    expect(mockDeleteExpiredAliasTombstones).toHaveBeenCalledTimes(1);
+    const [, cutoff] = mockDeleteExpiredAliasTombstones.mock.calls[0] as [unknown, Date];
+    const sevenDaysMs = 7 * 24 * 3600 * 1000;
+    expect(before - cutoff.getTime()).toBeGreaterThanOrEqual(sevenDaysMs - 1000);
+    expect(before - cutoff.getTime()).toBeLessThanOrEqual(sevenDaysMs + 60_000);
+    expect(mockLogger.info).toHaveBeenCalledWith({ rows: 4 }, "cleanup: purged alias tombstones");
+  });
+
+  it("isolates a tombstone purge failure from the rest of the run", async () => {
+    const db = makeDb();
+    mockDeleteExpiredAliasTombstones.mockRejectedValueOnce(new Error("db down"));
+
+    await expect(runCleanup(db, config)).resolves.toBeUndefined();
+
+    const loggedFailure = mockLogger.error.mock.calls.some(
+      (call) => call[1] === "cleanup: alias tombstone purge failed",
+    );
+    expect(loggedFailure).toBe(true);
   });
 
   it("renders the no-attachments purge guard as a parenthesized NOT EXISTS subquery", () => {

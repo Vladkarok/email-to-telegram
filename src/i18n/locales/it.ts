@@ -150,6 +150,8 @@ ${safetyNotes}
       "⛔ Il tuo account hosted non è pronto per la creazione di alias al momento.",
     uniqueNameFailed: "❌ Impossibile generare un nome alias univoco. Provane uno diverso.",
     nameTaken: "❌ Questo nome è già in uso. Provane uno diverso.",
+    nameCooldown:
+      "❌ Questo nome è stato eliminato di recente da un altro utente ed è temporaneamente non disponibile. Riprova più tardi o scegline un altro.",
     created: (fullAddress: string, chatNote: string) =>
       `✅ Alias email creato!\n\n📧 <code>${fullAddress}</code>${chatNote}\n\n⚠️ Tutta la posta viene rifiutata finché non autorizzi almeno un mittente.\nTocca una scelta rapida o aggiungi un dominio personalizzato:`,
     deliveringTo: (chatTitle: string) => `\nConsegna a: <b>${chatTitle}</b>`,
