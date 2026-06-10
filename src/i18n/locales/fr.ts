@@ -149,6 +149,7 @@ ${safetyNotes}
     sharedDomainUnavailable:
       "⛔ Votre compte hosted n'est pas prêt pour la création d'alias pour le moment.",
     uniqueNameFailed: "❌ Impossible de trouver un nom d'alias unique. Essayez-en un autre.",
+    nameTaken: "❌ Ce nom est déjà pris. Essayez-en un autre.",
     created: (fullAddress: string, chatNote: string) =>
       `✅ Alias e-mail créé !\n\n📧 <code>${fullAddress}</code>${chatNote}\n\n⚠️ Tout le courrier est rejeté tant que vous n'avez pas autorisé au moins un expéditeur.\nTapez un choix rapide ou ajoutez un domaine personnalisé :`,
     deliveringTo: (chatTitle: string) => `\nLivraison vers : <b>${chatTitle}</b>`,

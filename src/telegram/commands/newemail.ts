@@ -187,14 +187,33 @@ async function nextInboxName(db: ReturnType<typeof getDb>, chatId: bigint): Prom
   return `inbox-${Math.max(maxN, 1) + 1}`;
 }
 
+/** Postgres error code for unique-constraint violations. */
+const PG_UNIQUE_VIOLATION = "23505";
+
+/** Cap cause-chain traversal in case of cyclic `cause` references. */
+const MAX_CAUSE_DEPTH = 5;
+
+/**
+ * Walks the error `cause` chain: drizzle-orm >= 0.44 wraps driver errors in
+ * DrizzleQueryError, whose own message no longer carries the pg constraint
+ * text — the original pg error (code 23505) lives on `cause`.
+ */
 function isLocalPartConflict(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  return (
-    msg.includes("idx_alias_local_part") ||
-    msg.includes("idx_alias_domain_local_part") ||
-    msg.includes("duplicate key value") ||
-    msg.includes("unique constraint")
-  );
+  let current: unknown = err;
+  for (let depth = 0; current instanceof Error && depth < MAX_CAUSE_DEPTH; depth++) {
+    if ((current as Error & { code?: unknown }).code === PG_UNIQUE_VIOLATION) return true;
+    const msg = current.message;
+    if (
+      msg.includes("idx_alias_local_part") ||
+      msg.includes("idx_alias_domain_local_part") ||
+      msg.includes("duplicate key value") ||
+      msg.includes("unique constraint")
+    ) {
+      return true;
+    }
+    current = current.cause;
+  }
+  return false;
 }
 
 export async function createEmailAlias(
@@ -284,6 +303,12 @@ export async function createEmailAlias(
         return;
       }
       if (isLocalPartConflict(err)) {
+        // A user-chosen name is sacred: don't silently hand back a suffixed
+        // variant — tell them it's taken. Auto-names retry with a suffix.
+        if (rawName.length > 0) {
+          await ctx.reply(messages.newemail.nameTaken);
+          return;
+        }
         continue;
       }
       throw err;

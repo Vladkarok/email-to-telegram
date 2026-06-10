@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { attachments } from "../../../src/db/schema.js";
 
 const mockLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
@@ -46,7 +47,7 @@ vi.mock("../../../src/db/repos/attachmentLinks.js", () => ({
     mockDeleteExpiredAttachmentLinks(...args),
 }));
 
-const { runCleanup } = await import("../../../src/storage/cleanup.js");
+const { runCleanup, deliveryLogHasNoAttachments } = await import("../../../src/storage/cleanup.js");
 
 function makeDb(
   expiredAttachments: {
@@ -615,5 +616,13 @@ describe("runCleanup", () => {
       (call) => call[1] === "cleanup: expired link cleanup failed",
     );
     expect(loggedLinkFailure).toBe(true);
+  });
+
+  it("renders the no-attachments purge guard as a parenthesized NOT EXISTS subquery", () => {
+    // Regression: notExists(sql`select …`) emitted `not exists select …`,
+    // a syntax error that made every delivery-log purge cycle fail.
+    const { sql } = new PgDialect().sqlToQuery(deliveryLogHasNoAttachments());
+
+    expect(sql).toMatch(/not exists \(select 1/i);
   });
 });

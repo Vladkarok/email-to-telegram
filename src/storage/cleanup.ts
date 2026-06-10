@@ -199,6 +199,17 @@ async function cleanRawEmails(
   await cleanOrphanedDirs(rawEmailDir, ttlHours, now, log);
 }
 
+/**
+ * Purge guard: only delete logs with no attachment rows. The raw subquery is
+ * parenthesized explicitly — drizzle's notExists() does not wrap raw SQL, and
+ * `not exists select 1 …` is a Postgres syntax error.
+ */
+export function deliveryLogHasNoAttachments(): ReturnType<typeof notExists> {
+  return notExists(
+    sql`(select 1 from ${attachments} where ${attachments.deliveryLogId} = ${deliveryLogs.id})`,
+  );
+}
+
 async function cleanDeliveryLogs(
   db: Db,
   retentionDays: number,
@@ -236,9 +247,7 @@ async function cleanDeliveryLogs(
           and(
             eq(deliveryLogs.id, row.id),
             isNull(deliveryLogs.rawEmailPath),
-            notExists(
-              sql`select 1 from ${attachments} where ${attachments.deliveryLogId} = ${deliveryLogs.id}`,
-            ),
+            deliveryLogHasNoAttachments(),
           ),
         );
       rows += (result as unknown as { rowCount?: number }).rowCount ?? 0;

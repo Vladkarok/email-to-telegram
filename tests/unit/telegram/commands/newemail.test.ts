@@ -77,6 +77,18 @@ vi.mock("../../../../src/abuse/hostedAliasCreation.js", () => ({
 const { newemailHandler, createEmailAlias } =
   await import("../../../../src/telegram/commands/newemail.js");
 
+/**
+ * Mirrors drizzle-orm >= 0.44 DrizzleQueryError: the wrapper message carries
+ * only the failed query text; the pg unique-violation details live on `cause`.
+ */
+function drizzleWrappedDuplicateKeyError(): Error {
+  const cause = Object.assign(
+    new Error('duplicate key value violates unique constraint "idx_alias_domain_local_part"'),
+    { code: "23505" },
+  );
+  return new Error('Failed query: insert into "email_addresses" (...) values (...)', { cause });
+}
+
 describe("/newemail command", () => {
   const MOCK_ALIAS_ID = "550e8400-e29b-41d4-a716-446655440000";
 
@@ -133,22 +145,51 @@ describe("/newemail command", () => {
     );
   });
 
-  it("retries with a random suffix on duplicate-name collision", async () => {
+  it("retries auto-name with a random suffix on duplicate-name collision", async () => {
     mockCreateAlias.mockRejectedValueOnce(
       new Error("duplicate key value violates unique constraint idx_alias_local_part"),
     );
     mockCreateAlias.mockResolvedValueOnce({
       id: MOCK_ALIAS_ID,
-      localPart: "alerts-abc123",
-      fullAddress: "alerts-abc123@tgmail.example.com",
+      localPart: "inbox-abc123",
+      fullAddress: "inbox-abc123@tgmail.example.com",
     });
+    const ctx = createMockCtx();
+
+    await createEmailAlias(ctx, "", 123n, null, "Test Chat");
+
+    expect(mockCreateAlias).toHaveBeenCalledTimes(2);
+    const [, second] = mockCreateAlias.mock.calls[1] as [unknown, { localPart: string }];
+    expect(second.localPart).toMatch(/^inbox-[a-z0-9]{6}$/);
+  });
+
+  it("retries auto-name when the duplicate-key error is wrapped à la DrizzleQueryError", async () => {
+    // drizzle-orm >= 0.44 wraps driver errors: the pg error (constraint name,
+    // code 23505) lives on err.cause, not in err.message.
+    mockCreateAlias.mockRejectedValueOnce(drizzleWrappedDuplicateKeyError());
+    mockCreateAlias.mockResolvedValueOnce({
+      id: MOCK_ALIAS_ID,
+      localPart: "inbox-abc123",
+      fullAddress: "inbox-abc123@tgmail.example.com",
+    });
+    const ctx = createMockCtx();
+
+    await createEmailAlias(ctx, "", 123n, null, "Test Chat");
+
+    expect(mockCreateAlias).toHaveBeenCalledTimes(2);
+    const [, second] = mockCreateAlias.mock.calls[1] as [unknown, { localPart: string }];
+    expect(second.localPart).toMatch(/^inbox-[a-z0-9]{6}$/);
+  });
+
+  it("replies that a user-chosen name is taken instead of suffixing it", async () => {
+    mockCreateAlias.mockRejectedValueOnce(drizzleWrappedDuplicateKeyError());
     const ctx = createMockCtx({ commandMatch: "alerts" });
 
     await newemailHandler(ctx);
 
-    expect(mockCreateAlias).toHaveBeenCalledTimes(2);
-    const [, second] = mockCreateAlias.mock.calls[1] as [unknown, { localPart: string }];
-    expect(second.localPart).toMatch(/^alerts-[a-z0-9]{6}$/);
+    expect(mockCreateAlias).toHaveBeenCalledOnce();
+    expect(ctx.reply).toHaveBeenCalledOnce();
+    expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/already taken/i);
   });
 
   it("'Add Allow Rule' button uses alias UUID not localPart", async () => {
@@ -445,14 +486,12 @@ describe("/newemail command", () => {
     expect(aliasData.messageThreadId).toBeNull();
   });
 
-  it("shows fallback error after exhausting all suffix attempts", async () => {
+  it("shows fallback error after exhausting all auto-name suffix attempts", async () => {
     // 5 attempts max — every retry collides
-    mockCreateAlias.mockRejectedValue(
-      new Error("duplicate key value violates unique constraint idx_alias_local_part"),
-    );
-    const ctx = createMockCtx({ commandMatch: "alerts" });
+    mockCreateAlias.mockRejectedValue(drizzleWrappedDuplicateKeyError());
+    const ctx = createMockCtx();
 
-    await newemailHandler(ctx);
+    await createEmailAlias(ctx, "", 123n, null, "Test Chat");
 
     expect(mockCreateAlias).toHaveBeenCalledTimes(5);
     expect(ctx.reply).toHaveBeenCalledOnce();
