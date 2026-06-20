@@ -161,6 +161,22 @@ docker image prune -f
 
 Do not `docker volume prune` blindly — it can wipe Grafana dashboards if the volume is detached.
 
+## Operator alerts (Telegram)
+
+The app pushes critical alerts straight to `ALERT_CHAT_ID` from the 5-minute
+uptime check (`src/utils/uptime.ts`). The message lists the failing
+dimensions: `db`, `disk`, `telegram`, `inbound`.
+
+- **`inbound`** means the app is up but no mail can get in: the Cloudflare
+  Worker → `/inbound/raw` contract is failing (signature version/secret/replay
+  rejections) with **zero accepted inbound** in the last hour. A correctly
+  deployed Worker never trips this. When it fires, check that the prod Worker
+  is deployed and on the v2 signature scheme — it is deployed separately from
+  the VPS app via `wrangler deploy --env production` (see
+  `cloudflare-worker/`). This alert exists because a v1.2.0 app change went
+  v2-only while the prod Worker was still on v1, and inbound was silently down
+  for ~9 days. See `docs/agent/DECISIONS.md`.
+
 ## Troubleshooting
 
 - **Grafana shows "no data"**: inspect the Prometheus targets endpoint from inside the container (port 9090 is not published on the host):
