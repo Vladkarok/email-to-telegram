@@ -6,8 +6,17 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { sql } from "drizzle-orm";
 import type * as schema from "../db/schema.js";
 import { getLogger } from "./logger.js";
+import { evaluateInboundStall } from "../observability/inboundHealth.js";
 
 type Db = NodePgDatabase<typeof schema>;
+
+/**
+ * How long the worker contract must be failing with no accepted inbound
+ * before the uptime check reports inbound as down. Long enough to ride out a
+ * brief blip, short enough to catch a real outage within the hour instead of
+ * days.
+ */
+const INBOUND_STALL_WINDOW_MS = 60 * 60 * 1000;
 
 export interface UptimeConfig {
   healthchecksUrl: string | undefined;
@@ -20,6 +29,7 @@ interface ProbeResult {
   db: boolean;
   disk: boolean;
   telegram: boolean;
+  inbound: boolean;
 }
 
 async function probeDb(db: Db): Promise<boolean> {
@@ -83,8 +93,13 @@ export async function runUptimeCheck(db: Db, api: Api | null, config: UptimeConf
     api ? probeTelegram(api) : true,
   ]);
 
-  const result: ProbeResult = { db: dbOk, disk: diskOk, telegram: telegramOk };
-  const allOk = dbOk && diskOk && telegramOk;
+  // Synchronous: reads in-memory inbound counters fed by recordRawInbound.
+  // Catches "app healthy but no mail can get in" (e.g. a worker↔app signature
+  // contract mismatch), which the db/disk/telegram probes cannot see.
+  const inboundOk = !evaluateInboundStall(INBOUND_STALL_WINDOW_MS).stalled;
+
+  const result: ProbeResult = { db: dbOk, disk: diskOk, telegram: telegramOk, inbound: inboundOk };
+  const allOk = dbOk && diskOk && telegramOk && inboundOk;
 
   if (allOk) {
     if (config.healthchecksUrl) {

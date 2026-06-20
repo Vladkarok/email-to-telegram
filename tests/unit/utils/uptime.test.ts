@@ -6,6 +6,8 @@ vi.mock("../../../src/utils/logger.js", () => ({
 }));
 
 const { runUptimeCheck } = await import("../../../src/utils/uptime.js");
+const { noteRawInboundOutcome, resetInboundHealthForTests } =
+  await import("../../../src/observability/inboundHealth.js");
 
 function makeDb(healthy: boolean) {
   return {
@@ -25,6 +27,31 @@ describe("runUptimeCheck", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+    resetInboundHealthForTests();
+  });
+
+  it("alerts on inbound stall when the worker contract is failing with no accepts", async () => {
+    const db = makeDb(true);
+    const { api, sendMessage } = makeApi();
+    noteRawInboundOutcome("rejected", "unsupported_signature_version");
+
+    await runUptimeCheck(db, api, { healthchecksUrl: undefined, alertChatId: 999n });
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      999,
+      expect.stringContaining("inbound"),
+      expect.objectContaining({ parse_mode: "HTML" }),
+    );
+  });
+
+  it("does not alert on inbound when mail is flowing despite the app being otherwise healthy", async () => {
+    const db = makeDb(true);
+    const { api, sendMessage } = makeApi();
+    noteRawInboundOutcome("accepted", "accepted");
+
+    await runUptimeCheck(db, api, { healthchecksUrl: undefined, alertChatId: 999n });
+
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it("does not send alert when DB is healthy", async () => {

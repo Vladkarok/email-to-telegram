@@ -6,6 +6,7 @@ import { countChats } from "../db/repos/chats.js";
 import { countAliasesByStatus } from "../db/repos/aliases.js";
 import { countAttachmentStorage } from "../db/repos/attachments.js";
 import { classifyTelegramError } from "../telegram/errorClassifier.js";
+import { noteRawInboundOutcome } from "./inboundHealth.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -156,6 +157,7 @@ export function recordInboundPreflight(result: "accepted" | "rejected", reason: 
 
 export function recordRawInbound(result: "accepted" | "rejected", reason: string): void {
   rawInboundTotal.inc({ result, reason });
+  noteRawInboundOutcome(result, reason);
 }
 
 export function recordDeliveryAttempt(result: "succeeded" | "failed"): void {
