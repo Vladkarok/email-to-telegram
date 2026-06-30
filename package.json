@@ -32,7 +32,7 @@
     "fastify": "^5.8.5",
     "grammy": "^1.31.0",
     "mailauth": "^4.13.3",
-    "mailparser": "^3.7.1",
+    "mailparser": "^3.9.12",
     "nanoid": "^5.0.9",
     "node-cron": "^4.2.1",
     "pg": "^8.13.1",
