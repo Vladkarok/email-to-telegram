@@ -489,32 +489,12 @@
       ]
     },
     {
-      "id": 17,
-      "type": "stat",
-      "title": "Users (allowed)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 6, "w": 4, "x": 4, "y": 36 },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "textMode": "auto",
-        "colorMode": "value",
-        "graphMode": "area"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum(email_to_telegram_users{state=\"allowed\",env=~\"$env\"})",
-          "legendFormat": "allowed"
-        }
-      ]
-    },
-    {
       "id": 18,
       "type": "bargauge",
       "title": "Activation funnel",
       "description": "signed up → created an alias (undeleted, incl. paused) → mail accepted this month. Note: 'accepted' counts at acceptance into processing; a later Telegram send failure still counts (watch the perm-failed retries stat for that).",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 36 },
+      "gridPos": { "h": 6, "w": 10, "x": 4, "y": 36 },
       "fieldConfig": {
         "defaults": { "unit": "short", "decimals": 0, "min": 0 },
         "overrides": []
@@ -548,7 +528,7 @@
       "type": "bargauge",
       "title": "Active users by plan",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 36 },
+      "gridPos": { "h": 6, "w": 10, "x": 14, "y": 36 },
       "fieldConfig": {
         "defaults": { "unit": "short" },
         "overrides": []
