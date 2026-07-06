@@ -41,6 +41,13 @@ export interface PipelineInput {
 export interface PipelineResult {
   ok: boolean;
   reason?: string;
+  /**
+   * Owner of the alias that the rejection decision was made for, resolved
+   * fresh inside the queue transaction. Callers must prefer this over any
+   * alias row they resolved earlier in the request (ownership can change
+   * between the route's lookup and the locked queue decision).
+   */
+  userId?: bigint;
 }
 
 export interface QueuedInboundEmail {

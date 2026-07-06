@@ -4,6 +4,9 @@ import { getDb } from "../../db/client.js";
 import { checkPreflightAllowRules } from "../../db/repos/allowRules.js";
 import { countRecentDeliveriesByAlias } from "../../db/repos/deliveryLogs.js";
 import { checkInboundLimit } from "../../billing/limits.js";
+import { isQuotaNotificationReason, notifyQuotaExhausted } from "../../billing/quotaNotifier.js";
+import { usageMonthForDate } from "../../db/repos/usage.js";
+import { getApi } from "../../telegram/api.js";
 import { findHostedInboundRejection } from "../../abuse/hostedInboundBlocklist.js";
 import { findAliasForInbound } from "../../email/inboundRouting.js";
 import { normalizeEnvelopeSender } from "../../email/envelopeSender.js";
@@ -97,6 +100,18 @@ export function preflightRoute(app: FastifyInstance): void {
         );
         recordInboundPreflight("rejected", inboundLimit.code);
         recordQuotaRejection(inboundLimit.code);
+        // The Worker bounces on {accept:false} and never calls /inbound/raw,
+        // so this is the ONLY place monthly/subscription exhaustion can
+        // notify the owner. (storage_limit needs sizes and is raw-only.)
+        if (isQuotaNotificationReason(inboundLimit.code)) {
+          void notifyQuotaExhausted(
+            getDb(),
+            getApi(),
+            alias.createdBy,
+            inboundLimit.code,
+            usageMonthForDate(),
+          );
+        }
         await reply.send({ accept: false });
         return;
       }

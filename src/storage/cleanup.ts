@@ -10,6 +10,7 @@ import { decrementUserStorageUsage } from "../db/repos/storageUsage.js";
 import { deleteExpiredDeliveryViewLinks } from "../db/repos/deliveryViewLinks.js";
 import { deleteExpiredAttachmentLinks } from "../db/repos/attachmentLinks.js";
 import { deleteExpiredAliasTombstones } from "../db/repos/aliases.js";
+import { deleteOldQuotaNotifications } from "../db/repos/quotaNotifications.js";
 import { getEffectivePlan } from "../billing/limits.js";
 import { PLAN_DEFINITIONS } from "../billing/plans.js";
 
@@ -31,6 +32,12 @@ export interface CleanupConfig {
  */
 const TOMBSTONE_MIN_AGE_DAYS = 7;
 
+/**
+ * Quota-notice claim rows only need to survive their own month (the PK guards
+ * one notice per month); 3 months keeps a short audit tail before purge.
+ */
+const QUOTA_NOTIFICATION_RETENTION_DAYS = 92;
+
 export async function runCleanup(db: Db, config: CleanupConfig): Promise<void> {
   const log = getLogger();
   const now = Date.now();
@@ -40,6 +47,24 @@ export async function runCleanup(db: Db, config: CleanupConfig): Promise<void> {
   await cleanDeliveryLogs(db, config.deliveryLogRetentionDays, now, log);
   await cleanExpiredLinks(db, now, log);
   await cleanAliasTombstones(db, now, log);
+  await cleanQuotaNotifications(db, now, log);
+}
+
+/** Purges quota-notice claim rows past retention. Failure is isolated. */
+async function cleanQuotaNotifications(
+  db: Db,
+  now: number,
+  log: ReturnType<typeof getLogger>,
+): Promise<void> {
+  const cutoff = new Date(now - QUOTA_NOTIFICATION_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  try {
+    const rows = await deleteOldQuotaNotifications(db, cutoff);
+    if (rows > 0) {
+      log.info({ rows }, "cleanup: purged quota notification claims");
+    }
+  } catch (err: unknown) {
+    log.error({ err }, "cleanup: quota notification purge failed");
+  }
 }
 
 /**
