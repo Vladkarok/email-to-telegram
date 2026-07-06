@@ -1,5 +1,18 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { eq, and, ne, isNull, count, desc, gt, like, lt, notExists, sql } from "drizzle-orm";
+import {
+  eq,
+  and,
+  ne,
+  isNull,
+  count,
+  countDistinct,
+  desc,
+  gt,
+  like,
+  lt,
+  notExists,
+  sql,
+} from "drizzle-orm";
 import { customAlphabet } from "nanoid";
 import {
   deliveryLogs,
@@ -109,6 +122,19 @@ export async function countActiveAliasesByUser(db: Db, userId: bigint): Promise<
     .from(emailAddresses)
     .where(and(eq(emailAddresses.createdBy, userId), ne(emailAddresses.status, "deleted")));
   return row?.count ?? 0;
+}
+
+/**
+ * Users with at least one undeleted alias (active OR paused). Paused aliases
+ * count: this feeds the activation funnel ("did the user ever create an
+ * alias"), not a reachability check.
+ */
+export async function countUsersWithAlias(db: Db): Promise<number> {
+  const [row] = await db
+    .select({ count: countDistinct(emailAddresses.createdBy) })
+    .from(emailAddresses)
+    .where(ne(emailAddresses.status, "deleted"));
+  return Number(row?.count ?? 0);
 }
 
 export async function countAliasesByStatus(

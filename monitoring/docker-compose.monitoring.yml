@@ -18,7 +18,7 @@ services:
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
-      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.time=90d
       - --web.listen-address=0.0.0.0:9090
       - --web.enable-lifecycle
     volumes:

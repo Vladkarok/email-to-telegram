@@ -36,8 +36,10 @@ A self-hosted Prometheus + Grafana + Loki stack runs on the staging VM alongside
                                         VPN client (operator laptop)
                                         http://<VPN-IP>:3001
 
-  # Optional, disabled by default:
-  # prometheus --scrape--> prod app (<prod-private-ip>:3000) over VPN
+  # Enabled: prometheus --scrape--> prod app (10.0.88.2:3000) over the
+  # private network (job email_to_telegram_prod in prometheus.yml).
+  # Loki/promtail, however, ship STAGING container logs only — prod logs
+  # never reach Loki.
 ```
 
 ## First-time setup on the VM
@@ -89,22 +91,22 @@ The output must bind to the VPN interface only (not `0.0.0.0`).
 
 All gauges/counters are prefixed `email_to_telegram_`. Exposed at `GET /metrics` (bearer-protected).
 
-| Metric                                                             | Type      | Description                                               | Example PromQL                                                                                                   |
-| ------------------------------------------------------------------ | --------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `email_to_telegram_users{state}`                                   | gauge     | Users by state (`total`, `allowed`)                       | `email_to_telegram_users{state="allowed"}`                                                                       |
-| `email_to_telegram_users_total`                                    | gauge     | Total users across all plans                              | `email_to_telegram_users_total`                                                                                  |
-| `email_to_telegram_active_users_by_plan{plan}`                     | gauge     | Active users by plan                                      | `email_to_telegram_active_users_by_plan{plan="pro"}`                                                             |
-| `email_to_telegram_chats{state}`                                   | gauge     | Chats by state (`total`, `active`)                        | `email_to_telegram_chats{state="active"}`                                                                        |
-| `email_to_telegram_aliases{status}`                                | gauge     | Aliases grouped by status (`active`, `paused`, `deleted`) | `sum by (status)(email_to_telegram_aliases)`                                                                     |
-| `email_to_telegram_attachments_stored`                             | gauge     | Stored attachment count                                   | `email_to_telegram_attachments_stored`                                                                           |
-| `email_to_telegram_attachments_stored_bytes`                       | gauge     | Total stored attachment bytes                             | `email_to_telegram_attachments_stored_bytes / 1024 / 1024 / 1024`                                                |
-| `email_to_telegram_delivery_attempts_total{result}`                | counter   | Delivery attempts by result                               | `sum by (result)(rate(email_to_telegram_delivery_attempts_total[5m]))`                                           |
-| `email_to_telegram_retry_attempts_total{result}`                   | counter   | Retry attempts by result                                  | `rate(email_to_telegram_retry_attempts_total{result="succeeded"}[5m])`                                           |
-| `email_to_telegram_telegram_send_failures_total{error_class}`      | counter   | Telegram send failures bucketed by error class            | `topk(5, sum by (error_class)(rate(email_to_telegram_telegram_send_failures_total[1h])))`                        |
-| `email_to_telegram_quota_rejections_total{reason}`                 | counter   | Quota rejections by reason                                | `sum by (reason)(rate(email_to_telegram_quota_rejections_total[1h]))`                                            |
-| `email_to_telegram_manual_plan_grants_total{plan}`                 | counter   | Manual billing plan grants                                | `increase(email_to_telegram_manual_plan_grants_total[7d])`                                                       |
-| `email_to_telegram_http_requests_total{route,method,status_class}` | counter   | HTTP request count                                        | `sum by (status_class)(rate(email_to_telegram_http_requests_total[5m]))`                                         |
-| `email_to_telegram_http_request_duration_seconds_*`                | histogram | HTTP latency histogram (`_bucket`, `_sum`, `_count`)      | `histogram_quantile(0.95, sum by (le, route)(rate(email_to_telegram_http_request_duration_seconds_bucket[5m])))` |
+| Metric                                                             | Type      | Description                                                                   | Example PromQL                                                                                                   |
+| ------------------------------------------------------------------ | --------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `email_to_telegram_users{state}`                                   | gauge     | Users by state (`total`, `allowed`, `with_alias`, `accepted_mail_this_month`) | `email_to_telegram_users{state="with_alias"}`                                                                    |
+| `email_to_telegram_users_total`                                    | gauge     | Total users across all plans                                                  | `email_to_telegram_users_total`                                                                                  |
+| `email_to_telegram_active_users_by_plan{plan}`                     | gauge     | Active users by plan                                                          | `email_to_telegram_active_users_by_plan{plan="pro"}`                                                             |
+| `email_to_telegram_chats{state}`                                   | gauge     | Chats by state (`total`, `active`)                                            | `email_to_telegram_chats{state="active"}`                                                                        |
+| `email_to_telegram_aliases{status}`                                | gauge     | Aliases grouped by status (`active`, `paused`, `deleted`)                     | `sum by (status)(email_to_telegram_aliases)`                                                                     |
+| `email_to_telegram_attachments_stored`                             | gauge     | Stored attachment count                                                       | `email_to_telegram_attachments_stored`                                                                           |
+| `email_to_telegram_attachments_stored_bytes`                       | gauge     | Total stored attachment bytes                                                 | `email_to_telegram_attachments_stored_bytes / 1024 / 1024 / 1024`                                                |
+| `email_to_telegram_delivery_attempts_total{result}`                | counter   | Delivery attempts by result                                                   | `sum by (result)(rate(email_to_telegram_delivery_attempts_total[5m]))`                                           |
+| `email_to_telegram_retry_attempts_total{result}`                   | counter   | Retry attempts by result                                                      | `rate(email_to_telegram_retry_attempts_total{result="succeeded"}[5m])`                                           |
+| `email_to_telegram_telegram_send_failures_total{error_class}`      | counter   | Telegram send failures bucketed by error class                                | `topk(5, sum by (error_class)(rate(email_to_telegram_telegram_send_failures_total[1h])))`                        |
+| `email_to_telegram_quota_rejections_total{reason}`                 | counter   | Quota rejections by reason                                                    | `sum by (reason)(rate(email_to_telegram_quota_rejections_total[1h]))`                                            |
+| `email_to_telegram_manual_plan_grants_total{plan}`                 | counter   | Manual billing plan grants                                                    | `increase(email_to_telegram_manual_plan_grants_total[7d])`                                                       |
+| `email_to_telegram_http_requests_total{route,method,status_class}` | counter   | HTTP request count                                                            | `sum by (status_class)(rate(email_to_telegram_http_requests_total[5m]))`                                         |
+| `email_to_telegram_http_request_duration_seconds_*`                | histogram | HTTP latency histogram (`_bucket`, `_sum`, `_count`)                          | `histogram_quantile(0.95, sum by (le, route)(rate(email_to_telegram_http_request_duration_seconds_bucket[5m])))` |
 
 ## Adding a new business gauge
 
@@ -130,13 +132,18 @@ Edit `monitoring/prometheus/prometheus.yml`. Add a job under `scrape_configs`:
 
 Add the bearer token to the `Deploy Monitoring` workflow so it lands at `~/monitoring/prometheus/secrets/my_service_token`. Redeploy via the workflow. Confirm the target is `UP` in `/targets`.
 
-## Enabling production scraping
+## Production scraping
+
+Prod scraping is **enabled**: the `email_to_telegram_prod` job in
+`monitoring/prometheus/prometheus.yml` scrapes `10.0.88.2:3000`. The app
+dashboards default to `env=prod`. If it ever needs re-enabling from
+scratch:
 
 1. Confirm prod is reachable from the staging VM over VPN:
    ```sh
    ssh <staging-host> 'curl -sS http://<prod-private-ip>:3000/healthz'
    ```
-2. Uncomment the `email_to_telegram_prod` job in `monitoring/prometheus/prometheus.yml`.
+2. Ensure the `email_to_telegram_prod` job exists in `monitoring/prometheus/prometheus.yml`.
 3. Ensure the GitHub secret `METRICS_BEARER_TOKEN_PROD` matches prod's `METRICS_TOKEN` in its `.env`.
 4. Push to `main` and re-run `Deploy Monitoring`.
 5. Verify the new target is `UP` in Prometheus.
@@ -144,7 +151,10 @@ Add the bearer token to the `Deploy Monitoring` workflow so it lands at `~/monit
 ## Retention and disk
 
 - Loki: 7 days (configured in `monitoring/loki/loki-config.yml`).
-- Prometheus: 15 days (`--storage.tsdb.retention.time=15d` in the compose command).
+- Prometheus: 90 days (`--storage.tsdb.retention.time=90d` in the compose
+  command). Raised from 15d in 2026-07 so the 30d business-trend panels
+  (delivered/day, user growth) have history; at this metric cardinality the
+  disk cost is a few hundred MB.
 - Storage lives in named Docker volumes (`prometheus_data`, `grafana_data`, `loki_data`), not in `~/monitoring/`. Compose-managed; do not edit the volume contents directly.
 
 Inspect volume disk usage:
