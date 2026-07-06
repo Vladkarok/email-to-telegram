@@ -472,11 +472,11 @@ This action <b>cannot be undone</b>. Confirm to proceed.`,
     monthlyEmailLimit: (planName: string, limit: number) =>
       `⚠️ <b>Your inbox reached the ${planName} plan's monthly limit of ${limit} emails.</b>\n` +
       `New incoming mail is being bounced back to senders until the counter resets on the 1st.\n` +
-      `Use /usage to review this month and /plan to see higher limits.`,
+      `Use /usage to review this month, or /upgrade to get higher limits.`,
     storageLimit: (planName: string) =>
       `⚠️ <b>Your storage on the ${planName} plan is full.</b>\n` +
       `New incoming mail is being bounced back to senders.\n` +
-      `Free up space by deleting stored emails or attachments, or see /plan for higher limits.`,
+      `Free up space by deleting stored emails or attachments, or /upgrade for higher limits.`,
     subscriptionInactive: () =>
       `⚠️ <b>Your subscription is inactive, so incoming mail is being bounced.</b>\n` +
       `Use /billing to review your plan status.`,
