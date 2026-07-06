@@ -494,7 +494,9 @@ describe("queueInboundEmail", () => {
 
     expect(result).toEqual({
       queued: false,
-      result: { ok: false, reason: "monthly_email_limit" },
+      // userId is the alias owner resolved inside the queue transaction so the
+      // route can notify the effective owner, not its own possibly-stale lookup.
+      result: { ok: false, reason: "monthly_email_limit", userId: 1n },
     });
     expect(mockCreateLog).not.toHaveBeenCalled();
     expect(mockIncrementOrganizationUsageMonth).not.toHaveBeenCalled();

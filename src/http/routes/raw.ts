@@ -7,6 +7,8 @@ import { claimWorkerRequestNonce } from "../../db/repos/workerRequestNonces.js";
 import { getApi } from "../../telegram/api.js";
 import { queueInboundEmail, deliverQueuedEmail } from "../../email/pipeline.js";
 import { checkInboundLimit } from "../../billing/limits.js";
+import { isQuotaNotificationReason, notifyQuotaExhausted } from "../../billing/quotaNotifier.js";
+import { usageMonthForDate } from "../../db/repos/usage.js";
 import { findHostedInboundRejection } from "../../abuse/hostedInboundBlocklist.js";
 import { findAliasForInbound } from "../../email/inboundRouting.js";
 import {
@@ -182,6 +184,15 @@ export function rawRoute(
         if (rejectionStatus) {
           recordRawInbound("rejected", inboundLimit.code);
           recordQuotaRejection(inboundLimit.code);
+          if (isQuotaNotificationReason(inboundLimit.code)) {
+            void notifyQuotaExhausted(
+              getDb(),
+              getApi(),
+              alias.createdBy,
+              inboundLimit.code,
+              usageMonthForDate(),
+            );
+          }
           await reply.status(rejectionStatus).send({ error: "rejected" });
           return;
         }
@@ -246,6 +257,18 @@ export function rawRoute(
         recordRawInbound("rejected", reason);
         const rejectionStatus = statusForQueueRejection(reason);
         if (rejectionStatus) {
+          if (isQuotaNotificationReason(reason)) {
+            // Prefer the owner resolved inside the queue transaction — the
+            // route's own alias lookup may be stale by the time the queue
+            // rejects (alias deleted/recreated for another user mid-request).
+            void notifyQuotaExhausted(
+              getDb(),
+              getApi(),
+              queued.result.userId ?? alias.createdBy,
+              reason,
+              usageMonthForDate(),
+            );
+          }
           await reply.status(rejectionStatus).send({ error: "rejected" });
           return;
         }

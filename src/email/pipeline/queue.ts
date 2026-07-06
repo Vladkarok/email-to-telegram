@@ -165,7 +165,7 @@ async function queueAllowedInboundEmail(
     recordQuotaRejection(queueResult.limit.code);
     return {
       queued: false,
-      result: { ok: false, reason: queueResult.limit.code },
+      result: { ok: false, reason: queueResult.limit.code, userId: alias.createdBy },
     };
   }
 

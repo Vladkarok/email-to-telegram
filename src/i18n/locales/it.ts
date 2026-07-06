@@ -478,4 +478,17 @@ L'azione <b>non è reversibile</b>. Conferma per procedere.`,
     accountName: "Account",
     thisMonth: (month: string) => `<b>Questo mese — ${month}</b>`,
   },
+  quotaNotice: {
+    monthlyEmailLimit: (planName: string, limit: number) =>
+      `⚠️ <b>La tua casella ha raggiunto il limite mensile del piano ${planName}: ${limit} email.</b>\n` +
+      `Le nuove email in arrivo vengono respinte ai mittenti finché il contatore non si azzera il giorno 1.\n` +
+      `Usa /usage per rivedere questo mese e /plan per vedere limiti più alti.`,
+    storageLimit: (planName: string) =>
+      `⚠️ <b>Il tuo spazio di archiviazione sul piano ${planName} è pieno.</b>\n` +
+      `Le nuove email in arrivo vengono respinte ai mittenti.\n` +
+      `Libera spazio eliminando email o allegati salvati, oppure consulta /plan per limiti più alti.`,
+    subscriptionInactive: () =>
+      `⚠️ <b>Il tuo abbonamento non è attivo, quindi le email in arrivo vengono respinte.</b>\n` +
+      `Usa /billing per verificare lo stato del piano.`,
+  },
 } as const;

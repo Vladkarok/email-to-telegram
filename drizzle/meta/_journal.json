@@ -50,6 +50,13 @@
       "when": 1781097797890,
       "tag": "0006_alias-tombstone-uniqueness",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1783377111985,
+      "tag": "0007_user-quota-notifications",
+      "breakpoints": true
     }
   ]
 }

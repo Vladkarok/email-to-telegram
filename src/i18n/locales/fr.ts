@@ -479,4 +479,17 @@ Cette action est <b>irréversible</b>. Confirmez pour continuer.`,
     accountName: "Compte",
     thisMonth: (month: string) => `<b>Ce mois-ci — ${month}</b>`,
   },
+  quotaNotice: {
+    monthlyEmailLimit: (planName: string, limit: number) =>
+      `⚠️ <b>Votre boîte a atteint la limite mensuelle du plan ${planName} : ${limit} e-mails.</b>\n` +
+      `Les nouveaux e-mails entrants sont renvoyés aux expéditeurs jusqu'à la remise à zéro le 1er du mois.\n` +
+      `Utilisez /usage pour consulter ce mois-ci et /plan pour voir des limites plus élevées.`,
+    storageLimit: (planName: string) =>
+      `⚠️ <b>Votre stockage sur le plan ${planName} est plein.</b>\n` +
+      `Les nouveaux e-mails entrants sont renvoyés aux expéditeurs.\n` +
+      `Libérez de l'espace en supprimant des e-mails ou pièces jointes stockés, ou consultez /plan pour des limites plus élevées.`,
+    subscriptionInactive: () =>
+      `⚠️ <b>Votre abonnement est inactif, les e-mails entrants sont donc renvoyés.</b>\n` +
+      `Utilisez /billing pour vérifier l'état de votre plan.`,
+  },
 } as const;

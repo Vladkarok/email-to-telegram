@@ -54,6 +54,13 @@ vi.mock("../../../src/db/repos/aliases.js", () => ({
     mockDeleteExpiredAliasTombstones(...args),
 }));
 
+const mockDeleteOldQuotaNotifications = vi.fn().mockResolvedValue(0);
+
+vi.mock("../../../src/db/repos/quotaNotifications.js", () => ({
+  deleteOldQuotaNotifications: (...args: unknown[]): unknown =>
+    mockDeleteOldQuotaNotifications(...args),
+}));
+
 const { runCleanup, deliveryLogHasNoAttachments } = await import("../../../src/storage/cleanup.js");
 
 function makeDb(
