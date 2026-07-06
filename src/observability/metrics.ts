@@ -3,8 +3,9 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema.js";
 import { countUsers, countUsersByPlan } from "../db/repos/users.js";
 import { countChats } from "../db/repos/chats.js";
-import { countAliasesByStatus } from "../db/repos/aliases.js";
+import { countAliasesByStatus, countUsersWithAlias } from "../db/repos/aliases.js";
 import { countAttachmentStorage } from "../db/repos/attachments.js";
+import { countUsersWithAcceptedMailInMonth, usageMonthForDate } from "../db/repos/usage.js";
 import { classifyTelegramError } from "../telegram/errorClassifier.js";
 import { noteRawInboundOutcome } from "./inboundHealth.js";
 
@@ -99,7 +100,7 @@ const activeUsersByPlan = new Gauge({
 
 const usersGauge = new Gauge({
   name: "email_to_telegram_users",
-  help: "Telegram users known to the bot, partitioned by allow status.",
+  help: "Telegram users known to the bot, partitioned by state (total, allowed, with_alias = has an undeleted alias, accepted_mail_this_month = mail accepted into processing this month; Telegram send failures still count).",
   labelNames: ["state"] as const,
   registers: [metricsRegistry],
 });
@@ -184,21 +185,31 @@ export function recordQuotaRejection(reason: string): void {
   quotaRejectionsTotal.inc({ reason });
 }
 
-// All five business reads happen first; gauge mutations only execute once
+// All business reads happen first; gauge mutations only execute once
 // every read has succeeded. This makes `/metrics` either fully refresh to
 // a consistent snapshot or fully retain its previous values on failure,
 // matching the route's "serving last known values" promise.
 export async function refreshBusinessGauges(db: Db): Promise<void> {
-  const [planRows, userCounts, chatCounts, aliasRows, attachmentStats] = await Promise.all([
+  const [
+    planRows,
+    userCounts,
+    chatCounts,
+    aliasRows,
+    attachmentStats,
+    usersWithAlias,
+    usersAcceptedMailThisMonth,
+  ] = await Promise.all([
     countUsersByPlan(db),
     countUsers(db),
     countChats(db),
     countAliasesByStatus(db),
     countAttachmentStorage(db),
+    countUsersWithAlias(db),
+    countUsersWithAcceptedMailInMonth(db, usageMonthForDate()),
   ]);
 
   applyUsersByPlanGauges(planRows);
-  applyUsersGauge(userCounts);
+  applyUsersGauge(userCounts, { usersWithAlias, usersAcceptedMailThisMonth });
   applyChatsGauge(chatCounts);
   applyAliasesGauge(aliasRows);
   applyAttachmentsGauge(attachmentStats);
@@ -214,9 +225,14 @@ function applyUsersByPlanGauges(rows: Array<{ planCode: string; count: number }>
   usersTotalGauge.set(total);
 }
 
-function applyUsersGauge(counts: { total: number; allowed: number }): void {
+function applyUsersGauge(
+  counts: { total: number; allowed: number },
+  engagement: { usersWithAlias: number; usersAcceptedMailThisMonth: number },
+): void {
   usersGauge.set({ state: "total" }, counts.total);
   usersGauge.set({ state: "allowed" }, counts.allowed);
+  usersGauge.set({ state: "with_alias" }, engagement.usersWithAlias);
+  usersGauge.set({ state: "accepted_mail_this_month" }, engagement.usersAcceptedMailThisMonth);
 }
 
 function applyChatsGauge(counts: { total: number; active: number }): void {

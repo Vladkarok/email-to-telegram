@@ -29,8 +29,8 @@
         "multi": false,
         "includeAll": false,
         "current": {
-          "text": "staging",
-          "value": "staging",
+          "text": "prod",
+          "value": "prod",
           "selected": true
         }
       }

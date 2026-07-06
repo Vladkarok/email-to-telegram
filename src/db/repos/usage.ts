@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { and, eq, sql } from "drizzle-orm";
+import { and, count, eq, gt, sql } from "drizzle-orm";
 import { userUsageMonths, type NewUserUsageMonth, type UserUsageMonth } from "../schema.js";
 import type * as schema from "../schema.js";
 
@@ -19,6 +19,20 @@ export async function getUserUsageMonth(
     .from(userUsageMonths)
     .where(and(eq(userUsageMonths.userId, userId), eq(userUsageMonths.month, month)));
   return usage ?? null;
+}
+
+/**
+ * Users whose usage counter shows accepted mail in `month`. delivered_count
+ * increments when mail is accepted into durable processing (queue.ts), NOT
+ * when the Telegram send succeeds — later send failures still count. Callers
+ * must not present this as "received/delivered".
+ */
+export async function countUsersWithAcceptedMailInMonth(db: Db, month: string): Promise<number> {
+  const [row] = await db
+    .select({ count: count() })
+    .from(userUsageMonths)
+    .where(and(eq(userUsageMonths.month, month), gt(userUsageMonths.deliveredCount, 0)));
+  return Number(row?.count ?? 0);
 }
 
 export async function incrementUserUsageMonth(

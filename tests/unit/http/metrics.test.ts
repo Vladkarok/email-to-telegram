@@ -8,6 +8,8 @@ const mockCountUsers = vi.fn();
 const mockCountChats = vi.fn();
 const mockCountAliasesByStatus = vi.fn();
 const mockCountAttachmentStorage = vi.fn();
+const mockCountUsersWithAlias = vi.fn();
+const mockCountUsersWithAcceptedMailInMonth = vi.fn();
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 vi.mock("../../../src/db/repos/users.js", async () => {
@@ -33,6 +35,17 @@ vi.mock("../../../src/db/repos/aliases.js", async () => {
   return {
     ...actual,
     countAliasesByStatus: (...args: unknown[]): unknown => mockCountAliasesByStatus(...args),
+    countUsersWithAlias: (...args: unknown[]): unknown => mockCountUsersWithAlias(...args),
+  };
+});
+vi.mock("../../../src/db/repos/usage.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/db/repos/usage.js")>(
+    "../../../src/db/repos/usage.js",
+  );
+  return {
+    ...actual,
+    countUsersWithAcceptedMailInMonth: (...args: unknown[]): unknown =>
+      mockCountUsersWithAcceptedMailInMonth(...args),
   };
 });
 vi.mock("../../../src/db/repos/attachments.js", async () => {
@@ -104,6 +117,8 @@ describe("GET /metrics", () => {
       { status: "paused", count: 1 },
     ]);
     mockCountAttachmentStorage.mockResolvedValue({ count: 12, bytes: 34567 });
+    mockCountUsersWithAlias.mockResolvedValue(4);
+    mockCountUsersWithAcceptedMailInMonth.mockResolvedValue(2);
   });
 
   it("returns 404 when metrics are disabled", async () => {
@@ -153,6 +168,10 @@ describe("GET /metrics", () => {
     expect(res.body).toMatch(/email_to_telegram_users_total\{[^}]*\} 3/);
     expect(res.body).toMatch(/email_to_telegram_users\{[^}]*state="total"[^}]*\} 5/);
     expect(res.body).toMatch(/email_to_telegram_users\{[^}]*state="allowed"[^}]*\} 3/);
+    expect(res.body).toMatch(/email_to_telegram_users\{[^}]*state="with_alias"[^}]*\} 4/);
+    expect(res.body).toMatch(
+      /email_to_telegram_users\{[^}]*state="accepted_mail_this_month"[^}]*\} 2/,
+    );
     expect(res.body).toMatch(/email_to_telegram_chats\{[^}]*state="active"[^}]*\} 4/);
     expect(res.body).toMatch(/email_to_telegram_aliases\{[^}]*status="active"[^}]*\} 7/);
     expect(res.body).toMatch(/email_to_telegram_attachments_stored\{[^}]*\} 12/);
@@ -162,6 +181,8 @@ describe("GET /metrics", () => {
     expect(mockCountChats).toHaveBeenCalledOnce();
     expect(mockCountAliasesByStatus).toHaveBeenCalledOnce();
     expect(mockCountAttachmentStorage).toHaveBeenCalledOnce();
+    expect(mockCountUsersWithAlias).toHaveBeenCalledOnce();
+    expect(mockCountUsersWithAcceptedMailInMonth).toHaveBeenCalledOnce();
   });
 
   it("still serves metrics when business gauge refresh fails", async () => {
@@ -200,6 +221,8 @@ describe("GET /metrics", () => {
     mockCountAliasesByStatus.mockRejectedValueOnce(new Error("db hiccup"));
     mockCountUsers.mockResolvedValueOnce({ total: 999, allowed: 999 });
     mockCountChats.mockResolvedValueOnce({ total: 999, active: 999 });
+    mockCountUsersWithAlias.mockResolvedValueOnce(999);
+    mockCountUsersWithAcceptedMailInMonth.mockResolvedValueOnce(999);
 
     const stale = await app.inject({
       method: "GET",
@@ -213,6 +236,10 @@ describe("GET /metrics", () => {
     expect(stale.body).toMatch(/email_to_telegram_aliases\{[^}]*status="active"[^}]*\} 7/);
     expect(stale.body).toMatch(/email_to_telegram_users\{[^}]*state="total"[^}]*\} 5/);
     expect(stale.body).toMatch(/email_to_telegram_chats\{[^}]*state="active"[^}]*\} 4/);
+    expect(stale.body).toMatch(/email_to_telegram_users\{[^}]*state="with_alias"[^}]*\} 4/);
+    expect(stale.body).toMatch(
+      /email_to_telegram_users\{[^}]*state="accepted_mail_this_month"[^}]*\} 2/,
+    );
     expect(stale.body).not.toMatch(/email_to_telegram_users\{[^}]*state="total"[^}]*\} 999/);
   });
 
