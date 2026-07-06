@@ -38,6 +38,7 @@ import type { parseEmail } from "../parser.js";
 import type { Db, QueuedInboundEmail, PipelineResult } from "./types.js";
 import { recordDeliveryAttempt, recordTelegramSendFailure } from "../../observability/metrics.js";
 import { classifyTelegramError, retryDispositionForError } from "../../telegram/errorClassifier.js";
+import { refundAcceptedEmail } from "../../billing/usageRefund.js";
 
 interface StoredImageAttachment extends PhotoItem {
   attachmentId: string;
@@ -319,6 +320,15 @@ export async function deliverQueuedEmail(
             ? "delivery.telegram.permanently_failed"
             : "delivery.telegram.failed",
         );
+        if (failedStatus === "permanently_failed") {
+          // The user never received this email; give the monthly-quota
+          // charge from acceptance back.
+          await refundAcceptedEmail(db, {
+            deliveryLogId: deliveryLog.id,
+            userId: deliveryLog.userId,
+            receivedAt: deliveryLog.receivedAt,
+          });
+        }
         return { ok: false, reason: "send_failed" };
       }
 

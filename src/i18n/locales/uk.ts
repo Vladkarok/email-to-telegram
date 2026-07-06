@@ -445,7 +445,6 @@ ${policyUrl ? `Повна політика: ${policyUrl}\n` : ""}${supportContac
     renewsEnds: "Поновлення/завершення",
     limits: "<b>Ліміти</b>",
     aliases: "Аліаси",
-    chats: "Чати",
     allowRules: "Allow rules",
     acceptedEmailsMonth: "Прийняті листи / місяць",
     egressMonth: "Egress / місяць",

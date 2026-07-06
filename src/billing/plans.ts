@@ -15,8 +15,6 @@ export type SubscriptionStatus =
 
 export interface PlanLimits {
   aliases: number;
-  users: number;
-  chats: number;
   allowRules: number;
   deliveredEmailsMonth: number;
   egressBytesMonth: number;
@@ -45,8 +43,6 @@ export const PLAN_DEFINITIONS = {
     yearlyPriceUsd: 0,
     limits: {
       aliases: 3,
-      users: 1,
-      chats: 1,
       allowRules: 10,
       deliveredEmailsMonth: 100,
       egressBytesMonth: gib,
@@ -63,8 +59,6 @@ export const PLAN_DEFINITIONS = {
     yearlyPriceUsd: 48,
     limits: {
       aliases: 10,
-      users: 1,
-      chats: 3,
       allowRules: 50,
       deliveredEmailsMonth: 1_000,
       egressBytesMonth: 10 * gib,
@@ -81,8 +75,6 @@ export const PLAN_DEFINITIONS = {
     yearlyPriceUsd: 120,
     limits: {
       aliases: 50,
-      users: 3,
-      chats: 10,
       allowRules: 500,
       deliveredEmailsMonth: 10_000,
       egressBytesMonth: 100 * gib,
@@ -99,8 +91,6 @@ export const PLAN_DEFINITIONS = {
     yearlyPriceUsd: 290,
     limits: {
       aliases: 200,
-      users: 10,
-      chats: 50,
       allowRules: 2_000,
       deliveredEmailsMonth: 100_000,
       egressBytesMonth: 500 * gib,
@@ -117,8 +107,6 @@ export const PLAN_DEFINITIONS = {
     yearlyPriceUsd: null,
     limits: {
       aliases: 1_000,
-      users: 100,
-      chats: 250,
       allowRules: 10_000,
       deliveredEmailsMonth: 1_000_000,
       egressBytesMonth: 5_000 * gib,
