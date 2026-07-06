@@ -2,86 +2,153 @@ import { escapeHtml, escapeHtmlAttribute } from "../../../utils/html.js";
 
 const ADMIN_CSS = `
 :root {
-  color-scheme: light;
-  --bg: #f4f1ea;
-  --panel: #fffdf8;
-  --ink: #171514;
-  --muted: #6b645c;
-  --line: #d9d0c4;
-  --accent: #8b5e34;
-  --danger: #b53d3d;
+  color-scheme: dark;
+  --bg: #0e1116;
+  --panel: #151a22;
+  --panel-raised: #1a2029;
+  --ink: #dde3ec;
+  --muted: #8a94a6;
+  --line: #232b38;
+  --line-soft: #1d2430;
+  --accent: #58a6ff;
+  --accent-btn: #2f6feb;
+  --accent-btn-hover: #4079ee;
+  --ok: #3fb950;
+  --warn: #d29922;
+  --danger: #f85149;
 }
 * { box-sizing: border-box; }
 body {
   margin: 0;
   background: var(--bg);
   color: var(--ink);
-  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 main {
   max-width: 1180px;
   margin: 0 auto;
-  padding: 24px 18px 56px;
+  padding: 20px 20px 64px;
 }
+.topnav {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 10px 4px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--line);
+}
+.topnav .brand {
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  margin-right: 8px;
+}
+.topnav .brand .at { color: var(--accent); }
+.topnav a { color: var(--muted); text-decoration: none; font-weight: 500; }
+.topnav a:hover { color: var(--ink); }
+.topnav .logout { margin-left: auto; color: var(--danger); }
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 20px;
+  border-radius: 10px;
+  padding: 18px 20px;
   margin-bottom: 16px;
   overflow-x: auto;
 }
-h1 { font-size: 1.5rem; margin: 0 0 16px; }
-h2 { font-size: 1.15rem; margin: 20px 0 10px; }
-a { color: var(--accent); }
-nav { margin-bottom: 20px; }
-nav a { margin-right: 16px; }
-table { width: 100%; border-collapse: collapse; margin: 10px 0; }
-th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
-th { font-size: 0.82rem; text-transform: uppercase; color: var(--muted); letter-spacing: 0.06em; }
+h1 { font-size: 1.3rem; font-weight: 650; margin: 0 0 14px; letter-spacing: -0.01em; }
+h2 {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 4px 0 12px;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0 2px;
+  font-variant-numeric: tabular-nums;
+}
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line-soft); }
+th {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  border-bottom: 1px solid var(--line);
+}
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover td { background: rgba(255, 255, 255, 0.025); }
 .muted { color: var(--muted); }
-input[type="text"], input[type="password"], select, textarea {
+input[type="text"], input[type="password"], input[type="date"], select, textarea {
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 8px 12px;
   font: inherit;
+  color: var(--ink);
   width: 100%;
   max-width: 400px;
-  background: var(--panel);
+  background: var(--bg);
 }
+input:focus, select:focus, textarea:focus {
+  outline: 2px solid var(--accent-btn);
+  outline-offset: -1px;
+  border-color: transparent;
+}
+input::placeholder { color: var(--muted); opacity: 0.7; }
 textarea { resize: vertical; }
-.flash-success { background: #e6f4ea; color: #1a5c2a; border: 1px solid #a8d5b3; }
-.flash-info { background: #e8f0fe; color: #1a3a6b; border: 1px solid #a8c4f5; }
 button, .btn {
-  background: var(--accent);
+  background: var(--accent-btn);
   color: #fff;
   border: 0;
-  border-radius: 6px;
-  padding: 8px 16px;
+  border-radius: 8px;
+  padding: 8px 18px;
   font: inherit;
+  font-weight: 550;
   cursor: pointer;
   text-decoration: none;
   display: inline-block;
+  transition: background 0.12s ease;
 }
-button:hover, .btn:hover { opacity: 0.9; }
+button:hover, .btn:hover { background: var(--accent-btn-hover); }
 .btn-danger { background: var(--danger); }
-dl { margin: 0; }
-dt { font-size: 0.82rem; text-transform: uppercase; color: var(--muted); letter-spacing: 0.06em; margin-top: 12px; }
-dt:first-child { margin-top: 0; }
-dd { margin: 2px 0 0; }
-.flash { padding: 10px 14px; border-radius: 6px; margin-bottom: 14px; }
-.flash-error { background: #fde8e8; color: var(--danger); border: 1px solid #f5c6c6; }
+.btn-danger:hover { background: #ff6a5f; }
+dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  row-gap: 8px;
+  align-items: baseline;
+}
+dt {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+}
+dd { margin: 0; }
+.flash { padding: 10px 14px; border-radius: 8px; margin-bottom: 14px; border: 1px solid; }
+.flash-success { background: rgba(63, 185, 80, 0.12); color: #56d364; border-color: rgba(63, 185, 80, 0.4); }
+.flash-info { background: rgba(88, 166, 255, 0.1); color: #79b8ff; border-color: rgba(88, 166, 255, 0.4); }
+.flash-error { background: rgba(248, 81, 73, 0.12); color: #ff7b72; border-color: rgba(248, 81, 73, 0.4); }
 .dashboard-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 16px;
   align-items: start;
 }
 .dashboard-grid .panel { margin-bottom: 0; }
-.compact-table th, .compact-table td { padding: 7px 8px; font-size: 0.92rem; }
+.compact-table th, .compact-table td { padding: 7px 8px; font-size: 0.9rem; }
 .compact-table { min-width: 420px; }
 .status-danger { color: var(--danger); font-weight: 600; }
-.status-warn { color: #8b5e34; font-weight: 600; }
+.status-warn { color: var(--warn); font-weight: 600; }
+.status-ok { color: var(--ok); }
 `;
 
 function adminLayout(title: string, bodyHtml: string, csrfToken?: string): string {
@@ -100,10 +167,11 @@ function adminLayout(title: string, bodyHtml: string, csrfToken?: string): strin
   </head>
   <body>
     <main>
-      <nav>
+      <nav class="topnav">
+        <span class="brand">email<span class="at">→</span>telegram <span class="muted">admin</span></span>
         <a href="/admin">Dashboard</a>
         <a href="/admin/users">Users</a>
-        <a href="/admin/logout" style="float:right;color:var(--danger);">Logout</a>
+        <a href="/admin/logout" class="logout">Logout</a>
       </nav>
       ${bodyHtml}
     </main>
@@ -443,7 +511,7 @@ function renderBillingForm(
   const keepStripeLinkChecked =
     submittedKeptStripeLink ?? (user.hasStripeLink && activePlan === "business");
   const stripeLinkStatus = user.hasStripeLink
-    ? `<span style="color:#1a5c2a;">linked</span>`
+    ? `<span class="status-ok">linked</span>`
     : `<span class="muted">none</span>`;
 
   return `<div class="panel">
