@@ -139,13 +139,14 @@ dd { margin: 0; }
 .flash-error { background: rgba(248, 81, 73, 0.12); color: #ff7b72; border-color: rgba(248, 81, 73, 0.4); }
 .dashboard-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(480px, 100%), 1fr));
   gap: 16px;
   align-items: start;
 }
 .dashboard-grid .panel { margin-bottom: 0; }
+.dashboard-grid .panel > p.muted { margin: 2px 0 4px; }
+th, td { white-space: nowrap; }
 .compact-table th, .compact-table td { padding: 7px 8px; font-size: 0.9rem; }
-.compact-table { min-width: 420px; }
 .status-danger { color: var(--danger); font-weight: 600; }
 .status-warn { color: var(--warn); font-weight: 600; }
 .status-ok { color: var(--ok); }
