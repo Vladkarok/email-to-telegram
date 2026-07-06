@@ -11,8 +11,6 @@ describe("billing plans", () => {
   it("defines the free hosted limits", () => {
     expect(PLAN_DEFINITIONS.free.limits).toMatchObject({
       aliases: 3,
-      users: 1,
-      chats: 1,
       allowRules: 10,
       deliveredEmailsMonth: 100,
       egressBytesMonth: 1024 * 1024 * 1024,

@@ -82,7 +82,6 @@ export function buildPlanSummaryText(
   lines.push("");
   lines.push(messages.limits);
   lines.push(`• ${messages.aliases}: <code>${plan.limits.aliases}</code>`);
-  lines.push(`• ${messages.chats}: <code>${plan.limits.chats}</code>`);
   lines.push(`• ${messages.allowRules}: <code>${plan.limits.allowRules}</code>`);
   lines.push(`• ${messages.acceptedEmailsMonth}: <code>${plan.limits.deliveredEmailsMonth}</code>`);
   lines.push(

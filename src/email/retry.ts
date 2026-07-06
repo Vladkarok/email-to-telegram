@@ -2,6 +2,7 @@ import type { Api } from "grammy";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema.js";
 import { queueInboundEmail, deliverQueuedEmail } from "./pipeline.js";
+import { refundAcceptedEmail } from "../billing/usageRefund.js";
 import { parseEmail } from "./parser.js";
 import { cleanEmailBody } from "./cleaner.js";
 import {
@@ -245,6 +246,7 @@ async function retryDelivery(
   deliveryLog: {
     id: string;
     emailAddressId: string;
+    userId: bigint | null;
     rawEmailPath: string | null;
     receivedAt: Date;
     rawEmailEncryptionMode: string | null;
@@ -255,9 +257,21 @@ async function retryDelivery(
 ): Promise<void> {
   const log = getLogger();
 
-  if (!deliveryLog.rawEmailPath) {
+  // Marks the log permanently failed and refunds the monthly-quota charge the
+  // acceptance path took: the user never received this email, so it must not
+  // count against their plan.
+  const closePermanentlyFailed = async (): Promise<void> => {
     recordRetryAttempt("permanently_failed");
     await updateDeliveryLogStatus(db, deliveryLog.id, "permanently_failed");
+    await refundAcceptedEmail(db, {
+      deliveryLogId: deliveryLog.id,
+      userId: deliveryLog.userId,
+      receivedAt: deliveryLog.receivedAt,
+    });
+  };
+
+  if (!deliveryLog.rawEmailPath) {
+    await closePermanentlyFailed();
     return;
   }
 
@@ -272,8 +286,7 @@ async function retryDelivery(
       { deliveryLogId: deliveryLog.id, attempts, countedFailures },
       "retry worker: max retries reached",
     );
-    recordRetryAttempt("permanently_failed");
-    await updateDeliveryLogStatus(db, deliveryLog.id, "permanently_failed");
+    await closePermanentlyFailed();
     return;
   }
 
@@ -284,8 +297,7 @@ async function retryDelivery(
       { deliveryLogId: deliveryLog.id, aliasStatus: alias?.status },
       "retry worker: alias unavailable, giving up",
     );
-    recordRetryAttempt("permanently_failed");
-    await updateDeliveryLogStatus(db, deliveryLog.id, "permanently_failed");
+    await closePermanentlyFailed();
     return;
   }
 
@@ -299,8 +311,7 @@ async function retryDelivery(
     });
   } catch (err: unknown) {
     log.error({ err, deliveryLogId: deliveryLog.id }, "retry worker: raw email file missing");
-    recordRetryAttempt("permanently_failed");
-    await updateDeliveryLogStatus(db, deliveryLog.id, "permanently_failed");
+    await closePermanentlyFailed();
     return;
   }
 
@@ -386,6 +397,14 @@ async function retryDelivery(
       }),
     POST_SEND_PERSIST_RETRY,
   );
+
+  if (finalStatus === "permanently_failed") {
+    await refundAcceptedEmail(db, {
+      deliveryLogId: deliveryLog.id,
+      userId: deliveryLog.userId,
+      receivedAt: deliveryLog.receivedAt,
+    });
+  }
 
   if (result.ok) {
     recordRetryAttempt("succeeded");
