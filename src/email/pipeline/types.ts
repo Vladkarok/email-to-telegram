@@ -48,6 +48,12 @@ export interface PipelineResult {
    * between the route's lookup and the locked queue decision).
    */
   userId?: bigint;
+  /**
+   * Usage month the rejection decision was made against. Callers must use
+   * this (not a recomputed "now") for notification claims so a request that
+   * straddles the UTC month boundary cannot burn the fresh month's slot.
+   */
+  month?: string;
 }
 
 export interface QueuedInboundEmail {
@@ -63,5 +69,15 @@ export interface QueuedInboundEmail {
 }
 
 export type QueueInboundResult =
-  | { queued: true; job: QueuedInboundEmail }
+  | {
+      queued: true;
+      job: QueuedInboundEmail;
+      /**
+       * Post-increment monthly usage captured inside the locked queue
+       * transaction. The approaching-limit warning must use this instead of
+       * re-reading usage, or a fast burst through the 80–99% band can pass
+       * the threshold unobserved.
+       */
+      usage?: { month: string; deliveredCount: number };
+    }
   | { queued: false; result: PipelineResult };

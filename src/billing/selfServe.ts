@@ -8,11 +8,21 @@ export function resolveSupportContact(config: Pick<AppConfig, "supportContact">)
   return config.supportContact ?? DEFAULT_SUPPORT_CONTACT;
 }
 
+/**
+ * In donation mode this instance must never read as selling subscriptions
+ * (donations are gifts, not payment for service — the legal basis of the
+ * model), so the copy points at the operator for limits and at /donate for
+ * support. Other providers with self-serve disabled get the neutral
+ * operator-managed message.
+ */
 export function manualBillingMessage(
-  config: Pick<AppConfig, "supportContact">,
+  config: Pick<AppConfig, "supportContact" | "billingProvider">,
   messages: Messages,
 ): string {
-  return messages.billingCommands.manualBilling(escapeHtml(resolveSupportContact(config)));
+  const contact = escapeHtml(resolveSupportContact(config));
+  return config.billingProvider === "donation"
+    ? messages.billingCommands.manualBillingDonation(contact)
+    : messages.billingCommands.manualBilling(contact);
 }
 
 export function manualBillingAlert(messages: Messages): string {

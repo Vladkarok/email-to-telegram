@@ -368,9 +368,15 @@ Esempi:
       "❌ I dati di fatturazione sono temporaneamente non disponibili. Riprova a breve.",
     upgradeButton: "⬆️ Upgrade",
     manageBillingButton: "🧾 Gestisci fatturazione",
-    manualBillingAlert: "I pagamenti self-serve sono temporaneamente non disponibili.",
+    manualBillingAlert:
+      "Su questa istanza non si vendono abbonamenti — usa /upgrade per i dettagli.",
     manualBilling: (contact: string) =>
-      `ℹ️ I pagamenti self-serve sono temporaneamente non disponibili.\n\nGli upgrade hosted sono gestiti manualmente per il momento. Contatta ${contact} per fare upgrade, rinnovare, annullare o per domande sulla fatturazione.`,
+      `ℹ️ I pagamenti self-serve non sono disponibili per il tuo account.\n\n` +
+      `Il tuo piano è gestito personalmente dall'operatore — contatta ${contact} per fare upgrade, rinnovare, annullare o per domande sulla fatturazione.`,
+    manualBillingDonation: (contact: string) =>
+      `ℹ️ Questa istanza funziona su un modello di donazioni — qui non si vendono abbonamenti.\n\n` +
+      `Ti servono limiti più alti? Scrivi a ${contact} per discutere il tuo caso.\n` +
+      `Se il bot ti è utile, puoi sostenere il progetto con /donate — le donazioni sono un regalo, non un pagamento per il servizio.`,
   },
   donate: {
     title: "☕ Supporta il progetto",
@@ -489,5 +495,13 @@ L'azione <b>non è reversibile</b>. Conferma per procedere.`,
     subscriptionInactive: () =>
       `⚠️ <b>Il tuo abbonamento non è attivo, quindi le email in arrivo vengono respinte.</b>\n` +
       `Usa /billing per verificare lo stato del piano.`,
+    approachingMonthlyLimit: (planName: string, used: number, limit: number) =>
+      `⏳ <b>Hai usato ${used} delle ${limit} email mensili del piano ${planName}.</b>\n` +
+      `Al raggiungimento del limite, le nuove email verranno respinte ai mittenti finché il contatore non si azzera il giorno 1.\n` +
+      `Usa /usage per i dettagli, oppure /upgrade per limiti più alti.`,
+    monthlyLimitReminder: (rejectedCount: number) =>
+      `⚠️ <b>La tua casella è ancora oltre il limite mensile — questo mese la posta in arrivo è stata respinta ${rejectedCount} volte.</b>\n` +
+      `Le email continueranno a essere respinte finché il contatore non si azzera il giorno 1.\n` +
+      `/upgrade per aumentare i limiti e non perdere più email.`,
   },
 } as const;

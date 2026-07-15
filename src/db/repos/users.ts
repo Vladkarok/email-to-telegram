@@ -9,6 +9,7 @@ import {
   type NewUser,
 } from "../schema.js";
 import type * as schema from "../schema.js";
+import { normalizeLocale, type Locale } from "../../i18n/locale.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -340,12 +341,11 @@ async function findUserByIdWithoutLocaleColumn(db: Db, id: bigint): Promise<User
   return user ?? null;
 }
 
-function normalizeSupportedLocale(locale: string | null | undefined): "en" | "uk" | null {
-  if (!locale) return null;
-  const language = locale.toLowerCase().replace("_", "-").split("-")[0];
-  if (language === "en") return "en";
-  if (language === "uk" || language === "ua") return "uk";
-  return null;
+// Shared with the i18n layer so a Telegram language_code for ANY supported
+// locale is persisted. (A local en/uk-only copy of this mapping once silently
+// dropped fr/it — users then got default-language quota notices.)
+function normalizeSupportedLocale(locale: string | null | undefined): Locale | null {
+  return normalizeLocale(locale);
 }
 
 export interface UserDeletionSummary {

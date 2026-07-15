@@ -359,9 +359,14 @@ Examples:
     billingUnavailable: "❌ Billing data is temporarily unavailable. Please try again shortly.",
     upgradeButton: "⬆️ Upgrade",
     manageBillingButton: "🧾 Manage Billing",
-    manualBillingAlert: "Self-serve payments are temporarily unavailable.",
+    manualBillingAlert: "Plans are not sold on this instance — run /upgrade for details.",
     manualBilling: (contact: string) =>
-      `ℹ️ Self-serve payments are temporarily unavailable.\n\nHosted upgrades are handled manually for now. Contact ${contact} to upgrade, renew, cancel, or ask billing questions.`,
+      `ℹ️ Self-serve payments are unavailable on your account.\n\n` +
+      `Your plan is managed personally by the operator — contact ${contact} to upgrade, renew, cancel, or ask billing questions.`,
+    manualBillingDonation: (contact: string) =>
+      `ℹ️ This instance runs on a donation model — subscriptions are not sold here.\n\n` +
+      `Need higher limits? Message ${contact} to discuss your use case.\n` +
+      `If the bot is useful to you, you can support the project with /donate — donations are gifts, not payment for service.`,
   },
   donate: {
     title: "☕ Support the project",
@@ -480,5 +485,13 @@ This action <b>cannot be undone</b>. Confirm to proceed.`,
     subscriptionInactive: () =>
       `⚠️ <b>Your subscription is inactive, so incoming mail is being bounced.</b>\n` +
       `Use /billing to review your plan status.`,
+    approachingMonthlyLimit: (planName: string, used: number, limit: number) =>
+      `⏳ <b>You've used ${used} of the ${planName} plan's ${limit} monthly emails.</b>\n` +
+      `Once the limit is reached, new mail bounces back to senders until the counter resets on the 1st.\n` +
+      `Use /usage for details, or /upgrade for higher limits.`,
+    monthlyLimitReminder: (rejectedCount: number) =>
+      `⚠️ <b>Your inbox is still over its monthly limit — incoming mail was rejected ${rejectedCount} times this month.</b>\n` +
+      `Mail keeps bouncing until the counter resets on the 1st.\n` +
+      `/upgrade to raise your limits and stop losing mail.`,
   },
 } as const;

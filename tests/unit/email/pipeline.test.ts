@@ -25,7 +25,9 @@ const mockSendTelegramPhotos = vi.fn();
 const mockWriteAttachment = vi.fn();
 const mockDeleteFile = vi.fn();
 const mockCheckInboundLimit = vi.fn().mockResolvedValue({ ok: true });
-const mockIncrementOrganizationUsageMonth = vi.fn().mockResolvedValue(undefined);
+const mockIncrementOrganizationUsageMonth = vi
+  .fn()
+  .mockResolvedValue({ deliveredCount: 1, rejectedCount: 0 });
 const mockIncrementOrganizationStorageUsage = vi.fn().mockResolvedValue(undefined);
 const mockDecrementOrganizationStorageUsage = vi.fn().mockResolvedValue(undefined);
 const mockUsageMonthForDate = vi.fn(() => "2026-04");
@@ -145,7 +147,7 @@ describe("processInboundEmail", () => {
       status: "pass",
     });
     mockFindAliasById.mockResolvedValue(activeAlias);
-    mockIncrementOrganizationUsageMonth.mockResolvedValue(undefined);
+    mockIncrementOrganizationUsageMonth.mockResolvedValue({ deliveredCount: 1, rejectedCount: 0 });
     mockIncrementOrganizationStorageUsage.mockResolvedValue(undefined);
     mockDecrementOrganizationStorageUsage.mockResolvedValue(undefined);
     mockDeleteFile.mockResolvedValue(undefined);
@@ -419,7 +421,7 @@ describe("queueInboundEmail", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mockCheckInboundLimit.mockResolvedValue({ ok: true });
-    mockIncrementOrganizationUsageMonth.mockResolvedValue(undefined);
+    mockIncrementOrganizationUsageMonth.mockResolvedValue({ deliveredCount: 1, rejectedCount: 0 });
     mockIncrementOrganizationStorageUsage.mockResolvedValue(undefined);
     mockDecrementOrganizationStorageUsage.mockResolvedValue(undefined);
     mockDeleteFile.mockResolvedValue(undefined);
@@ -494,12 +496,20 @@ describe("queueInboundEmail", () => {
 
     expect(result).toEqual({
       queued: false,
-      // userId is the alias owner resolved inside the queue transaction so the
-      // route can notify the effective owner, not its own possibly-stale lookup.
-      result: { ok: false, reason: "monthly_email_limit", userId: 1n },
+      // userId and month are resolved inside the queue transaction so the
+      // route can notify the effective owner against the decision month, not
+      // its own possibly-stale lookup or a recomputed "now".
+      result: { ok: false, reason: "monthly_email_limit", userId: 1n, month: "2026-04" },
     });
     expect(mockCreateLog).not.toHaveBeenCalled();
-    expect(mockIncrementOrganizationUsageMonth).not.toHaveBeenCalled();
+    // Quota-exhaustion rejections charge rejected_count (lost-mail tracking);
+    // delivered_count stays untouched.
+    expect(mockIncrementOrganizationUsageMonth).toHaveBeenCalledOnce();
+    expect(mockIncrementOrganizationUsageMonth).toHaveBeenCalledWith(expect.anything(), {
+      userId: 1n,
+      month: expect.stringMatching(/^\d{4}-\d{2}$/) as unknown as string,
+      rejectedCount: 1,
+    });
   });
 
   it("returns duplicate when the delivery-log insert loses a DB race", async () => {

@@ -1,0 +1,5 @@
+ALTER TABLE "user_quota_notifications" DROP CONSTRAINT "chk_user_quota_notifications_month";--> statement-breakpoint
+ALTER TABLE "user_quota_notifications" DROP CONSTRAINT "chk_user_quota_notifications_reason";--> statement-breakpoint
+ALTER TABLE "user_quota_notifications" ALTER COLUMN "month" SET DATA TYPE varchar(8);--> statement-breakpoint
+ALTER TABLE "user_quota_notifications" ADD CONSTRAINT "chk_user_quota_notifications_month" CHECK ("user_quota_notifications"."month" ~ '^[0-9]{4}-([0-9]{2}|W[0-9]{2})$');--> statement-breakpoint
+ALTER TABLE "user_quota_notifications" ADD CONSTRAINT "chk_user_quota_notifications_reason" CHECK ("user_quota_notifications"."reason" in ('monthly_email_limit', 'storage_limit', 'subscription_inactive', 'approaching_monthly_limit', 'monthly_email_limit_reminder'));

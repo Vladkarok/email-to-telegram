@@ -86,7 +86,7 @@ vi.mock("../../../src/telegram/sender.js", () => ({
   sendTelegramPhotos: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("../../../src/db/repos/usage.js", () => ({
-  incrementUserUsageMonth: vi.fn().mockResolvedValue(undefined),
+  incrementUserUsageMonth: vi.fn().mockResolvedValue({ deliveredCount: 1, rejectedCount: 0 }),
   usageMonthForDate: () => "2026-04",
 }));
 vi.mock("../../../src/db/repos/storageUsage.js", () => ({

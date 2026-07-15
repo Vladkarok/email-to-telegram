@@ -106,6 +106,10 @@ export async function checkInboundLimit(
   userId: bigint | null,
   rawSizeBytes?: number,
   storageDeltaBytes?: bigint,
+  // Callers pass the month they captured for the whole rejection decision so
+  // that check, counter increment, and notification claim cannot straddle a
+  // UTC month boundary and disagree.
+  month = usageMonthForDate(),
 ): Promise<LimitResult> {
   if (!shouldEnforceHostedLimits()) return { ok: true };
   if (userId == null) return { ok: false, code: "subscription_inactive" };
@@ -137,7 +141,7 @@ export async function checkInboundLimit(
     }
   }
 
-  const usage = await getUserUsageMonth(db, user.id, usageMonthForDate());
+  const usage = await getUserUsageMonth(db, user.id, month);
   const deliveredCount = usage?.deliveredCount ?? 0;
   if (deliveredCount >= plan.limits.deliveredEmailsMonth) {
     return {
@@ -188,7 +192,7 @@ export async function hasActiveHostedUser(db: Db, userId: bigint | null): Promis
   return Boolean(user);
 }
 
-function shouldEnforceHostedLimits(): boolean {
+export function shouldEnforceHostedLimits(): boolean {
   const appMode = process.env["APP_MODE"];
   if (appMode === "hosted") return true;
   if (appMode === "self-hosted") return false;

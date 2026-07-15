@@ -57,6 +57,13 @@
       "when": 1783377111985,
       "tag": "0007_user-quota-notifications",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784101737532,
+      "tag": "0008_quota-notice-periods",
+      "breakpoints": true
     }
   ]
 }

@@ -369,9 +369,15 @@ Exemples :
       "❌ Les données de facturation sont temporairement indisponibles. Réessayez sous peu.",
     upgradeButton: "⬆️ Mettre à niveau",
     manageBillingButton: "🧾 Gérer la facturation",
-    manualBillingAlert: "Les paiements self-serve sont temporairement indisponibles.",
+    manualBillingAlert:
+      "Aucun abonnement n'est vendu sur cette instance — tapez /upgrade pour les détails.",
     manualBilling: (contact: string) =>
-      `ℹ️ Les paiements self-serve sont temporairement indisponibles.\n\nLes mises à niveau hosted sont traitées manuellement pour le moment. Contactez ${contact} pour mettre à niveau, renouveler, annuler ou pour toute question de facturation.`,
+      `ℹ️ Les paiements self-serve sont indisponibles pour votre compte.\n\n` +
+      `Votre plan est géré personnellement par l'opérateur — contactez ${contact} pour mettre à niveau, renouveler, annuler ou pour toute question de facturation.`,
+    manualBillingDonation: (contact: string) =>
+      `ℹ️ Cette instance fonctionne sur un modèle de dons — aucun abonnement n'y est vendu.\n\n` +
+      `Besoin de limites plus élevées ? Écrivez à ${contact} pour discuter de votre cas.\n` +
+      `Si le bot vous est utile, vous pouvez soutenir le projet avec /donate — les dons sont des cadeaux, pas un paiement pour un service.`,
   },
   donate: {
     title: "☕ Soutenir le projet",
@@ -490,5 +496,13 @@ Cette action est <b>irréversible</b>. Confirmez pour continuer.`,
     subscriptionInactive: () =>
       `⚠️ <b>Votre abonnement est inactif, les e-mails entrants sont donc renvoyés.</b>\n` +
       `Utilisez /billing pour vérifier l'état de votre plan.`,
+    approachingMonthlyLimit: (planName: string, used: number, limit: number) =>
+      `⏳ <b>Vous avez utilisé ${used} des ${limit} e-mails mensuels du plan ${planName}.</b>\n` +
+      `Une fois la limite atteinte, les nouveaux e-mails seront renvoyés aux expéditeurs jusqu'à la remise à zéro le 1er du mois.\n` +
+      `Utilisez /usage pour les détails, ou /upgrade pour des limites plus élevées.`,
+    monthlyLimitReminder: (rejectedCount: number) =>
+      `⚠️ <b>Votre boîte dépasse toujours sa limite mensuelle — le courrier entrant a été refusé ${rejectedCount} fois ce mois-ci.</b>\n` +
+      `Les e-mails continueront d'être renvoyés jusqu'à la remise à zéro le 1er du mois.\n` +
+      `/upgrade pour augmenter vos limites et ne plus perdre d'e-mails.`,
   },
 } as const;

@@ -88,9 +88,11 @@ export const manualBillingEvents = pgTable(
 );
 
 // ─── user_quota_notifications ────────────────────────────────────────────────
-// Claim ledger for "your quota is exhausted" Telegram notices: at most one
-// notification per user, per rejection reason, per month. The PK is the claim —
-// INSERT ... ON CONFLICT DO NOTHING decides which pipeline invocation sends.
+// Claim ledger for quota Telegram notices: at most one notification per user,
+// per reason, per claim period. The PK is the claim — INSERT ... ON CONFLICT
+// DO NOTHING decides which pipeline invocation sends. The period is a month
+// ("2026-07") for exhaustion/approaching notices, or an ISO week ("2026-W29")
+// for the while-capped reminder.
 
 export const userQuotaNotifications = pgTable(
   "user_quota_notifications",
@@ -99,15 +101,18 @@ export const userQuotaNotifications = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     reason: varchar("reason", { length: 32 }).notNull(),
-    month: varchar("month", { length: 7 }).notNull(),
+    month: varchar("month", { length: 8 }).notNull(),
     sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     primaryKey({ columns: [t.userId, t.reason, t.month] }),
-    check("chk_user_quota_notifications_month", sql`${t.month} ~ '^[0-9]{4}-[0-9]{2}$'`),
+    check(
+      "chk_user_quota_notifications_month",
+      sql`${t.month} ~ '^[0-9]{4}-([0-9]{2}|W[0-9]{2})$'`,
+    ),
     check(
       "chk_user_quota_notifications_reason",
-      sql`${t.reason} in ('monthly_email_limit', 'storage_limit', 'subscription_inactive')`,
+      sql`${t.reason} in ('monthly_email_limit', 'storage_limit', 'subscription_inactive', 'approaching_monthly_limit', 'monthly_email_limit_reminder')`,
     ),
   ],
 );
