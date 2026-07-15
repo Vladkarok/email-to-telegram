@@ -14,6 +14,7 @@ import { findAliasForInbound } from "../inboundRouting.js";
 import { countRecentDeliveriesByAlias, createDeliveryLog } from "../../db/repos/deliveryLogs.js";
 import { prepareDeliveryLogMetadataWrite } from "../../security/deliveryLogMetadata.js";
 import { checkInboundLimit } from "../../billing/limits.js";
+import { isQuotaNotificationReason } from "../../billing/quotaNotifier.js";
 import { incrementUserUsageMonth, usageMonthForDate } from "../../db/repos/usage.js";
 import { incrementUserStorageUsage } from "../../db/repos/storageUsage.js";
 import type { Db, PipelineInput, QueueInboundResult } from "./types.js";
@@ -70,6 +71,9 @@ async function queueAllowedInboundEmail(
     (sum, attachment) => sum + BigInt(attachment.sizeBytes ?? 0),
     0n,
   );
+  // One month for the whole decision: limit check, counter increment, and the
+  // caller's notification claim must agree even across a UTC month boundary.
+  const month = usageMonthForDate();
   const queueResult = await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(${alias.createdBy})`);
 
@@ -82,8 +86,19 @@ async function queueAllowedInboundEmail(
       alias.createdBy,
       rawEmail.length,
       BigInt(rawEmail.length) + reservedAttachmentBytes,
+      month,
     );
     if (!inboundLimit.ok) {
+      // Quota-exhaustion rejections count as lost mail; per-message conditions
+      // (size, rate, duplicate) do not. The route notifies after commit, so
+      // the reminder it may send already sees this increment.
+      if (isQuotaNotificationReason(inboundLimit.code)) {
+        await incrementUserUsageMonth(tx as Db, {
+          userId: alias.createdBy,
+          month,
+          rejectedCount: 1,
+        });
+      }
       return { kind: "inbound_limit" as const, limit: inboundLimit };
     }
 
@@ -140,9 +155,9 @@ async function queueAllowedInboundEmail(
 
     // Hosted monthly usage is charged once the email is accepted into durable processing.
     // This intentionally counts later Telegram send failures because infrastructure was used.
-    await incrementUserUsageMonth(tx as Db, {
+    const usageAfterCharge = await incrementUserUsageMonth(tx as Db, {
       userId: alias.createdBy,
-      month: usageMonthForDate(),
+      month,
       deliveredCount: 1,
     });
     await incrementUserStorageUsage(tx as Db, alias.createdBy, {
@@ -150,7 +165,11 @@ async function queueAllowedInboundEmail(
       attachmentBytes: reservedAttachmentBytes,
     });
 
-    return { kind: "queued" as const, deliveryLog };
+    return {
+      kind: "queued" as const,
+      deliveryLog,
+      deliveredCount: usageAfterCharge.deliveredCount,
+    };
   });
 
   if (queueResult.kind === "duplicate") {
@@ -165,12 +184,13 @@ async function queueAllowedInboundEmail(
     recordQuotaRejection(queueResult.limit.code);
     return {
       queued: false,
-      result: { ok: false, reason: queueResult.limit.code, userId: alias.createdBy },
+      result: { ok: false, reason: queueResult.limit.code, userId: alias.createdBy, month },
     };
   }
 
   return {
     queued: true,
+    usage: { month, deliveredCount: queueResult.deliveredCount },
     job: {
       alias,
       parsed,

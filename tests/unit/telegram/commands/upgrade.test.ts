@@ -216,7 +216,7 @@ describe("upgradePlanCallbackHandler (upg:{priceKey})", () => {
     expect(mockCreateCheckoutSession).not.toHaveBeenCalled();
     const call = ctx.answerCallbackQuery.mock.calls[0][0] as { show_alert: boolean; text: string };
     expect(call.show_alert).toBe(true);
-    expect(call.text).toMatch(/self-serve payments/i);
+    expect(call.text).toMatch(/operator|\/upgrade/i);
   });
 
   it("answers with show_alert for manual paid organizations", async () => {
@@ -234,7 +234,7 @@ describe("upgradePlanCallbackHandler (upg:{priceKey})", () => {
     expect(mockCreateCheckoutSession).not.toHaveBeenCalled();
     const call = ctx.answerCallbackQuery.mock.calls[0][0] as { show_alert: boolean; text: string };
     expect(call.show_alert).toBe(true);
-    expect(call.text).toMatch(/self-serve payments/i);
+    expect(call.text).toMatch(/operator|\/upgrade/i);
   });
 
   it("answers with show_alert for invalid price key", async () => {

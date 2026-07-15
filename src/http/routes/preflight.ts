@@ -5,7 +5,7 @@ import { checkPreflightAllowRules } from "../../db/repos/allowRules.js";
 import { countRecentDeliveriesByAlias } from "../../db/repos/deliveryLogs.js";
 import { checkInboundLimit } from "../../billing/limits.js";
 import { isQuotaNotificationReason, notifyQuotaExhausted } from "../../billing/quotaNotifier.js";
-import { usageMonthForDate } from "../../db/repos/usage.js";
+import { incrementUserUsageMonth, usageMonthForDate } from "../../db/repos/usage.js";
 import { getApi } from "../../telegram/api.js";
 import { findHostedInboundRejection } from "../../abuse/hostedInboundBlocklist.js";
 import { findAliasForInbound } from "../../email/inboundRouting.js";
@@ -87,7 +87,15 @@ export function preflightRoute(app: FastifyInstance): void {
         return;
       }
 
-      const inboundLimit = await checkInboundLimit(getDb(), alias.createdBy);
+      // One month for the whole rejection decision (check, counter, claim).
+      const month = usageMonthForDate();
+      const inboundLimit = await checkInboundLimit(
+        getDb(),
+        alias.createdBy,
+        undefined,
+        undefined,
+        month,
+      );
       if (!inboundLimit.ok) {
         getLogger().info(
           {
@@ -104,13 +112,19 @@ export function preflightRoute(app: FastifyInstance): void {
         // so this is the ONLY place monthly/subscription exhaustion can
         // notify the owner. (storage_limit needs sizes and is raw-only.)
         if (isQuotaNotificationReason(inboundLimit.code)) {
-          void notifyQuotaExhausted(
-            getDb(),
-            getApi(),
-            alias.createdBy,
-            inboundLimit.code,
-            usageMonthForDate(),
-          );
+          // Charge the rejection before notifying: the while-capped reminder
+          // reads rejected_count and must include this email.
+          await incrementUserUsageMonth(getDb(), {
+            userId: alias.createdBy,
+            month,
+            rejectedCount: 1,
+          }).catch((err: unknown) => {
+            getLogger().warn(
+              { err, userId: alias.createdBy.toString() },
+              "quota.rejection.count_failed",
+            );
+          });
+          void notifyQuotaExhausted(getDb(), getApi(), alias.createdBy, inboundLimit.code, month);
         }
         await reply.send({ accept: false });
         return;

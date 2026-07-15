@@ -6,9 +6,17 @@ import { en } from "./locales/en.js";
 import { uk } from "./locales/uk.js";
 import { fr } from "./locales/fr.js";
 import { it } from "./locales/it.js";
+import { DEFAULT_LOCALE, localeFromTelegram, normalizeLocale, type Locale } from "./locale.js";
 
-export const SUPPORTED_LOCALES = ["en", "uk", "fr", "it"] as const;
-export type Locale = (typeof SUPPORTED_LOCALES)[number];
+export {
+  DEFAULT_LOCALE,
+  SUPPORTED_LOCALES,
+  isLocale,
+  localeFromTelegram,
+  normalizeLocale,
+  type Locale,
+} from "./locale.js";
+
 type Widen<T> = T extends string
   ? string
   : T extends (...args: infer Args) => infer Result
@@ -18,31 +26,10 @@ type Widen<T> = T extends string
       : T;
 export type Messages = Widen<typeof en>;
 
-export const DEFAULT_LOCALE: Locale = "en";
-
 const catalogs: Record<Locale, Messages> = { en, uk, fr, it };
 
 export function getMessages(locale: Locale): Messages {
   return catalogs[locale];
-}
-
-export function isLocale(value: string): value is Locale {
-  return (SUPPORTED_LOCALES as readonly string[]).includes(value);
-}
-
-export function normalizeLocale(value: string | null | undefined): Locale | null {
-  if (!value) return null;
-  const normalized = value.toLowerCase().replace("_", "-");
-  const [language] = normalized.split("-");
-  if (language === "uk" || language === "ua") return "uk";
-  if (language === "en") return "en";
-  if (language === "fr") return "fr";
-  if (language === "it") return "it";
-  return null;
-}
-
-export function localeFromTelegram(value: string | null | undefined): Locale | null {
-  return normalizeLocale(value);
 }
 
 export async function resolveLocale(

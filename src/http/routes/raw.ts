@@ -7,8 +7,12 @@ import { claimWorkerRequestNonce } from "../../db/repos/workerRequestNonces.js";
 import { getApi } from "../../telegram/api.js";
 import { queueInboundEmail, deliverQueuedEmail } from "../../email/pipeline.js";
 import { checkInboundLimit } from "../../billing/limits.js";
-import { isQuotaNotificationReason, notifyQuotaExhausted } from "../../billing/quotaNotifier.js";
-import { usageMonthForDate } from "../../db/repos/usage.js";
+import {
+  isQuotaNotificationReason,
+  notifyApproachingMonthlyLimit,
+  notifyQuotaExhausted,
+} from "../../billing/quotaNotifier.js";
+import { incrementUserUsageMonth, usageMonthForDate } from "../../db/repos/usage.js";
 import { findHostedInboundRejection } from "../../abuse/hostedInboundBlocklist.js";
 import { findAliasForInbound } from "../../email/inboundRouting.js";
 import {
@@ -173,11 +177,14 @@ export function rawRoute(
         return;
       }
 
+      // One month for the whole rejection decision (check, counter, claim).
+      const preCheckMonth = usageMonthForDate();
       const inboundLimit = await checkInboundLimit(
         getDb(),
         alias.createdBy,
         body.length,
         BigInt(body.length),
+        preCheckMonth,
       );
       if (!inboundLimit.ok) {
         const rejectionStatus = statusForQueueRejection(inboundLimit.code);
@@ -185,12 +192,24 @@ export function rawRoute(
           recordRawInbound("rejected", inboundLimit.code);
           recordQuotaRejection(inboundLimit.code);
           if (isQuotaNotificationReason(inboundLimit.code)) {
+            // Charge the rejection before notifying: the while-capped reminder
+            // reads rejected_count and must include this email.
+            await incrementUserUsageMonth(getDb(), {
+              userId: alias.createdBy,
+              month: preCheckMonth,
+              rejectedCount: 1,
+            }).catch((err: unknown) => {
+              getLogger().warn(
+                { err, userId: alias.createdBy.toString() },
+                "quota.rejection.count_failed",
+              );
+            });
             void notifyQuotaExhausted(
               getDb(),
               getApi(),
               alias.createdBy,
               inboundLimit.code,
-              usageMonthForDate(),
+              preCheckMonth,
             );
           }
           await reply.status(rejectionStatus).send({ error: "rejected" });
@@ -258,15 +277,16 @@ export function rawRoute(
         const rejectionStatus = statusForQueueRejection(reason);
         if (rejectionStatus) {
           if (isQuotaNotificationReason(reason)) {
-            // Prefer the owner resolved inside the queue transaction — the
-            // route's own alias lookup may be stale by the time the queue
-            // rejects (alias deleted/recreated for another user mid-request).
+            // Prefer the owner and month resolved inside the queue
+            // transaction — the route's own alias lookup may be stale, and a
+            // recomputed month could straddle the UTC boundary and burn the
+            // fresh month's claim.
             void notifyQuotaExhausted(
               getDb(),
               getApi(),
               queued.result.userId ?? alias.createdBy,
               reason,
-              usageMonthForDate(),
+              queued.result.month ?? usageMonthForDate(),
             );
           }
           await reply.status(rejectionStatus).send({ error: "rejected" });
@@ -276,6 +296,21 @@ export function rawRoute(
 
       if (queued.queued) {
         recordRawInbound("accepted", "accepted");
+        // This accept may have pushed the user into the top band of their
+        // monthly limit — warn once per month before mail starts bouncing.
+        // The post-increment count from the queue transaction is authoritative:
+        // re-reading usage here could miss the 80–99% band entirely during a
+        // fast burst.
+        const ownerId = queued.job.deliveryLog.userId ?? alias.createdBy;
+        if (ownerId != null && queued.usage) {
+          void notifyApproachingMonthlyLimit(
+            getDb(),
+            getApi(),
+            ownerId,
+            queued.usage.month,
+            queued.usage.deliveredCount,
+          );
+        }
       }
       await reply.status(202).send({ status: "accepted" });
 

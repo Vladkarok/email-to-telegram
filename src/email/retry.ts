@@ -3,6 +3,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema.js";
 import { queueInboundEmail, deliverQueuedEmail } from "./pipeline.js";
 import { refundAcceptedEmail } from "../billing/usageRefund.js";
+import { notifyApproachingMonthlyLimit } from "../billing/quotaNotifier.js";
 import { parseEmail } from "./parser.js";
 import { cleanEmailBody } from "./cleaner.js";
 import {
@@ -228,6 +229,21 @@ async function recoverPendingRawEmails(
       }
 
       await deletePendingRawEmailMeta(pendingEmail.rawEmailPath);
+
+      // Recovery charges usage exactly like live ingress, so it must also be
+      // able to trigger the approaching-limit warning — a recovered batch can
+      // carry a user through the 80–99% band that live traffic never sees.
+      const ownerId = queued.job.deliveryLog.userId;
+      if (ownerId != null && queued.usage) {
+        void notifyApproachingMonthlyLimit(
+          db,
+          api,
+          ownerId,
+          queued.usage.month,
+          queued.usage.deliveredCount,
+        );
+      }
+
       await pipelineTracker.runFor(queued.job.deliveryLog.id, () =>
         deliverQueuedEmail(db, api, queued.job),
       );
