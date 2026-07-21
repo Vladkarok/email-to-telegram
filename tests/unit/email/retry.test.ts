@@ -60,6 +60,10 @@ vi.mock("../../../src/telegram/sender.js", () => ({
   sendTelegramMessage: (...args: unknown[]): unknown => mockSendTelegramMessage(...args),
   sendTelegramPhotos: (...args: unknown[]): unknown => mockSendTelegramPhotos(...args),
 }));
+const mockRepairChatMigration = vi.fn();
+vi.mock("../../../src/telegram/chatMigration.js", () => ({
+  repairChatMigration: (...args: unknown[]): unknown => mockRepairChatMigration(...args),
+}));
 vi.mock("../../../src/email/pipeline.js", () => ({
   queueInboundEmail: (...args: unknown[]): unknown => mockQueueInboundEmail(...args),
   deliverQueuedEmail: (...args: unknown[]): unknown => mockDeliverQueuedEmail(...args),
@@ -169,6 +173,202 @@ describe("runRetryWorker", () => {
       expect.objectContaining({ status: "succeeded", attemptNo: 1 }),
     );
     expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "delivered");
+  });
+
+  it("repairs from a REAL GrammyError shape, not a hand-built failure", async () => {
+    // Acceptance criterion: the reactive path must work against the object
+    // grammY actually throws, so the whole sender→classifier→repair chain is
+    // exercised end to end rather than a convenient stand-in.
+    const { GrammyError } = await import("grammy");
+    const realError = new GrammyError(
+      "Call to 'sendMessage' failed! (400: Bad Request: group chat was upgraded to a supergroup chat)",
+      {
+        ok: false,
+        error_code: 400,
+        description: "Bad Request: group chat was upgraded to a supergroup chat",
+        parameters: { migrate_to_chat_id: -1002222333444 },
+      },
+      "sendMessage",
+      {},
+    );
+    const { describeSendError } = await import("../../../src/telegram/errorClassifier.js");
+    const failure = describeSendError(realError);
+
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockRepairChatMigration.mockResolvedValue({ aliasCount: 1 });
+    mockSendTelegramMessage.mockResolvedValue({
+      ok: false,
+      error: failure.description,
+      failure,
+    });
+
+    await runRetryWorker(fakeDb, fakeApi);
+
+    expect(mockRepairChatMigration).toHaveBeenCalledWith(fakeDb, fakeApi, -100n, -1002222333444n);
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
+    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+  });
+
+  it("delivers the WHOLE email to the new chat when a move lands before the retry", async () => {
+    // move-during-retry: the alias moved after the failed attempt; the retry
+    // reads the route once at attempt start, so text, attachment fallback and
+    // the attempt record all target the new chat.
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockFindAliasById.mockResolvedValue({ ...fakeAlias, chatId: -777n, messageThreadId: null });
+    mockListAttachments.mockResolvedValue([
+      {
+        id: "att-1",
+        storagePath: "/data/att-1.bin",
+        originalFilename: "photo.png",
+        contentType: "image/png",
+        sizeBytes: 10,
+        encryptionMode: null,
+        wrappedDek: null,
+        kekKeyId: null,
+      },
+    ]);
+    mockSendTelegramPhotos.mockResolvedValue({
+      ok: false,
+      failedPhotos: [{ id: "att-1", storagePath: "/data/att-1.bin" }],
+    });
+
+    await runRetryWorker(fakeDb, fakeApi);
+
+    // One alias read for the whole attempt.
+    expect(mockFindAliasById).toHaveBeenCalledTimes(1);
+    for (const call of mockSendTelegramMessage.mock.calls) {
+      expect((call[1] as { chatId: bigint }).chatId).toBe(-777n);
+    }
+    expect(mockSendTelegramPhotos).toHaveBeenCalledWith(
+      fakeApi,
+      expect.objectContaining({ chatId: -777n }),
+    );
+    expect(mockInsertAttempt).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({ targetChatId: -777n }),
+    );
+  });
+
+  it("aborts retryably when the RETRY's attachment send hits a migrate error", async () => {
+    // The other half of ratified amendment 2: the same rule must hold on the
+    // retry path, not just the initial delivery.
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockRepairChatMigration.mockResolvedValue({ aliasCount: 1 });
+    mockListAttachments.mockResolvedValue([
+      {
+        id: "att-1",
+        storagePath: "/data/att-1.bin",
+        originalFilename: "photo.png",
+        contentType: "image/png",
+        sizeBytes: 10,
+        encryptionMode: null,
+        wrappedDek: null,
+        kekKeyId: null,
+      },
+    ]);
+    mockSendTelegramPhotos.mockResolvedValue({
+      ok: false,
+      failedPhotos: [{ id: "att-1", storagePath: "/data/att-1.bin" }],
+      failure: {
+        code: 400,
+        description: "Bad Request: group chat was upgraded to a supergroup chat",
+        transient: false,
+        migrateToChatId: -1002222333444n,
+      },
+    });
+
+    await runRetryWorker(fakeDb, fakeApi);
+
+    expect(mockRepairChatMigration).toHaveBeenCalledWith(fakeDb, fakeApi, -100n, -1002222333444n);
+    // Handed back as retryable so the next cycle delivers the whole email to
+    // the new chat, rather than leaving it `delivered` minus its attachments.
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
+    // No fallback message to the dead old route.
+    expect(mockSendTelegramMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts retryably when the attachment FALLBACK send hits a migrate error", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockRepairChatMigration.mockResolvedValue({ aliasCount: 1 });
+    mockListAttachments.mockResolvedValue([
+      {
+        id: "att-1",
+        storagePath: "/data/att-1.bin",
+        originalFilename: "photo.png",
+        contentType: "image/png",
+        sizeBytes: 10,
+        encryptionMode: null,
+        wrappedDek: null,
+        kekKeyId: null,
+      },
+    ]);
+    // Photos fail for an unrelated reason, so the fallback runs — and THAT is
+    // where the upgrade lands.
+    mockSendTelegramPhotos.mockResolvedValue({
+      ok: false,
+      failedPhotos: [{ id: "att-1", storagePath: "/data/att-1.bin" }],
+    });
+    mockSendTelegramMessage
+      .mockResolvedValueOnce({ ok: true, telegramMessageId: 42 })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: "Bad Request: group chat was upgraded to a supergroup chat",
+        failure: {
+          code: 400,
+          description: "Bad Request: group chat was upgraded to a supergroup chat",
+          transient: false,
+          migrateToChatId: -1002222333444n,
+        },
+      });
+
+    await runRetryWorker(fakeDb, fakeApi);
+
+    expect(mockRepairChatMigration).toHaveBeenCalledWith(fakeDb, fakeApi, -100n, -1002222333444n);
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
+  });
+
+  it("retries to the route from the single fresh attempt-start read", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    // The alias moved to chat -200n / thread 9n since the original delivery.
+    mockFindAliasById.mockResolvedValue({ ...fakeAlias, chatId: -200n, messageThreadId: 9n });
+    await runRetryWorker(fakeDb, fakeApi);
+
+    expect(mockFindAliasById).toHaveBeenCalledTimes(1);
+    expect(mockSendTelegramMessage).toHaveBeenCalledWith(
+      fakeApi,
+      expect.objectContaining({ chatId: -200n, threadId: 9n }),
+    );
+    expect(mockInsertAttempt).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({ targetChatId: -200n, targetThreadId: 9n }),
+    );
+  });
+
+  it("keeps a migrate-failed retry retryable, repairs, and burns no budget", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockCountAttempts.mockResolvedValue(2);
+    mockCountCountedFailed.mockResolvedValue(2); // one counted failure below the cap
+    mockRepairChatMigration.mockResolvedValue({ aliasCount: 1 });
+    mockSendTelegramMessage.mockResolvedValue({
+      ok: false,
+      error: "Bad Request: group chat was upgraded to a supergroup chat",
+      failure: {
+        code: 400,
+        description: "Bad Request: group chat was upgraded to a supergroup chat",
+        transient: false,
+        migrateToChatId: -1002222333444n,
+      },
+    });
+    await runRetryWorker(fakeDb, fakeApi);
+
+    expect(mockInsertAttempt).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({ status: "failed", errorClass: "migrated" }),
+    );
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
+    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+    // The next worker cycle re-reads the alias and lands on the new chat id.
+    expect(mockRepairChatMigration).toHaveBeenCalledWith(fakeDb, fakeApi, -100n, -1002222333444n);
   });
 
   it("marks permanently_failed when max retries reached", async () => {

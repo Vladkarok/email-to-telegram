@@ -33,6 +33,7 @@ const fakeAlias = {
   renderMode: "plaintext",
   privacyModeEnabled: false,
   bodyDedupEnabled: false,
+  routingVersion: 0,
 };
 
 describe("editAliasListMenu", () => {
@@ -197,7 +198,13 @@ describe("editAliasDeleteConfirmMenu", () => {
     expect(text).toContain(fakeAlias.fullAddress);
     expect(text).toMatch(/delete this email alias/i);
     const buttons = opts.reply_markup.inline_keyboard.flat();
-    expect(buttons.some((button) => button.callback_data === `adc:${fakeAlias.id}`)).toBe(true);
+    // The confirm button carries the routing version it was rendered against,
+    // so a delete confirmed on a pre-move view loses to the move.
+    expect(
+      buttons.some(
+        (button) => button.callback_data === `adc:${fakeAlias.id}:${fakeAlias.routingVersion ?? 0}`,
+      ),
+    ).toBe(true);
     expect(buttons.some((button) => button.callback_data === `adx:${fakeAlias.id}`)).toBe(true);
   });
 });

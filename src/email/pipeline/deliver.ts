@@ -38,6 +38,8 @@ import type { parseEmail } from "../parser.js";
 import type { Db, QueuedInboundEmail, PipelineResult } from "./types.js";
 import { recordDeliveryAttempt, recordTelegramSendFailure } from "../../observability/metrics.js";
 import { classifyTelegramError, retryDispositionForError } from "../../telegram/errorClassifier.js";
+import { readAttemptRoute } from "../deliveryRoute.js";
+import { repairChatMigration } from "../../telegram/chatMigration.js";
 import { refundAcceptedEmail } from "../../billing/usageRefund.js";
 
 interface StoredImageAttachment extends PhotoItem {
@@ -238,13 +240,11 @@ export async function deliverQueuedEmail(
       // Final non-transactional recheck right before the irreversible Telegram
       // send. Narrows the /delete_me race window from "Telegram API latency" to
       // "one DB roundtrip". Cannot fully close it without holding a tx across
-      // the network call.
-      const preSendAlias = await findAliasById(db, alias.id);
-      if (
-        !preSendAlias ||
-        preSendAlias.status !== "active" ||
-        preSendAlias.createdBy !== alias.createdBy
-      ) {
+      // the network call. This is also the attempt's ONE route read: every
+      // send below (text, photos, fallback) and the attempt record must use
+      // `route`, never the queued alias's chat/thread.
+      const attemptRoute = await readAttemptRoute(db, alias.id);
+      if (!attemptRoute.ok || attemptRoute.alias.createdBy !== alias.createdBy) {
         log.info(
           {
             deliveryLogId: deliveryLog.id,
@@ -255,10 +255,11 @@ export async function deliverQueuedEmail(
         );
         return { ok: false, reason: "user_deleted" };
       }
+      const { route } = attemptRoute;
 
       const result = await sendTelegramMessage(api, {
-        chatId: alias.chatId,
-        threadId: alias.messageThreadId ?? null,
+        chatId: route.chatId,
+        threadId: route.threadId,
         text: prepared.text,
         parseMode: prepared.parseMode,
       });
@@ -266,9 +267,12 @@ export async function deliverQueuedEmail(
       // A chat-level permanent error (bot blocked, chat deleted) can never
       // succeed on retry; close the log immediately instead of burning retry
       // cycles against an unreachable chat.
-      const sendErrorClass = result.ok ? null : classifyTelegramError(result.error);
+      const sendErrorClass = result.ok
+        ? null
+        : classifyTelegramError(result.failure ?? result.error);
       const failedStatus =
-        !result.ok && retryDispositionForError(result.error) === "fail_permanently"
+        !result.ok &&
+        retryDispositionForError(result.failure ?? result.error) === "fail_permanently"
           ? "permanently_failed"
           : "failed";
 
@@ -280,8 +284,8 @@ export async function deliverQueuedEmail(
               await insertDeliveryAttempt(workDb, {
                 deliveryLogId: deliveryLog.id,
                 attemptNo: 1,
-                targetChatId: alias.chatId,
-                targetThreadId: alias.messageThreadId ?? null,
+                targetChatId: route.chatId,
+                targetThreadId: route.threadId,
                 telegramMessageId: result.telegramMessageId
                   ? BigInt(result.telegramMessageId)
                   : null,
@@ -329,15 +333,63 @@ export async function deliverQueuedEmail(
             receivedAt: deliveryLog.receivedAt,
           });
         }
+        // The chat migrated mid-attempt: repair the alias routing so the
+        // retry (status stayed "failed", uncounted) lands on the new id.
+        // Repair failure keeps the delivery retryable — never rethrow.
+        if (result.failure?.migrateToChatId != null) {
+          await repairChatMigration(db, api, route.chatId, result.failure.migrateToChatId).catch(
+            (repairErr: unknown) => {
+              log.error(
+                { err: repairErr, deliveryLogId: deliveryLog.id },
+                "chat.migration_repair_failed",
+              );
+            },
+          );
+        }
         return { ok: false, reason: "send_failed" };
       }
+
+      /**
+       * The chat upgraded mid-attempt, after the text had already landed.
+       * Repair the routing and hand the delivery back to the retry worker so
+       * the NEXT attempt re-reads the route and delivers the whole email to
+       * the new chat.
+       *
+       * This deliberately costs a duplicate: the text the user already
+       * received is re-sent to the migrated chat (history survives an
+       * upgrade, so it lands in the same visible conversation). The
+       * alternative — keeping this attempt `delivered` — silently drops the
+       * attachments, and a duplicate the user can see and ignore beats an
+       * attachment they never learn existed. User decision, 2026-07-20.
+       */
+      const abortAttemptForMigration = async (newChatId: bigint): Promise<PipelineResult> => {
+        await repairChatMigration(db, api, route.chatId, newChatId).catch((repairErr: unknown) => {
+          log.error(
+            { err: repairErr, deliveryLogId: deliveryLog.id },
+            "chat.migration_repair_failed",
+          );
+        });
+        // Back to retryable. The attempt row stays `succeeded`, so this does
+        // not consume the bounded retry budget and cannot trigger a refund.
+        await updateDeliveryLogStatus(db, deliveryLog.id, "failed").catch((statusErr: unknown) => {
+          log.error(
+            { err: statusErr, deliveryLogId: deliveryLog.id },
+            "delivery.migration_retry_reset_failed",
+          );
+        });
+        log.warn(
+          { deliveryLogId: deliveryLog.id, oldChatId: route.chatId.toString() },
+          "delivery.aborted_for_migration",
+        );
+        return { ok: false, reason: "chat_migrated" };
+      };
 
       // Send image attachments as Telegram photos (replied to the text message)
       if (!privacyMode && prepared.imageAttachments.length > 0) {
         try {
           const photoResult = await sendTelegramPhotos(api, {
-            chatId: alias.chatId,
-            threadId: alias.messageThreadId ?? null,
+            chatId: route.chatId,
+            threadId: route.threadId,
             replyToMessageId: result.telegramMessageId,
             photos: prepared.imageAttachments.map(
               ({ id, storagePath, filename, encryptionMode, wrappedDek, kekKeyId }) => ({
@@ -351,7 +403,10 @@ export async function deliverQueuedEmail(
             ),
           });
 
-          if (photoResult.failedPhotos.length > 0) {
+          const photoMigrateTo = photoResult.failure?.migrateToChatId ?? null;
+          if (photoMigrateTo != null) {
+            return await abortAttemptForMigration(photoMigrateTo);
+          } else if (photoResult.failedPhotos.length > 0) {
             const failedPaths = new Set(photoResult.failedPhotos.map((photo) => photo.storagePath));
             const fallbackLinks = await Promise.all(
               prepared.imageAttachments
@@ -371,8 +426,8 @@ export async function deliverQueuedEmail(
             );
 
             const fallbackResult = await sendTelegramMessage(api, {
-              chatId: alias.chatId,
-              threadId: alias.messageThreadId ?? null,
+              chatId: route.chatId,
+              threadId: route.threadId,
               text: renderAttachmentFallback(fallbackLinks),
             });
 
@@ -382,6 +437,10 @@ export async function deliverQueuedEmail(
                 { deliveryLogId: deliveryLog.id, error: fallbackResult.error },
                 "image attachment fallback delivery failed",
               );
+              // The upgrade can just as easily land on this last send.
+              if (fallbackResult.failure?.migrateToChatId != null) {
+                return await abortAttemptForMigration(fallbackResult.failure.migrateToChatId);
+              }
             }
           }
         } catch (err: unknown) {

@@ -149,6 +149,8 @@ ${safetyNotes}
     sharedDomainUnavailable:
       "⛔ Votre compte hosted n'est pas prêt pour la création d'alias pour le moment.",
     uniqueNameFailed: "❌ Impossible de trouver un nom d'alias unique. Essayez-en un autre.",
+    chatUnavailable:
+      "❌ Cette discussion est momentanément indisponible — elle vient peut-être d'être convertie en supergroupe. Réessayez dans un instant.",
     nameTaken: "❌ Ce nom est déjà pris. Essayez-en un autre.",
     nameCooldown:
       "❌ Ce nom a été supprimé récemment par un autre utilisateur et est temporairement indisponible. Réessayez plus tard ou choisissez-en un autre.",
@@ -168,6 +170,13 @@ ${safetyNotes}
     aliasesForChat: (count: number) => `📬 Alias de ce chat (${count}) :`,
     allAliases: (count: number) => `📬 Tous vos alias (${count}) :`,
     manageHint: "<i>Tapez un alias ci-dessous pour le gérer.</i>",
+    orphanHeader: "<b>⚠️ Discussion inaccessible</b>",
+    orphanHint:
+      "<i>Le bot n'est plus dans la discussion où ce courrier est livré. Vous pouvez déplacer ces alias ailleurs ou les supprimer pour libérer le nom.</i>",
+    orphanButton: (localPart: string) => `⚠️ ${localPart}`,
+    orphanMenuHeader: (address: string) =>
+      `⚠️ <code>${address}</code>\n\nSa discussion n'est plus accessible, le courrier ne peut donc pas être livré. Déplacez-le vers une autre discussion, ou supprimez-le pour libérer le nom.`,
+    orphanUnavailable: "Cet alias est de nouveau accessible — ouvrez-le depuis la liste.",
   },
   aliasMenu: {
     createFirstButton: "📧 Créer le premier e-mail",
@@ -211,6 +220,39 @@ ${safetyNotes}
     backButton: "⬅️ Retour",
     deleteConfirmHeader: (address: string) =>
       `⚠️ Supprimer cet alias e-mail ?\n\n📧 <code>${address}</code>\n\nLes e-mails futurs vers cette adresse seront rejetés.`,
+    moveButton: "📦 Déplacer vers une autre discussion",
+    moveToOwnDm: "👤 Ma discussion privée avec le bot",
+    moveOwnDmTitle: "votre discussion privée",
+    movePickerHeader: (address: string) =>
+      `📦 Déplacer <code>${address}</code>\n\nChoisissez où le courrier doit arriver désormais. L'adresse elle-même ne change pas.`,
+    moveNoTargets: (address: string) =>
+      `📦 Déplacer <code>${address}</code>\n\nAucune autre discussion disponible. Ajoutez le bot à un groupe ou canal que vous administrez, puis réessayez.`,
+    moveConfirmHeader: (address: string, target: string) =>
+      `📦 Déplacer <code>${address}</code> vers <b>${target}</b> ?\n\nLe courrier suivant y arrivera. Si la cible est un forum, la livraison commence dans « Général » — vous pourrez choisir un sujet ensuite.`,
+    moveConfirmYes: "📦 Oui, déplacer",
+    moveConfirmCancel: "⬅️ Annuler",
+    moveDone: (address: string, target: string) =>
+      `✅ <code>${address}</code> est maintenant livré vers <b>${target}</b>.`,
+    moveDeniedToast: "⛔ Vous ne pouvez plus gérer cet alias.",
+    moveDenied: (reason: string) => {
+      const detail: Record<string, string> = {
+        actor_not_admin: "Vous n'êtes pas administrateur de cette discussion.",
+        not_admin: "Le bot doit être administrateur de ce canal.",
+        cannot_post: "Le bot ne peut pas publier de messages dans ce canal.",
+        not_member: "Le bot n'est pas membre de cette discussion.",
+        cannot_send: "Le bot n'est pas autorisé à y envoyer des messages.",
+        foreign_dm: "Le courrier ne peut être déplacé que vers votre propre discussion privée.",
+        dm_not_here:
+          "Ouvrez d'abord cet alias depuis notre discussion privée, puis déplacez-le — ainsi je sais que je peux vous joindre.",
+        probe_failed: "Impossible de vérifier cette discussion pour le moment. Réessayez bientôt.",
+        chat_migrated:
+          "Cette discussion vient d'être convertie en supergroupe, son adresse a donc changé. Rouvrez le menu de déplacement pour la sélectionner à nouveau.",
+      };
+      return `⛔ Déplacement annulé.\n\n${detail[reason] ?? "Cette discussion ne peut pas recevoir de courrier."}`;
+    },
+    topicButton: "📌 Livrer dans ce sujet",
+    topicSet: "✅ Le courrier de cet alias arrive maintenant dans ce sujet.",
+    topicCleared: "✅ Le courrier de cet alias arrive maintenant dans « Général ».",
     deleteConfirmYes: "🗑 Oui, supprimer",
     deleteConfirmCancel: "⬅️ Conserver l'alias",
   },
@@ -247,6 +289,8 @@ ${safetyNotes}
     resumedToast: "Repris.",
     deletedToast: "Supprimé.",
     keptToast: "Conservé.",
+    routingChanged:
+      "⚠️ Cet alias a changé pendant que vous décidiez — il a peut-être été déplacé vers une autre discussion. Aucune action n'a été effectuée. Rouvrez-le pour voir son état actuel.",
     cancelledToast: "Annulé.",
   },
   settingsCommand: {

@@ -12,6 +12,7 @@ import {
   lt,
   notExists,
   sql,
+  type SQL,
 } from "drizzle-orm";
 import { customAlphabet } from "nanoid";
 import {
@@ -40,6 +41,60 @@ function escapeLikePattern(value: string): string {
 export async function findAliasById(db: Db, id: string): Promise<EmailAddress | null> {
   const [alias] = await db.select().from(emailAddresses).where(eq(emailAddresses.id, id));
   return alias ?? null;
+}
+
+/** The per-alias facts a migration audit event needs about the old routing. */
+export interface RepointedAlias {
+  id: string;
+  createdBy: bigint;
+  messageThreadId: bigint | null;
+}
+
+/**
+ * Distinct owners of every alias currently pointing at a chat.
+ *
+ * Read BEFORE `repointAliasesToChat` so the caller can take its per-owner
+ * advisory locks first: the UPDATE itself takes row locks, and every other
+ * writer locks owner-then-row, so locking owners after the UPDATE would
+ * invert the order and deadlock.
+ */
+export async function listAliasOwnersByChat(db: Db, chatId: bigint): Promise<bigint[]> {
+  const rows = await db
+    .selectDistinct({ createdBy: emailAddresses.createdBy })
+    .from(emailAddresses)
+    .where(eq(emailAddresses.chatId, chatId));
+  return rows.map((row) => row.createdBy);
+}
+
+/**
+ * Re-points every alias of a migrated chat to its new id (including
+ * tombstoned rows, so nothing keeps referencing the deactivated chat) and
+ * bumps `routing_version` on each — a re-key invalidates any confirmation
+ * authorized against the old chat. Part of the chat-migration repair
+ * transaction; callers hold the per-chat migration lock.
+ *
+ * Returns the affected rows so the caller can write one audit event per
+ * alias. `message_thread_id` is returned pre-update, i.e. the thread the
+ * alias had before the re-key (a migration preserves topics — unlike a move).
+ */
+export async function repointAliasesToChat(
+  db: Db,
+  oldChatId: bigint,
+  newChatId: bigint,
+): Promise<RepointedAlias[]> {
+  return db
+    .update(emailAddresses)
+    .set({
+      chatId: newChatId,
+      routingVersion: sql`${emailAddresses.routingVersion} + 1`,
+      updatedAt: new Date(),
+    })
+    .where(eq(emailAddresses.chatId, oldChatId))
+    .returning({
+      id: emailAddresses.id,
+      createdBy: emailAddresses.createdBy,
+      messageThreadId: emailAddresses.messageThreadId,
+    });
 }
 
 export async function findAliasesByCreator(db: Db, createdBy: bigint): Promise<EmailAddress[]> {
@@ -159,21 +214,27 @@ export async function updateAliasStatus(
 }
 
 /**
- * Soft-deletes an alias and frees its name: local_part and full_address are
- * renamed with a `~del~<id>` tombstone suffix in the same UPDATE, so the
- * unique indexes no longer reserve the original name.
+ * The UPDATE payload that soft-deletes an alias and frees its name:
+ * local_part and full_address gain a `~del~<id>` tombstone suffix in the same
+ * statement, so the unique indexes no longer reserve the original name.
+ *
+ * Consumed only by `softDeleteAliasWithCas` in `aliasRouting.ts`: every
+ * delete surface goes through the version guard, so no unguarded
+ * delete-by-id helper is exported from here.
  */
-export async function softDeleteAlias(db: Db, id: string): Promise<void> {
+export function buildAliasTombstoneSet(): {
+  localPart: SQL;
+  fullAddress: SQL;
+  status: "deleted";
+  updatedAt: Date;
+} {
   const tombstoneTag = `${ALIAS_TOMBSTONE_MARKER}${tombstoneSuffix()}`;
-  await db
-    .update(emailAddresses)
-    .set({
-      localPart: sql`${emailAddresses.localPart} || ${tombstoneTag}`,
-      fullAddress: sql`${emailAddresses.localPart} || ${tombstoneTag} || '@' || split_part(${emailAddresses.fullAddress}, '@', 2)`,
-      status: "deleted",
-      updatedAt: new Date(),
-    })
-    .where(eq(emailAddresses.id, id));
+  return {
+    localPart: sql`${emailAddresses.localPart} || ${tombstoneTag}`,
+    fullAddress: sql`${emailAddresses.localPart} || ${tombstoneTag} || '@' || split_part(${emailAddresses.fullAddress}, '@', 2)`,
+    status: "deleted",
+    updatedAt: new Date(),
+  };
 }
 
 /**

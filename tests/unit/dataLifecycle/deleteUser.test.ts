@@ -7,6 +7,7 @@ vi.mock("../../../src/storage/disk.js", () => ({
 }));
 
 const { deleteHostedUser } = await import("../../../src/dataLifecycle/deleteUser.js");
+const { aliasMoveEvents } = await import("../../../src/db/schema.js");
 
 function makeDb({
   userExists = true,
@@ -52,9 +53,13 @@ function makeDb({
   });
 
   const del = vi.fn(() => ({ where: deleteWhere }));
-  const tx = { execute, select, delete: del };
+  // Anonymising a third party's audit row is an UPDATE, not a DELETE.
+  const updateWhere = vi.fn().mockResolvedValue(undefined);
+  const updateSet = vi.fn(() => ({ where: updateWhere }));
+  const update = vi.fn(() => ({ set: updateSet }));
+  const tx = { execute, select, delete: del, update };
   const transaction = vi.fn(async (work: (tx: unknown) => Promise<unknown>) => work(tx));
-  return { db: { transaction } as never };
+  return { db: { transaction } as never, update, updateSet };
 }
 
 describe("deleteHostedUser", () => {
@@ -81,6 +86,19 @@ describe("deleteHostedUser", () => {
     expect(result.attachmentFiles).toBe(1);
     expect(mockDeleteFile).toHaveBeenCalledTimes(3);
     expect(result.failedFileDeletes).toEqual([]);
+  });
+
+  it("erases the user's own move-audit rows and anonymises them as a third-party actor", async () => {
+    const { db, update, updateSet } = makeDb({ rawRows: [], attachmentRows: [] });
+
+    await deleteHostedUser(db, 1n);
+
+    // Rows they OWN are personal data and are deleted with the rest; rows
+    // where they were merely the actor belong to another user's audit trail,
+    // so only the actor id is nulled — deleting them would erase a third
+    // party's record.
+    expect(update).toHaveBeenCalledWith(aliasMoveEvents);
+    expect(updateSet).toHaveBeenCalledWith({ actorId: null });
   });
 
   it("reports failed file deletes without aborting", async () => {

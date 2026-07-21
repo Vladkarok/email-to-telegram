@@ -23,6 +23,8 @@ import {
   CB_ALIAS_LIST,
   CB_ALIAS_LABEL_EDIT,
   CB_ALIAS_LABEL_CLEAR,
+  CB_ALIAS_MOVE,
+  CB_ALIAS_SET_TOPIC,
 } from "../callbacks.js";
 
 type Db = NodePgDatabase<typeof schema>;
@@ -141,6 +143,21 @@ async function buildAliasDetailMenu(
     .text(messages.aliasMenu.allowRulesButton, CB_ALLOW_RULES.build(alias.id))
     .text(messages.aliasMenu.settingsButton, CB_ALIAS_SETTINGS.build(alias.id))
     .row();
+  keyboard.text(messages.aliasMenu.moveButton, CB_ALIAS_MOVE.build(alias.id)).row();
+  // Only meaningful when this menu was opened inside a forum topic: the
+  // callback message's thread is the topic the user is pointing at.
+  const currentThreadId = ctx.callbackQuery?.message?.message_thread_id ?? null;
+  if (
+    currentThreadId !== null &&
+    (alias.messageThreadId === null || BigInt(currentThreadId) !== alias.messageThreadId)
+  ) {
+    keyboard
+      .text(
+        messages.aliasMenu.topicButton,
+        CB_ALIAS_SET_TOPIC.build(alias.id, alias.routingVersion),
+      )
+      .row();
+  }
   if (alias.label) {
     keyboard
       .text(messages.aliasMenu.editLabelButton, CB_ALIAS_LABEL_EDIT.build(alias.id))
@@ -167,7 +184,11 @@ export async function editAliasDeleteConfirmMenu(
   }
 
   const keyboard = new InlineKeyboard()
-    .text(messages.aliasMenu.deleteConfirmYes, CB_ALIAS_DELETE_CONFIRM.build(alias.id))
+    .text(
+      messages.aliasMenu.deleteConfirmYes,
+      // Bind the confirmation to the routing state the user is looking at.
+      CB_ALIAS_DELETE_CONFIRM.build(alias.id, alias.routingVersion),
+    )
     .row()
     .text(messages.aliasMenu.deleteConfirmCancel, CB_ALIAS_DELETE_CANCEL.build(alias.id));
 

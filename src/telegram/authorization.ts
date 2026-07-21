@@ -62,6 +62,18 @@ export async function canManageChat(
 }
 
 /**
+ * Drops every cached membership result for a chat. Called by chat-migration
+ * repair for both the old and the new id: cached admin checks against
+ * either may be wrong after the re-key.
+ */
+export function invalidateChatAuthorizationCache(chatId: bigint): void {
+  const prefix = `${chatId}:`;
+  for (const key of chatMemberCache.keys()) {
+    if (key.startsWith(prefix)) chatMemberCache.delete(key);
+  }
+}
+
+/**
  * Returns only the subset of active chats that the given user can manage.
  * Checks are done in parallel to minimise latency.
  */

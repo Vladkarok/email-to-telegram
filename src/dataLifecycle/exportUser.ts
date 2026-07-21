@@ -1,6 +1,7 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { and, asc, desc, eq, inArray, or } from "drizzle-orm";
 import {
+  aliasMoveEvents,
   allowRules,
   attachments,
   chats,
@@ -17,7 +18,7 @@ import type * as schema from "../db/schema.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
-export const EXPORT_SCHEMA_VERSION = 3;
+export const EXPORT_SCHEMA_VERSION = 4;
 
 export interface UserExport {
   schemaVersion: number;
@@ -128,6 +129,21 @@ export interface UserExport {
     keptStripeLink: boolean;
     createdAt: string;
   }>;
+  aliasMoveEvents: Array<{
+    id: string;
+    /** "owner" when the requester owns the alias, "actor" when they moved someone else's. */
+    role: "owner" | "actor";
+    /** Null on actor-role rows: the alias belongs to another user. */
+    aliasId: string | null;
+    authzPath: string;
+    /** Routing ids are the owner's data; null on actor-role rows. */
+    oldChatId: string | null;
+    newChatId: string | null;
+    oldThreadId: string | null;
+    newThreadId: string | null;
+    outcome: string;
+    createdAt: string;
+  }>;
 }
 
 export async function exportHostedUserData(
@@ -165,6 +181,7 @@ export async function exportHostedUserData(
     deliveryAttemptRows,
     attachmentRows,
     manualEventRows,
+    aliasMoveEventRows,
   ] = await Promise.all([
     listAllowRulesForUser(db, userId),
     listInboundDomainsForUser(db, userId),
@@ -175,6 +192,7 @@ export async function exportHostedUserData(
     listDeliveryAttemptsForUser(db, userId),
     listAttachmentsForUser(db, userId),
     listManualBillingEvents(db, userId),
+    listAliasMoveEvents(db, userId),
   ]);
 
   return {
@@ -279,7 +297,53 @@ export async function exportHostedUserData(
       keptStripeLink: row.keptStripeLink,
       createdAt: row.createdAt.toISOString(),
     })),
+    aliasMoveEvents: aliasMoveEventRows.map((row) => {
+      const isOwner = row.aliasOwnerId === userId;
+      // On a row where the requester was only the ACTOR, the alias and both
+      // chat ids describe someone else's mailbox. The requester is entitled
+      // to know they performed the action, not to a copy of the other user's
+      // routing — so those fields are withheld, not just the user ids.
+      return {
+        id: row.id,
+        role: isOwner ? ("owner" as const) : ("actor" as const),
+        aliasId: isOwner ? row.aliasId : null,
+        authzPath: row.authzPath,
+        oldChatId: isOwner ? row.oldChatId.toString() : null,
+        newChatId: isOwner ? row.newChatId.toString() : null,
+        oldThreadId: isOwner ? (row.oldThreadId?.toString() ?? null) : null,
+        newThreadId: isOwner ? (row.newThreadId?.toString() ?? null) : null,
+        outcome: row.outcome,
+        createdAt: row.createdAt.toISOString(),
+      };
+    }),
   };
+}
+
+/**
+ * Move events the requester appears in, as alias owner or as actor.
+ *
+ * Third-party identifiers are redacted by omission: neither `aliasOwnerId`
+ * nor `actorId` is exported. On a row where the requester is only the actor,
+ * the owner is someone else; on a row they own, the actor may be someone
+ * else. `role` conveys which side they were on without naming the other.
+ */
+async function listAliasMoveEvents(db: Db, userId: bigint) {
+  return db
+    .select({
+      id: aliasMoveEvents.id,
+      aliasId: aliasMoveEvents.aliasId,
+      aliasOwnerId: aliasMoveEvents.aliasOwnerId,
+      authzPath: aliasMoveEvents.authzPath,
+      oldChatId: aliasMoveEvents.oldChatId,
+      newChatId: aliasMoveEvents.newChatId,
+      oldThreadId: aliasMoveEvents.oldThreadId,
+      newThreadId: aliasMoveEvents.newThreadId,
+      outcome: aliasMoveEvents.outcome,
+      createdAt: aliasMoveEvents.createdAt,
+    })
+    .from(aliasMoveEvents)
+    .where(or(eq(aliasMoveEvents.aliasOwnerId, userId), eq(aliasMoveEvents.actorId, userId)))
+    .orderBy(desc(aliasMoveEvents.createdAt));
 }
 
 async function listManualBillingEvents(db: Db, userId: bigint) {

@@ -61,6 +61,12 @@ import {
   CB_ALIAS_DELETE,
   CB_ALIAS_DELETE_CANCEL,
   CB_ALIAS_DELETE_CONFIRM,
+  CB_ALIAS_MOVE,
+  CB_ALIAS_MOVE_TARGET,
+  CB_ALIAS_MOVE_CONFIRM,
+  CB_ALIAS_ORPHAN,
+  CB_ALIAS_ORPHAN_DELETE,
+  CB_ALIAS_SET_TOPIC,
   CB_ALIAS_SETTINGS,
   CB_SET_MODE,
   CB_TOGGLE_BODY_DEDUP,
@@ -82,6 +88,7 @@ import {
 } from "./callbacks.js";
 import { portalHandler, portalCallbackHandler } from "./commands/portal.js";
 import { chatMemberHandler } from "./handlers/chatMember.js";
+import { migrateToChatIdHandler, migrateFromChatIdHandler } from "./chatMigration.js";
 import { editChatSelectionMenu, editChatManagementMenu } from "./menu/chatMenu.js";
 import {
   editAliasListMenu,
@@ -92,13 +99,20 @@ import {
 import { sendAllowRulesMenu, editAllowRulesMenu } from "./menu/allowRulesMenu.js";
 import {
   findAliasById,
-  softDeleteAlias,
   updateAliasBodyDedup,
   updateAliasLabel,
   updateAliasPrivacyMode,
   updateAliasStatus,
   updateAliasRenderMode,
 } from "../db/repos/aliases.js";
+import { softDeleteAliasWithCas, setAliasTopicWithCas } from "../db/repos/aliasRouting.js";
+import {
+  editMovePickerMenu,
+  editMoveConfirmMenu,
+  executeAliasMove,
+  resolveMoveAuthzPath,
+} from "./menu/moveMenu.js";
+import { editOrphanMenu, executeOrphanDelete } from "./menu/orphanMenu.js";
 import { findChatById } from "../db/repos/chats.js";
 import { findAllowRuleById, removeAllowRule } from "../db/repos/allowRules.js";
 import { getPending, clearPending, setPending } from "./session.js";
@@ -130,6 +144,12 @@ export function createBot(token: string): Bot {
 
   // ── Auto-register groups ────────────────────────────────────────────────────
   bot.on("my_chat_member", chatMemberHandler);
+
+  // ── Chat-id migration repair (group→supergroup upgrades) ───────────────────
+  // Service messages, registered before auth: they carry no user command and
+  // must repair aliases even when no authorized user is involved.
+  bot.on("message:migrate_to_chat_id", migrateToChatIdHandler);
+  bot.on("message:migrate_from_chat_id", migrateFromChatIdHandler);
 
   bot.use(async (ctx, next) => {
     if (!ctx.from || !isPreAuthPublicEntryPoint(ctx)) {
@@ -260,9 +280,19 @@ export function createBot(token: string): Bot {
 
   // am:{aliasId} — alias detail menu
   bot.callbackQuery(CB_ALIAS_DETAIL.pattern, async (ctx) => {
-    if (!(await assertAliasAccess(ctx, ctx.match[1]))) return;
-    await ctx.answerCallbackQuery();
-    await editAliasDetailMenu(ctx, getDb(), ctx.match[1]);
+    if (!ctx.from) return;
+    const aliasId = ctx.match[1];
+    if (await canManageAlias(getDb(), ctx.api, ctx.from.id, aliasId)) {
+      await ctx.answerCallbackQuery();
+      await editAliasDetailMenu(ctx, getDb(), aliasId);
+      return;
+    }
+    // Every Back/Cancel in the move flow points here, including when that
+    // flow was entered from orphan recovery — where the creator has no normal
+    // access by design. Fall back to the recovery menu instead of a dead-end
+    // "access denied"; editOrphanMenu re-checks eligibility and answers the
+    // callback itself on every path.
+    await editOrphanMenu(ctx, getDb(), aliasId);
   });
 
   // ap:{aliasId} — pause alias
@@ -302,14 +332,102 @@ export function createBot(token: string): Bot {
   bot.callbackQuery(CB_ALIAS_DELETE_CONFIRM.pattern, async (ctx) => {
     if (!(await assertAliasAccess(ctx, ctx.match[1], { fresh: true }))) return;
     const messages = getMessages(await resolveLocale(ctx, getDb()));
-    await ctx.answerCallbackQuery(messages.aliasActions.deletedToast);
     const alias = await findAliasById(getDb(), ctx.match[1]);
     if (alias) {
-      await softDeleteAlias(getDb(), alias.id);
+      // Version-guarded against the state the CONFIRMATION SCREEN was built
+      // from (carried in the callback data), not the current row — otherwise
+      // the CAS could never fail and a stale delete would win a move race.
+      const deletion = await softDeleteAliasWithCas(getDb(), {
+        aliasId: alias.id,
+        expectedVersion: Number(ctx.match[2]),
+      });
+      // The toast reports the OUTCOME, so it waits for the CAS. Answering
+      // "Deleted." up front and then contradicting it is worse than a
+      // slightly later toast.
+      if (!deletion.ok) {
+        await ctx.answerCallbackQuery();
+        await ctx.reply(messages.aliasActions.routingChanged, { parse_mode: "HTML" });
+        return;
+      }
+      await ctx.answerCallbackQuery(messages.aliasActions.deletedToast);
       const chat = await findChatById(getDb(), alias.chatId);
       const title = chat?.title ?? alias.chatId.toString();
       await editAliasListMenu(ctx, getDb(), alias.chatId, title);
+    } else {
+      await ctx.answerCallbackQuery(messages.common.aliasNotFoundShort);
     }
+  });
+
+  // Move entry points accept EITHER normal admin rights or the orphan
+  // fallback, so an alias in a dead chat stays movable by its creator.
+  const assertMoveAccess = async (
+    ctx: Parameters<typeof assertAliasAccess>[0],
+    aliasId: string,
+  ): Promise<boolean> => {
+    const path = await resolveMoveAuthzPath(getDb(), ctx, aliasId);
+    if (!path) await ctx.answerCallbackQuery("⛔ Access denied");
+    return path !== null;
+  };
+
+  // mv:{aliasId} — open the move picker
+  bot.callbackQuery(CB_ALIAS_MOVE.pattern, async (ctx) => {
+    if (!(await assertMoveAccess(ctx, ctx.match[1]))) return;
+    await ctx.answerCallbackQuery();
+    await editMovePickerMenu(ctx, getDb(), ctx.match[1]);
+  });
+
+  // mt:{aliasId}:{chatId}:{version} — confirm a chosen move target
+  bot.callbackQuery(CB_ALIAS_MOVE_TARGET.pattern, async (ctx) => {
+    if (!(await assertMoveAccess(ctx, ctx.match[1]))) return;
+    await ctx.answerCallbackQuery();
+    await editMoveConfirmMenu(
+      ctx,
+      getDb(),
+      ctx.match[1],
+      BigInt(ctx.match[2]),
+      Number(ctx.match[3]),
+    );
+  });
+
+  // mc:{aliasId}:{chatId}:{version} — execute the move. Authorization is
+  // re-resolved FRESH inside executeAliasMove; this is only the cheap gate.
+  bot.callbackQuery(CB_ALIAS_MOVE_CONFIRM.pattern, async (ctx) => {
+    if (!(await assertMoveAccess(ctx, ctx.match[1]))) return;
+    await ctx.answerCallbackQuery();
+    await executeAliasMove(ctx, getDb(), ctx.match[1], BigInt(ctx.match[2]), Number(ctx.match[3]));
+  });
+
+  // orp:{aliasId} — orphan recovery menu (Move / Delete only).
+  // editOrphanMenu answers the callback on every path.
+  bot.callbackQuery(CB_ALIAS_ORPHAN.pattern, async (ctx) => {
+    await editOrphanMenu(ctx, getDb(), ctx.match[1]);
+  });
+
+  // orpd:{aliasId}:{version} — orphan delete
+  bot.callbackQuery(CB_ALIAS_ORPHAN_DELETE.pattern, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await executeOrphanDelete(ctx, getDb(), ctx.match[1], Number(ctx.match[2]));
+  });
+
+  // tp:{aliasId}:{version} — deliver in the topic this menu was opened in
+  bot.callbackQuery(CB_ALIAS_SET_TOPIC.pattern, async (ctx) => {
+    if (!(await assertAliasAccess(ctx, ctx.match[1], { fresh: true }))) return;
+    const messages = getMessages(await resolveLocale(ctx, getDb()));
+    const threadId = ctx.callbackQuery.message?.message_thread_id ?? null;
+    const updated = await setAliasTopicWithCas(getDb(), {
+      aliasId: ctx.match[1],
+      expectedVersion: Number(ctx.match[2]),
+      threadId: threadId === null ? null : BigInt(threadId),
+    });
+    if (!updated.ok) {
+      await ctx.answerCallbackQuery();
+      await ctx.reply(messages.aliasActions.routingChanged, { parse_mode: "HTML" });
+      return;
+    }
+    await ctx.answerCallbackQuery(
+      threadId === null ? messages.aliasMenu.topicCleared : messages.aliasMenu.topicSet,
+    );
+    await editAliasDetailMenu(ctx, getDb(), ctx.match[1]);
   });
 
   // ac:{aliasId} — alias settings

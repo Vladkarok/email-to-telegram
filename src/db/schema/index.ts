@@ -2,6 +2,7 @@ export * from "./users.js";
 export * from "./inboundDomains.js";
 export * from "./chats.js";
 export * from "./aliases.js";
+export * from "./aliasMoveEvents.js";
 export * from "./delivery.js";
 export * from "./storage.js";
 export * from "./billing.js";
