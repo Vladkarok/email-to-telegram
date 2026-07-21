@@ -216,6 +216,29 @@ describe("executeAliasMove", () => {
     );
   });
 
+  it("teaches how to set a topic when the target is a supergroup", async () => {
+    // Default mockFindChatById already returns a supergroup.
+    const ctx = createMockCtx({});
+
+    await executeAliasMove(ctx, db, ALIAS_ID, -200n, 3);
+
+    const [text] = ctx.editMessageText.mock.calls[0] as [string];
+    expect(text).toContain("Other Group");
+    expect(text).toMatch(/topic/i);
+    expect(text).toContain("/listemail");
+  });
+
+  it("does not add the topic hint when the target is a plain group", async () => {
+    mockFindChatById.mockResolvedValue({ id: -200n, title: "Plain Group", type: "group" });
+    const ctx = createMockCtx({});
+
+    await executeAliasMove(ctx, db, ALIAS_ID, -200n, 3);
+
+    const [text] = ctx.editMessageText.mock.calls[0] as [string];
+    expect(text).toContain("Plain Group");
+    expect(text).not.toContain("/listemail");
+  });
+
   it("denies when the mover lost access to the source alias", async () => {
     mockCanManageAlias.mockResolvedValue(false);
     const ctx = createMockCtx({});

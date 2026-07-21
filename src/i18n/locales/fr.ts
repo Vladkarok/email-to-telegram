@@ -228,7 +228,8 @@ ${safetyNotes}
     moveNoTargets: (address: string) =>
       `📦 Déplacer <code>${address}</code>\n\nAucune autre discussion disponible. Ajoutez le bot à un groupe ou canal que vous administrez, puis réessayez.`,
     moveConfirmHeader: (address: string, target: string) =>
-      `📦 Déplacer <code>${address}</code> vers <b>${target}</b> ?\n\nLe courrier suivant y arrivera. Si la cible est un forum, la livraison commence dans « Général » — vous pourrez choisir un sujet ensuite.`,
+      `📦 Déplacer <code>${address}</code> vers <b>${target}</b> ?\n\nLe courrier suivant y arrivera. Un forum commence dans « Général » ; vous pourrez l'envoyer vers un sujet précis ensuite.`,
+    topicHowTo: `💡 <b>Forum avec sujets ?</b> Le courrier arrive dans « Général ». Pour livrer vers un sujet précis : ouvrez ce sujet, envoyez-y <code>/listemail</code>, touchez l'alias, puis touchez « 📌 Livrer dans ce sujet ».`,
     moveConfirmYes: "📦 Oui, déplacer",
     moveConfirmCancel: "⬅️ Annuler",
     moveDone: (address: string, target: string) =>

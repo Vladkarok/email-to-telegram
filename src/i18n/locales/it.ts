@@ -228,7 +228,8 @@ ${safetyNotes}
     moveNoTargets: (address: string) =>
       `📦 Sposta <code>${address}</code>\n\nNessuna altra chat disponibile. Aggiungi il bot a un gruppo o canale che amministri e riprova.`,
     moveConfirmHeader: (address: string, target: string) =>
-      `📦 Spostare <code>${address}</code> in <b>${target}</b>?\n\nLa posta successiva arriverà lì. Se la destinazione è un forum, la consegna inizia in «Generale» — potrai scegliere un argomento dopo.`,
+      `📦 Spostare <code>${address}</code> in <b>${target}</b>?\n\nLa posta successiva arriverà lì. Un forum inizia da «Generale»; potrai inviarla a un argomento specifico dopo.`,
+    topicHowTo: `💡 <b>Forum con argomenti?</b> La posta arriva in «Generale». Per consegnare in un argomento specifico: apri quell'argomento, invia lì <code>/listemail</code>, tocca l'alias, poi tocca «📌 Consegna in questo argomento».`,
     moveConfirmYes: "📦 Sì, sposta",
     moveConfirmCancel: "⬅️ Annulla",
     moveDone: (address: string, target: string) =>

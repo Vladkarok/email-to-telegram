@@ -14,6 +14,11 @@ vi.mock("../../../../src/db/repos/allowRules.js", () => ({
   listAllowRules: (...args: unknown[]): unknown => mockListAllowRules(...args),
 }));
 
+const mockFindChatById = vi.fn();
+vi.mock("../../../../src/db/repos/chats.js", () => ({
+  findChatById: (...args: unknown[]): unknown => mockFindChatById(...args),
+}));
+
 const mockCanManageAlias = vi.fn();
 vi.mock("../../../../src/telegram/authorization.js", () => ({
   canManageAlias: (...args: unknown[]): unknown => mockCanManageAlias(...args),
@@ -88,7 +93,11 @@ describe("editAliasListMenu", () => {
 });
 
 describe("editAliasDetailMenu", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Default: a plain group, so no topic hint unless a test opts in.
+    mockFindChatById.mockResolvedValue({ id: -100n, title: "My Chat", type: "group" });
+  });
 
   it("shows alias details with allow rules", async () => {
     mockFindAliasById.mockResolvedValue(fakeAlias);
@@ -112,6 +121,44 @@ describe("editAliasDetailMenu", () => {
     await editAliasDetailMenu(ctx, fakeDb, fakeAlias.id);
     const [text] = (ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
     expect(text).toMatch(/all mail rejected/i);
+  });
+
+  it("hints how to set a topic when the alias lives in a supergroup, in General", async () => {
+    mockFindAliasById.mockResolvedValue({ ...fakeAlias, messageThreadId: null });
+    mockListAllowRules.mockResolvedValue([]);
+    mockFindChatById.mockResolvedValue({ id: -100n, title: "Forum", type: "supergroup" });
+    // Opened from a DM / list view, not from inside a topic.
+    const ctx = createMockCtx({ chatType: "private" });
+
+    await editAliasDetailMenu(ctx, fakeDb, fakeAlias.id);
+
+    const [text] = (ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
+    expect(text).toMatch(/topic/i);
+    expect(text).toContain("/listemail");
+  });
+
+  it("does not hint for a plain group", async () => {
+    mockFindAliasById.mockResolvedValue({ ...fakeAlias, messageThreadId: null });
+    mockListAllowRules.mockResolvedValue([]);
+    mockFindChatById.mockResolvedValue({ id: -100n, title: "Group", type: "group" });
+    const ctx = createMockCtx({ chatType: "private" });
+
+    await editAliasDetailMenu(ctx, fakeDb, fakeAlias.id);
+
+    const [text] = (ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
+    expect(text).not.toContain("/listemail");
+  });
+
+  it("does not hint when the alias already delivers to a topic", async () => {
+    mockFindAliasById.mockResolvedValue({ ...fakeAlias, messageThreadId: 7n });
+    mockListAllowRules.mockResolvedValue([]);
+    mockFindChatById.mockResolvedValue({ id: -100n, title: "Forum", type: "supergroup" });
+    const ctx = createMockCtx({ chatType: "private" });
+
+    await editAliasDetailMenu(ctx, fakeDb, fakeAlias.id);
+
+    const [text] = (ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
+    expect(text).not.toContain("/listemail");
   });
 
   it("shows Pause button for active alias", async () => {

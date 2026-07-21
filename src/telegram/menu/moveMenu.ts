@@ -251,8 +251,11 @@ export async function executeAliasMove(
   }
 
   const targetTitle = targetChat?.title ?? messages.aliasMenu.moveOwnDmTitle;
+  // A supergroup may be a forum; teach the topic flow right here, since a
+  // move is exactly the moment a user lands in one and there is no picker.
+  const topicHint = targetChat?.type === "supergroup" ? `\n\n${messages.aliasMenu.topicHowTo}` : "";
   await ctx.editMessageText(
-    messages.aliasMenu.moveDone(escapeHtml(alias.fullAddress), escapeHtml(targetTitle)),
+    messages.aliasMenu.moveDone(escapeHtml(alias.fullAddress), escapeHtml(targetTitle)) + topicHint,
     {
       parse_mode: "HTML",
       reply_markup: new InlineKeyboard().text(
