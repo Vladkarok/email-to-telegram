@@ -1,7 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Readable } from "node:stream";
 import { sendTelegramMessage, sendTelegramPhotos } from "../../../src/telegram/sender.js";
+import { GrammyError } from "grammy";
 import type { Api } from "grammy";
+
+function migrateError(newChatId = -1002222333444): GrammyError {
+  return new GrammyError(
+    "Call to 'sendMessage' failed! (400: Bad Request: group chat was upgraded to a supergroup chat)",
+    {
+      ok: false,
+      error_code: 400,
+      description: "Bad Request: group chat was upgraded to a supergroup chat",
+      parameters: { migrate_to_chat_id: newChatId },
+    },
+    "sendMessage",
+    {},
+  );
+}
 
 const mockOpenAttachmentStream = vi.fn();
 vi.mock("../../../src/storage/disk.js", () => ({
@@ -151,6 +166,47 @@ describe("sendTelegramMessage", () => {
     expect(api.sendMessage).toHaveBeenCalledTimes(3);
   });
 
+  it("stops retrying the old chat id immediately on a migrate error", async () => {
+    const api = makeApi(() => Promise.reject(migrateError()));
+
+    const promise = sendTelegramMessage(api, {
+      chatId: -100200n,
+      threadId: null,
+      text: "Migrated away",
+    });
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result.ok).toBe(false);
+    expect(api.sendMessage).toHaveBeenCalledTimes(1);
+    expect(result.failure).toEqual({
+      code: 400,
+      description: "Bad Request: group chat was upgraded to a supergroup chat",
+      transient: false,
+      migrateToChatId: -1002222333444n,
+    });
+  });
+
+  it("returns the structured failure alongside the error string", async () => {
+    const api = makeApi(() => Promise.reject(new Error("telegram down")));
+
+    const promise = sendTelegramMessage(api, {
+      chatId: 300n,
+      threadId: null,
+      text: "Always fails",
+    });
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result.ok).toBe(false);
+    expect(result.failure).toEqual({
+      code: null,
+      description: "telegram down",
+      transient: false,
+      migrateToChatId: null,
+    });
+  });
+
   it("omits parse_mode when one is not provided", async () => {
     const api = makeApi(() => Promise.resolve({ message_id: 8 }));
 
@@ -278,5 +334,71 @@ describe("sendTelegramPhotos", () => {
     expect(result.failedPhotos[0]?.id).toBe("att-1");
     // Temp file released even when the send fails.
     expect(disposeSpies[0]).toHaveBeenCalledOnce();
+  });
+
+  function makePhotos(count: number) {
+    return Array.from({ length: count }, (_, i) => ({
+      id: `att-${i + 1}`,
+      storagePath: `/data/attachments/att-${i + 1}.bin`,
+      filename: `graph-${i + 1}.png`,
+      encryptionMode: "local-v1",
+      wrappedDek: "wrapped",
+      kekKeyId: "test-key",
+    }));
+  }
+
+  it("aborts remaining chunks and surfaces the migrate hint on a migrate error", async () => {
+    const api = {
+      sendMessage: vi.fn(),
+      sendPhoto: vi.fn(),
+      sendMediaGroup: vi.fn(() => Promise.reject(migrateError())),
+    } as unknown as MockApi;
+
+    // 11 photos → two chunks (10 + 1); the first chunk hits the migrate error.
+    const result = await sendTelegramPhotos(api, {
+      chatId: -100200n,
+      threadId: null,
+      photos: makePhotos(11),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(api.sendMediaGroup).toHaveBeenCalledTimes(1);
+    expect(api.sendPhoto).not.toHaveBeenCalled();
+    // Every photo failed: the sent chunk plus the never-attempted remainder.
+    expect(result.failedPhotos).toHaveLength(11);
+    expect(result.failure).toMatchObject({
+      code: 400,
+      transient: false,
+      migrateToChatId: -1002222333444n,
+    });
+    // Only the first chunk was ever opened; its temp files were released.
+    expect(disposeSpies).toHaveLength(10);
+    for (const dispose of disposeSpies) {
+      expect(dispose).toHaveBeenCalledOnce();
+    }
+  });
+
+  it("keeps sending later chunks on non-migrate failures and surfaces the first failure", async () => {
+    const api = {
+      sendMessage: vi.fn(),
+      sendPhoto: vi.fn(() => Promise.resolve({ message_id: 2 })),
+      sendMediaGroup: vi.fn(() => Promise.reject(new Error("telegram down"))),
+    } as unknown as MockApi;
+
+    const result = await sendTelegramPhotos(api, {
+      chatId: 100n,
+      threadId: null,
+      photos: makePhotos(11),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(api.sendMediaGroup).toHaveBeenCalledTimes(1);
+    expect(api.sendPhoto).toHaveBeenCalledTimes(1);
+    expect(result.failedPhotos).toHaveLength(10);
+    expect(result.failure).toMatchObject({
+      code: null,
+      description: "telegram down",
+      migrateToChatId: null,
+    });
   });
 });

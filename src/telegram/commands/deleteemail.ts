@@ -1,6 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import { getDb } from "../../db/client.js";
-import { softDeleteAlias } from "../../db/repos/aliases.js";
+import { softDeleteAliasWithCas } from "../../db/repos/aliasRouting.js";
 import { aliasResolutionError, resolveManageableAlias } from "../aliasResolver.js";
 import { escapeHtml } from "../../utils/html.js";
 import { getMessages, resolveLocale } from "../../i18n/index.js";
@@ -34,7 +34,18 @@ export async function deleteemailHandler(ctx: CommandContext<Context>): Promise<
 
   const alias = result.alias;
 
-  await softDeleteAlias(getDb(), alias.id);
+  // Version-guarded against the alias state this command was authorized on:
+  // a concurrent move must not be silently overridden by a stale delete.
+  const deletion = await softDeleteAliasWithCas(getDb(), {
+    aliasId: alias.id,
+    expectedVersion: alias.routingVersion,
+  });
+
+  if (!deletion.ok) {
+    await ctx.reply(messages.aliasActions.routingChanged, { parse_mode: "HTML" });
+    return;
+  }
+
   await ctx.reply(messages.aliasActions.deleted(escapeHtml(alias.fullAddress)), {
     parse_mode: "HTML",
   });

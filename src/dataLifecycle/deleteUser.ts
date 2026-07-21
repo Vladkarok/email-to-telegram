@@ -1,6 +1,13 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { and, eq, sql } from "drizzle-orm";
-import { attachments, chats, deliveryLogs, emailAddresses, users } from "../db/schema.js";
+import {
+  aliasMoveEvents,
+  attachments,
+  chats,
+  deliveryLogs,
+  emailAddresses,
+  users,
+} from "../db/schema.js";
 import type * as schema from "../db/schema.js";
 import { deleteFile } from "../storage/disk.js";
 
@@ -41,6 +48,18 @@ export async function deleteHostedUser(db: Db, userId: bigint): Promise<DeleteUs
     // doesn't reach when the user row is dropped (email_addresses lacks ON DELETE CASCADE
     // on created_by).
     await tx.delete(deliveryLogs).where(eq(deliveryLogs.userId, userId));
+    // alias_move_events has no foreign keys by design (the audit outlives the
+    // alias), so erasure must reach it explicitly — twice, for two distinct
+    // roles the user can appear in:
+    //   1. as the alias OWNER: their rows are personal data — delete them.
+    //   2. as the ACTOR on someone else's alias: that row belongs to another
+    //      user's audit trail and must survive, so only the actor id is
+    //      anonymized. Deleting it would erase a third party's record.
+    await tx.delete(aliasMoveEvents).where(eq(aliasMoveEvents.aliasOwnerId, userId));
+    await tx
+      .update(aliasMoveEvents)
+      .set({ actorId: null })
+      .where(eq(aliasMoveEvents.actorId, userId));
     await tx.delete(emailAddresses).where(eq(emailAddresses.createdBy, userId));
     // Telegram DM chat rows share the user's id; their title embeds the user's
     // name (e.g. "🏠 <first> <last> (DM)"), so it must be wiped too. Group

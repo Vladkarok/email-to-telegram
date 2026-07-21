@@ -64,6 +64,13 @@
       "when": 1784101737532,
       "tag": "0008_quota-notice-periods",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1784578550056,
+      "tag": "0009_alias-move-events-routing-version",
+      "breakpoints": true
     }
   ]
 }

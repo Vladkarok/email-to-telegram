@@ -36,6 +36,12 @@ export const emailAddresses = pgTable(
     privacyModeEnabled: boolean("privacy_mode_enabled").notNull().default(false),
     bodyDedupEnabled: boolean("body_dedup_enabled").notNull().default(false),
     status: varchar("status", { length: 20 }).notNull().default("active"),
+    // CAS token for every routing-or-existence mutation (move, migration
+    // re-key, topic change, delete). A confirmation carries the version it was
+    // authorized against; the mutation runs as `WHERE id = ? AND
+    // routing_version = ?`, so an A→B→A round trip invalidates it — chat id
+    // alone would not. Zero rows updated ⇒ re-read, re-authorize, re-confirm.
+    routingVersion: integer("routing_version").notNull().default(0),
     maxEmailsHour: integer("max_emails_hour").notNull().default(60),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

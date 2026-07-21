@@ -269,6 +269,8 @@ describe("pipeline integration matrix", () => {
 
   it("forum topic: message_thread_id passed to Telegram send", async () => {
     mockFindAlias.mockResolvedValue(makeAlias({ messageThreadId: 42n }));
+    // The attempt route comes from the fresh by-id read, not the queued alias.
+    mockFindAliasById.mockResolvedValue(makeAlias({ messageThreadId: 42n }));
     mockIsDuplicate.mockResolvedValue(false);
     mockCreateLog.mockResolvedValue({ id: "log-topic" });
     mockUpdateLogStatus.mockResolvedValue(undefined);

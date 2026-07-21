@@ -31,6 +31,9 @@ export async function upsertChat(
       target: chats.id,
       set: {
         title: data.title,
+        // A group→supergroup migration changes the type of a known chat id's
+        // successor; keep it current alongside the title.
+        type: data.type,
         isActive: true,
         updatedAt: new Date(),
       },

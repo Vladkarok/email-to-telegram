@@ -66,6 +66,14 @@ vi.mock("../../../../src/billing/limits.js", () => ({
   ),
 }));
 
+const mockWithChatMigrationLock = vi.fn(
+  async (_db: unknown, _chatId: bigint, work: (tx: unknown) => Promise<unknown>) => work({}),
+);
+vi.mock("../../../../src/telegram/chatMigration.js", () => ({
+  withChatMigrationLock: (...args: unknown[]): unknown =>
+    mockWithChatMigrationLock(...(args as Parameters<typeof mockWithChatMigrationLock>)),
+}));
+
 const mockReserveHostedAliasCreateAttempt = vi.fn().mockResolvedValue(undefined);
 class MockHostedAliasCreateRateLimitError extends Error {}
 vi.mock("../../../../src/abuse/hostedAliasCreation.js", () => ({
@@ -121,6 +129,34 @@ describe("/newemail command", () => {
       localPart: "alerts-ab12cd",
       fullAddress: "alerts-ab12cd@tgmail.example.com",
     });
+  });
+
+  it("creates under the chat migration lock and verifies the chat is still active", async () => {
+    const ctx = createMockCtx({ commandMatch: "alerts" });
+
+    await newemailHandler(ctx);
+
+    expect(mockWithChatMigrationLock).toHaveBeenCalledOnce();
+    const [, lockedChatId] = mockWithChatMigrationLock.mock.calls[0] as unknown as [
+      unknown,
+      bigint,
+    ];
+    expect(lockedChatId).toBe(BigInt((ctx.chat as { id: number }).id));
+    expect(mockCreateAlias).toHaveBeenCalledOnce();
+  });
+
+  it("rejects creation when the target chat row was deactivated (migration won the race)", async () => {
+    mockFindChatById.mockResolvedValue({
+      title: "Old Group",
+      type: "group",
+      isActive: false,
+    });
+    const ctx = createMockCtx({ commandMatch: "alerts" });
+
+    await newemailHandler(ctx);
+
+    expect(mockCreateAlias).not.toHaveBeenCalled();
+    expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("unavailable"));
   });
 
   it("creates an alias with the given name as-is on the first try", async () => {

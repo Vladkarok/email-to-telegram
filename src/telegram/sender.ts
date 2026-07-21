@@ -4,6 +4,7 @@ import type { ParseMode } from "@grammyjs/types";
 import { getLogger } from "../utils/logger.js";
 import { openAttachmentStream } from "../storage/disk.js";
 import { recordTelegramSendFailure } from "../observability/metrics.js";
+import { describeSendError, type TelegramSendFailure } from "./errorClassifier.js";
 
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
 const MEDIA_GROUP_MAX = 10;
@@ -20,6 +21,8 @@ export interface SendResult {
   ok: boolean;
   telegramMessageId?: number;
   error?: string;
+  /** Structured details of the last failure; present whenever ok is false. */
+  failure?: TelegramSendFailure;
 }
 
 export interface PhotoItem {
@@ -41,6 +44,11 @@ export interface SendPhotosOptions {
 export interface SendPhotosResult {
   ok: boolean;
   failedPhotos: PhotoItem[];
+  /**
+   * Structured details of the first failure (a migrate failure takes
+   * precedence — it aborts the batch); present whenever ok is false.
+   */
+  failure?: TelegramSendFailure;
 }
 
 export async function sendTelegramMessage(api: Api, opts: SendOptions): Promise<SendResult> {
@@ -58,7 +66,7 @@ export async function sendTelegramMessage(api: Api, opts: SendOptions): Promise<
     other.message_thread_id = Number(opts.threadId);
   }
 
-  let lastError: string = "unknown error";
+  let lastFailure: TelegramSendFailure | null = null;
 
   for (let attempt = 0; attempt < RETRY_DELAYS_MS.length; attempt++) {
     try {
@@ -69,15 +77,23 @@ export async function sendTelegramMessage(api: Api, opts: SendOptions): Promise<
       );
       return { ok: true, telegramMessageId: msg.message_id };
     } catch (err: unknown) {
-      lastError = err instanceof Error ? err.message : String(err);
+      lastFailure = describeSendError(err);
       getLogger().warn({ attempt, chatId: opts.chatId.toString(), err }, "sendMessage failed");
+      // The chat migrated: no retry against the old id can ever succeed.
+      // Surface the migrate hint immediately so the delivery orchestration
+      // can repair the route instead of burning the in-process retries.
+      if (lastFailure.migrateToChatId !== null) break;
       if (attempt < RETRY_DELAYS_MS.length - 1) {
         await sleep(RETRY_DELAYS_MS[attempt] ?? 1000);
       }
     }
   }
 
-  return { ok: false, error: lastError };
+  return {
+    ok: false,
+    error: lastFailure?.description ?? "unknown error",
+    failure: lastFailure ?? undefined,
+  };
 }
 
 export async function sendTelegramPhotos(
@@ -87,6 +103,8 @@ export async function sendTelegramPhotos(
   const log = getLogger();
   const chatId = Number(opts.chatId);
   const failedPhotos: PhotoItem[] = [];
+  let failure: TelegramSendFailure | undefined;
+  let abortedByMigrate = false;
 
   for (let i = 0; i < opts.photos.length; i += MEDIA_GROUP_MAX) {
     const chunk = opts.photos.slice(i, i + MEDIA_GROUP_MAX);
@@ -130,9 +148,18 @@ export async function sendTelegramPhotos(
         );
       }
     } catch (err: unknown) {
-      recordTelegramSendFailure(err instanceof Error ? err.message : String(err));
+      const chunkFailure = describeSendError(err);
+      failure ??= chunkFailure;
+      recordTelegramSendFailure(chunkFailure.description);
       log.error({ err, chatId, chunk: chunk.map((p) => p.filename) }, "sendPhotos failed");
       failedPhotos.push(...chunk);
+      if (chunkFailure.migrateToChatId !== null) {
+        // The chat migrated: later chunks can never reach the old id. Fail
+        // the remainder of the batch and surface the migrate hint.
+        failure = chunkFailure;
+        failedPhotos.push(...opts.photos.slice(i + MEDIA_GROUP_MAX));
+        abortedByMigrate = true;
+      }
     } finally {
       // Release temp files. Idempotent with the stream's own close/error
       // cleanup; covers the case the stream was never consumed (open failed
@@ -141,12 +168,12 @@ export async function sendTelegramPhotos(
         await s.dispose?.().catch(() => {});
       }
     }
+    if (abortedByMigrate) break;
   }
 
-  return {
-    ok: failedPhotos.length === 0,
-    failedPhotos,
-  };
+  // `failure` is only ever set in the catch that also pushes to
+  // failedPhotos, so no extra guard is needed here.
+  return { ok: failedPhotos.length === 0, failedPhotos, failure };
 }
 
 function sleep(ms: number): Promise<void> {

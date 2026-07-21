@@ -8,6 +8,7 @@ import {
 } from "../../abuse/hostedOnboarding.js";
 import { getLogger } from "../../utils/logger.js";
 import { localeFromTelegram } from "../../i18n/index.js";
+import { invalidateReachabilityCache } from "../orphanProbe.js";
 
 export async function chatMemberHandler(ctx: Context): Promise<void> {
   const update = ctx.myChatMember;
@@ -20,6 +21,11 @@ export async function chatMemberHandler(ctx: Context): Promise<void> {
   const chatId = BigInt(chat.id);
   const status = update.new_chat_member.status;
   const title = "title" in chat ? chat.title : "Unknown";
+
+  // The bot's membership just changed, so any cached reachability verdict for
+  // this chat is stale. Critical on re-add: a cached `dead` would otherwise
+  // keep granting orphan recovery for a chat that is alive again.
+  invalidateReachabilityCache(chatId);
 
   if (status === "member" || status === "administrator") {
     if (loadConfig().appMode === "hosted") {

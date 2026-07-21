@@ -25,7 +25,8 @@ import {
   countAttemptsByLog,
   countCountedFailedAttemptsByLog,
 } from "../db/repos/deliveryAttempts.js";
-import { findAliasById } from "../db/repos/aliases.js";
+import { readAttemptRoute } from "./deliveryRoute.js";
+import { repairChatMigration } from "../telegram/chatMigration.js";
 import { listAttachmentsByDeliveryLogId } from "../db/repos/attachments.js";
 import { createAttachmentLink } from "../db/repos/attachmentLinks.js";
 import {
@@ -306,16 +307,20 @@ async function retryDelivery(
     return;
   }
 
-  // Look up alias — may have been paused/deleted since original delivery
-  const alias = await findAliasById(db, deliveryLog.emailAddressId);
-  if (!alias || alias.status !== "active") {
+  // The attempt's ONE fresh alias read: it both revalidates the alias
+  // (may have been paused/deleted since original delivery) and freezes the
+  // route every send of this attempt must use — text, photos, fallback,
+  // and the attempt record. A move/migration lands on the next attempt.
+  const attemptRoute = await readAttemptRoute(db, deliveryLog.emailAddressId);
+  if (!attemptRoute.ok) {
     log.warn(
-      { deliveryLogId: deliveryLog.id, aliasStatus: alias?.status },
+      { deliveryLogId: deliveryLog.id, aliasStatus: attemptRoute.aliasStatus ?? undefined },
       "retry worker: alias unavailable, giving up",
     );
     await closePermanentlyFailed();
     return;
   }
+  const { alias, route } = attemptRoute;
 
   // Re-read and re-parse raw email
   let rawEmail: Buffer;
@@ -376,15 +381,15 @@ async function retryDelivery(
   const parseMode = privacyMode ? "HTML" : parseModeForRenderMode(renderMode);
 
   const result = await sendTelegramMessage(api, {
-    chatId: alias.chatId,
-    threadId: alias.messageThreadId ?? null,
+    chatId: route.chatId,
+    threadId: route.threadId,
     text,
     parseMode,
   });
 
   const newAttemptNo = attempts + 1;
-  const sendErrorClass = result.ok ? null : classifyTelegramError(result.error);
-  const disposition = result.ok ? null : retryDispositionForError(result.error);
+  const sendErrorClass = result.ok ? null : classifyTelegramError(result.failure ?? result.error);
+  const disposition = result.ok ? null : retryDispositionForError(result.failure ?? result.error);
   const countedAfterSend = disposition === "retry_counted" ? countedFailures + 1 : countedFailures;
   const finalStatus = result.ok
     ? "delivered"
@@ -402,8 +407,8 @@ async function retryDelivery(
         await insertDeliveryAttempt(workDb, {
           deliveryLogId: deliveryLog.id,
           attemptNo: newAttemptNo,
-          targetChatId: alias.chatId,
-          targetThreadId: alias.messageThreadId ?? null,
+          targetChatId: route.chatId,
+          targetThreadId: route.threadId,
           telegramMessageId: result.telegramMessageId ? BigInt(result.telegramMessageId) : null,
           status: result.ok ? "succeeded" : "failed",
           errorText: result.error ?? null,
@@ -422,20 +427,65 @@ async function retryDelivery(
     });
   }
 
+  // The chat migrated: repair the routing so the NEXT worker cycle reads the
+  // new id (a `migrated` failure is uncounted, so the log stayed retryable).
+  // Repair failure must never escalate the delivery's status.
+  if (result.failure?.migrateToChatId != null) {
+    await repairChatMigration(db, api, route.chatId, result.failure.migrateToChatId).catch(
+      (repairErr: unknown) => {
+        log.error(
+          { err: repairErr, deliveryLogId: deliveryLog.id },
+          "retry worker: chat.migration_repair_failed",
+        );
+      },
+    );
+  }
+
   if (result.ok) {
     recordRetryAttempt("succeeded");
     log.info({ deliveryLogId: deliveryLog.id, attemptNo: newAttemptNo }, "retry worker: delivered");
 
+    /**
+     * Chat upgraded mid-attempt, after the text landed. Repair, then hand the
+     * delivery back as retryable so the next cycle re-reads the route and
+     * delivers the WHOLE email to the new chat. Costs a visible duplicate;
+     * the alternative silently drops the attachments (user decision
+     * 2026-07-20). The attempt row stays `succeeded`, so no retry budget is
+     * consumed and no refund is triggered.
+     */
+    const abortAttemptForMigration = async (newChatId: bigint): Promise<void> => {
+      await repairChatMigration(db, api, route.chatId, newChatId).catch((repairErr: unknown) => {
+        log.error(
+          { err: repairErr, deliveryLogId: deliveryLog.id },
+          "retry worker: chat.migration_repair_failed",
+        );
+      });
+      await updateDeliveryLogStatus(db, deliveryLog.id, "failed").catch((statusErr: unknown) => {
+        log.error(
+          { err: statusErr, deliveryLogId: deliveryLog.id },
+          "retry worker: migration_retry_reset_failed",
+        );
+      });
+      log.warn(
+        { deliveryLogId: deliveryLog.id, oldChatId: route.chatId.toString() },
+        "retry worker: delivery.aborted_for_migration",
+      );
+    };
+
     if (!privacyMode && imageAttachments.length > 0) {
       try {
         const photoResult = await sendTelegramPhotos(api, {
-          chatId: alias.chatId,
-          threadId: alias.messageThreadId ?? null,
+          chatId: route.chatId,
+          threadId: route.threadId,
           replyToMessageId: result.telegramMessageId,
           photos: imageAttachments,
         });
 
-        if (photoResult.failedPhotos.length > 0) {
+        const photoMigrateTo = photoResult.failure?.migrateToChatId ?? null;
+        if (photoMigrateTo != null) {
+          await abortAttemptForMigration(photoMigrateTo);
+          return;
+        } else if (photoResult.failedPhotos.length > 0) {
           const failedPaths = new Set(photoResult.failedPhotos.map((photo) => photo.storagePath));
           const fallbackLinks = await Promise.all(
             storedAttachments
@@ -459,8 +509,8 @@ async function retryDelivery(
           );
 
           const fallbackResult = await sendTelegramMessage(api, {
-            chatId: alias.chatId,
-            threadId: alias.messageThreadId ?? null,
+            chatId: route.chatId,
+            threadId: route.threadId,
             text: renderAttachmentFallback(fallbackLinks),
           });
 
@@ -470,6 +520,10 @@ async function retryDelivery(
               { deliveryLogId: deliveryLog.id, error: fallbackResult.error },
               "retry worker: image attachment fallback delivery failed",
             );
+            if (fallbackResult.failure?.migrateToChatId != null) {
+              await abortAttemptForMigration(fallbackResult.failure.migrateToChatId);
+              return;
+            }
           }
         }
       } catch (err: unknown) {

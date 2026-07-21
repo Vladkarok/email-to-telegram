@@ -28,6 +28,7 @@ import {
 } from "../../billing/limits.js";
 import { getPending, clearPending, setPending } from "../session.js";
 import { canManageChat } from "../authorization.js";
+import { withChatMigrationLock } from "../chatMigration.js";
 import { escapeHtml } from "../../utils/html.js";
 import {
   HOSTED_ALIAS_CREATE_RATE_LIMIT_MESSAGE,
@@ -281,31 +282,42 @@ export async function createEmailAlias(
     }
 
     try {
-      alias = await withUserQuotaLock(db, createdBy, async (tx) => {
-        const inboundDomain =
-          config.appMode === "hosted"
-            ? await ensureSharedInboundDomain(tx, config.hostedMailDomain!)
-            : null;
-        const fullAddress = `${candidate}@${inboundDomain?.domain ?? config.mailDomain}`;
-        const limit = await checkAliasCreateLimit(tx, createdBy);
-        if (!limit.ok) {
-          blockedLimit = limit;
-          throw new Error("quota-blocked");
-        }
+      // Lock order (alias-chat-mobility contract): the per-chat migration
+      // lock is taken BEFORE the per-user quota lock, so creation can never
+      // interleave with a migration repair of this chat. The quota lock
+      // nests as a savepoint on the same transaction.
+      alias = await withChatMigrationLock(db, chatId, async (lockTx) => {
+        // Repair may have won the race and deactivated this chat id while we
+        // waited for the lock; a new alias must never point at a dead chat.
+        const chatRow = await findChatById(lockTx, chatId);
+        if (chatRow?.isActive === false) throw new Error("chat-migrated");
 
-        await reserveHostedAliasCreateAttempt(tx, createdBy);
+        return withUserQuotaLock(lockTx, createdBy, async (tx) => {
+          const inboundDomain =
+            config.appMode === "hosted"
+              ? await ensureSharedInboundDomain(tx, config.hostedMailDomain!)
+              : null;
+          const fullAddress = `${candidate}@${inboundDomain?.domain ?? config.mailDomain}`;
+          const limit = await checkAliasCreateLimit(tx, createdBy);
+          if (!limit.ok) {
+            blockedLimit = limit;
+            throw new Error("quota-blocked");
+          }
 
-        return createAlias(tx, {
-          localPart: candidate,
-          fullAddress,
-          domainId: inboundDomain?.id ?? null,
-          chatId,
-          messageThreadId: threadId,
-          createdBy,
-          renderMode: "plaintext",
-          privacyModeEnabled: false,
-          bodyDedupEnabled: false,
-          status: "active",
+          await reserveHostedAliasCreateAttempt(tx, createdBy);
+
+          return createAlias(tx, {
+            localPart: candidate,
+            fullAddress,
+            domainId: inboundDomain?.id ?? null,
+            chatId,
+            messageThreadId: threadId,
+            createdBy,
+            renderMode: "plaintext",
+            privacyModeEnabled: false,
+            bodyDedupEnabled: false,
+            status: "active",
+          });
         });
       });
       break;
@@ -313,6 +325,10 @@ export async function createEmailAlias(
       const msg = err instanceof Error ? err.message : String(err);
       if (msg === "quota-blocked") {
         if (blockedLimit) await replyForAliasLimitFailure(ctx, blockedLimit);
+        return;
+      }
+      if (msg === "chat-migrated") {
+        await ctx.reply(messages.newemail.chatUnavailable);
         return;
       }
       if (err instanceof HostedAliasCreateRateLimitError) {

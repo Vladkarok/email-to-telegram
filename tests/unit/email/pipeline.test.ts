@@ -4,6 +4,7 @@ import {
   queueInboundEmail,
   deliverQueuedEmail,
 } from "../../../src/email/pipeline.js";
+import { insertDeliveryAttempt } from "../../../src/db/repos/deliveryAttempts.js";
 import { readFileSync } from "fs";
 import { join } from "path";
 
@@ -61,6 +62,18 @@ vi.mock("../../../src/telegram/sender.js", () => ({
   sendTelegramMessage: (...args: unknown[]): unknown => mockSendTelegram(...args),
   sendTelegramPhotos: (...args: unknown[]): unknown => mockSendTelegramPhotos(...args),
 }));
+
+const mockRepairChatMigration = vi.fn();
+vi.mock("../../../src/telegram/chatMigration.js", () => ({
+  repairChatMigration: (...args: unknown[]): unknown => mockRepairChatMigration(...args),
+}));
+
+const MIGRATE_FAILURE = {
+  code: 400,
+  description: "Bad Request: group chat was upgraded to a supergroup chat",
+  transient: false,
+  migrateToChatId: -1002222333444n,
+};
 
 vi.mock("../../../src/db/repos/attachments.js", () => ({
   createAttachment: (...args: unknown[]): unknown => mockCreateAttachment(...args),
@@ -681,6 +694,46 @@ describe("deliverQueuedEmail", () => {
     );
   });
 
+  it("delivers the whole attempt to the route from the fresh pre-send read (move after queue)", async () => {
+    // The queued job still carries the old chat (100n); the alias was moved
+    // to chat 999n / thread 7n between queueing and this delivery attempt.
+    mockFindAliasById.mockResolvedValue({ ...activeAlias, chatId: 999n, messageThreadId: 7n });
+    mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 77 });
+
+    await deliverQueuedEmail(
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
+      {} as Parameters<typeof processInboundEmail>[1],
+      {
+        alias: activeAlias,
+        parsed: {
+          messageId: "<id@test>",
+          subject: "Moved",
+          envelopeFrom: "sender@example.com",
+          headerFrom: "Sender <sender@example.com>",
+          headerFromEmail: "sender@example.com",
+          headerFromDomain: "example.com",
+          textBody: "hello",
+          htmlBody: null,
+          bodySha256: "hash",
+          attachments: [],
+          rawSizeBytes: 5,
+        },
+        deliveryLog: { id: "log-moved" } as never,
+        envelopeFrom: "sender@example.com",
+        ...PIPELINE_CONFIG,
+      },
+    );
+
+    expect(mockSendTelegram).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ chatId: 999n, threadId: 7n }),
+    );
+    expect(vi.mocked(insertDeliveryAttempt)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ targetChatId: 999n, targetThreadId: 7n }),
+    );
+  });
+
   it("uses HTML parse mode for markdown-rendered deliveries", async () => {
     mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 77 });
 
@@ -774,6 +827,160 @@ describe("deliverQueuedEmail", () => {
       expect.any(Date),
     );
     expect(mockSendTelegramPhotos).toHaveBeenCalledOnce();
+  });
+
+  it("repairs the migration and stays retryable when the text send hits a migrate error", async () => {
+    mockRepairChatMigration.mockResolvedValue({ aliasCount: 1 });
+    mockSendTelegram.mockResolvedValue({
+      ok: false,
+      error: MIGRATE_FAILURE.description,
+      failure: MIGRATE_FAILURE,
+    });
+
+    const result = await deliverQueuedEmail(
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
+      {} as Parameters<typeof processInboundEmail>[1],
+      {
+        alias: activeAlias,
+        parsed: {
+          messageId: "<id@test>",
+          subject: "Hi",
+          envelopeFrom: "sender@example.com",
+          headerFrom: "Sender <sender@example.com>",
+          headerFromEmail: "sender@example.com",
+          headerFromDomain: "example.com",
+          textBody: "hello",
+          htmlBody: null,
+          bodySha256: "hash",
+          attachments: [],
+          rawSizeBytes: 5,
+        },
+        deliveryLog: { id: "log-migrate" } as never,
+        envelopeFrom: "sender@example.com",
+        ...PIPELINE_CONFIG,
+      },
+    );
+
+    expect(result).toEqual({ ok: false, reason: "send_failed" });
+    expect(mockRepairChatMigration).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      100n,
+      -1002222333444n,
+    );
+    // Retryable, never permanently failed: repair failure must not burn the
+    // budget or trigger a premature refund.
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(expect.anything(), "log-migrate", "failed");
+    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "log-migrate",
+      "permanently_failed",
+    );
+  });
+
+  it("still returns send_failed (retryable) when the migrate repair itself fails", async () => {
+    mockRepairChatMigration.mockRejectedValue(new Error("repair exploded"));
+    mockSendTelegram.mockResolvedValue({
+      ok: false,
+      error: MIGRATE_FAILURE.description,
+      failure: MIGRATE_FAILURE,
+    });
+
+    const result = await deliverQueuedEmail(
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
+      {} as Parameters<typeof processInboundEmail>[1],
+      {
+        alias: activeAlias,
+        parsed: {
+          messageId: "<id@test>",
+          subject: "Hi",
+          envelopeFrom: "sender@example.com",
+          headerFrom: "Sender <sender@example.com>",
+          headerFromEmail: "sender@example.com",
+          headerFromDomain: "example.com",
+          textBody: "hello",
+          htmlBody: null,
+          bodySha256: "hash",
+          attachments: [],
+          rawSizeBytes: 5,
+        },
+        deliveryLog: { id: "log-migrate-repair-fail" } as never,
+        envelopeFrom: "sender@example.com",
+        ...PIPELINE_CONFIG,
+      },
+    );
+
+    expect(result).toEqual({ ok: false, reason: "send_failed" });
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(
+      expect.anything(),
+      "log-migrate-repair-fail",
+      "failed",
+    );
+  });
+
+  it("aborts retryably when photo sends hit a migrate error, so the retry delivers it whole", async () => {
+    mockRepairChatMigration.mockResolvedValue({ aliasCount: 1 });
+    mockCreateAttachment.mockResolvedValueOnce({ id: "att-image" });
+    mockSendTelegram.mockResolvedValueOnce({ ok: true, telegramMessageId: 99 });
+    mockSendTelegramPhotos.mockImplementationOnce((_api, opts: { photos: unknown[] }) =>
+      Promise.resolve({
+        ok: false,
+        failedPhotos: opts.photos,
+        failure: MIGRATE_FAILURE,
+      }),
+    );
+
+    const result = await deliverQueuedEmail(
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
+      {} as Parameters<typeof processInboundEmail>[1],
+      {
+        alias: activeAlias,
+        parsed: {
+          messageId: "<id@test>",
+          subject: "Hi",
+          envelopeFrom: "sender@example.com",
+          headerFrom: "Sender <sender@example.com>",
+          headerFromEmail: "sender@example.com",
+          headerFromDomain: "example.com",
+          textBody: "hello",
+          htmlBody: null,
+          bodySha256: "hash",
+          attachments: [
+            {
+              filename: "image.png",
+              contentType: "image/png",
+              sizeBytes: 10,
+              sha256: "img-hash",
+              content: Buffer.from("image-bytes"),
+            },
+          ],
+          rawSizeBytes: 10,
+        },
+        deliveryLog: { id: "log-photo-migrate" } as never,
+        envelopeFrom: "sender@example.com",
+        ...PIPELINE_CONFIG,
+      },
+    );
+
+    // The text landed before the upgrade, but the attachments did not. Rather
+    // than keep the delivery `delivered` and silently lose them, the attempt
+    // is handed back as retryable — the retry re-reads the route and sends the
+    // whole email to the new chat. The duplicate text is the accepted cost.
+    expect(result).toEqual({ ok: false, reason: "chat_migrated" });
+    expect(mockRepairChatMigration).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      100n,
+      -1002222333444n,
+    );
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(
+      expect.anything(),
+      "log-photo-migrate",
+      "failed",
+    );
+    // No fallback message to the dead old route, no orphan links.
+    expect(mockSendTelegram).toHaveBeenCalledTimes(1);
+    expect(mockCreateAttachmentLink).not.toHaveBeenCalled();
   });
 
   it("sends fallback download links when Telegram photo upload fails", async () => {

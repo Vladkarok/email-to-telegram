@@ -35,6 +35,7 @@ interface MockRows {
   deliveryAttempts?: unknown[];
   attachments?: unknown[];
   manualBillingEvents?: unknown[];
+  aliasMoveEvents?: unknown[];
 }
 
 function makeDb(userRow: Record<string, unknown> | null, rows: MockRows = {}) {
@@ -42,7 +43,8 @@ function makeDb(userRow: Record<string, unknown> | null, rows: MockRows = {}) {
   // 1: user lookup
   // 2: aliases (awaited before the parallel batch)
   // 3-11: allowRules, inboundDomains, chats, usageMonths, storageUsage,
-  //       deliveryLogs, deliveryAttempts, attachments, manualBillingEvents
+  //       deliveryLogs, deliveryAttempts, attachments, manualBillingEvents,
+  //       aliasMoveEvents
   const selectResponses: unknown[][] = [
     userRow ? [userRow] : [],
     rows.aliases ?? [],
@@ -55,6 +57,7 @@ function makeDb(userRow: Record<string, unknown> | null, rows: MockRows = {}) {
     rows.deliveryAttempts ?? [],
     rows.attachments ?? [],
     rows.manualBillingEvents ?? [],
+    rows.aliasMoveEvents ?? [],
   ];
   let call = 0;
   const select = vi.fn(() => {
@@ -239,5 +242,105 @@ describe("exportHostedUserData", () => {
       },
       manualBillingEvents: [{ id: "event-1", paymentReference: "wise-1" }],
     });
+  });
+
+  it("exports the requester's own move events in full", async () => {
+    const db = makeDb(
+      {
+        id: 1n,
+        username: "owner",
+        locale: "en",
+        planCode: "free",
+        subscriptionStatus: "free",
+        createdAt: new Date("2025-01-01T00:00:00.000Z"),
+        updatedAt: new Date("2025-01-02T00:00:00.000Z"),
+      },
+      {
+        aliasMoveEvents: [
+          {
+            id: "evt-1",
+            aliasId: "alias-1",
+            aliasOwnerId: 1n,
+            authzPath: "admin",
+            oldChatId: -100n,
+            newChatId: -200n,
+            oldThreadId: 7n,
+            newThreadId: null,
+            outcome: "succeeded",
+            createdAt: new Date("2026-05-02T00:00:00Z"),
+          },
+        ],
+      },
+    );
+
+    const result = await exportHostedUserData(db, 1n);
+
+    expect(result.aliasMoveEvents).toEqual([
+      {
+        id: "evt-1",
+        role: "owner",
+        aliasId: "alias-1",
+        authzPath: "admin",
+        oldChatId: "-100",
+        newChatId: "-200",
+        oldThreadId: "7",
+        newThreadId: null,
+        outcome: "succeeded",
+        createdAt: "2026-05-02T00:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("redacts a third party's alias and routing ids from actor-role rows", async () => {
+    // The requester moved SOMEONE ELSE'S alias. They are entitled to know they
+    // performed the action, not to a copy of the other user's routing.
+    const db = makeDb(
+      {
+        id: 1n,
+        username: "actor",
+        locale: "en",
+        planCode: "free",
+        subscriptionStatus: "free",
+        createdAt: new Date("2025-01-01T00:00:00.000Z"),
+        updatedAt: new Date("2025-01-02T00:00:00.000Z"),
+      },
+      {
+        aliasMoveEvents: [
+          {
+            id: "evt-2",
+            aliasId: "someone-elses-alias",
+            aliasOwnerId: 999n,
+            authzPath: "admin",
+            oldChatId: -100n,
+            newChatId: -200n,
+            oldThreadId: 7n,
+            newThreadId: 8n,
+            outcome: "succeeded",
+            createdAt: new Date("2026-05-03T00:00:00Z"),
+          },
+        ],
+      },
+    );
+
+    const result = await exportHostedUserData(db, 1n);
+
+    expect(result.aliasMoveEvents).toEqual([
+      {
+        id: "evt-2",
+        role: "actor",
+        aliasId: null,
+        authzPath: "admin",
+        oldChatId: null,
+        newChatId: null,
+        oldThreadId: null,
+        newThreadId: null,
+        outcome: "succeeded",
+        createdAt: "2026-05-03T00:00:00.000Z",
+      },
+    ]);
+    // Neither user id is exported on any row, in either role.
+    const serialized = JSON.stringify(result.aliasMoveEvents);
+    expect(serialized).not.toContain("999");
+    expect(serialized).not.toContain("someone-elses-alias");
   });
 });

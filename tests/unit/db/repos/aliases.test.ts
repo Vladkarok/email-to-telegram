@@ -2,28 +2,19 @@ import { describe, expect, it, vi } from "vitest";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
 import {
-  softDeleteAlias,
+  buildAliasTombstoneSet,
   findRecentAliasTombstone,
   deleteExpiredAliasTombstones,
+  repointAliasesToChat,
 } from "../../../../src/db/repos/aliases.js";
 import { emailAddresses } from "../../../../src/db/schema.js";
 
 const dialect = new PgDialect();
 
-describe("softDeleteAlias", () => {
-  it("renames local_part and full_address with a tombstone suffix in one update", async () => {
-    const where = vi.fn().mockResolvedValue(undefined);
-    const set = vi.fn(() => ({ where }));
-    const update = vi.fn(() => ({ set }));
-    const db = { update } as unknown as Parameters<typeof softDeleteAlias>[0];
+describe("buildAliasTombstoneSet", () => {
+  it("renames local_part and full_address with a tombstone suffix in one update", () => {
+    const setArg = buildAliasTombstoneSet();
 
-    await softDeleteAlias(db, "uuid-1");
-
-    expect(update).toHaveBeenCalledWith(emailAddresses);
-    expect(set).toHaveBeenCalledOnce();
-    const [setArg] = set.mock.calls[0] as [
-      { localPart: SQL; fullAddress: SQL; status: string; updatedAt: Date },
-    ];
     expect(setArg.status).toBe("deleted");
     expect(setArg.updatedAt).toBeInstanceOf(Date);
 
@@ -40,6 +31,51 @@ describe("softDeleteAlias", () => {
       /split_part\((?:"email_addresses"\.)?"full_address", '@', 2\)/,
     );
     expect(fullAddressSql.params).toContain(marker);
+  });
+});
+
+describe("repointAliasesToChat", () => {
+  function makeUpdateDb(rows: unknown[]) {
+    const returning = vi.fn().mockResolvedValue(rows);
+    const where = vi.fn(() => ({ returning }));
+    const set = vi.fn(() => ({ where }));
+    const update = vi.fn(() => ({ set }));
+    return {
+      db: { update } as unknown as Parameters<typeof repointAliasesToChat>[0],
+      update,
+      set,
+      returning,
+    };
+  }
+
+  it("re-points every alias of the old chat and returns the affected rows", async () => {
+    const rows = [
+      { id: "a-1", createdBy: 7n, messageThreadId: null },
+      { id: "a-2", createdBy: 8n, messageThreadId: 12n },
+    ];
+    const { db, update, set } = makeUpdateDb(rows);
+
+    const affected = await repointAliasesToChat(db, -100123n, -1002222333444n);
+
+    // The caller needs owner + prior thread per alias to write the audit.
+    expect(affected).toEqual(rows);
+    expect(update).toHaveBeenCalledWith(emailAddresses);
+    const [setArg] = set.mock.calls[0] as [
+      { chatId: bigint; routingVersion: SQL; updatedAt: Date },
+    ];
+    expect(setArg.chatId).toBe(-1002222333444n);
+    expect(setArg.updatedAt).toBeInstanceOf(Date);
+  });
+
+  it("bumps routing_version so confirmations authorized against the old id lose", async () => {
+    const { db, set } = makeUpdateDb([]);
+
+    await repointAliasesToChat(db, -100123n, -1002222333444n);
+
+    const [setArg] = set.mock.calls[0] as [{ routingVersion: SQL }];
+    const versionSql = dialect.sqlToQuery(setArg.routingVersion).sql;
+    expect(versionSql).toContain('"routing_version"');
+    expect(versionSql).toContain("+");
   });
 });
 

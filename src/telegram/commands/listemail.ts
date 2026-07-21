@@ -5,8 +5,9 @@ import { listAliasesByChat, findAliasesByCreator } from "../../db/repos/aliases.
 import { findChatById } from "../../db/repos/chats.js";
 import type { EmailAddress } from "../../db/schema.js";
 import { canManageAlias, canManageChat } from "../authorization.js";
+import { listRecoverableOrphans } from "../orphanRecovery.js";
 import { escapeHtml } from "../../utils/html.js";
-import { CB_ALIAS_DETAIL } from "../callbacks.js";
+import { CB_ALIAS_DETAIL, CB_ALIAS_ORPHAN } from "../callbacks.js";
 import { getMessages, resolveLocale } from "../../i18n/index.js";
 
 export async function listemailHandler(ctx: Context): Promise<void> {
@@ -53,8 +54,30 @@ async function listAllChats(ctx: Context): Promise<void> {
   const aliases = await findAliasesByCreator(db, BigInt(ctx.from!.id));
   const visibleAliases = await filterVisibleAliases(ctx, db, aliases);
 
-  if (visibleAliases.length === 0) {
+  // Aliases whose chat is definitively dead are invisible to canManageAlias
+  // (the membership check errors out), so they are listed separately with
+  // exactly two recovery actions. Only the creator sees them.
+  //
+  // An orphan is by construction an alias that filterVisibleAliases already
+  // rejected, so only those are worth probing — probing the visible ones too
+  // would cost a getChatMember round-trip per live chat on every /listemail.
+  const visibleIds = new Set(visibleAliases.map((alias) => alias.id));
+  const orphanCandidates = aliases.filter((alias) => !visibleIds.has(alias.id));
+  const orphans =
+    orphanCandidates.length === 0
+      ? []
+      : await listRecoverableOrphans(db, ctx.api, ctx.from!.id, orphanCandidates);
+
+  if (visibleAliases.length === 0 && orphans.length === 0) {
     await ctx.reply(messages.listemail.noAliases);
+    return;
+  }
+
+  if (visibleAliases.length === 0) {
+    await ctx.reply(renderOrphanSection(orphans, messages), {
+      parse_mode: "HTML",
+      reply_markup: buildOrphanButtons(orphans, messages),
+    });
     return;
   }
 
@@ -76,10 +99,40 @@ async function listAllChats(ctx: Context): Promise<void> {
   }
 
   const keyboard = buildAliasButtons(visibleAliases);
+  if (orphans.length > 0) {
+    sections.push(renderOrphanSection(orphans, messages));
+    for (const orphan of orphans) {
+      keyboard
+        .text(messages.listemail.orphanButton(orphan.localPart), CB_ALIAS_ORPHAN.build(orphan.id))
+        .row();
+    }
+  }
+
   await ctx.reply(
     `${messages.listemail.allAliases(visibleAliases.length)}\n\n${sections.join("\n\n")}\n\n${messages.listemail.manageHint}`,
     { parse_mode: "HTML", reply_markup: keyboard },
   );
+}
+
+function renderOrphanSection(
+  orphans: EmailAddress[],
+  messages: ReturnType<typeof getMessages>,
+): string {
+  const lines = orphans.map((a) => `  ⚠️ <code>${escapeHtml(a.fullAddress)}</code>`);
+  return `${messages.listemail.orphanHeader}\n${lines.join("\n")}\n\n${messages.listemail.orphanHint}`;
+}
+
+function buildOrphanButtons(
+  orphans: EmailAddress[],
+  messages: ReturnType<typeof getMessages>,
+): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  for (const orphan of orphans) {
+    keyboard
+      .text(messages.listemail.orphanButton(orphan.localPart), CB_ALIAS_ORPHAN.build(orphan.id))
+      .row();
+  }
+  return keyboard;
 }
 
 function statusIcon(status: string): string {

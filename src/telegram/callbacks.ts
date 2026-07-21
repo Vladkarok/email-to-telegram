@@ -78,16 +78,65 @@ export const CB_ALIAS_DELETE = {
   build: (aliasId: string): string => `ad:${aliasId}`,
 } as const;
 
-/** Confirm alias delete — adc:{aliasId} */
+/**
+ * Confirm alias delete — adc:{aliasId}:{routingVersion}
+ *
+ * The version is baked in when the confirmation screen is rendered. Re-reading
+ * it at click time would defeat the CAS entirely: the delete would always
+ * match current state and could silently win a move-vs-delete race.
+ */
 export const CB_ALIAS_DELETE_CONFIRM = {
-  pattern: /^adc:([0-9a-f-]{36})$/,
-  build: (aliasId: string): string => `adc:${aliasId}`,
+  pattern: /^adc:([0-9a-f-]{36}):(\d+)$/,
+  build: (aliasId: string, version: number): string => `adc:${aliasId}:${version}`,
 } as const;
 
 /** Cancel alias delete — adx:{aliasId} */
 export const CB_ALIAS_DELETE_CANCEL = {
   pattern: /^adx:([0-9a-f-]{36})$/,
   build: (aliasId: string): string => `adx:${aliasId}`,
+} as const;
+
+/** Orphan recovery menu for an unreachable-chat alias — orp:{aliasId} */
+export const CB_ALIAS_ORPHAN = {
+  pattern: /^orp:([0-9a-f-]{36})$/,
+  build: (aliasId: string): string => `orp:${aliasId}`,
+} as const;
+
+/** Confirm orphan delete — orpd:{aliasId}:{routingVersion} */
+export const CB_ALIAS_ORPHAN_DELETE = {
+  pattern: /^orpd:([0-9a-f-]{36}):(\d+)$/,
+  build: (aliasId: string, version: number): string => `orpd:${aliasId}:${version}`,
+} as const;
+
+/** Open move picker — mv:{aliasId} */
+export const CB_ALIAS_MOVE = {
+  pattern: /^mv:([0-9a-f-]{36})$/,
+  build: (aliasId: string): string => `mv:${aliasId}`,
+} as const;
+
+/**
+ * Move target chosen — mt:{aliasId}:{chatId}:{routingVersion}
+ *
+ * The routing version travels with the callback so the confirmation stays
+ * bound to the alias state it was authorized against.
+ */
+export const CB_ALIAS_MOVE_TARGET = {
+  pattern: /^mt:([0-9a-f-]{36}):(-?\d+):(\d+)$/,
+  build: (aliasId: string, chatId: bigint | string, version: number): string =>
+    `mt:${aliasId}:${chatId}:${version}`,
+} as const;
+
+/** Confirmed move — mc:{aliasId}:{chatId}:{routingVersion} */
+export const CB_ALIAS_MOVE_CONFIRM = {
+  pattern: /^mc:([0-9a-f-]{36}):(-?\d+):(\d+)$/,
+  build: (aliasId: string, chatId: bigint | string, version: number): string =>
+    `mc:${aliasId}:${chatId}:${version}`,
+} as const;
+
+/** Deliver in the current forum topic — tp:{aliasId}:{routingVersion} */
+export const CB_ALIAS_SET_TOPIC = {
+  pattern: /^tp:([0-9a-f-]{36}):(\d+)$/,
+  build: (aliasId: string, version: number): string => `tp:${aliasId}:${version}`,
 } as const;
 
 /** Alias settings — ac:{aliasId} */

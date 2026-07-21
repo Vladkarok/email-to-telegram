@@ -143,6 +143,8 @@ ${safetyNotes}
       "❌ Invalid name. Only lowercase letters, digits, dots, hyphens and underscores are allowed.",
     sharedDomainUnavailable: "⛔ Your hosted account is not ready for alias creation right now.",
     uniqueNameFailed: "❌ Could not pick a unique alias name. Try a different one.",
+    chatUnavailable:
+      "❌ This chat is currently unavailable — it may have just been upgraded to a supergroup. Please try again in a moment.",
     nameTaken: "❌ That name is already taken. Try a different one.",
     nameCooldown:
       "❌ That name was recently deleted by another user and is cooling down. Try again later or pick a different name.",
@@ -162,6 +164,13 @@ ${safetyNotes}
     aliasesForChat: (count: number) => `📬 Aliases for this chat (${count}):`,
     allAliases: (count: number) => `📬 All your aliases (${count}):`,
     manageHint: "<i>Tap an alias below to manage it.</i>",
+    orphanHeader: "<b>⚠️ Unreachable chat</b>",
+    orphanHint:
+      "<i>The bot is no longer in the chat these deliver to. You can move them somewhere else or delete them to free the name.</i>",
+    orphanButton: (localPart: string) => `⚠️ ${localPart}`,
+    orphanMenuHeader: (address: string) =>
+      `⚠️ <code>${address}</code>\n\nIts chat is no longer reachable, so mail cannot be delivered. Move it to another chat, or delete it to free the name.`,
+    orphanUnavailable: "This alias is reachable again — open it from the list.",
   },
   aliasMenu: {
     createFirstButton: "📧 Create First Email",
@@ -207,6 +216,39 @@ ${safetyNotes}
       `⚠️ Delete this email alias?\n\n📧 <code>${address}</code>\n\nFuture emails sent to this address will be rejected.`,
     deleteConfirmYes: "🗑 Yes, delete",
     deleteConfirmCancel: "⬅️ Keep alias",
+    moveButton: "📦 Move to another chat",
+    moveToOwnDm: "👤 My private chat with the bot",
+    moveOwnDmTitle: "your private chat",
+    movePickerHeader: (address: string) =>
+      `📦 Move <code>${address}</code>\n\nPick where its mail should arrive from now on. The address itself does not change.`,
+    moveNoTargets: (address: string) =>
+      `📦 Move <code>${address}</code>\n\nNo other chats available. Add the bot to a group or channel you administer, then try again.`,
+    moveConfirmHeader: (address: string, target: string) =>
+      `📦 Move <code>${address}</code> to <b>${target}</b>?\n\nFuture mail arrives there. If the target is a forum, delivery starts in General — you can pick a topic afterwards.`,
+    moveConfirmYes: "📦 Yes, move it",
+    moveConfirmCancel: "⬅️ Cancel",
+    moveDone: (address: string, target: string) =>
+      `✅ <code>${address}</code> now delivers to <b>${target}</b>.`,
+    moveDeniedToast: "⛔ You can no longer manage this alias.",
+    moveDenied: (reason: string) => {
+      const detail: Record<string, string> = {
+        actor_not_admin: "You are not an administrator of that chat.",
+        not_admin: "The bot must be an administrator of that channel.",
+        cannot_post: "The bot cannot post messages in that channel.",
+        not_member: "The bot is not a member of that chat.",
+        cannot_send: "The bot is not allowed to send messages there.",
+        foreign_dm: "Mail can only be moved to your own private chat.",
+        dm_not_here:
+          "Open this alias from our private chat first, then move it there — that way I know I can reach you.",
+        probe_failed: "That chat could not be checked right now. Try again shortly.",
+        chat_migrated:
+          "That chat was just upgraded to a supergroup, so its address changed. Open the move menu again to pick it fresh.",
+      };
+      return `⛔ Move cancelled.\n\n${detail[reason] ?? "That chat cannot receive mail."}`;
+    },
+    topicButton: "📌 Deliver in this topic",
+    topicSet: "✅ Mail for this alias now arrives in this topic.",
+    topicCleared: "✅ Mail for this alias now arrives in General.",
   },
   allowRulesMenu: {
     addRuleButton: "➕ Add Rule",
@@ -241,6 +283,8 @@ ${safetyNotes}
     resumedToast: "Resumed.",
     deletedToast: "Deleted.",
     keptToast: "Kept.",
+    routingChanged:
+      "⚠️ This alias changed while you were deciding — it may have been moved to another chat. Nothing was done. Open it again to see its current state.",
     cancelledToast: "Cancelled.",
   },
   settingsCommand: {
