@@ -31,6 +31,7 @@ export const uk = {
     aliasNotFoundShort: "Аліас не знайдено.",
     chatNotFoundShort: "Чат не знайдено.",
     ruleNotFoundShort: "Правило не знайдено.",
+    closeButton: "✖ Закрити",
     languageHint:
       "🌐 Також доступно: English, Français, Italiano — використайте /language, щоб переключити.",
   },
@@ -257,6 +258,7 @@ ${safetyNotes}
       return `⛔ Переміщення скасовано.\n\n${detail[reason] ?? "Той чат не може отримувати пошту."}`;
     },
     topicButton: "📌 Доставляти в цю тему",
+    topicGeneralButton: "📤 Доставляти в «Загальне»",
     topicSet: "✅ Пошта для цього аліаса тепер надходить у цю тему.",
     topicCleared: "✅ Пошта для цього аліаса тепер надходить у «Загальне».",
     deleteConfirmYes: "🗑 Так, видалити",

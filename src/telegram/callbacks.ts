@@ -139,6 +139,23 @@ export const CB_ALIAS_SET_TOPIC = {
   build: (aliasId: string, version: number): string => `tp:${aliasId}:${version}`,
 } as const;
 
+/** Deliver in General (clear the forum topic) — tg:{aliasId}:{routingVersion} */
+export const CB_ALIAS_CLEAR_TOPIC = {
+  pattern: /^tg:([0-9a-f-]{36}):(\d+)$/,
+  build: (aliasId: string, version: number): string => `tg:${aliasId}:${version}`,
+} as const;
+
+/**
+ * Dismiss (delete) a menu message — mx:{openerUserId}
+ *
+ * The opener's id is carried so only they can close the menu; in a group any
+ * member could otherwise dismiss someone else's menu.
+ */
+export const CB_MENU_CLOSE = {
+  pattern: /^mx:(\d+)$/,
+  build: (openerUserId: number | string): string => `mx:${openerUserId}`,
+} as const;
+
 /** Alias settings — ac:{aliasId} */
 export const CB_ALIAS_SETTINGS = {
   pattern: /^ac:([0-9a-f-]{36})$/,

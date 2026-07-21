@@ -161,6 +161,52 @@ describe("editAliasDetailMenu", () => {
     expect(text).not.toContain("/listemail");
   });
 
+  it("offers 'Deliver in General' with the routing version when the alias is in a topic", async () => {
+    mockFindAliasById.mockResolvedValue({ ...fakeAlias, messageThreadId: 7n, routingVersion: 4 });
+    mockListAllowRules.mockResolvedValue([]);
+    const ctx = createMockCtx({ chatType: "private" });
+
+    await editAliasDetailMenu(ctx, fakeDb, fakeAlias.id);
+
+    const [, opts] = (ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      { reply_markup: { inline_keyboard: { text: string; callback_data: string }[][] } },
+    ];
+    const buttons = opts.reply_markup.inline_keyboard.flat();
+    const general = buttons.find((b) => b.text.includes("General"));
+    expect(general?.callback_data).toBe(`tg:${fakeAlias.id}:4`);
+  });
+
+  it("does not offer 'Deliver in General' when the alias is already in General", async () => {
+    mockFindAliasById.mockResolvedValue({ ...fakeAlias, messageThreadId: null });
+    mockListAllowRules.mockResolvedValue([]);
+    const ctx = createMockCtx({ chatType: "private" });
+
+    await editAliasDetailMenu(ctx, fakeDb, fakeAlias.id);
+
+    const [, opts] = (ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      { reply_markup: { inline_keyboard: { callback_data: string }[][] } },
+    ];
+    const data = opts.reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
+    expect(data.some((d) => d.startsWith("tg:"))).toBe(false);
+  });
+
+  it("shows a Close button on the detail menu", async () => {
+    mockFindAliasById.mockResolvedValue(fakeAlias);
+    mockListAllowRules.mockResolvedValue([]);
+    const ctx = createMockCtx({ chatType: "private" });
+
+    await editAliasDetailMenu(ctx, fakeDb, fakeAlias.id);
+
+    const [, opts] = (ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      { reply_markup: { inline_keyboard: { callback_data: string }[][] } },
+    ];
+    const data = opts.reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
+    expect(data).toContain("mx:123456789");
+  });
+
   it("shows Pause button for active alias", async () => {
     mockFindAliasById.mockResolvedValue({ ...fakeAlias, status: "active" });
     mockListAllowRules.mockResolvedValue([]);

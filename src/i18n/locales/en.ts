@@ -24,6 +24,7 @@ export const en = {
     aliasNotFoundShort: "Alias not found.",
     chatNotFoundShort: "Chat not found.",
     ruleNotFoundShort: "Rule not found.",
+    closeButton: "✖ Close",
     languageHint: "🌐 Also available in Українська, Français, Italiano — use /language to switch.",
   },
   start: {
@@ -251,6 +252,7 @@ ${safetyNotes}
       return `⛔ Move cancelled.\n\n${detail[reason] ?? "That chat cannot receive mail."}`;
     },
     topicButton: "📌 Deliver in this topic",
+    topicGeneralButton: "📤 Deliver in General",
     topicSet: "✅ Mail for this alias now arrives in this topic.",
     topicCleared: "✅ Mail for this alias now arrives in General.",
   },
