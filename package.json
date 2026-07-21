@@ -63,6 +63,12 @@
     "typescript-eslint": "^8.58.0",
     "vitest": "^4.1.7"
   },
+  "overrides": {
+    "esbuild": "^0.28.1",
+    "@esbuild-kit/core-utils": {
+      "esbuild": "0.18.20"
+    }
+  },
   "lint-staged": {
     "*.{ts,tsx}": [
       "eslint --fix",
