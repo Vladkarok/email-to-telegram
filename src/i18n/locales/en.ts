@@ -224,11 +224,15 @@ ${safetyNotes}
     moveNoTargets: (address: string) =>
       `📦 Move <code>${address}</code>\n\nNo other chats available. Add the bot to a group or channel you administer, then try again.`,
     moveConfirmHeader: (address: string, target: string) =>
-      `📦 Move <code>${address}</code> to <b>${target}</b>?\n\nFuture mail arrives there. If the target is a forum, delivery starts in General — you can pick a topic afterwards.`,
+      `📦 Move <code>${address}</code> to <b>${target}</b>?\n\nFuture mail arrives there. A forum starts in General; you can send it to a specific topic afterwards.`,
     moveConfirmYes: "📦 Yes, move it",
     moveConfirmCancel: "⬅️ Cancel",
     moveDone: (address: string, target: string) =>
       `✅ <code>${address}</code> now delivers to <b>${target}</b>.`,
+    // Shared how-to shown after a move into a supergroup and on the alias
+    // detail menu. There is no topic picker (Telegram gives bots no way to
+    // list a forum's topics), so the only path is to act from inside the topic.
+    topicHowTo: `💡 <b>Forum with topics?</b> Mail arrives in General. To deliver into a specific topic: open that topic, send <code>/listemail</code> there, tap the alias, then tap “📌 Deliver in this topic”.`,
     moveDeniedToast: "⛔ You can no longer manage this alias.",
     moveDenied: (reason: string) => {
       const detail: Record<string, string> = {

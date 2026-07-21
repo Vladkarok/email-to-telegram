@@ -4,6 +4,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../../db/schema.js";
 import type { EmailAddress } from "../../db/schema.js";
 import { listAliasesByChat, findAliasById } from "../../db/repos/aliases.js";
+import { findChatById } from "../../db/repos/chats.js";
 import { listAllowRules } from "../../db/repos/allowRules.js";
 import { canManageAlias } from "../authorization.js";
 import { escapeHtml } from "../../utils/html.js";
@@ -120,7 +121,7 @@ async function buildAliasDetailMenu(
       ? rules.map((r) => `• ${allowRuleIcon()} ${escapeHtml(r.matchValue)}`).join("\n")
       : messages.aliasMenu.allowRulesEmpty;
 
-  const text = messages.aliasMenu.detailLines({
+  const detailText = messages.aliasMenu.detailLines({
     label: alias.label ? escapeHtml(alias.label) : null,
     address: escapeHtml(alias.fullAddress),
     statusIcon: statusIcon(alias.status),
@@ -130,6 +131,17 @@ async function buildAliasDetailMenu(
     bodyDedupOn: alias.bodyDedupEnabled,
     rulesText,
   });
+
+  const currentThreadId = ctx.callbackQuery?.message?.message_thread_id ?? null;
+
+  // Persistent topic hint: the alias lives in a supergroup (topic-capable),
+  // is currently in General, and this menu is NOT open inside a topic — so
+  // the "📌 Deliver in this topic" button below cannot appear yet. A brand
+  // new user has no other way to discover the from-inside-the-topic flow.
+  const chat = await findChatById(db, alias.chatId);
+  const showTopicHint =
+    chat?.type === "supergroup" && alias.messageThreadId === null && currentThreadId === null;
+  const text = showTopicHint ? `${detailText}\n\n${messages.aliasMenu.topicHowTo}` : detailText;
 
   const keyboard = new InlineKeyboard();
 
@@ -146,7 +158,6 @@ async function buildAliasDetailMenu(
   keyboard.text(messages.aliasMenu.moveButton, CB_ALIAS_MOVE.build(alias.id)).row();
   // Only meaningful when this menu was opened inside a forum topic: the
   // callback message's thread is the topic the user is pointing at.
-  const currentThreadId = ctx.callbackQuery?.message?.message_thread_id ?? null;
   if (
     currentThreadId !== null &&
     (alias.messageThreadId === null || BigInt(currentThreadId) !== alias.messageThreadId)
