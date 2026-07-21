@@ -25,6 +25,7 @@ export const fr = {
     aliasNotFoundShort: "Alias introuvable.",
     chatNotFoundShort: "Chat introuvable.",
     ruleNotFoundShort: "Règle introuvable.",
+    closeButton: "✖ Fermer",
     languageHint:
       "🌐 Également disponible en English, Українська, Italiano — utilisez /language pour changer.",
   },
@@ -252,6 +253,7 @@ ${safetyNotes}
       return `⛔ Déplacement annulé.\n\n${detail[reason] ?? "Cette discussion ne peut pas recevoir de courrier."}`;
     },
     topicButton: "📌 Livrer dans ce sujet",
+    topicGeneralButton: "📤 Livrer dans « Général »",
     topicSet: "✅ Le courrier de cet alias arrive maintenant dans ce sujet.",
     topicCleared: "✅ Le courrier de cet alias arrive maintenant dans « Général ».",
     deleteConfirmYes: "🗑 Oui, supprimer",

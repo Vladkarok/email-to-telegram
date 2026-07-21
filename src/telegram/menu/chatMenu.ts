@@ -8,7 +8,13 @@ import { findUserById } from "../../db/repos/users.js";
 import { getEffectivePlan } from "../../billing/limits.js";
 import { countActiveAliasesByUser } from "../../db/repos/aliases.js";
 import { escapeHtml } from "../../utils/html.js";
-import { CB_CHAT_SELECTION, CB_CHAT_MENU, CB_NEW_EMAIL, CB_ALIAS_LIST } from "../callbacks.js";
+import {
+  CB_CHAT_SELECTION,
+  CB_CHAT_MENU,
+  CB_NEW_EMAIL,
+  CB_ALIAS_LIST,
+  CB_MENU_CLOSE,
+} from "../callbacks.js";
 import { getMessages, resolveLocale, type Locale } from "../../i18n/index.js";
 
 type Db = NodePgDatabase<typeof schema>;
@@ -61,6 +67,7 @@ export async function sendChatSelectionMenu(
   for (const chat of chats) {
     keyboard.text(`${chatIcon(chat.type)} ${chat.title}`, CB_CHAT_MENU.build(chat.id)).row();
   }
+  keyboard.text(messages.common.closeButton, CB_MENU_CLOSE.build(ctx.from.id));
 
   const footer = await buildPlanFooter(db, ctx.from.id, locale);
   const body = footer
@@ -85,6 +92,7 @@ export async function editChatSelectionMenu(ctx: Context, db: Db): Promise<void>
   for (const chat of chats) {
     keyboard.text(`${chatIcon(chat.type)} ${chat.title}`, CB_CHAT_MENU.build(chat.id)).row();
   }
+  keyboard.text(messages.common.closeButton, CB_MENU_CLOSE.build(ctx.from.id));
 
   const footer = await buildPlanFooter(db, ctx.from.id, locale);
   const body = footer

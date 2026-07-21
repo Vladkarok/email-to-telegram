@@ -26,6 +26,8 @@ import {
   CB_ALIAS_LABEL_CLEAR,
   CB_ALIAS_MOVE,
   CB_ALIAS_SET_TOPIC,
+  CB_ALIAS_CLEAR_TOPIC,
+  CB_MENU_CLOSE,
 } from "../callbacks.js";
 
 type Db = NodePgDatabase<typeof schema>;
@@ -63,7 +65,9 @@ export async function editAliasListMenu(
     }
   }
 
-  keyboard.text(messages.aliasMenu.backButton, CB_CHAT_MENU.build(chatId));
+  keyboard
+    .text(messages.aliasMenu.backButton, CB_CHAT_MENU.build(chatId))
+    .text(messages.common.closeButton, CB_MENU_CLOSE.build(ctx.from?.id ?? 0));
 
   const header =
     aliases.length === 0
@@ -132,7 +136,12 @@ async function buildAliasDetailMenu(
     rulesText,
   });
 
-  const currentThreadId = ctx.callbackQuery?.message?.message_thread_id ?? null;
+  // The topic the menu is being shown in: a callback edits the menu message
+  // (callbackQuery.message), while a fresh send after a text flow (e.g. a
+  // label edit) inherits the command's thread (ctx.message). Missing the
+  // latter would mis-show the topic hint after such a flow inside a topic.
+  const currentThreadId =
+    ctx.callbackQuery?.message?.message_thread_id ?? ctx.message?.message_thread_id ?? null;
 
   // Persistent topic hint: the alias lives in a supergroup (topic-capable),
   // is currently in General, and this menu is NOT open inside a topic — so
@@ -156,8 +165,9 @@ async function buildAliasDetailMenu(
     .text(messages.aliasMenu.settingsButton, CB_ALIAS_SETTINGS.build(alias.id))
     .row();
   keyboard.text(messages.aliasMenu.moveButton, CB_ALIAS_MOVE.build(alias.id)).row();
-  // Only meaningful when this menu was opened inside a forum topic: the
-  // callback message's thread is the topic the user is pointing at.
+  // "Deliver in this topic" — only when the menu is open inside a forum topic
+  // the alias is not already pointed at (the callback message's thread is the
+  // topic the user is pointing at).
   if (
     currentThreadId !== null &&
     (alias.messageThreadId === null || BigInt(currentThreadId) !== alias.messageThreadId)
@@ -169,6 +179,17 @@ async function buildAliasDetailMenu(
       )
       .row();
   }
+  // "Deliver in General" — whenever the alias currently delivers to a topic,
+  // regardless of where this menu was opened, so a topic-bound alias is never
+  // stranded without a way back to General.
+  if (alias.messageThreadId !== null) {
+    keyboard
+      .text(
+        messages.aliasMenu.topicGeneralButton,
+        CB_ALIAS_CLEAR_TOPIC.build(alias.id, alias.routingVersion),
+      )
+      .row();
+  }
   if (alias.label) {
     keyboard
       .text(messages.aliasMenu.editLabelButton, CB_ALIAS_LABEL_EDIT.build(alias.id))
@@ -177,7 +198,9 @@ async function buildAliasDetailMenu(
   } else {
     keyboard.text(messages.aliasMenu.setLabelButton, CB_ALIAS_LABEL_EDIT.build(alias.id)).row();
   }
-  keyboard.text(messages.aliasMenu.backButton, CB_ALIAS_LIST.build(alias.chatId));
+  keyboard
+    .text(messages.aliasMenu.backButton, CB_ALIAS_LIST.build(alias.chatId))
+    .text(messages.common.closeButton, CB_MENU_CLOSE.build(ctx.from?.id ?? 0));
 
   return { text, keyboard };
 }

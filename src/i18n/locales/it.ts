@@ -25,6 +25,7 @@ export const it = {
     aliasNotFoundShort: "Alias non trovato.",
     chatNotFoundShort: "Chat non trovata.",
     ruleNotFoundShort: "Regola non trovata.",
+    closeButton: "✖ Chiudi",
     languageHint:
       "🌐 Disponibile anche in English, Українська, Français — usa /language per cambiare.",
   },
@@ -252,6 +253,7 @@ ${safetyNotes}
       return `⛔ Spostamento annullato.\n\n${detail[reason] ?? "Quella chat non può ricevere posta."}`;
     },
     topicButton: "📌 Consegna in questo argomento",
+    topicGeneralButton: "📤 Consegna in «Generale»",
     topicSet: "✅ La posta di questo alias ora arriva in questo argomento.",
     topicCleared: "✅ La posta di questo alias ora arriva in «Generale».",
     deleteConfirmYes: "🗑 Sì, elimina",

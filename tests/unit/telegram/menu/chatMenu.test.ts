@@ -64,6 +64,17 @@ describe("sendChatSelectionMenu", () => {
     );
   });
 
+  it("includes a Close button so the menu can be dismissed", async () => {
+    const ctx = createMockCtx({ chatType: "private" });
+    await sendChatSelectionMenu(ctx, fakeDb);
+    const [, opts] = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      { reply_markup: { inline_keyboard: { callback_data: string }[][] } },
+    ];
+    const data = opts.reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
+    expect(data).toContain("mx:123456789");
+  });
+
   it("in self-hosted mode does not include a plan/alias footer", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "self-hosted" });
     const ctx = createMockCtx({ chatType: "private" });

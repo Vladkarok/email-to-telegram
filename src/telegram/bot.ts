@@ -67,6 +67,8 @@ import {
   CB_ALIAS_ORPHAN,
   CB_ALIAS_ORPHAN_DELETE,
   CB_ALIAS_SET_TOPIC,
+  CB_ALIAS_CLEAR_TOPIC,
+  CB_MENU_CLOSE,
   CB_ALIAS_SETTINGS,
   CB_SET_MODE,
   CB_TOGGLE_BODY_DEDUP,
@@ -428,6 +430,40 @@ export function createBot(token: string): Bot {
       threadId === null ? messages.aliasMenu.topicCleared : messages.aliasMenu.topicSet,
     );
     await editAliasDetailMenu(ctx, getDb(), ctx.match[1]);
+  });
+
+  // tg:{aliasId}:{version} — clear the topic, deliver in General
+  bot.callbackQuery(CB_ALIAS_CLEAR_TOPIC.pattern, async (ctx) => {
+    if (!(await assertAliasAccess(ctx, ctx.match[1], { fresh: true }))) return;
+    const messages = getMessages(await resolveLocale(ctx, getDb()));
+    const updated = await setAliasTopicWithCas(getDb(), {
+      aliasId: ctx.match[1],
+      expectedVersion: Number(ctx.match[2]),
+      threadId: null,
+    });
+    if (!updated.ok) {
+      await ctx.answerCallbackQuery();
+      await ctx.reply(messages.aliasActions.routingChanged, { parse_mode: "HTML" });
+      return;
+    }
+    await ctx.answerCallbackQuery(messages.aliasMenu.topicCleared);
+    await editAliasDetailMenu(ctx, getDb(), ctx.match[1]);
+  });
+
+  // mx:{openerId} — dismiss a menu. Only the opener may close it (matters in
+  // groups). If the message is too old to delete, strip its keyboard so the
+  // button is never left inert.
+  bot.callbackQuery(CB_MENU_CLOSE.pattern, async (ctx) => {
+    if (ctx.from && String(ctx.from.id) !== ctx.match[1]) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    try {
+      await ctx.deleteMessage();
+    } catch {
+      await ctx.editMessageReplyMarkup().catch(() => {});
+    }
   });
 
   // ac:{aliasId} — alias settings
