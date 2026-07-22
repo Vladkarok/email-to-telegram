@@ -67,7 +67,8 @@
     "esbuild": "^0.28.1",
     "@esbuild-kit/core-utils": {
       "esbuild": "0.18.20"
-    }
+    },
+    "undici": "^7.28.0"
   },
   "lint-staged": {
     "*.{ts,tsx}": [
