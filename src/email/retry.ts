@@ -7,10 +7,9 @@ import { notifyApproachingMonthlyLimit } from "../billing/quotaNotifier.js";
 import { parseEmail } from "./parser.js";
 import { cleanEmailBody } from "./cleaner.js";
 import {
-  renderEmail,
+  renderEmailForDelivery,
   renderAttachmentFallback,
   renderPrivacyAlert,
-  parseModeForRenderMode,
 } from "./renderer.js";
 import { isImageContentType, isInlinePhoto } from "./imageTypes.js";
 import { sendTelegramMessage, sendTelegramPhotos } from "../telegram/sender.js";
@@ -87,12 +86,14 @@ export async function runRetryWorker(
     publicBaseUrl = "",
     attachmentDir = "",
     rawEmailDir,
+    telegramRichMessagesEnabled = true,
   }: {
     attachmentTtlHours?: number;
     rawEmailTtlHours?: number;
     publicBaseUrl?: string;
     attachmentDir?: string;
     rawEmailDir?: string;
+    telegramRichMessagesEnabled?: boolean;
   } = {},
 ): Promise<void> {
   if (!api) return;
@@ -115,6 +116,7 @@ export async function runRetryWorker(
       rawEmailTtlHours,
       publicBaseUrl,
       rawEmailDir,
+      telegramRichMessagesEnabled,
     });
   }
 
@@ -141,6 +143,7 @@ export async function runRetryWorker(
           attachmentTtlHours,
           rawEmailTtlHours,
           publicBaseUrl,
+          telegramRichMessagesEnabled,
         }),
       );
     } catch (err: unknown) {
@@ -164,6 +167,7 @@ async function recoverPendingRawEmails(
     publicBaseUrl: string;
     attachmentDir: string;
     rawEmailDir: string;
+    telegramRichMessagesEnabled: boolean;
   },
 ): Promise<void> {
   const log = getLogger();
@@ -209,6 +213,7 @@ async function recoverPendingRawEmails(
         attachmentDir: opts.attachmentDir,
         attachmentTtlHours: opts.attachmentTtlHours,
         rawEmailTtlHours: opts.rawEmailTtlHours,
+        telegramRichMessagesEnabled: opts.telegramRichMessagesEnabled,
       });
 
       if (!queued.queued) {
@@ -270,7 +275,12 @@ async function retryDelivery(
     rawEmailWrappedDek: string | null;
     rawEmailKekKeyId: string | null;
   },
-  opts: { attachmentTtlHours: number; rawEmailTtlHours: number; publicBaseUrl: string },
+  opts: {
+    attachmentTtlHours: number;
+    rawEmailTtlHours: number;
+    publicBaseUrl: string;
+    telegramRichMessagesEnabled: boolean;
+  },
 ): Promise<void> {
   const log = getLogger();
 
@@ -375,16 +385,21 @@ async function retryDelivery(
     }));
 
   const renderMode = (alias.renderMode ?? "plaintext") as "plaintext" | "html" | "markdown";
-  const text = privacyMode
-    ? await buildPrivacyRetryMessage(db, deliveryLog, parsed, alias.fullAddress, opts)
-    : renderEmail(parsed, renderMode, alias.fullAddress, attachmentLinks);
-  const parseMode = privacyMode ? "HTML" : parseModeForRenderMode(renderMode);
+  const rendered = privacyMode
+    ? {
+        text: await buildPrivacyRetryMessage(db, deliveryLog, parsed, alias.fullAddress, opts),
+        parseMode: "HTML" as const,
+        richHtml: undefined,
+      }
+    : renderEmailForDelivery(parsed, renderMode, alias.fullAddress, attachmentLinks);
 
   const result = await sendTelegramMessage(api, {
     chatId: route.chatId,
     threadId: route.threadId,
-    text,
-    parseMode,
+    text: rendered.text,
+    parseMode: rendered.parseMode,
+    richHtml: rendered.richHtml,
+    richMessagesEnabled: opts.telegramRichMessagesEnabled,
   });
 
   const newAttemptNo = attempts + 1;
@@ -537,7 +552,13 @@ async function retryDelivery(
     recordRetryAttempt("permanently_failed");
     recordTelegramSendFailure(result.error);
     log.warn(
-      { deliveryLogId: deliveryLog.id, error: result.error, errorClass: sendErrorClass },
+      {
+        deliveryLogId: deliveryLog.id,
+        code: result.failure?.code ?? null,
+        errorClass: sendErrorClass,
+        transient: result.failure?.transient ?? false,
+        hasMigrationHint: result.failure?.migrateToChatId != null,
+      },
       "retry worker: permanently failed",
     );
   } else {
@@ -547,8 +568,10 @@ async function retryDelivery(
       {
         deliveryLogId: deliveryLog.id,
         attemptNo: newAttemptNo,
-        error: result.error,
+        code: result.failure?.code ?? null,
         errorClass: sendErrorClass,
+        transient: result.failure?.transient ?? false,
+        hasMigrationHint: result.failure?.migrateToChatId != null,
       },
       "retry worker: will retry again",
     );

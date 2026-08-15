@@ -3,18 +3,27 @@ import type { Api } from "grammy";
 import type { ParseMode } from "@grammyjs/types";
 import { getLogger } from "../utils/logger.js";
 import { openAttachmentStream } from "../storage/disk.js";
-import { recordTelegramSendFailure } from "../observability/metrics.js";
-import { describeSendError, type TelegramSendFailure } from "./errorClassifier.js";
+import { recordRichMessage, recordTelegramSendFailure } from "../observability/metrics.js";
+import {
+  classifyTelegramError,
+  describeSendError,
+  type TelegramSendFailure,
+} from "./errorClassifier.js";
 
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
 const MEDIA_GROUP_MAX = 10;
 const TELEGRAM_API_TIMEOUT_MS = 30_000;
+let richMessageMethodUnavailable = false;
 
 export interface SendOptions {
   chatId: bigint;
   threadId: bigint | null;
   text: string;
   parseMode?: ParseMode;
+  /** Safe, preflighted Telegram Rich HTML for the same content as `text`. */
+  richHtml?: string;
+  /** Runtime kill switch. Defaults to enabled for backward-compatible callers. */
+  richMessagesEnabled?: boolean;
 }
 
 export interface SendResult {
@@ -23,6 +32,11 @@ export interface SendResult {
   error?: string;
   /** Structured details of the last failure; present whenever ok is false. */
   failure?: TelegramSendFailure;
+}
+
+interface RetryOutcome {
+  result: SendResult;
+  attempts: number;
 }
 
 export interface PhotoItem {
@@ -52,6 +66,37 @@ export interface SendPhotosResult {
 }
 
 export async function sendTelegramMessage(api: Api, opts: SendOptions): Promise<SendResult> {
+  if (opts.richHtml) {
+    if (opts.richMessagesEnabled === false || richMessageMethodUnavailable) {
+      recordRichMessage("disabled");
+    } else {
+      const richAttempt = await sendRichTelegramMessage(api, opts);
+      const richResult = richAttempt.result;
+      if (richResult.ok) {
+        recordRichMessage("success");
+        return richResult;
+      }
+
+      if (richResult.failure?.code === 404) richMessageMethodUnavailable = true;
+
+      // A prior transient/ambiguous attempt may have been accepted despite a
+      // lost acknowledgement. Never change transports after such an attempt.
+      if (richAttempt.attempts !== 1 || !shouldUseClassicFallback(richResult.failure)) {
+        return richResult;
+      }
+
+      recordRichMessage("fallback");
+      getLogger().warn(
+        safeFailureLogFields("sendRichMessage", richAttempt.attempts, opts, richResult.failure),
+        "rich message rejected; using classic fallback",
+      );
+    }
+  }
+
+  return sendClassicTelegramMessage(api, opts);
+}
+
+async function sendClassicTelegramMessage(api: Api, opts: SendOptions): Promise<SendResult> {
   const other: {
     parse_mode?: ParseMode;
     message_thread_id?: number;
@@ -66,23 +111,57 @@ export async function sendTelegramMessage(api: Api, opts: SendOptions): Promise<
     other.message_thread_id = Number(opts.threadId);
   }
 
+  const outcome = await sendWithRetries(
+    "sendMessage",
+    opts,
+    () => api.sendMessage(Number(opts.chatId), opts.text, other),
+    "sendMessage timed out",
+  );
+  return outcome.result;
+}
+
+async function sendRichTelegramMessage(api: Api, opts: SendOptions): Promise<RetryOutcome> {
+  const other: { message_thread_id?: number } = {};
+  if (opts.threadId !== null) other.message_thread_id = Number(opts.threadId);
+
+  return sendWithRetries(
+    "sendRichMessage",
+    opts,
+    () =>
+      api.sendRichMessage(
+        Number(opts.chatId),
+        { html: opts.richHtml, skip_entity_detection: true },
+        other,
+      ),
+    "sendRichMessage timed out",
+  );
+}
+
+async function sendWithRetries(
+  method: "sendMessage" | "sendRichMessage",
+  opts: SendOptions,
+  send: () => Promise<{ message_id: number }>,
+  timeoutMessage: string,
+): Promise<RetryOutcome> {
   let lastFailure: TelegramSendFailure | null = null;
+  let attempts = 0;
 
   for (let attempt = 0; attempt < RETRY_DELAYS_MS.length; attempt++) {
+    attempts = attempt + 1;
     try {
-      const msg = await withTimeout(
-        api.sendMessage(Number(opts.chatId), opts.text, other),
-        TELEGRAM_API_TIMEOUT_MS,
-        "sendMessage timed out",
-      );
-      return { ok: true, telegramMessageId: msg.message_id };
+      const msg = await withTimeout(send(), TELEGRAM_API_TIMEOUT_MS, timeoutMessage);
+      return { result: { ok: true, telegramMessageId: msg.message_id }, attempts };
     } catch (err: unknown) {
       lastFailure = describeSendError(err);
-      getLogger().warn({ attempt, chatId: opts.chatId.toString(), err }, "sendMessage failed");
-      // The chat migrated: no retry against the old id can ever succeed.
-      // Surface the migrate hint immediately so the delivery orchestration
-      // can repair the route instead of burning the in-process retries.
+      getLogger().warn(
+        safeFailureLogFields(method, attempt + 1, opts, lastFailure),
+        `${method} failed`,
+      );
+
+      // Structured permanent failures cannot be repaired by repeating the
+      // same request. Unstructured failures retain the historical retries.
       if (lastFailure.migrateToChatId !== null) break;
+      if (lastFailure.code !== null && !lastFailure.transient) break;
       if (attempt < RETRY_DELAYS_MS.length - 1) {
         await sleep(RETRY_DELAYS_MS[attempt] ?? 1000);
       }
@@ -90,9 +169,12 @@ export async function sendTelegramMessage(api: Api, opts: SendOptions): Promise<
   }
 
   return {
-    ok: false,
-    error: lastFailure?.description ?? "unknown error",
-    failure: lastFailure ?? undefined,
+    result: {
+      ok: false,
+      error: lastFailure?.description ?? "unknown error",
+      failure: lastFailure ?? undefined,
+    },
+    attempts,
   };
 }
 
@@ -151,7 +233,18 @@ export async function sendTelegramPhotos(
       const chunkFailure = describeSendError(err);
       failure ??= chunkFailure;
       recordTelegramSendFailure(chunkFailure.description);
-      log.error({ err, chatId, chunk: chunk.map((p) => p.filename) }, "sendPhotos failed");
+      log.error(
+        {
+          method: chunk.length === 1 ? "sendPhoto" : "sendMediaGroup",
+          chatId: String(chatId),
+          chunkSize: chunk.length,
+          code: chunkFailure.code,
+          errorClass: classifyTelegramError(chunkFailure),
+          transient: chunkFailure.transient,
+          hasMigrationHint: chunkFailure.migrateToChatId !== null,
+        },
+        "sendPhotos failed",
+      );
       failedPhotos.push(...chunk);
       if (chunkFailure.migrateToChatId !== null) {
         // The chat migrated: later chunks can never reach the old id. Fail
@@ -178,6 +271,45 @@ export async function sendTelegramPhotos(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function shouldUseClassicFallback(failure: TelegramSendFailure | undefined): boolean {
+  if (!failure || failure.transient || failure.migrateToChatId !== null) return false;
+  if (failure.code === 404) return true;
+  return (
+    failure.code === 400 &&
+    classifyTelegramError(failure) === "bad_request" &&
+    !isDestinationOrAuthFailure(failure.description)
+  );
+}
+
+function isDestinationOrAuthFailure(description: string): boolean {
+  return /(?:chat|peer|thread|topic).*(?:closed|forbidden|invalid|not found)|(?:blocked|forbidden|not enough rights|write forbidden)/iu.test(
+    description,
+  );
+}
+
+function safeFailureLogFields(
+  method: "sendMessage" | "sendRichMessage",
+  attempt: number,
+  opts: SendOptions,
+  failure: TelegramSendFailure | undefined,
+): Record<string, unknown> {
+  return {
+    method,
+    attempt,
+    chatId: opts.chatId.toString(),
+    threadId: opts.threadId?.toString(),
+    code: failure?.code ?? null,
+    errorClass: classifyTelegramError(failure),
+    transient: failure?.transient ?? false,
+    hasMigrationHint: failure?.migrateToChatId !== null && failure?.migrateToChatId !== undefined,
+  };
+}
+
+/** Reset only the process capability latch; exposed for isolated unit tests. */
+export function resetRichMessageAvailabilityForTests(): void {
+  richMessageMethodUnavailable = false;
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {

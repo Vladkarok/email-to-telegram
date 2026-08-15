@@ -1,10 +1,17 @@
 import type { ParsedEmail } from "./types.js";
-import { sanitizeTelegramHtml, stripHtml } from "../utils/telegramHtml.js";
+import {
+  renderStructuredEmailHtml,
+  sanitizeTelegramHtml,
+  stripHtml,
+  type StructuredHtmlResult,
+} from "../utils/telegramHtml.js";
 import { escapeHtml, escapeHtmlAttribute } from "../utils/html.js";
 
 const MAX_LEN = 4096;
 const TRUNCATION_NOTICE = "\n[... truncated]";
 const SEPARATOR = "\n\n";
+const MAX_RICH_TEXT_CHARACTERS = 32_768;
+const MAX_RICH_BLOCKS = 500;
 
 export interface AttachmentLink {
   filename: string;
@@ -16,15 +23,40 @@ export type RenderMode = "plaintext" | "html" | "markdown";
 
 type HtmlParseMode = "HTML";
 
+type SelectedBody =
+  | { kind: "text"; content: string }
+  | { kind: "html"; content: string; structured?: StructuredHtmlResult }
+  | { kind: "markdown"; content: string };
+
+export interface RenderedEmailForDelivery {
+  text: string;
+  parseMode: HtmlParseMode | undefined;
+  /** Safe Telegram Rich HTML. Omitted for plaintext, linked, or over-budget content. */
+  richHtml?: string;
+}
+
 export function renderEmail(
   email: ParsedEmail,
   mode: RenderMode,
   aliasFullAddress: string,
   attachmentLinks: AttachmentLink[],
 ): string {
+  return renderEmailForDelivery(email, mode, aliasFullAddress, attachmentLinks).text;
+}
+
+/**
+ * Select one MIME body source, then derive both Telegram transports from it.
+ * This keeps the rich primary and classic fallback semantically identical.
+ */
+export function renderEmailForDelivery(
+  email: ParsedEmail,
+  mode: RenderMode,
+  aliasFullAddress: string,
+  attachmentLinks: AttachmentLink[],
+): RenderedEmailForDelivery {
   const from = email.headerFrom ?? email.envelopeFrom ?? "unknown";
   const subject = email.subject ?? "(no subject)";
-
+  const selectedBody = selectBodySource(email, mode);
   const header = buildHeader(mode, from, aliasFullAddress, subject);
 
   // Attachments section is built with mode-appropriate escaping so filenames
@@ -38,7 +70,8 @@ export function renderEmail(
 
   const bodyBudget = MAX_LEN - fixedCost;
 
-  const rawBody = extractBody(email, mode);
+  const renderedBody = renderSelectedBody(selectedBody, mode);
+  const rawBody = renderedBody.classic;
   const body = truncateToBudget(rawBody, bodyBudget, mode);
 
   const parts = [header, body];
@@ -46,7 +79,21 @@ export function renderEmail(
 
   // Safety clamp: if header + attachments alone exceed MAX_LEN (many attachments),
   // drop trailing attachment entries until the message fits.
-  return clampToMaxLen(parts, mode);
+  const text = clampToMaxLen(parts, mode);
+  const richHtml = buildRichDeliveryHtml({
+    mode,
+    from,
+    to: aliasFullAddress,
+    subject,
+    renderedBody,
+    hasAttachmentLinks: attachmentLinks.length > 0,
+  });
+
+  return {
+    text,
+    parseMode: parseModeForRenderMode(mode),
+    ...(richHtml ? { richHtml } : {}),
+  };
 }
 
 export function parseModeForRenderMode(mode: RenderMode): HtmlParseMode | undefined {
@@ -150,45 +197,90 @@ function buildHeader(mode: RenderMode, from: string, to: string, subject: string
   return `From: ${f}\nTo: ${t}\nSubject: ${s}`;
 }
 
-function extractBody(email: ParsedEmail, mode: RenderMode): string {
+function selectBodySource(email: ParsedEmail, mode: RenderMode): SelectedBody {
   if (mode === "html") {
-    if (email.htmlBody) {
-      return sanitizeTelegramHtml(email.htmlBody);
-    }
-    // Plain-text fallback must be HTML-escaped; raw text with < > & would be
-    // parsed as tags or entity refs by Telegram's HTML parser.
-    return escapeHtml(email.textBody ?? "");
+    if (email.htmlBody) return { kind: "html", content: email.htmlBody };
+    return { kind: "text", content: email.textBody ?? "" };
   }
 
   if (mode === "markdown") {
-    return extractMarkdownBody(email);
+    const textBody = normalizeLineEndings(email.textBody ?? "");
+    if (textBody && looksLikeMarkdown(textBody)) {
+      return { kind: "markdown", content: textBody };
+    }
+    if (email.htmlBody) {
+      const structured = renderStructuredEmailHtml(email.htmlBody);
+      if (structured.hasVisibleContent || !textBody) {
+        return { kind: "html", content: email.htmlBody, structured };
+      }
+    }
+    return { kind: "text", content: textBody };
   }
 
-  // plaintext — sent with no parse_mode, no escaping required
-  if (email.textBody) return email.textBody;
-  if (email.htmlBody) return stripHtml(email.htmlBody);
-  return "";
+  if (email.textBody) return { kind: "text", content: email.textBody };
+  if (email.htmlBody) return { kind: "html", content: email.htmlBody };
+  return { kind: "text", content: "" };
 }
 
-function extractMarkdownBody(email: ParsedEmail): string {
-  const textBody = normalizeLineEndings(email.textBody ?? "");
-
-  if (email.htmlBody && !looksLikeMarkdown(textBody)) {
-    const renderedHtml = sanitizeTelegramHtml(email.htmlBody);
-    if (renderedHtml || !textBody) {
-      return renderedHtml;
-    }
+function renderSelectedBody(
+  selectedBody: SelectedBody,
+  mode: RenderMode,
+): { classic: string; structured: StructuredHtmlResult | null } {
+  if (mode === "plaintext") {
+    return {
+      classic:
+        selectedBody.kind === "html" ? stripHtml(selectedBody.content) : selectedBody.content,
+      structured: null,
+    };
   }
 
-  if (textBody) {
-    return renderMarkdownToTelegramHtml(textBody);
+  if (selectedBody.kind === "text") {
+    // Raw text must be escaped before Telegram parses it as HTML.
+    return { classic: escapeHtml(selectedBody.content), structured: null };
   }
 
-  if (email.htmlBody) {
-    return sanitizeTelegramHtml(email.htmlBody);
+  const safeSource =
+    selectedBody.kind === "markdown"
+      ? renderMarkdownToStructuredHtml(selectedBody.content)
+      : selectedBody.content;
+  const structured =
+    selectedBody.kind === "html" && selectedBody.structured
+      ? selectedBody.structured
+      : renderStructuredEmailHtml(safeSource);
+  return { classic: structured.classicHtml, structured };
+}
+
+function buildRichDeliveryHtml(input: {
+  mode: RenderMode;
+  from: string;
+  to: string;
+  subject: string;
+  renderedBody: { classic: string; structured: StructuredHtmlResult | null };
+  hasAttachmentLinks: boolean;
+}): string | undefined {
+  const structured = input.renderedBody.structured;
+  if (
+    input.mode === "plaintext" ||
+    input.hasAttachmentLinks ||
+    !structured?.richHtml ||
+    structured.hasLinks
+  ) {
+    return undefined;
   }
 
-  return "";
+  const from = sanitizeHeaderField(input.from);
+  const to = sanitizeHeaderField(input.to);
+  const subject = sanitizeHeaderField(input.subject);
+  const headerText = `From: ${from}\nTo: ${to}\nSubject: ${subject}`;
+  if (
+    structured.stats.textCharacters + Array.from(headerText).length > MAX_RICH_TEXT_CHARACTERS ||
+    structured.stats.blocks + 1 > MAX_RICH_BLOCKS
+  ) {
+    return undefined;
+  }
+
+  const header = `<p>From: ${escapeHtml(from)}<br>To: ${escapeHtml(to)}<br>Subject: ${escapeHtml(subject)}</p>`;
+  return `${header}${structured.richHtml}`;
 }
 
 function truncateToBudget(text: string, budget: number, mode: RenderMode): string {
@@ -223,73 +315,131 @@ function looksLikeMarkdown(text: string): boolean {
   ].some((pattern) => pattern.test(trimmed));
 }
 
-function renderMarkdownToTelegramHtml(text: string): string {
+function renderMarkdownToStructuredHtml(text: string): string {
   const normalized = normalizeLineEndings(text).trimEnd();
   if (!normalized) return "";
 
   const lines = normalized.split("\n");
   const rendered: string[] = [];
   let codeFence: string[] | null = null;
+  let paragraphLines: string[] = [];
+  let listRun: { ordered: boolean; start: number; items: string[] } | null = null;
+
+  const flushParagraph = (): void => {
+    if (paragraphLines.length === 0) return;
+    rendered.push(`<p>${paragraphLines.map((line) => renderMarkdownInline(line)).join(" ")}</p>`);
+    paragraphLines = [];
+  };
+
+  const flushList = (): void => {
+    if (!listRun) return;
+    const tag = listRun.ordered ? "ol" : "ul";
+    const start = listRun.ordered && listRun.start !== 1 ? ` start="${listRun.start}"` : "";
+    rendered.push(
+      `<${tag}${start}>${listRun.items.map((item) => `<li>${item}</li>`).join("")}</${tag}>`,
+    );
+    listRun = null;
+  };
 
   for (const line of lines) {
-    if (/^\s*```/.test(line)) {
-      if (codeFence) {
+    if (codeFence) {
+      if (/^\s*```/.test(line)) {
         rendered.push(`<pre>${escapeHtml(codeFence.join("\n"))}</pre>`);
         codeFence = null;
       } else {
-        codeFence = [];
+        codeFence.push(line);
       }
       continue;
     }
 
-    if (codeFence) {
-      codeFence.push(line);
+    if (/^\s*```/.test(line)) {
+      flushParagraph();
+      flushList();
+      codeFence = [];
       continue;
     }
 
-    rendered.push(renderMarkdownLine(line));
+    if (!line.trim()) {
+      flushParagraph();
+      flushList();
+      rendered.push("");
+      continue;
+    }
+
+    const listItem = parseMarkdownListItem(line);
+    if (listItem) {
+      flushParagraph();
+      if (!listRun || listRun.ordered !== listItem.ordered) {
+        flushList();
+        listRun = { ordered: listItem.ordered, start: listItem.number, items: [] };
+      }
+      listRun.items.push(renderMarkdownInline(listItem.content));
+      continue;
+    }
+
+    flushList();
+    if (isMarkdownBlockLine(line)) {
+      flushParagraph();
+      rendered.push(renderMarkdownLine(line));
+    } else {
+      paragraphLines.push(line.trim());
+    }
   }
 
+  flushParagraph();
+  flushList();
   if (codeFence) {
     rendered.push(`<pre>${escapeHtml(codeFence.join("\n"))}</pre>`);
   }
 
-  return sanitizeTelegramHtml(
-    rendered
-      .join("\n")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim(),
+  return rendered
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function parseMarkdownListItem(
+  line: string,
+): { ordered: boolean; number: number; content: string } | null {
+  const ordered = line.match(/^\s*(\d+)[.)]\s+(.*)$/);
+  if (ordered) {
+    const number = Number(ordered[1]);
+    if (Number.isSafeInteger(number) && number <= 1_000_000) {
+      return { ordered: true, number, content: ordered[2] ?? "" };
+    }
+  }
+
+  const unordered = line.match(/^\s*[-*+]\s+(.*)$/);
+  return unordered ? { ordered: false, number: 1, content: unordered[1] ?? "" } : null;
+}
+
+function isMarkdownBlockLine(line: string): boolean {
+  return (
+    /^\s{0,3}#{1,6}\s+/.test(line) ||
+    /^\s{0,3}>\s?/.test(line) ||
+    /^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line)
   );
 }
 
 function renderMarkdownLine(line: string): string {
   if (!line.trim()) return "";
 
-  const heading = line.match(/^\s{0,3}#{1,6}\s+(.*)$/);
+  const heading = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/);
   if (heading) {
-    return `<b>${renderMarkdownInline(heading[1]?.trim() ?? "")}</b>`;
+    const level = heading[1]?.length ?? 1;
+    return `<h${level}>${renderMarkdownInline(heading[2]?.trim() ?? "")}</h${level}>`;
   }
 
   const quote = line.match(/^\s{0,3}>\s?(.*)$/);
   if (quote) {
-    return `&gt; ${renderMarkdownInline(quote[1] ?? "")}`;
-  }
-
-  const ordered = line.match(/^\s*(\d+)[.)]\s+(.*)$/);
-  if (ordered) {
-    return `${ordered[1]}. ${renderMarkdownInline(ordered[2] ?? "")}`;
-  }
-
-  const unordered = line.match(/^\s*[-*+]\s+(.*)$/);
-  if (unordered) {
-    return `• ${renderMarkdownInline(unordered[1] ?? "")}`;
+    return `<blockquote>${renderMarkdownInline(quote[1] ?? "")}</blockquote>`;
   }
 
   if (/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
-    return "────────";
+    return "<hr>";
   }
 
-  return renderMarkdownInline(line);
+  return `<p>${renderMarkdownInline(line)}</p>`;
 }
 
 function renderMarkdownInline(text: string): string {

@@ -112,6 +112,7 @@ const PIPELINE_CONFIG = {
   attachmentDir: "/tmp/att",
   attachmentTtlHours: 24,
   rawEmailTtlHours: 24,
+  telegramRichMessagesEnabled: true,
 };
 
 const activeAlias = {
@@ -763,11 +764,13 @@ describe("deliverQueuedEmail", () => {
 
     const [, opts] = mockSendTelegram.mock.calls[0] as [
       unknown,
-      { parseMode?: string; text: string },
+      { parseMode?: string; text: string; richHtml?: string; richMessagesEnabled?: boolean },
     ];
     expect(opts.parseMode).toBe("HTML");
     expect(opts.text).toContain("<b>Heading</b>");
     expect(opts.text).toContain("<b>Bold</b>");
+    expect(opts.richHtml).toContain("<h1>Heading</h1>");
+    expect(opts.richMessagesEnabled).toBe(true);
   });
 
   it("omits image download links when the image is sent as a Telegram photo", async () => {

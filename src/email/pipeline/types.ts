@@ -36,6 +36,8 @@ export interface PipelineInput {
   attachmentTtlHours: number;
   /** Raw email retention window in hours; privacy-mode links must not outlive it. */
   rawEmailTtlHours: number;
+  /** Runtime switch for Telegram Rich Messages. Defaults to true for internal callers. */
+  telegramRichMessagesEnabled?: boolean;
 }
 
 export interface PipelineResult {
@@ -65,6 +67,7 @@ export interface QueuedInboundEmail {
   attachmentDir: string;
   attachmentTtlHours: number;
   rawEmailTtlHours: number;
+  telegramRichMessagesEnabled: boolean;
   correlationId?: string;
 }
 

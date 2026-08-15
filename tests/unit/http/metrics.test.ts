@@ -65,6 +65,7 @@ const BASE_CONFIG: AppConfig = {
   billingProvider: "none",
   databaseUrl: "postgres://app:pass@localhost:5432/db",
   telegramBotToken: "123456:ABC",
+  telegramRichMessagesEnabled: true,
   mailDomain: "mail.example.com",
   hostedMailDomain: undefined,
   publicBaseUrl: "https://mail.example.com",

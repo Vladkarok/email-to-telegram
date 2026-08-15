@@ -13,7 +13,12 @@ export function nextPollingStartOptions(isInitialPollingStart: boolean): {
 export function buildRetryWorkerOptions(
   config: Pick<
     AppConfig,
-    "attachmentDir" | "attachmentTtlHours" | "publicBaseUrl" | "rawEmailDir" | "rawEmailTtlHours"
+    | "attachmentDir"
+    | "attachmentTtlHours"
+    | "publicBaseUrl"
+    | "rawEmailDir"
+    | "rawEmailTtlHours"
+    | "telegramRichMessagesEnabled"
   >,
 ): {
   attachmentDir: string;
@@ -21,6 +26,7 @@ export function buildRetryWorkerOptions(
   publicBaseUrl: string;
   rawEmailDir: string;
   rawEmailTtlHours: number;
+  telegramRichMessagesEnabled: boolean;
 } {
   return {
     attachmentDir: config.attachmentDir,
@@ -28,5 +34,6 @@ export function buildRetryWorkerOptions(
     publicBaseUrl: config.publicBaseUrl,
     rawEmailDir: config.rawEmailDir,
     rawEmailTtlHours: config.rawEmailTtlHours,
+    telegramRichMessagesEnabled: config.telegramRichMessagesEnabled,
   };
 }

@@ -14,10 +14,9 @@ import type { Api } from "grammy";
 import { sql } from "drizzle-orm";
 import { cleanEmailBody } from "../cleaner.js";
 import {
-  renderEmail,
+  renderEmailForDelivery,
   renderAttachmentFallback,
   renderPrivacyAlert,
-  parseModeForRenderMode,
   type AttachmentLink,
 } from "../renderer.js";
 import { isInlinePhoto } from "../imageTypes.js";
@@ -181,24 +180,27 @@ export async function deliverQueuedEmail(
 
       // 8. Render
       const renderMode = (alias.renderMode ?? "plaintext") as "plaintext" | "html" | "markdown";
-      const text = privacyMode
-        ? await buildPrivacyModeMessage(
-            workDb,
-            deliveryLog,
-            parsed,
-            alias.fullAddress,
-            publicBaseUrl,
-            {
-              rawEmailTtlHours,
-            },
-          )
-        : renderEmail(parsed, renderMode, alias.fullAddress, attachmentLinks);
+      const rendered = privacyMode
+        ? {
+            text: await buildPrivacyModeMessage(
+              workDb,
+              deliveryLog,
+              parsed,
+              alias.fullAddress,
+              publicBaseUrl,
+              { rawEmailTtlHours },
+            ),
+            parseMode: "HTML" as const,
+            richHtml: undefined,
+          }
+        : renderEmailForDelivery(parsed, renderMode, alias.fullAddress, attachmentLinks);
 
       return {
         ok: true as const,
         imageAttachments,
-        parseMode: privacyMode ? "HTML" : parseModeForRenderMode(renderMode),
-        text,
+        parseMode: rendered.parseMode,
+        richHtml: rendered.richHtml,
+        text: rendered.text,
       };
     });
 
@@ -262,6 +264,8 @@ export async function deliverQueuedEmail(
         threadId: route.threadId,
         text: prepared.text,
         parseMode: prepared.parseMode,
+        richHtml: prepared.richHtml,
+        richMessagesEnabled: job.telegramRichMessagesEnabled,
       });
 
       // A chat-level permanent error (bot blocked, chat deleted) can never
@@ -319,7 +323,13 @@ export async function deliverQueuedEmail(
       if (!result.ok) {
         recordTelegramSendFailure(result.error);
         log.error(
-          { deliveryLogId: deliveryLog.id, error: result.error, errorClass: sendErrorClass },
+          {
+            deliveryLogId: deliveryLog.id,
+            code: result.failure?.code ?? null,
+            errorClass: sendErrorClass,
+            transient: result.failure?.transient ?? false,
+            hasMigrationHint: result.failure?.migrateToChatId != null,
+          },
           failedStatus === "permanently_failed"
             ? "delivery.telegram.permanently_failed"
             : "delivery.telegram.failed",

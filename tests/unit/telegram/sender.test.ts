@@ -1,8 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Readable } from "node:stream";
-import { sendTelegramMessage, sendTelegramPhotos } from "../../../src/telegram/sender.js";
+import {
+  resetRichMessageAvailabilityForTests,
+  sendTelegramMessage,
+  sendTelegramPhotos,
+} from "../../../src/telegram/sender.js";
 import { GrammyError } from "grammy";
 import type { Api } from "grammy";
+
+const loggerMocks = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn() }));
+vi.mock("../../../src/utils/logger.js", () => ({
+  getLogger: () => loggerMocks,
+}));
 
 function migrateError(newChatId = -1002222333444): GrammyError {
   return new GrammyError(
@@ -16,6 +25,18 @@ function migrateError(newChatId = -1002222333444): GrammyError {
     "sendMessage",
     {},
   );
+}
+
+function botApiError(
+  errorCode: number,
+  description: string,
+  extra: Record<string, unknown> = {},
+): Error & { error_code: number; description: string } {
+  return Object.assign(new Error(description), {
+    error_code: errorCode,
+    description,
+    ...extra,
+  });
 }
 
 const mockOpenAttachmentStream = vi.fn();
@@ -41,13 +62,18 @@ function stubAttachmentStreams(): void {
 
 interface MockApi extends Api {
   sendMessage: ReturnType<typeof vi.fn>;
+  sendRichMessage: ReturnType<typeof vi.fn>;
   sendPhoto: ReturnType<typeof vi.fn>;
   sendMediaGroup: ReturnType<typeof vi.fn>;
 }
 
-function makeApi(sendFn: () => Promise<unknown>): MockApi {
+function makeApi(
+  sendFn: () => Promise<unknown>,
+  richFn: () => Promise<unknown> = () => Promise.resolve({ message_id: 99 }),
+): MockApi {
   return {
     sendMessage: vi.fn(sendFn),
+    sendRichMessage: vi.fn(richFn),
     sendPhoto: vi.fn(),
     sendMediaGroup: vi.fn(),
   } as unknown as MockApi;
@@ -56,6 +82,9 @@ function makeApi(sendFn: () => Promise<unknown>): MockApi {
 describe("sendTelegramMessage", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    resetRichMessageAvailabilityForTests();
+    loggerMocks.warn.mockReset();
+    loggerMocks.error.mockReset();
   });
 
   it("sends a message successfully on first attempt", async () => {
@@ -224,6 +253,294 @@ describe("sendTelegramMessage", () => {
 
     expect(text).toBe("No parse mode");
     expect(options).not.toHaveProperty("parse_mode");
+  });
+
+  it("sends preflighted rich HTML with thread metadata and entity detection disabled", async () => {
+    const api = makeApi(
+      () => Promise.resolve({ message_id: 1 }),
+      () => Promise.resolve({ message_id: 77 }),
+    );
+
+    const result = await sendTelegramMessage(api, {
+      chatId: 123n,
+      threadId: 9n,
+      text: "Classic fallback",
+      parseMode: "HTML",
+      richHtml: "<h2>Report</h2><table><tr><td>OK</td></tr></table>",
+    });
+
+    expect(result).toMatchObject({ ok: true, telegramMessageId: 77 });
+    const [chatId, richMessage, options] = api.sendRichMessage.mock.calls[0] as [
+      number,
+      { html?: string; skip_entity_detection?: boolean },
+      { message_thread_id?: number },
+    ];
+    expect(chatId).toBe(123);
+    expect(richMessage.html).toContain("<table>");
+    expect(richMessage.skip_entity_detection).toBe(true);
+    expect(options).toEqual({ message_thread_id: 9 });
+    expect(api.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("falls back exactly once after a structured rich-content 400", async () => {
+    const api = makeApi(
+      () => Promise.resolve({ message_id: 8 }),
+      () => Promise.reject(botApiError(400, "Bad Request: can't parse rich message HTML")),
+    );
+
+    const result = await sendTelegramMessage(api, {
+      chatId: 123n,
+      threadId: null,
+      text: "Classic fallback",
+      parseMode: "HTML",
+      richHtml: "<table><tr><td>Report</td></tr></table>",
+    });
+
+    expect(result).toMatchObject({ ok: true, telegramMessageId: 8 });
+    expect(api.sendRichMessage).toHaveBeenCalledOnce();
+    expect(api.sendMessage).toHaveBeenCalledOnce();
+  });
+
+  it("returns the classic fallback failure rather than the rejected rich failure", async () => {
+    const api = makeApi(
+      () => Promise.reject(botApiError(403, "Forbidden: bot was blocked")),
+      () => Promise.reject(botApiError(400, "Bad Request: can't parse rich message HTML")),
+    );
+
+    const result = await sendTelegramMessage(api, {
+      chatId: 123n,
+      threadId: null,
+      text: "Classic fallback",
+      richHtml: "<p>Rich</p>",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      failure: { code: 403, description: "Forbidden: bot was blocked" },
+    });
+    expect(api.sendRichMessage).toHaveBeenCalledOnce();
+    expect(api.sendMessage).toHaveBeenCalledOnce();
+  });
+
+  it("latches rich delivery off after a method-unavailable 404", async () => {
+    const api = makeApi(
+      () => Promise.resolve({ message_id: 8 }),
+      () => Promise.reject(botApiError(404, "Not Found: method not found")),
+    );
+    const options = {
+      chatId: 123n,
+      threadId: null,
+      text: "Classic fallback",
+      richHtml: "<p>Rich</p>",
+    } as const;
+
+    await sendTelegramMessage(api, options);
+    await sendTelegramMessage(api, options);
+
+    expect(api.sendRichMessage).toHaveBeenCalledOnce();
+    expect(api.sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("honors the runtime rich-message kill switch", async () => {
+    const api = makeApi(() => Promise.resolve({ message_id: 8 }));
+    await sendTelegramMessage(api, {
+      chatId: 123n,
+      threadId: null,
+      text: "Classic",
+      richHtml: "<p>Rich</p>",
+      richMessagesEnabled: false,
+    });
+
+    expect(api.sendRichMessage).not.toHaveBeenCalled();
+    expect(api.sendMessage).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["migration", migrateError()],
+    ["forbidden", botApiError(403, "Forbidden: bot was blocked")],
+    ["chat not found", botApiError(400, "Bad Request: chat not found")],
+    ["thread not found", botApiError(400, "Bad Request: message thread not found")],
+    ["closed topic", botApiError(400, "Bad Request: topic was closed")],
+  ])("does not switch transports for %s failures", async (_name, failure) => {
+    const api = makeApi(
+      () => Promise.resolve({ message_id: 8 }),
+      () => Promise.reject(failure),
+    );
+
+    const result = await sendTelegramMessage(api, {
+      chatId: -100n,
+      threadId: null,
+      text: "Classic",
+      richHtml: "<p>Rich</p>",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(api.sendRichMessage).toHaveBeenCalledOnce();
+    expect(api.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [429, "Too Many Requests: retry after 1"],
+    [500, "Internal Server Error"],
+  ])("retries rich transient %s failures without a classic send", async (code, description) => {
+    const api = makeApi(
+      () => Promise.resolve({ message_id: 8 }),
+      () => Promise.reject(botApiError(code, description)),
+    );
+
+    const promise = sendTelegramMessage(api, {
+      chatId: 123n,
+      threadId: null,
+      text: "Classic",
+      richHtml: "<p>Rich</p>",
+    });
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result.ok).toBe(false);
+    expect(api.sendRichMessage).toHaveBeenCalledTimes(3);
+    expect(api.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not switch transports when a deterministic rejection follows an ambiguous attempt", async () => {
+    let richCalls = 0;
+    const api = makeApi(
+      () => Promise.resolve({ message_id: 8 }),
+      () => {
+        richCalls++;
+        return Promise.reject(
+          richCalls === 1
+            ? botApiError(500, "Internal Server Error")
+            : botApiError(400, "Bad Request: can't parse rich message HTML"),
+        );
+      },
+    );
+
+    const promise = sendTelegramMessage(api, {
+      chatId: 123n,
+      threadId: null,
+      text: "Classic",
+      richHtml: "<p>Rich</p>",
+    });
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toMatchObject({
+      ok: false,
+      failure: { code: 400, description: "Bad Request: can't parse rich message HTML" },
+    });
+    expect(api.sendRichMessage).toHaveBeenCalledTimes(2);
+    expect(api.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("latches an unsupported rich method after an earlier ambiguous attempt", async () => {
+    let richCalls = 0;
+    const api = makeApi(
+      () => Promise.resolve({ message_id: 8 }),
+      () => {
+        richCalls++;
+        return Promise.reject(
+          richCalls === 1
+            ? botApiError(500, "Internal Server Error")
+            : botApiError(404, "Not Found: method not found"),
+        );
+      },
+    );
+    const options = {
+      chatId: 123n,
+      threadId: null,
+      text: "Classic",
+      richHtml: "<p>Rich</p>",
+    } as const;
+
+    const first = sendTelegramMessage(api, options);
+    await vi.runAllTimersAsync();
+    await expect(first).resolves.toMatchObject({ ok: false, failure: { code: 404 } });
+    expect(api.sendMessage).not.toHaveBeenCalled();
+
+    await sendTelegramMessage(api, options);
+    expect(api.sendRichMessage).toHaveBeenCalledTimes(2);
+    expect(api.sendMessage).toHaveBeenCalledOnce();
+  });
+
+  it("retries an ambiguous rich network failure without switching transports", async () => {
+    const api = makeApi(
+      () => Promise.resolve({ message_id: 8 }),
+      () => Promise.reject(new Error("network fetch failed")),
+    );
+    const promise = sendTelegramMessage(api, {
+      chatId: 123n,
+      threadId: null,
+      text: "Classic",
+      richHtml: "<p>Rich</p>",
+    });
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result.ok).toBe(false);
+    expect(api.sendRichMessage).toHaveBeenCalledTimes(3);
+    expect(api.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("times out rich attempts without risking a duplicate classic send", async () => {
+    const api = makeApi(
+      () => Promise.resolve({ message_id: 8 }),
+      () => new Promise(() => {}),
+    );
+    const promise = sendTelegramMessage(api, {
+      chatId: 123n,
+      threadId: null,
+      text: "Classic",
+      richHtml: "<p>Rich</p>",
+    });
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toMatchObject({ ok: false, error: "sendRichMessage timed out" });
+    expect(api.sendRichMessage).toHaveBeenCalledTimes(3);
+    expect(api.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not expose message content through Telegram failure logs", async () => {
+    const sentinel = "PAYLOAD_SENTINEL_DO_NOT_LOG";
+    const api = makeApi(
+      () => Promise.resolve({ message_id: 8 }),
+      () =>
+        Promise.reject(
+          botApiError(400, "Bad Request: can't parse rich message HTML", {
+            request: { rich_message: { html: `<p>${sentinel}</p>` } },
+          }),
+        ),
+    );
+
+    await sendTelegramMessage(api, {
+      chatId: 123n,
+      threadId: null,
+      text: sentinel,
+      richHtml: `<p>${sentinel}</p>`,
+    });
+
+    expect(JSON.stringify(loggerMocks.warn.mock.calls)).not.toContain(sentinel);
+  });
+
+  it("does not expose classic message content through Telegram failure logs", async () => {
+    const sentinel = "CLASSIC_PAYLOAD_SENTINEL_DO_NOT_LOG";
+    const api = makeApi(() =>
+      Promise.reject(
+        botApiError(400, "Bad Request: can't parse entities", {
+          request: { text: sentinel },
+        }),
+      ),
+    );
+
+    await sendTelegramMessage(api, {
+      chatId: 123n,
+      threadId: null,
+      text: sentinel,
+      parseMode: "HTML",
+    });
+
+    expect(JSON.stringify(loggerMocks.warn.mock.calls)).not.toContain(sentinel);
   });
 });
 
