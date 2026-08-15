@@ -19,6 +19,7 @@ export type RouteConfig = Pick<
   | "rawEmailTtlHours"
   | "maxSizeBytes"
   | "maxInflightDeliveries"
+  | "telegramRichMessagesEnabled"
   | "adminEnabled"
   | "adminSecret"
   | "adminSessionSecret"

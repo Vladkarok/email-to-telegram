@@ -18,6 +18,7 @@ describe("startup runtime helpers", () => {
         publicBaseUrl: "https://mail.example.com",
         rawEmailDir: "/data/rawemails",
         rawEmailTtlHours: 48,
+        telegramRichMessagesEnabled: false,
       }),
     ).toEqual({
       attachmentDir: "/data/attachments",
@@ -25,6 +26,7 @@ describe("startup runtime helpers", () => {
       publicBaseUrl: "https://mail.example.com",
       rawEmailDir: "/data/rawemails",
       rawEmailTtlHours: 48,
+      telegramRichMessagesEnabled: false,
     });
   });
 });

@@ -589,11 +589,13 @@ describe("runRetryWorker", () => {
 
     const [, opts] = mockSendTelegramMessage.mock.calls[0] as [
       unknown,
-      { parseMode?: string; text: string },
+      { parseMode?: string; text: string; richHtml?: string; richMessagesEnabled?: boolean },
     ];
     expect(opts.parseMode).toBe("HTML");
     expect(opts.text).toContain("<b>Heading</b>");
     expect(opts.text).toContain("<b>Bold</b>");
+    expect(opts.richHtml).toContain("<h1>Heading</h1>");
+    expect(opts.richMessagesEnabled).toBe(true);
   });
 
   it("does not rebuild download links for image attachments that are resent as photos", async () => {

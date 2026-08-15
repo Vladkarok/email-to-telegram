@@ -80,6 +80,7 @@ export function rawRoute(
     | "rawEmailTtlHours"
     | "maxSizeBytes"
     | "maxInflightDeliveries"
+    | "telegramRichMessagesEnabled"
   >,
 ): void {
   app.post(
@@ -249,6 +250,7 @@ export function rawRoute(
         attachmentDir: config.attachmentDir,
         attachmentTtlHours: config.attachmentTtlHours,
         rawEmailTtlHours: config.rawEmailTtlHours,
+        telegramRichMessagesEnabled: config.telegramRichMessagesEnabled,
       });
 
       const isTerminalRejection = !queued.queued && shouldDeletePendingMeta(queued.result.reason);

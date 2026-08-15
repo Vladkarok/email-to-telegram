@@ -46,6 +46,7 @@ const OPTIONAL_ENV = [
   "METRICS_ENABLED",
   "METRICS_TOKEN",
   "TRUST_PROXY",
+  "TELEGRAM_RICH_MESSAGES_ENABLED",
 ];
 
 describe("loadConfig", () => {
@@ -98,12 +99,18 @@ describe("loadConfig", () => {
     expect(config.metricsEnabled).toBe(false);
     expect(config.metricsToken).toBeUndefined();
     expect(config.trustProxy).toBe(false);
+    expect(config.telegramRichMessagesEnabled).toBe(true);
   });
 
   it("parses TRUST_PROXY as boolean", () => {
     process.env["TRUST_PROXY"] = "true";
     const config = loadConfig();
     expect(config.trustProxy).toBe(true);
+  });
+
+  it("can disable Telegram Rich Messages", () => {
+    process.env["TELEGRAM_RICH_MESSAGES_ENABLED"] = "false";
+    expect(loadConfig().telegramRichMessagesEnabled).toBe(false);
   });
 
   it("parses ATTACHMENT_TTL_HOURS as number", () => {

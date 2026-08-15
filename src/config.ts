@@ -67,10 +67,15 @@ const optionalBooleanSchema = z
   .enum(["true", "false"])
   .default("false")
   .transform((v) => v === "true");
+const enabledBooleanSchema = z
+  .enum(["true", "false"])
+  .default("true")
+  .transform((v) => v === "true");
 
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   TELEGRAM_BOT_TOKEN: z.string().min(1),
+  TELEGRAM_RICH_MESSAGES_ENABLED: enabledBooleanSchema,
   MAIL_DOMAIN: z.string().min(1),
   HTTP_PORT: portSchema,
   HMAC_SECRET: secretSchema,
@@ -163,6 +168,7 @@ export interface AppConfig {
   billingProvider: BillingProvider;
   databaseUrl: string;
   telegramBotToken: string;
+  telegramRichMessagesEnabled: boolean;
   mailDomain: string;
   hostedMailDomain: string | undefined;
   publicBaseUrl: string;
@@ -349,6 +355,7 @@ export function loadConfig(): AppConfig {
     billingProvider: env.BILLING_PROVIDER,
     databaseUrl: env.DATABASE_URL,
     telegramBotToken: env.TELEGRAM_BOT_TOKEN,
+    telegramRichMessagesEnabled: env.TELEGRAM_RICH_MESSAGES_ENABLED,
     mailDomain: env.MAIL_DOMAIN,
     hostedMailDomain: env.HOSTED_MAIL_DOMAIN,
     publicBaseUrl: env.PUBLIC_BASE_URL,

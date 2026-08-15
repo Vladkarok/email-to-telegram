@@ -77,6 +77,13 @@ const telegramSendFailuresTotal = new Counter({
   registers: [metricsRegistry],
 });
 
+const richMessagesTotal = new Counter({
+  name: "email_to_telegram_rich_messages_total",
+  help: "Telegram rich-message outcomes (success, classic fallback, or disabled).",
+  labelNames: ["result"] as const,
+  registers: [metricsRegistry],
+});
+
 const manualPlanGrantsTotal = new Counter({
   name: "email_to_telegram_manual_plan_grants_total",
   help: "Manual plan grant events by plan.",
@@ -175,6 +182,10 @@ export function recordRetryAttempt(result: "succeeded" | "failed" | "permanently
 
 export function recordTelegramSendFailure(error: string | null | undefined): void {
   telegramSendFailuresTotal.inc({ error_class: classifyTelegramError(error) });
+}
+
+export function recordRichMessage(result: "success" | "fallback" | "disabled"): void {
+  richMessagesTotal.inc({ result });
 }
 
 export function recordManualPlanGrant(plan: string): void {

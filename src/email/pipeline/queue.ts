@@ -200,6 +200,7 @@ async function queueAllowedInboundEmail(
       attachmentDir,
       attachmentTtlHours,
       rawEmailTtlHours,
+      telegramRichMessagesEnabled: input.telegramRichMessagesEnabled ?? true,
       correlationId: input.correlationId,
     },
   };
