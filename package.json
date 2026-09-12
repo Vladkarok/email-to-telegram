@@ -71,7 +71,11 @@
     "@esbuild-kit/core-utils": {
       "esbuild": "0.18.20"
     },
-    "undici": "^7.28.0"
+    "undici": "^7.28.0",
+    "joi": "^18.2.5",
+    "mailauth": {
+      "nodemailer": "^9.1.1"
+    }
   },
   "lint-staged": {
     "*.{ts,tsx}": [
