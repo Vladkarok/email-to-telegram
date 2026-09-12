@@ -6,6 +6,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { sql } from "drizzle-orm";
 import type * as schema from "../db/schema.js";
 import { getLogger } from "./logger.js";
+import { retryAsync } from "./retryAsync.js";
 import { evaluateInboundStall } from "../observability/inboundHealth.js";
 
 type Db = NodePgDatabase<typeof schema>;
@@ -17,6 +18,21 @@ type Db = NodePgDatabase<typeof schema>;
  * days.
  */
 const INBOUND_STALL_WINDOW_MS = 60 * 60 * 1000;
+
+/**
+ * Consecutive failing checks a dimension must accumulate before it alerts. At
+ * the 5-minute cron interval this rides out a single transient blip (an
+ * isolated Telegram 502 or ETIMEDOUT, both observed in production) while still
+ * catching a real outage within roughly five minutes.
+ */
+const ALERT_THRESHOLD = 2;
+
+/** How long a still-failing dimension stays quiet before reminding. */
+const REALERT_INTERVAL_MS = 60 * 60 * 1000;
+
+/** Attempts for the Telegram probe, including the first. */
+const TELEGRAM_PROBE_ATTEMPTS = 2;
+const TELEGRAM_PROBE_RETRY_DELAY_MS = 2000;
 
 export interface UptimeConfig {
   healthchecksUrl: string | undefined;
@@ -30,6 +46,43 @@ interface ProbeResult {
   disk: boolean;
   telegram: boolean;
   inbound: boolean;
+}
+
+type Dimension = keyof ProbeResult;
+
+interface DimensionState {
+  consecutiveFailures: number;
+  /** Timestamp of the last alert sent for this dimension, or null if none is outstanding. */
+  alertedAt: number | null;
+  /**
+   * Set when an alerted dimension recovers, cleared only once the all-clear is
+   * actually delivered. Kept separate from `alertedAt` so a recovery notice
+   * that fails to send is retried on the next check without also suppressing a
+   * fresh alert if the dimension goes down again.
+   */
+  pendingRecoveryNotice: boolean;
+}
+
+function freshState(): Record<Dimension, DimensionState> {
+  const initial = (): DimensionState => ({
+    consecutiveFailures: 0,
+    alertedAt: null,
+    pendingRecoveryNotice: false,
+  });
+  return { db: initial(), disk: initial(), telegram: initial(), inbound: initial() };
+}
+
+/**
+ * Per-dimension alert state, held in memory like the inbound counters in
+ * `observability/inboundHealth.ts`. Deliberately not persisted: the health
+ * check must keep working when the database is the failing dimension, so it
+ * cannot depend on a write path. A restart mid-outage re-alerts, which is the
+ * safe direction to fail.
+ */
+let alertState = freshState();
+
+export function resetUptimeAlertStateForTests(): void {
+  alertState = freshState();
 }
 
 async function probeDb(db: Db): Promise<boolean> {
@@ -67,8 +120,14 @@ async function probeDisk(dirs: string[]): Promise<boolean> {
 }
 
 async function probeTelegram(api: Api): Promise<boolean> {
+  // Retried because this is the only probe crossing the public internet, and
+  // the Telegram API returns isolated 502s. db and disk are local calls; a
+  // failure there is real and the consecutive-check threshold covers them.
   try {
-    await api.getMe();
+    await retryAsync(() => api.getMe(), {
+      attempts: TELEGRAM_PROBE_ATTEMPTS,
+      delaysMs: [TELEGRAM_PROBE_RETRY_DELAY_MS],
+    });
     return true;
   } catch (err: unknown) {
     getLogger().error({ err }, "uptime check: Telegram API probe failed");
@@ -77,12 +136,53 @@ async function probeTelegram(api: Api): Promise<boolean> {
 }
 
 /**
+ * Folds this run's probe results into the debounce state and decides what the
+ * operator should be told. Splitting the decision from the send keeps the
+ * state transitions testable and makes the "only mark alerted once the send
+ * succeeds" rule explicit at the call site.
+ */
+function decideNotifications(
+  result: ProbeResult,
+  now: number,
+): { toAlert: Dimension[]; recovered: Dimension[] } {
+  const toAlert: Dimension[] = [];
+  const recovered: Dimension[] = [];
+
+  for (const [dimension, ok] of Object.entries(result) as [Dimension, boolean][]) {
+    const state = alertState[dimension];
+
+    if (ok) {
+      // Only announce recovery for dimensions the operator was actually paged
+      // about; a blip that never alerted needs no all-clear.
+      if (state.alertedAt !== null) {
+        state.pendingRecoveryNotice = true;
+        state.alertedAt = null;
+      }
+      if (state.pendingRecoveryNotice) recovered.push(dimension);
+      state.consecutiveFailures = 0;
+      continue;
+    }
+
+    state.consecutiveFailures += 1;
+    if (state.consecutiveFailures < ALERT_THRESHOLD) continue;
+
+    const due = state.alertedAt === null || now - state.alertedAt >= REALERT_INTERVAL_MS;
+    if (due) toAlert.push(dimension);
+  }
+
+  return { toAlert, recovered };
+}
+
+/**
  * Runs on a cron schedule:
  * 1. Checks DB connectivity.
  * 2. Checks that configured directories are writable.
  * 3. Checks Telegram API reachability.
  * 4. On all-healthy — pings healthchecks.io URL if configured.
- * 5. On any failure — sends a Telegram alert to ALERT_CHAT_ID if configured.
+ * 5. On a dimension failing ALERT_THRESHOLD consecutive checks — sends a
+ *    Telegram alert to ALERT_CHAT_ID if configured, then stays quiet about
+ *    that dimension until it recovers or REALERT_INTERVAL_MS elapses.
+ * 6. On an alerted dimension recovering — sends a recovery notice.
  */
 export async function runUptimeCheck(db: Db, api: Api | null, config: UptimeConfig): Promise<void> {
   const log = getLogger();
@@ -100,6 +200,8 @@ export async function runUptimeCheck(db: Db, api: Api | null, config: UptimeConf
 
   const result: ProbeResult = { db: dbOk, disk: diskOk, telegram: telegramOk, inbound: inboundOk };
   const allOk = dbOk && diskOk && telegramOk && inboundOk;
+  const now = Date.now();
+  const { toAlert, recovered } = decideNotifications(result, now);
 
   if (allOk) {
     if (config.healthchecksUrl) {
@@ -107,24 +209,54 @@ export async function runUptimeCheck(db: Db, api: Api | null, config: UptimeConf
         log.warn({ err }, "uptime check: healthchecks ping failed");
       });
     }
-    return;
+  } else {
+    log.error({ result }, "uptime check: one or more probes failed");
   }
 
-  log.error({ result }, "uptime check: one or more probes failed");
+  if (!api || !config.alertChatId) return;
+  const chatId = Number(config.alertChatId);
 
-  if (api && config.alertChatId) {
-    const failures = Object.entries(result)
-      .filter(([, ok]) => !ok)
-      .map(([name]) => name)
-      .join(", ");
-    try {
-      await api.sendMessage(
-        Number(config.alertChatId),
-        `🚨 <b>email-to-telegram</b>: health probe failed (${failures}). Service may be degraded.`,
-        { parse_mode: "HTML" },
-      );
-    } catch (err: unknown) {
-      log.error({ err }, "uptime check: failed to send Telegram alert");
+  if (recovered.length > 0) {
+    const sent = await sendOperatorMessage(
+      api,
+      chatId,
+      `✅ <b>email-to-telegram</b>: recovered (${recovered.join(", ")}).`,
+      "recovery notice",
+    );
+    // Same rule as alerts: an all-clear the operator never received has not
+    // been delivered, so keep it queued for the next check.
+    if (sent) {
+      for (const dimension of recovered) alertState[dimension].pendingRecoveryNotice = false;
     }
+  }
+
+  if (toAlert.length > 0) {
+    const sent = await sendOperatorMessage(
+      api,
+      chatId,
+      `🚨 <b>email-to-telegram</b>: health probe failed (${toAlert.join(", ")}). Service may be degraded.`,
+      "alert",
+    );
+    // Record the alert only once it is actually delivered. Marking on attempt
+    // would let a failed send swallow a real outage until the re-alert
+    // interval elapsed.
+    if (sent) {
+      for (const dimension of toAlert) alertState[dimension].alertedAt = now;
+    }
+  }
+}
+
+async function sendOperatorMessage(
+  api: Api,
+  chatId: number,
+  text: string,
+  kind: string,
+): Promise<boolean> {
+  try {
+    await api.sendMessage(chatId, text, { parse_mode: "HTML" });
+    return true;
+  } catch (err: unknown) {
+    getLogger().error({ err, kind }, "uptime check: failed to send Telegram operator message");
+    return false;
   }
 }
