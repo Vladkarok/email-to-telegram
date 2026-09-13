@@ -2,7 +2,7 @@
 
 ## Overview
 
-A self-hosted Prometheus + Grafana + Loki stack runs on the staging VM alongside the application containers. Co-locating it with staging keeps cost and operational surface low while letting the same instance optionally scrape production. Grafana is reachable only through the WireGuard VPN; no monitoring port is published to the public internet.
+A self-hosted Prometheus + Grafana + Loki stack runs on the staging VM alongside the application containers. Co-locating it with staging keeps cost and operational surface low while letting the same instance optionally scrape production. Grafana is fronted by a Caddy reverse proxy (vhost `grafana.example.com`, configured outside this repo) and reachable only from the LAN / WireGuard VPN — Caddy returns 404 to any request from the public internet. Grafana's raw port is still published on the private VPN interface (see below) but the canonical access path is the Caddy HTTPS URL.
 
 ## Architecture
 
@@ -62,7 +62,7 @@ Required variables in `~/monitoring/.env` (read by docker compose at boot):
 
 - `MONITORING_BIND_IP` — private interface IP for Grafana publish (e.g. the VPN IP). Compose refuses to start if unset.
 - `GRAFANA_ADMIN_PASSWORD` — initial Grafana admin password. Required.
-- `GRAFANA_ROOT_URL` — full URL operators use to reach Grafana, including trailing slash (e.g. `http://<vm-private-ip>:3001/`). Required; Grafana uses this for redirects and shared links.
+- `GRAFANA_ROOT_URL` — full URL operators use to reach Grafana, including trailing slash. **Must be the public Caddy URL** (e.g. `https://grafana.example.com/`), not the internal `http://<vm-private-ip>:3001/`. Grafana uses this for redirects, shared links, **and the Grafana Live WebSocket origin check**: if it points at the internal IP while the browser reaches Grafana via Caddy, the browser Origin no longer matches and every `/api/live/ws` upgrade is rejected `401`, producing a reconnect loop (see Troubleshooting).
 - `GRAFANA_ADMIN_USER` — optional, defaults to `admin`.
 
 **Bearer tokens are not in `~/monitoring/.env`.** Scrape auth comes from the GitHub repository secrets `METRICS_BEARER_TOKEN_STAGING` / `METRICS_BEARER_TOKEN_PROD`. The deploy workflow writes them into `~/monitoring/prometheus/secrets/{staging_token,prod_token}` on the host. Each secret must exactly match `METRICS_TOKEN` in the corresponding app deployment's `.env`; if they drift, Prometheus targets go red with `401 Unauthorized`. Rotate via the GitHub secret UI and re-run the workflow.
@@ -71,15 +71,15 @@ Trigger the `Deploy Monitoring` GitHub Action from the Actions tab to bring the 
 
 ## Accessing Grafana
 
-Connect to the WireGuard VPN, then open:
+Connect to the LAN or WireGuard VPN, then open:
 
 ```
-http://<VPN-IP>:3001
+https://grafana.example.com
 ```
 
-Replace `<VPN-IP>` with the VM's VPN address. Log in as `admin` with the password from `~/monitoring/.env`.
+Caddy terminates TLS and reverse-proxies to Grafana at `<vm-private-ip>:3001`, restricting access to the LAN and VPN source ranges (any other source IP gets a 404). Log in as `admin` with the password from `~/monitoring/.env`.
 
-Verify the port is not exposed publicly:
+Grafana's raw port `3001` is still published on the VM's private VPN interface. Direct `http://<VPN-IP>:3001` access works for HTTP but Grafana Live (dashboard auto-refresh) will 401 there, because `GRAFANA_ROOT_URL` is set to the Caddy URL — use the Caddy HTTPS host. Verify the raw port is not exposed publicly:
 
 ```sh
 ssh <staging-host> 'ss -tlnp | grep 3001'
@@ -196,11 +196,12 @@ dimensions: `db`, `disk`, `telegram`, `inbound`.
 - **Promtail not shipping logs**: confirm the `docker_socket_proxy` container is healthy (`docker compose ... ps`) and that `/var/lib/docker/containers` is mounted read-only into promtail. Promtail talks to the proxy at `tcp://docker_socket_proxy:2375`, not the host docker socket directly.
 - **`bearer token authentication failed`**: the token file in `~/monitoring/prometheus/secrets/` does not match `METRICS_TOKEN` in the scraped app's `.env`. Rotate both sides via GitHub secrets and re-run `Deploy Monitoring`.
 - **Grafana login fails after rotating password**: restart the Grafana container; the admin password env var is only read at startup.
+- **`/api/live/ws` 401 loop (dashboards don't auto-refresh; log spam)**: symptom is a flood of `path=/api/live/ws status=401 userId=0` lines in `docker logs monitoring-grafana-1`, all from the Caddy host IP, while ordinary requests authenticate as `userId=1`. Cause is `GRAFANA_ROOT_URL` pointing at the internal `http://<vm-private-ip>:3001/` while browsers reach Grafana via Caddy at `https://grafana.example.com` — the Live WebSocket origin check derives allowed origins from `root_url`, so the mismatch rejects every upgrade. Fix: set `GRAFANA_ROOT_URL` to the Caddy URL (e.g. `https://grafana.example.com/`) in `~/monitoring/.env` and `docker compose -f docker-compose.monitoring.yml --env-file .env up -d grafana` (env is read only at startup). Verify a fresh browser connect logs `path=/api/live/ws status=-1 userId=1` (a successful upgrade), not `401`.
 
 ## Out of scope
 
 - Alertmanager. The app already pushes operator alerts to Telegram via `ALERT_CHAT_ID`; Prometheus-side alerting is not wired up.
-- Public Grafana exposure. Access stays VPN-only.
+- Public Grafana exposure. Access stays LAN/VPN-only; Caddy 404s the public internet and no monitoring port binds to a public IP.
 - Multi-region scraping. Single staging-VM scraper only; HA Prometheus is not in scope.
 
 ## Known tech debt
