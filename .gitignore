@@ -50,3 +50,11 @@ docs/agent/LOCAL.md
 
 # Scratch / agent working files
 tmp/
+
+# Agent/AI tooling: internal-only, must never land in the public repo
+.claude/
+.codex/
+.agents/
+AGENTS.md
+CLAUDE.md
+CONTEXT.md
