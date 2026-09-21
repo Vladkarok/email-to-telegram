@@ -5,7 +5,7 @@ vi.mock("../../../src/utils/logger.js", () => ({
   getLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
 }));
 
-const { runUptimeCheck, resetUptimeAlertStateForTests } =
+const { runUptimeCheck, resetUptimeAlertStateForTests, healthchecksFailUrl } =
   await import("../../../src/utils/uptime.js");
 const { noteRawInboundOutcome, resetInboundHealthForTests } =
   await import("../../../src/observability/inboundHealth.js");
@@ -30,6 +30,7 @@ function makeApi(): {
 
 const NO_ALERT = { healthchecksUrl: undefined, alertChatId: undefined };
 const ALERTING = { healthchecksUrl: undefined, alertChatId: 999n };
+const ANY_SIGNAL: unknown = expect.any(AbortSignal);
 
 /** The alert threshold is 2 consecutive failures, so most cases need two runs. */
 async function runTwice(...args: Parameters<typeof runUptimeCheck>) {
@@ -110,7 +111,10 @@ describe("runUptimeCheck", () => {
       alertChatId: 999n,
     });
 
-    expect(fetchMock).toHaveBeenCalledWith("https://hc.example/ping");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://hc.example/ping",
+      expect.objectContaining({ signal: ANY_SIGNAL }),
+    );
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
@@ -197,6 +201,90 @@ describe("runUptimeCheck", () => {
       const [, text] = sendMessage.mock.calls[0] as [number, string];
       expect(text).toContain("disk");
       expect(text).not.toContain("db");
+    });
+  });
+
+  describe("healthchecks fail signal", () => {
+    const HC = { healthchecksUrl: "https://hc.example/ping", alertChatId: undefined };
+
+    function stubFetch() {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+      vi.stubGlobal("fetch", fetchMock);
+      return fetchMock;
+    }
+
+    it("sends nothing on a single failing check", async () => {
+      const fetchMock = stubFetch();
+
+      await runUptimeCheck(makeDb(false), null, HC);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("POSTs /fail naming the failing dimensions once the threshold is reached", async () => {
+      const fetchMock = stubFetch();
+      const config = { ...HC, probeDirs: ["/definitely-missing-email-to-telegram-probe-dir"] };
+
+      await runTwice(makeDb(false), null, config);
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://hc.example/ping/fail",
+        expect.objectContaining({
+          method: "POST",
+          body: "health probe failed: db, disk",
+          signal: ANY_SIGNAL,
+        }),
+      );
+    });
+
+    it("keeps signalling every run while the outage lasts", async () => {
+      const fetchMock = stubFetch();
+
+      for (let i = 0; i < 4; i++) await runUptimeCheck(makeDb(false), null, HC);
+
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it("signals even when the Telegram alert could not be delivered", async () => {
+      const fetchMock = stubFetch();
+      const { api, sendMessage } = makeApi();
+      sendMessage.mockRejectedValue(new Error("telegram down"));
+
+      await runTwice(makeDb(false), api, { ...HC, alertChatId: 999n });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://hc.example/ping/fail",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+
+    it("sends the success ping again after recovery", async () => {
+      const fetchMock = stubFetch();
+
+      await runTwice(makeDb(false), null, HC);
+      fetchMock.mockClear();
+      await runUptimeCheck(makeDb(true), null, HC);
+
+      expect(fetchMock).toHaveBeenCalledWith("https://hc.example/ping", expect.anything());
+    });
+
+    it("does not throw when the fail signal request errors", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
+
+      await expect(runTwice(makeDb(false), null, HC)).resolves.not.toThrow();
+    });
+
+    it.each([
+      ["https://hc-ping.com/abc-uuid", "https://hc-ping.com/abc-uuid/fail"],
+      ["https://hc-ping.com/abc-uuid/", "https://hc-ping.com/abc-uuid/fail"],
+      ["https://hc-ping.com/pingkey/my-slug", "https://hc-ping.com/pingkey/my-slug/fail"],
+      [
+        "https://hc-ping.com/pingkey/my-slug?create=1",
+        "https://hc-ping.com/pingkey/my-slug/fail?create=1",
+      ],
+    ])("joins %s to %s", (input, expected) => {
+      expect(healthchecksFailUrl(input)).toBe(expected);
     });
   });
 

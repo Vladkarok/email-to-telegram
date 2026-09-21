@@ -34,6 +34,9 @@ const REALERT_INTERVAL_MS = 60 * 60 * 1000;
 const TELEGRAM_PROBE_ATTEMPTS = 2;
 const TELEGRAM_PROBE_RETRY_DELAY_MS = 2000;
 
+/** Upper bound on each healthchecks.io request so a hung endpoint cannot pile up requests. */
+const HEALTHCHECKS_TIMEOUT_MS = 10_000;
+
 export interface UptimeConfig {
   healthchecksUrl: string | undefined;
   alertChatId: bigint | undefined;
@@ -144,9 +147,12 @@ async function probeTelegram(api: Api): Promise<boolean> {
 function decideNotifications(
   result: ProbeResult,
   now: number,
-): { toAlert: Dimension[]; recovered: Dimension[] } {
+): { toAlert: Dimension[]; recovered: Dimension[]; outage: Dimension[] } {
   const toAlert: Dimension[] = [];
   const recovered: Dimension[] = [];
+  // Every dimension at or over the threshold, independent of `alertedAt`, so
+  // an undelivered Telegram alert cannot suppress the external fail signal.
+  const outage: Dimension[] = [];
 
   for (const [dimension, ok] of Object.entries(result) as [Dimension, boolean][]) {
     const state = alertState[dimension];
@@ -165,12 +171,20 @@ function decideNotifications(
 
     state.consecutiveFailures += 1;
     if (state.consecutiveFailures < ALERT_THRESHOLD) continue;
+    outage.push(dimension);
 
     const due = state.alertedAt === null || now - state.alertedAt >= REALERT_INTERVAL_MS;
     if (due) toAlert.push(dimension);
   }
 
-  return { toAlert, recovered };
+  return { toAlert, recovered, outage };
+}
+
+/** Appends `/fail` to the ping URL path, preserving any query string. */
+export function healthchecksFailUrl(pingUrl: string): string {
+  const url = new URL(pingUrl);
+  url.pathname = `${url.pathname.replace(/\/+$/, "")}/fail`;
+  return url.toString();
 }
 
 /**
@@ -178,7 +192,10 @@ function decideNotifications(
  * 1. Checks DB connectivity.
  * 2. Checks that configured directories are writable.
  * 3. Checks Telegram API reachability.
- * 4. On all-healthy — pings healthchecks.io URL if configured.
+ * 4. On all-healthy — pings healthchecks.io URL if configured. On any
+ *    dimension failing ALERT_THRESHOLD consecutive checks — POSTs its `/fail`
+ *    endpoint instead, naming the failing dimensions. Neither depends on
+ *    Telegram, so the operator hears about a Telegram outage too.
  * 5. On a dimension failing ALERT_THRESHOLD consecutive checks — sends a
  *    Telegram alert to ALERT_CHAT_ID if configured, then stays quiet about
  *    that dimension until it recovers or REALERT_INTERVAL_MS elapses.
@@ -201,16 +218,28 @@ export async function runUptimeCheck(db: Db, api: Api | null, config: UptimeConf
   const result: ProbeResult = { db: dbOk, disk: diskOk, telegram: telegramOk, inbound: inboundOk };
   const allOk = dbOk && diskOk && telegramOk && inboundOk;
   const now = Date.now();
-  const { toAlert, recovered } = decideNotifications(result, now);
+  const { toAlert, recovered, outage } = decideNotifications(result, now);
 
-  if (allOk) {
-    if (config.healthchecksUrl) {
-      fetch(config.healthchecksUrl).catch((err: unknown) => {
+  if (!allOk) log.error({ result }, "uptime check: one or more probes failed");
+
+  if (config.healthchecksUrl) {
+    // Fixed text and dimension names only: the privacy page promises
+    // healthchecks.io receives no message content or user PII.
+    if (allOk) {
+      fetch(config.healthchecksUrl, {
+        signal: AbortSignal.timeout(HEALTHCHECKS_TIMEOUT_MS),
+      }).catch((err: unknown) => {
         log.warn({ err }, "uptime check: healthchecks ping failed");
       });
+    } else if (outage.length > 0) {
+      fetch(healthchecksFailUrl(config.healthchecksUrl), {
+        method: "POST",
+        body: `health probe failed: ${outage.join(", ")}`,
+        signal: AbortSignal.timeout(HEALTHCHECKS_TIMEOUT_MS),
+      }).catch((err: unknown) => {
+        log.warn({ err }, "uptime check: healthchecks fail signal failed");
+      });
     }
-  } else {
-    log.error({ result }, "uptime check: one or more probes failed");
   }
 
   if (!api || !config.alertChatId) return;

@@ -355,7 +355,7 @@ See [`.env.example`](./.env.example) for the authoritative template.
 | `INITIAL_ALLOWED_USERS`          | No       | Initial Telegram operators; recommended on first deploy                                                             |
 | `BACKUP_DIR`                     | No       | Nightly backup directory                                                                                            |
 | `BACKUP_ARCHIVE_ENCRYPTION`      | No       | `off` or `storage-key`; `yes` is invalid                                                                            |
-| `HEALTHCHECKS_URL`               | No       | External heartbeat URL                                                                                              |
+| `HEALTHCHECKS_URL`               | No       | External heartbeat URL; sustained probe failures POST `<url>/fail`                                                  |
 | `ALERT_CHAT_ID`                  | No       | Telegram chat for critical alerts                                                                                   |
 | `ADMIN_ENABLED`                  | No       | Enable internal `/admin` Web UI                                                                                     |
 | `ADMIN_SECRET`                   | No       | Login secret required when admin is enabled                                                                         |

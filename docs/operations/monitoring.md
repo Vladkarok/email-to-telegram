@@ -187,6 +187,22 @@ dimensions: `db`, `disk`, `telegram`, `inbound`.
   v2-only while the prod Worker was still on v1, and inbound was silently down
   for ~9 days. See `docs/agent/DECISIONS.md`.
 
+### External heartbeat (healthchecks.io)
+
+With `HEALTHCHECKS_URL` set, the same check also reports to healthchecks.io,
+independently of Telegram configuration:
+
+- all probes pass: GET `<url>` (success ping);
+- a dimension reaches the alert threshold (2 consecutive failures): POST
+  `<url>/fail` with body `health probe failed: <dimensions>`, every run until
+  it recovers. healthchecks.io notifies immediately and shows the body as
+  "Last Ping Body";
+- a single failing run: nothing, and the grace time absorbs the missed ping.
+
+App or host down shows up as missing pings after period plus grace. Configure
+each check with period 5 min and grace 10 min. The body carries only fixed
+text and dimension names, as the hosted privacy page promises.
+
 ## Troubleshooting
 
 - **Grafana shows "no data"**: inspect the Prometheus targets endpoint from inside the container (port 9090 is not published on the host):
