@@ -39,6 +39,23 @@ describe("/help command", () => {
     expect(text).not.toContain("/portal");
   });
 
+  it("lists plan commands and the operator contact in hosted donation mode", async () => {
+    mockLoadConfig.mockReturnValue({
+      appMode: "hosted",
+      billingProvider: "donation",
+      supportContact: "@op",
+    });
+    const ctx = createMockCtx({ chatType: "private" });
+
+    await helpHandler(ctx);
+
+    const [text] = ctx.reply.mock.calls[0] as [string];
+    expect(text).toContain("/usage");
+    expect(text).toContain("Need higher limits? Message @op.");
+    expect(text).not.toContain("/upgrade");
+    expect(text).not.toContain("/portal");
+  });
+
   it("omits hosted plan and billing commands in self-hosted mode", async () => {
     mockLoadConfig.mockReturnValue({ appMode: "self-hosted", billingProvider: "none" });
     const ctx = createMockCtx({ chatType: "private" });
