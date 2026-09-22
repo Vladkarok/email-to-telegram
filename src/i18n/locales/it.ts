@@ -430,8 +430,6 @@ Esempi:
     body: "Questo bot è gratuito ed è mantenuto come progetto personale.\nSe ti è utile, una piccola donazione aiuta a tenerlo in vita.\n\nLe donazioni sono regali, non un pagamento per il servizio — non sono legati vantaggi alla donazione.",
     button: "💛 Dona",
     unavailable: "ℹ️ Le donazioni non sono configurate su questa istanza.",
-    quotaHint: (url: string) =>
-      `\n\n💛 Se questo bot ti è utile, puoi supportare il progetto: ${url}`,
   },
   privacy: {
     text: (supportContact: string | null, policyUrl: string | null) =>
@@ -531,24 +529,30 @@ L'azione <b>non è reversibile</b>. Conferma per procedere.`,
     thisMonth: (month: string) => `<b>Questo mese — ${month}</b>`,
   },
   quotaNotice: {
-    monthlyEmailLimit: (planName: string, limit: number) =>
+    higherLimitsUpgrade: "Usa /upgrade per limiti più alti.",
+    higherLimitsContact: (contact: string) => `Ti servono limiti più alti? Scrivi a ${contact}.`,
+    monthlyEmailLimit: (planName: string, limit: number, higherLimits: string) =>
       `⚠️ <b>La tua casella ha raggiunto il limite mensile del piano ${planName}: ${limit} email.</b>\n` +
       `Le nuove email in arrivo vengono respinte ai mittenti finché il contatore non si azzera il giorno 1.\n` +
-      `Usa /usage per rivedere questo mese, oppure /upgrade per ottenere limiti più alti.`,
-    storageLimit: (planName: string) =>
+      `Usa /usage per rivedere questo mese.\n` +
+      higherLimits,
+    storageLimit: (planName: string, higherLimits: string) =>
       `⚠️ <b>Il tuo spazio di archiviazione sul piano ${planName} è pieno.</b>\n` +
       `Le nuove email in arrivo vengono respinte ai mittenti.\n` +
-      `Libera spazio eliminando email o allegati salvati, oppure usa /upgrade per limiti più alti.`,
+      `Libera spazio eliminando email o allegati salvati.\n` +
+      higherLimits,
     subscriptionInactive: () =>
       `⚠️ <b>Il tuo abbonamento non è attivo, quindi le email in arrivo vengono respinte.</b>\n` +
       `Usa /billing per verificare lo stato del piano.`,
-    approachingMonthlyLimit: (planName: string, used: number, limit: number) =>
+    approachingMonthlyLimit: (
+      planName: string,
+      used: number,
+      limit: number,
+      higherLimits: string,
+    ) =>
       `⏳ <b>Hai usato ${used} delle ${limit} email mensili del piano ${planName}.</b>\n` +
       `Al raggiungimento del limite, le nuove email verranno respinte ai mittenti finché il contatore non si azzera il giorno 1.\n` +
-      `Usa /usage per i dettagli, oppure /upgrade per limiti più alti.`,
-    monthlyLimitReminder: (rejectedCount: number) =>
-      `⚠️ <b>La tua casella è ancora oltre il limite mensile — questo mese la posta in arrivo è stata respinta ${rejectedCount} volte.</b>\n` +
-      `Le email continueranno a essere respinte finché il contatore non si azzera il giorno 1.\n` +
-      `/upgrade per aumentare i limiti e non perdere più email.`,
+      `Usa /usage per i dettagli.\n` +
+      higherLimits,
   },
 } as const;

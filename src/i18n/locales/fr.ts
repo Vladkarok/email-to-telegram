@@ -431,8 +431,6 @@ Exemples :
     body: "Ce bot est gratuit et maintenu comme un projet personnel.\nS'il vous est utile, un petit don aide à garder les lumières allumées.\n\nLes dons sont des cadeaux, pas un paiement pour un service — aucun avantage n'est lié à un don.",
     button: "💛 Faire un don",
     unavailable: "ℹ️ Les dons ne sont pas configurés sur cette instance.",
-    quotaHint: (url: string) =>
-      `\n\n💛 Si ce bot vous est utile, vous pouvez soutenir le projet : ${url}`,
   },
   privacy: {
     text: (supportContact: string | null, policyUrl: string | null) =>
@@ -532,24 +530,31 @@ Cette action est <b>irréversible</b>. Confirmez pour continuer.`,
     thisMonth: (month: string) => `<b>Ce mois-ci — ${month}</b>`,
   },
   quotaNotice: {
-    monthlyEmailLimit: (planName: string, limit: number) =>
+    higherLimitsUpgrade: "Utilisez /upgrade pour des limites plus élevées.",
+    higherLimitsContact: (contact: string) =>
+      `Besoin de limites plus élevées ? Écrivez à ${contact}.`,
+    monthlyEmailLimit: (planName: string, limit: number, higherLimits: string) =>
       `⚠️ <b>Votre boîte a atteint la limite mensuelle du plan ${planName} : ${limit} e-mails.</b>\n` +
       `Les nouveaux e-mails entrants sont renvoyés aux expéditeurs jusqu'à la remise à zéro le 1er du mois.\n` +
-      `Utilisez /usage pour consulter ce mois-ci, ou /upgrade pour obtenir des limites plus élevées.`,
-    storageLimit: (planName: string) =>
+      `Utilisez /usage pour consulter ce mois-ci.\n` +
+      higherLimits,
+    storageLimit: (planName: string, higherLimits: string) =>
       `⚠️ <b>Votre stockage sur le plan ${planName} est plein.</b>\n` +
       `Les nouveaux e-mails entrants sont renvoyés aux expéditeurs.\n` +
-      `Libérez de l'espace en supprimant des e-mails ou pièces jointes stockés, ou utilisez /upgrade pour des limites plus élevées.`,
+      `Libérez de l'espace en supprimant des e-mails ou pièces jointes stockés.\n` +
+      higherLimits,
     subscriptionInactive: () =>
       `⚠️ <b>Votre abonnement est inactif, les e-mails entrants sont donc renvoyés.</b>\n` +
       `Utilisez /billing pour vérifier l'état de votre plan.`,
-    approachingMonthlyLimit: (planName: string, used: number, limit: number) =>
+    approachingMonthlyLimit: (
+      planName: string,
+      used: number,
+      limit: number,
+      higherLimits: string,
+    ) =>
       `⏳ <b>Vous avez utilisé ${used} des ${limit} e-mails mensuels du plan ${planName}.</b>\n` +
       `Une fois la limite atteinte, les nouveaux e-mails seront renvoyés aux expéditeurs jusqu'à la remise à zéro le 1er du mois.\n` +
-      `Utilisez /usage pour les détails, ou /upgrade pour des limites plus élevées.`,
-    monthlyLimitReminder: (rejectedCount: number) =>
-      `⚠️ <b>Votre boîte dépasse toujours sa limite mensuelle — le courrier entrant a été refusé ${rejectedCount} fois ce mois-ci.</b>\n` +
-      `Les e-mails continueront d'être renvoyés jusqu'à la remise à zéro le 1er du mois.\n` +
-      `/upgrade pour augmenter vos limites et ne plus perdre d'e-mails.`,
+      `Utilisez /usage pour les détails.\n` +
+      higherLimits,
   },
 } as const;
