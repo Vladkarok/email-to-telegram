@@ -193,8 +193,7 @@ export function rawRoute(
           recordRawInbound("rejected", inboundLimit.code);
           recordQuotaRejection(inboundLimit.code);
           if (isQuotaNotificationReason(inboundLimit.code)) {
-            // Charge the rejection before notifying: the while-capped reminder
-            // reads rejected_count and must include this email.
+            // Count the rejection (shown in /usage), then notify.
             await incrementUserUsageMonth(getDb(), {
               userId: alias.createdBy,
               month: preCheckMonth,

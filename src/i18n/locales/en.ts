@@ -423,8 +423,6 @@ Examples:
     body: "This bot is free to use and maintained as a personal project.\nIf it's useful to you, a small donation keeps the lights on.\n\nDonations are gifts, not payment for service — there are no perks tied to a donation.",
     button: "💛 Donate",
     unavailable: "ℹ️ Donations are not configured on this instance.",
-    quotaHint: (url: string) =>
-      `\n\n💛 If this bot is useful to you, you can support the project: ${url}`,
   },
   privacy: {
     text: (supportContact: string | null, policyUrl: string | null) =>
@@ -524,24 +522,30 @@ This action <b>cannot be undone</b>. Confirm to proceed.`,
     thisMonth: (month: string) => `<b>This month — ${month}</b>`,
   },
   quotaNotice: {
-    monthlyEmailLimit: (planName: string, limit: number) =>
+    higherLimitsUpgrade: "Use /upgrade for higher limits.",
+    higherLimitsContact: (contact: string) => `Need higher limits? Message ${contact}.`,
+    monthlyEmailLimit: (planName: string, limit: number, higherLimits: string) =>
       `⚠️ <b>Your inbox reached the ${planName} plan's monthly limit of ${limit} emails.</b>\n` +
       `New incoming mail is being bounced back to senders until the counter resets on the 1st.\n` +
-      `Use /usage to review this month, or /upgrade to get higher limits.`,
-    storageLimit: (planName: string) =>
+      `Use /usage to review this month.\n` +
+      higherLimits,
+    storageLimit: (planName: string, higherLimits: string) =>
       `⚠️ <b>Your storage on the ${planName} plan is full.</b>\n` +
       `New incoming mail is being bounced back to senders.\n` +
-      `Free up space by deleting stored emails or attachments, or /upgrade for higher limits.`,
+      `Free up space by deleting stored emails or attachments.\n` +
+      higherLimits,
     subscriptionInactive: () =>
       `⚠️ <b>Your subscription is inactive, so incoming mail is being bounced.</b>\n` +
       `Use /billing to review your plan status.`,
-    approachingMonthlyLimit: (planName: string, used: number, limit: number) =>
+    approachingMonthlyLimit: (
+      planName: string,
+      used: number,
+      limit: number,
+      higherLimits: string,
+    ) =>
       `⏳ <b>You've used ${used} of the ${planName} plan's ${limit} monthly emails.</b>\n` +
       `Once the limit is reached, new mail bounces back to senders until the counter resets on the 1st.\n` +
-      `Use /usage for details, or /upgrade for higher limits.`,
-    monthlyLimitReminder: (rejectedCount: number) =>
-      `⚠️ <b>Your inbox is still over its monthly limit — incoming mail was rejected ${rejectedCount} times this month.</b>\n` +
-      `Mail keeps bouncing until the counter resets on the 1st.\n` +
-      `/upgrade to raise your limits and stop losing mail.`,
+      `Use /usage for details.\n` +
+      higherLimits,
   },
 } as const;

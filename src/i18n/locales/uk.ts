@@ -1,12 +1,3 @@
-// Ukrainian count agreement: 1 раз, 2–4 рази, 5+ разів (11–14 always разів).
-function razy(n: number): string {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (mod10 === 1 && mod100 !== 11) return "раз";
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "рази";
-  return "разів";
-}
-
 export const uk = {
   localeName: "Українська",
   language: {
@@ -431,8 +422,6 @@ ${safetyNotes}
     body: "Цей бот безкоштовний і підтримується як особистий проєкт.\nЯкщо він вам корисний — невелика донація допомагає тримати його живим.\n\nДонати — це подарунок, а не оплата сервісу. Жодних перків за донат немає.",
     button: "💛 Підтримати",
     unavailable: "ℹ️ Донати не налаштовані на цьому інстансі.",
-    quotaHint: (url: string) =>
-      `\n\n💛 Якщо цей бот вам корисний — можете підтримати проєкт: ${url}`,
   },
   privacy: {
     text: (supportContact: string | null, policyUrl: string | null) =>
@@ -532,24 +521,30 @@ ${policyUrl ? `Повна політика: ${policyUrl}\n` : ""}${supportContac
     thisMonth: (month: string) => `<b>Цей місяць — ${month}</b>`,
   },
   quotaNotice: {
-    monthlyEmailLimit: (planName: string, limit: number) =>
+    higherLimitsUpgrade: "Скористайтеся /upgrade, щоб отримати вищі ліміти.",
+    higherLimitsContact: (contact: string) => `Потрібні вищі ліміти? Напишіть ${contact}.`,
+    monthlyEmailLimit: (planName: string, limit: number, higherLimits: string) =>
       `⚠️ <b>Ваша скринька досягла місячного ліміту плану ${planName} — ${limit} листів.</b>\n` +
       `Нові вхідні листи повертаються відправникам, доки лічильник не скинеться 1-го числа.\n` +
-      `Використайте /usage, щоб переглянути цей місяць, або /upgrade — щоб отримати вищі ліміти.`,
-    storageLimit: (planName: string) =>
+      `Використайте /usage, щоб переглянути цей місяць.\n` +
+      higherLimits,
+    storageLimit: (planName: string, higherLimits: string) =>
       `⚠️ <b>Ваше сховище на плані ${planName} заповнене.</b>\n` +
       `Нові вхідні листи повертаються відправникам.\n` +
-      `Звільніть місце, видаливши збережені листи чи вкладення, або скористайтеся /upgrade для вищих лімітів.`,
+      `Звільніть місце, видаливши збережені листи чи вкладення.\n` +
+      higherLimits,
     subscriptionInactive: () =>
       `⚠️ <b>Ваша підписка неактивна, тому вхідні листи повертаються відправникам.</b>\n` +
       `Використайте /billing, щоб перевірити стан плану.`,
-    approachingMonthlyLimit: (planName: string, used: number, limit: number) =>
+    approachingMonthlyLimit: (
+      planName: string,
+      used: number,
+      limit: number,
+      higherLimits: string,
+    ) =>
       `⏳ <b>Ви використали ${used} із ${limit} листів на місяць плану ${planName}.</b>\n` +
       `Після досягнення ліміту нові листи повертатимуться відправникам, доки лічильник не скинеться 1-го числа.\n` +
-      `Використайте /usage для деталей або /upgrade — щоб отримати вищі ліміти.`,
-    monthlyLimitReminder: (rejectedCount: number) =>
-      `⚠️ <b>Ваша скринька досі перевищує місячний ліміт — цього місяця вхідну пошту відхилено ${rejectedCount} ${razy(rejectedCount)}.</b>\n` +
-      `Листи повертатимуться відправникам, доки лічильник не скинеться 1-го числа.\n` +
-      `/upgrade — щоб підвищити ліміти й не втрачати пошту.`,
+      `Використайте /usage для деталей.\n` +
+      higherLimits,
   },
 } as const;

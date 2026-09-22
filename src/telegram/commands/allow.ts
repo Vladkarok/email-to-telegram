@@ -16,8 +16,6 @@ import {
 } from "../../billing/limits.js";
 import { parseAllowValue } from "../allowValue.js";
 import { escapeHtml } from "../../utils/html.js";
-import { loadConfig } from "../../config.js";
-import { donateHintSuffix } from "../donateHint.js";
 import { getMessages, resolveLocale } from "../../i18n/index.js";
 import { aliasResolutionError, resolveManageableAlias } from "../aliasResolver.js";
 import { allowRuleIcon } from "../allowRuleDisplay.js";
@@ -193,12 +191,11 @@ async function replyForAllowRuleLimitFailure(
       CB_BILLING_UPGRADE,
     );
     const limitValue = limit.limit ?? 0;
-    const text =
-      messages.allowCommand.limitReached(
-        escapeHtml(localPart),
-        limit.used ?? limitValue,
-        limitValue,
-      ) + donateHintSuffix(loadConfig(), messages, "html");
+    const text = messages.allowCommand.limitReached(
+      escapeHtml(localPart),
+      limit.used ?? limitValue,
+      limitValue,
+    );
     await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
     return;
   }

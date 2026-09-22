@@ -112,8 +112,7 @@ export function preflightRoute(app: FastifyInstance): void {
         // so this is the ONLY place monthly/subscription exhaustion can
         // notify the owner. (storage_limit needs sizes and is raw-only.)
         if (isQuotaNotificationReason(inboundLimit.code)) {
-          // Charge the rejection before notifying: the while-capped reminder
-          // reads rejected_count and must include this email.
+          // Count the rejection (shown in /usage), then notify.
           await incrementUserUsageMonth(getDb(), {
             userId: alias.createdBy,
             month,

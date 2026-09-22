@@ -4,13 +4,15 @@ import type * as schema from "../db/schema.js";
 import { findUserById } from "../db/repos/users.js";
 import {
   claimQuotaNotification,
-  quotaWeekForDate,
   type QuotaNotificationReason,
 } from "../db/repos/quotaNotifications.js";
-import { getUserUsageMonth } from "../db/repos/usage.js";
 import { getEffectivePlan, shouldEnforceHostedLimits } from "./limits.js";
 import { DEFAULT_LOCALE, getMessages, normalizeLocale } from "../i18n/index.js";
 import { getLogger } from "../utils/logger.js";
+import { loadConfig } from "../config.js";
+import { escapeHtml } from "../utils/html.js";
+import type { Messages } from "../i18n/index.js";
+import { resolveSupportContact } from "./selfServe.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -24,6 +26,18 @@ const NOTIFIABLE_REASONS: ReadonlySet<string> = new Set([
 export const APPROACHING_LIMIT_THRESHOLD = 0.8;
 
 /**
+ * The "how to get more" line of every quota notice. In donation mode plans are
+ * not sold (donations are gifts, the legal basis of the model), so the notice
+ * names the operator contact directly instead of pointing at /upgrade.
+ */
+function higherLimitsLine(messages: Messages): string {
+  const config = loadConfig();
+  return config.billingProvider === "donation"
+    ? messages.quotaNotice.higherLimitsContact(escapeHtml(resolveSupportContact(config)))
+    : messages.quotaNotice.higherLimitsUpgrade;
+}
+
+/**
  * Persistent, user-actionable rejections get a notice; per-message conditions
  * (size limit, rate limit, duplicates) do not — they would be spam.
  */
@@ -35,11 +49,8 @@ export function isQuotaNotificationReason(reason: string): reason is QuotaNotifi
  * Tells the alias owner (private chat) that inbound mail is bouncing because a
  * quota is exhausted. At most one notice per user, per reason, per month —
  * enforced by the claim row's primary key, so concurrent rejections cannot
- * double-send.
- *
- * While the monthly email cap stays exhausted, later rejections fall through
- * to a weekly reminder ("N emails were rejected this month") — at most one per
- * ISO week, and never in the same week the exhaustion notice itself went out.
+ * double-send. There is deliberately no follow-up reminder while a cap stays
+ * exhausted: weekly "still capped" nags were judged too noisy (2026-09-22).
  *
  * Never throws: inbound handling must not depend on Telegram availability.
  * If the send fails after the claim was won, the notice is lost for the rest
@@ -59,16 +70,7 @@ export async function notifyQuotaExhausted(
   try {
     if (!api) return;
 
-    const claimed =
-      reason === "monthly_email_limit"
-        ? await claimMonthlyWithWeekSuppression(db, userId, month)
-        : await claimQuotaNotification(db, userId, reason, month);
-    if (!claimed) {
-      if (reason === "monthly_email_limit") {
-        await sendCappedReminder(db, api, userId, month);
-      }
-      return;
-    }
+    if (!(await claimQuotaNotification(db, userId, reason, month))) return;
 
     const user = await findUserById(db, userId);
     if (!user) return;
@@ -77,9 +79,13 @@ export async function notifyQuotaExhausted(
     const messages = getMessages(normalizeLocale(user.locale) ?? DEFAULT_LOCALE);
     const text =
       reason === "monthly_email_limit"
-        ? messages.quotaNotice.monthlyEmailLimit(plan.name, plan.limits.deliveredEmailsMonth)
+        ? messages.quotaNotice.monthlyEmailLimit(
+            plan.name,
+            plan.limits.deliveredEmailsMonth,
+            higherLimitsLine(messages),
+          )
         : reason === "storage_limit"
-          ? messages.quotaNotice.storageLimit(plan.name)
+          ? messages.quotaNotice.storageLimit(plan.name, higherLimitsLine(messages))
           : messages.quotaNotice.subscriptionInactive();
 
     await api.sendMessage(userId.toString(), text, { parse_mode: "HTML" });
@@ -87,64 +93,6 @@ export async function notifyQuotaExhausted(
   } catch (err: unknown) {
     getLogger().warn({ err, userId: userId.toString(), reason }, "quota.notice.failed");
   }
-}
-
-/**
- * Wins the monthly exhaustion claim and, in the same transaction, pre-claims
- * the current ISO week. Atomicity matters: with two separate inserts, a
- * concurrent rejection that loses the month claim could win the week claim
- * in the gap and send the "still capped" reminder right next to the
- * exhaustion notice itself. Inside one transaction the loser's conflicting
- * month insert waits for this commit, by which time the week is taken.
- */
-async function claimMonthlyWithWeekSuppression(
-  db: Db,
-  userId: bigint,
-  month: string,
-): Promise<boolean> {
-  return db.transaction(async (tx) => {
-    const txDb = tx as Db;
-    if (!(await claimQuotaNotification(txDb, userId, "monthly_email_limit", month))) {
-      return false;
-    }
-    await claimQuotaNotification(txDb, userId, "monthly_email_limit_reminder", quotaWeekForDate());
-    return true;
-  });
-}
-
-/**
- * Weekly "still capped, you are losing mail" reminder. Runs only when the
- * month's exhaustion notice was already sent. The rejected count comes from
- * user_usage_months.rejected_count, which the ingress paths increment before
- * calling the notifier — so the current rejection is already included.
- * The count tallies bounce events: sender-side retries (and rare Worker
- * retries) each count. That is deliberate — every event is a real bounce —
- * so it is not a count of distinct messages.
- */
-async function sendCappedReminder(db: Db, api: Api, userId: bigint, month: string): Promise<void> {
-  if (
-    !(await claimQuotaNotification(db, userId, "monthly_email_limit_reminder", quotaWeekForDate()))
-  ) {
-    return;
-  }
-
-  const user = await findUserById(db, userId);
-  if (!user) return;
-
-  const usage = await getUserUsageMonth(db, userId, month);
-  const rejectedCount = usage?.rejectedCount ?? 0;
-  if (rejectedCount <= 0) return;
-
-  const messages = getMessages(normalizeLocale(user.locale) ?? DEFAULT_LOCALE);
-  await api.sendMessage(
-    userId.toString(),
-    messages.quotaNotice.monthlyLimitReminder(rejectedCount),
-    { parse_mode: "HTML" },
-  );
-  getLogger().info(
-    { userId: userId.toString(), reason: "monthly_email_limit_reminder", month },
-    "quota.notice.sent",
-  );
 }
 
 /**
@@ -182,7 +130,12 @@ export async function notifyApproachingMonthlyLimit(
     const messages = getMessages(normalizeLocale(user.locale) ?? DEFAULT_LOCALE);
     await api.sendMessage(
       userId.toString(),
-      messages.quotaNotice.approachingMonthlyLimit(plan.name, used, limit),
+      messages.quotaNotice.approachingMonthlyLimit(
+        plan.name,
+        used,
+        limit,
+        higherLimitsLine(messages),
+      ),
       { parse_mode: "HTML" },
     );
     getLogger().info(
