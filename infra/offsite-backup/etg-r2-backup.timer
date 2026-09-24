@@ -1,0 +1,13 @@
+[Unit]
+Description=Nightly off-site copy of the email-to-telegram database dump
+
+[Timer]
+# The app writes its dump at 02:00 UTC.
+OnCalendar=*-*-* 02:30:00 UTC
+RandomizedDelaySec=10m
+Persistent=true
+AccuracySec=1m
+Unit=etg-r2-backup.service
+
+[Install]
+WantedBy=timers.target

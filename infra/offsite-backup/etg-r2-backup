@@ -1,0 +1,116 @@
+#!/bin/bash
+# Nightly off-site copy of the newest encrypted database dump to an
+# S3-compatible restic repository (Cloudflare R2 in the hosted deployment).
+#
+# Runs on the Docker host as root via etg-r2-backup.timer, after the app's own
+# 02:00 UTC dump (scripts/backup.sh). The app container never sees the R2
+# credentials, and MASTER_ENCRYPTION_KEY never leaves the container: the dump
+# is already encrypted with it, and restic encrypts the repository again with
+# its own password.
+#
+# Config:      /etc/etg-r2/restic.env       (non-secret settings)
+# Credentials: /etc/etg-r2/credentials.env  (R2 key pair, healthchecks URL)
+# Password:    /etc/etg-r2/restic-password
+set -Eeuo pipefail
+umask 077
+
+readonly config_file=/etc/etg-r2/restic.env
+readonly credentials_file=/etc/etg-r2/credentials.env
+readonly cache_dir=/var/cache/restic-etg
+readonly max_dump_age_seconds=93600 # 26 h: one missed nightly dump fails loudly
+
+healthchecks_url=""
+
+ping_healthchecks() {
+    local suffix=$1 body=$2
+    [[ -n "$healthchecks_url" ]] || return 0
+    # Fixed text only: never send file names, paths or error output off-host.
+    curl -fsS -m 10 --retry 3 -o /dev/null --data-raw "$body" \
+        "${healthchecks_url%/}${suffix}" || true
+}
+
+on_error() {
+    local exit_code=$?
+    trap - ERR
+    ping_healthchecks /fail "etg off-site backup failed (exit $exit_code)"
+    exit "$exit_code"
+}
+trap on_error ERR
+
+fail() {
+    printf '%s\n' "$1" >&2
+    false
+}
+
+for required_file in "$config_file" "$credentials_file"; do
+    [[ -r "$required_file" ]] || fail "Required configuration is not readable: $required_file"
+done
+
+set -a
+# shellcheck disable=SC1090
+source "$config_file"
+# shellcheck disable=SC1090
+source "$credentials_file"
+set +a
+healthchecks_url=${ETG_HEALTHCHECKS_URL:-}
+
+for required_variable in \
+    RESTIC_REPOSITORY RESTIC_PASSWORD_FILE AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY \
+    ETG_BACKUP_DIR ETG_APP_CONTAINER ETG_ENVIRONMENT
+do
+    [[ -n "${!required_variable:-}" ]] || fail "$required_variable is required"
+done
+[[ -r "$RESTIC_PASSWORD_FILE" ]] || fail "Restic password file is not readable: $RESTIC_PASSWORD_FILE"
+
+ping_healthchecks /start ""
+
+latest_dump=$(
+    find "$ETG_BACKUP_DIR" -maxdepth 1 -type f -name 'backup-*.sql.gz.etg' \
+        -printf '%T@ %p\n' | sort -n | tail -n 1 | cut -d' ' -f2-
+)
+[[ -n "$latest_dump" ]] || fail "No encrypted dump found in $ETG_BACKUP_DIR"
+
+dump_name=$(basename "$latest_dump")
+meta_name="${dump_name%.sql.gz.etg}.meta"
+latest_meta="$ETG_BACKUP_DIR/$meta_name"
+
+dump_age_seconds=$(($(date +%s) - $(stat --format=%Y "$latest_dump")))
+if ((dump_age_seconds > max_dump_age_seconds)); then
+    fail "Newest dump is stale: ${dump_age_seconds}s old (maximum ${max_dump_age_seconds}s): $dump_name"
+fi
+for component in "$latest_dump" "$latest_meta"; do
+    [[ -s "$component" ]] || fail "Dump component is missing or empty: $component"
+done
+
+# Prove the dump decrypts with the live key and is a complete gzip stream
+# before uploading it. Decryption happens inside the app container, which
+# already holds the key; the plaintext temp file is removed immediately.
+docker exec "$ETG_APP_CONTAINER" sh -c '
+    set -eu
+    tmp=$(mktemp)
+    trap "rm -f \"$tmp\"" EXIT
+    node dist/backupArchiveCli.js decrypt "/data/backups/$1" "$tmp" "/data/backups/$2"
+    gzip -t "$tmp"
+' etg-verify "$dump_name" "$meta_name"
+
+install -d -m 0700 "$cache_dir"
+
+restic backup \
+    --cache-dir "$cache_dir" \
+    --host "etg-$ETG_ENVIRONMENT" \
+    --tag etg-db \
+    "$latest_dump" "$latest_meta"
+
+restic forget \
+    --cache-dir "$cache_dir" \
+    --host "etg-$ETG_ENVIRONMENT" \
+    --tag etg-db \
+    --group-by host,tags \
+    --keep-daily 7 \
+    --keep-weekly 4 \
+    --keep-monthly 6 \
+    --prune
+
+trap - ERR
+ping_healthchecks "" "etg off-site backup ok"
+printf 'Off-site backup complete: %s\n' "$dump_name"
