@@ -4,11 +4,12 @@ title: email-to-telegram documentation
 
 # email-to-telegram
 
-Self-hosted email alias forwarding for Telegram.
-[Source on GitHub](https://github.com/Vladkarok/email-to-telegram).
+Email aliases that deliver to Telegram. Use the hosted bot
+[@tgemails_Bot](https://t.me/tgemails_Bot) with no setup, or run your own from
+the [source on GitHub](https://github.com/Vladkarok/email-to-telegram).
 
 This site publishes the project's user-facing documentation and the policies
-that apply to the operator-run hosted instance at `@tgemails_Bot`.
+that apply to the operator-run hosted instance.
 
 ## Hosted instance — policies and support
 
@@ -24,6 +25,7 @@ users can review direction early.
 ## Self-hosting
 
 - [Operations: monitoring](./operations/monitoring/)
+- [Operations: disaster recovery](./operations/disaster-recovery/)
 - Example deployment files live under
   [`docs/examples/`](https://github.com/Vladkarok/email-to-telegram/tree/main/docs/examples)
   in the repository.

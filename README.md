@@ -1,49 +1,59 @@
 # email-to-telegram
 
-Self-hosted email alias forwarding for Telegram.
+Email aliases that deliver to Telegram. Create an address from a Telegram bot,
+choose who may send to it, and read what arrives in a DM, a group, or a forum
+topic.
 
-The project lets you create email aliases from a Telegram bot, restrict who may
-send to each alias, and forward accepted mail into a Telegram DM, group, or forum
-topic. Attachments are stored on disk and exposed through expiring download links;
-image attachments are also sent to Telegram directly when possible.
+Read this in: [Українська](README.uk.md) · [中文](README.zh-CN.md) ·
+[Français](README.fr.md) · [Italiano](README.it.md)
 
 ![Demo: create alias, send email, receive in Telegram](docs/assets/demo.gif)
 
-## Intended Use And Trust Model
+## Two ways to use it
 
-This project is intended for operational alerts, monitoring mail, and convenience
-forwarding where seeing the message in Telegram is faster than watching a busy inbox.
+**Use the hosted bot.** Open [@tgemails_Bot](https://t.me/tgemails_Bot), send
+`/start`, then `/newemail`. The address works a few seconds later. You need no
+domain, no server and no Cloudflare account. The free tier covers 3 aliases and
+100 delivered emails a month. If your workflow needs more, message
+[@yolovlad](https://t.me/yolovlad). Before you rely on it, read the
+[acceptable use](https://vladkarok.github.io/email-to-telegram/hosted/acceptable-use/)
+and [privacy](https://vladkarok.github.io/email-to-telegram/hosted/privacy-and-data-requests/)
+pages.
+
+**Run your own.** The code is MIT-licensed. Cloudflare Email Routing receives
+mail for your domain, a small Worker checks the alias, and a Node app on your
+server delivers the message to Telegram. Start with the
+[first deployment guide](#first-deployment-guide).
+
+## What it's for
+
+- alerts from apps, servers and uptime monitors
+- CI, deploy and GitHub notifications
+- SaaS notifications that get lost in a busy inbox
+- automations that can send an email, such as a Power Automate flow
+- a team's alerts in one Telegram group or forum topic
+
+It is one-way on purpose. The bot never sends email. Stored copies of mail and
+attachments expire (after 7 days on the hosted free tier), and Telegram keeps
+the delivered messages.
+
+## Trust model
 
 Do not use this project as a secure vault or a safe channel for secrets, recovery
 codes, credentials, medical/legal/financial records, or other regulated or highly
 confidential content.
 
-Current trust model:
+Who can see your mail:
 
 - The VPS operator and anyone with access to its backups may be able to access stored mail content
 - Anyone with access to the destination Telegram chat can read forwarded messages
 - Anyone with access to the bot token has meaningful visibility into bot-delivered content
 - Telegram forwarding is a convenience channel, not a life-safety or sole paging system
 
-## Current Scope
-
-Implemented today:
-
-- Cloudflare Email Routing as the inbound mail layer
-- A Cloudflare Worker that preflights aliases and streams raw MIME to the VPS
-- A VPS app that parses mail, stores raw `.eml` files and attachments, and sends
-  deliveries to Telegram
-- A checked-in Docker Compose file for the existing VPS deployment shape
-- Standalone first-deploy examples under `docs/examples/`
-
-Not implemented today:
-
-- Direct SMTP ingestion
-
-If you need SMTP in the future, treat it as new work rather than something this
-repository already supports.
-
 ## Architecture
+
+Mail enters only through Cloudflare Email Routing. There is no SMTP server.
+Example deployment files live under `docs/examples/`.
 
 ```text
 [Sender]
@@ -62,7 +72,7 @@ Important domain split:
 That means aliases look like `alerts-ab12cd@example.com`, while attachment links
 can be served from `https://mail.example.com`.
 
-## Bot Commands
+## Bot commands
 
 | Command                                  | Description                                         |
 | ---------------------------------------- | --------------------------------------------------- |
@@ -76,10 +86,12 @@ can be served from `https://mail.example.com`.
 | `/allow add <name> <email_or_domain>`    | Add an allow rule                                   |
 | `/allow remove <name> <email_or_domain>` | Remove an allow rule                                |
 | `/allow list <name>`                     | List allow rules                                    |
+| `/usage`                                 | This month's usage and limits (hosted)              |
+| `/plan`                                  | Current plan and limits (hosted)                    |
 | `/language`                              | Choose bot language                                 |
 | `/help`                                  | Show help                                           |
 
-## First Deployment Guide
+## First deployment guide
 
 This guide assumes:
 
@@ -326,7 +338,7 @@ Verify:
 - attachment links work
 - `/healthz` still returns `200`
 
-## Configuration Reference
+## Configuration reference
 
 See [`.env.example`](./.env.example) for the authoritative template.
 
@@ -430,7 +442,7 @@ npm test
 npm --prefix cloudflare-worker run typecheck
 ```
 
-## Release Workflow
+## Release workflow
 
 Tag-based releases are optional.
 
@@ -455,7 +467,7 @@ pulls the matching GHCR image and recreates the container with the desired
 That workflow is for this repository's existing VPS layout. A fresh install does
 not need GHCR and can be done entirely with the standalone example compose file.
 
-## Other Docs
+## Other docs
 
 - [`devdocs/encryption-todo.md`](./devdocs/encryption-todo.md) tracks future encryption work
 - [`docs/examples/docker-compose.standalone.yml`](./docs/examples/docker-compose.standalone.yml) is a clean first-install compose example
