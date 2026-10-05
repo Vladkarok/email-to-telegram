@@ -451,10 +451,13 @@ If you use the included GitHub Actions workflows:
 1. CI runs on both `dev` and `main`, and on pull requests targeting either branch
 2. The production VPS stays release-only; there is no built-in workflow that
    deploys `dev` automatically to `oracle-shiny`
-3. Pushing a release tag like `v1.2.3` builds `:latest` plus `:v1.2.3`
-4. The release deploy job checks out the exact tagged commit on the VPS,
+3. Before tagging, bump `version` in `package.json` to the release version
+   through a normal PR; the release workflow refuses a tag that does not match
+   it
+4. Pushing a release tag like `v1.2.3` builds `:latest` plus `:v1.2.3`
+5. The release deploy job checks out the exact tagged commit on the VPS,
    pulls the matching image tag, and restarts the stack
-5. The same release workflow also has a manual `workflow_dispatch` path, so you
+6. The same release workflow also has a manual `workflow_dispatch` path, so you
    can redeploy an existing release tag from the GitHub Actions UI without
    creating a new tag
 

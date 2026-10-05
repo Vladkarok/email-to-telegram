@@ -54,6 +54,18 @@ jobs:
           release_sha=$(git rev-list -n 1 "$release_tag")
           git merge-base --is-ancestor "$release_sha" origin/main
 
+          # A new tag must carry its version in package.json so the build log,
+          # the image tag and the git tag all agree. Skipped on workflow_dispatch:
+          # that path redeploys an existing tag (the rollback route) and tags up
+          # to v1.6.3 predate the bump.
+          if [ "${{ github.event_name }}" = "push" ]; then
+            pkg_version=$(git show "${release_sha}:package.json" | jq -r .version)
+            if [ "v${pkg_version}" != "$release_tag" ]; then
+              echo "package.json version ${pkg_version} does not match release tag ${release_tag}; bump it in a PR before tagging" >&2
+              exit 1
+            fi
+          fi
+
           echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
           echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
 
