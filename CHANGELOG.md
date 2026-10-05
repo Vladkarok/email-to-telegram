@@ -24,6 +24,57 @@ that has been running in production.
 - Public-facing documentation: `SECURITY.md`, `CONTRIBUTING.md`,
   `CHANGELOG.md`, issue/PR templates, CODEOWNERS.
 
+## [1.7.0] — 2026-10-06
+
+Rich-message polish and a dependency wave that clears every open
+Dependabot alert.
+
+### Changed
+
+- **Tables in rich messages** are drawn with cell borders and compact
+  padding, matching the source email instead of a borderless grid.
+- **Message header.** From/To/Subject is now a quote block with bold
+  labels, separated from the email body by a divider. Header fields are
+  capped at 512 characters so a crafted subject cannot overflow the message.
+- **Sender authentication.** An aligned DKIM pass now authenticates a From
+  domain that publishes no DMARC record; previously a DMARC pass was
+  effectively required. A DMARC lookup that fails temporarily still yields
+  a temporary failure. With mailauth 7 (RFC 9989 Tree Walk), `adkim=s` is
+  enforced and a subdomain with its own DMARC record no longer aligns with
+  a parent-domain signature.
+- **Node 24.** The Docker image and CI run on Node 24. The supported
+  minimum for self-hosters is Node 22.19.
+- **Releases.** The release workflow refuses a new tag whose commit does
+  not carry the matching `package.json` version. Redeploys of existing tags
+  are unaffected.
+
+### Security
+
+- mailauth 4.13 → 7.1 (nodemailer 10.0.14, undici 8.11.2): closes
+  GHSA-prgh-xp8r-p3m5, GHSA-g57g-f23g-4646, GHSA-6vj9-mwq6-2f5v,
+  GHSA-8vvx-rff5-p5rq and the undici 7.x advisory set.
+- fastify 5.12.1 → 5.12.5: GHSA-p68q-wchp-6fh7 (authentication bypass via
+  malformed URLs), GHSA-667r-xxjv-c9mm, GHSA-hwr6-493r-vm6h,
+  GHSA-9q9j-q6p8-xq58, GHSA-4mh8-r7rc-xpvc.
+- fast-uri, fast-copy, brace-expansion and wrangler bumps for the remaining
+  alerts.
+
+## [1.6.3] — 2026-09-22
+
+Healthchecks.io fail signal on sustained probe failures; clearer quota
+notices and plan commands in donation mode.
+
+## [1.6.2] — 2026-09-12
+
+Uptime alert debounce and log redaction; dependency advisories in the
+Cloudflare Worker closed.
+
+## [1.6.1] — 2026-08-15
+
+Telegram rich email rendering: structured HTML emails are delivered as
+rich messages with headings, lists and native tables, with a classic text
+fallback.
+
 ## [1.6.0] — 2026-07-21
 
 Alias chat mobility: aliases are no longer tied for life to the chat they
