@@ -406,7 +406,7 @@ describe("renderEmail", () => {
         "Configuration catalog with a deliberately long untruncated name",
       );
       expect(rendered.richHtml).toContain("<h2>Configuration Backup for Admins</h2>");
-      expect(rendered.richHtml?.match(/<table>/g)).toHaveLength(2);
+      expect(rendered.richHtml?.match(/<table bordered compact>/g)).toHaveLength(2);
       expect(rendered.richHtml).toContain(
         "<footer>Veeam Backup &amp; Replication 13.1.0.411</footer>",
       );

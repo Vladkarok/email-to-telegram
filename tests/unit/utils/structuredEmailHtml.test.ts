@@ -15,7 +15,20 @@ describe("renderStructuredEmailHtml", () => {
 
     expect(result.classicHtml).toContain("<b>Backup status</b>");
     expect(result.classicHtml).not.toContain("<pre>");
-    expect(result.richHtml?.match(/<table>/g)).toHaveLength(1);
+    expect(result.richHtml?.match(/<table bordered compact>/g)).toHaveLength(1);
+    expect(result.richHtml).toContain("<th>Name</th>");
+  });
+
+  it("emits bordered compact tables and keeps the caption first", () => {
+    const result = renderStructuredEmailHtml(`
+      <table>
+        <caption>Job summary</caption>
+        <tr><th>Name</th><th>Status</th></tr>
+        <tr><td>Primary catalog</td><td>Success</td></tr>
+      </table>
+    `);
+
+    expect(result.richHtml).toContain("<table bordered compact><caption>Job summary</caption>");
     expect(result.richHtml).toContain("<th>Name</th>");
   });
 
@@ -67,7 +80,7 @@ describe("renderStructuredEmailHtml", () => {
       "<table><tr><td>Environment</td><td>Production</td></tr></table>",
     );
 
-    expect(result.richHtml).toContain("<table>");
+    expect(result.richHtml).toContain("<table bordered compact>");
     expect(result.richHtml).toContain("<th>Environment</th>");
   });
 
