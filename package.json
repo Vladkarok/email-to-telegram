@@ -20,7 +20,7 @@
     "prepare": "husky || true"
   },
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=22.19.0"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
@@ -34,7 +34,7 @@
     "fastify": "^5.12.1",
     "grammy": "^1.45.1",
     "htmlparser2": "^12.0.0",
-    "mailauth": "^4.13.3",
+    "mailauth": "^7.1.1",
     "mailparser": "^3.9.26",
     "nanoid": "^5.1.16",
     "node-cron": "^4.2.1",
@@ -71,11 +71,7 @@
     "@esbuild-kit/core-utils": {
       "esbuild": "0.18.20"
     },
-    "undici": "^7.28.0",
-    "joi": "^18.2.5",
-    "mailauth": {
-      "nodemailer": "^9.1.1"
-    }
+    "joi": "^18.2.5"
   },
   "lint-staged": {
     "*.{ts,tsx}": [

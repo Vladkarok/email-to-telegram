@@ -218,7 +218,7 @@ Telegram Bot API.
 
 ### 9. Deploy the Cloudflare Worker
 
-On any machine with Node.js and Wrangler installed:
+On any machine with Node.js 22 or newer and Wrangler installed:
 
 ```bash
 cd cloudflare-worker

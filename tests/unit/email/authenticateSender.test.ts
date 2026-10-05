@@ -51,7 +51,7 @@ describe("authenticateSender", () => {
           results: [
             {
               signingDomain: "example.com",
-              status: { result: "pass", aligned: true },
+              status: { result: "pass", aligned: "example.com" },
               info: "",
             },
           ],
@@ -84,6 +84,78 @@ describe("authenticateSender", () => {
     expect(typeof firstCall?.[1].resolver).toBe("function");
   });
 
+  it("rejects a passing signature whose domain does not align with From", async () => {
+    mockAuthenticate.mockResolvedValue(
+      authResult({
+        dkim: {
+          headerFrom: ["example.com"],
+          envelopeFrom: false,
+          results: [
+            {
+              signingDomain: "third-party.example",
+              status: { result: "pass", aligned: false },
+              info: "",
+            },
+          ],
+        },
+      }),
+    );
+
+    const result = await authenticateSender(rawEmail(), null);
+
+    expect(result.status).toBe("fail");
+    expect(result.dkimPassDomains).toEqual(["third-party.example"]);
+    expect(result.authenticatedDomains).toEqual([]);
+  });
+
+  it("accepts a PSL-aligned DKIM pass when the From domain publishes no DMARC record", async () => {
+    mockAuthenticate.mockResolvedValue(
+      authResult({
+        dkim: {
+          headerFrom: ["news.example.com"],
+          envelopeFrom: false,
+          results: [
+            {
+              signingDomain: "example.com",
+              status: { result: "pass", aligned: "example.com" },
+              info: "",
+            },
+          ],
+        },
+        dmarc: { status: { result: "none" } },
+      } as Partial<AuthenticateResult>),
+    );
+
+    const result = await authenticateSender(rawEmail("Sender <sender@news.example.com>"), null);
+
+    expect(result.status).toBe("pass");
+    expect(result.authenticatedDomains).toEqual(["news.example.com"]);
+  });
+
+  it("does not let a guessed DKIM alignment stand in for a DMARC lookup that failed temporarily", async () => {
+    mockAuthenticate.mockResolvedValue(
+      authResult({
+        dkim: {
+          headerFrom: ["news.example.com"],
+          envelopeFrom: false,
+          results: [
+            {
+              signingDomain: "example.com",
+              status: { result: "pass", aligned: "example.com" },
+              info: "",
+            },
+          ],
+        },
+        dmarc: { status: { result: "temperror" } },
+      } as Partial<AuthenticateResult>),
+    );
+
+    const result = await authenticateSender(rawEmail("Sender <sender@news.example.com>"), null);
+
+    expect(result.status).toBe("temperror");
+    expect(result.authenticatedDomains).toEqual([]);
+  });
+
   it("lets an aligned pass win over unrelated temporary auth errors", async () => {
     mockAuthenticate.mockResolvedValue(
       authResult({
@@ -93,7 +165,7 @@ describe("authenticateSender", () => {
           results: [
             {
               signingDomain: "example.com",
-              status: { result: "pass", aligned: true },
+              status: { result: "pass", aligned: "example.com" },
               info: "",
             },
             {
@@ -108,7 +180,7 @@ describe("authenticateSender", () => {
           policy: "none",
           p: "none",
           sp: "none",
-          status: { result: "temperror" },
+          status: { result: "none" },
           alignment: {
             spf: { result: false, strict: false },
             dkim: { result: false, strict: false },
@@ -133,7 +205,7 @@ describe("authenticateSender", () => {
           results: [
             {
               signingDomain: "example.com",
-              status: { result: "temperror", aligned: true },
+              status: { result: "temperror", aligned: "example.com" },
               info: "",
             },
           ],

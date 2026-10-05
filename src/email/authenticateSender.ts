@@ -69,16 +69,24 @@ export async function authenticateSender(
 
   const dkimPassDomains = result.dkim.results
     .filter((row) => row.status.result === "pass")
-    .map((row) => row.signingDomain.toLowerCase());
+    .map((row) => row.signingDomain?.toLowerCase())
+    .filter((domain): domain is string => Boolean(domain));
+  // mailauth reports `aligned` as the aligned signing domain (string) or
+  // false. Once DMARC found a record it mirrors the DMARC verdict; without a
+  // record it is a relaxed-alignment guess from the Public Suffix List.
   const alignedDkimPass = result.dkim.results.some(
-    (row) => row.status.result === "pass" && row.status.aligned === true,
+    (row) => row.status.result === "pass" && Boolean(row.status.aligned),
   );
   const dmarcPass = result.dmarc !== false && result.dmarc.status.result === "pass";
+  const dmarcTempError = result.dmarc !== false && isTempAuthResult(result.dmarc.status.result);
   const hasTempError =
-    result.dkim.results.some((row) => isTempAuthResult(row.status.result)) ||
-    (result.dmarc !== false && isTempAuthResult(result.dmarc.status.result));
+    result.dkim.results.some((row) => isTempAuthResult(row.status.result)) || dmarcTempError;
 
-  const authenticatedDomains = alignedDkimPass || dmarcPass ? [headerFromDomain] : [];
+  // A DMARC lookup that failed temporarily may hide a strict policy, so the
+  // PSL-guessed DKIM alignment must not stand in for it: report temperror and
+  // let the retry path re-run authentication instead.
+  const authenticated = dmarcPass || (alignedDkimPass && !dmarcTempError);
+  const authenticatedDomains = authenticated ? [headerFromDomain] : [];
   if (authenticatedDomains.length > 0) {
     return {
       headerFromEmail,
