@@ -21,6 +21,9 @@ describe("renderEmail", () => {
   describe("plaintext mode", () => {
     it("renders metadata header and text body", () => {
       const result = renderEmail(BASE, "plaintext", "alerts-abc@tgmail.example.com", []);
+      expect(result.startsWith("From: ")).toBe(true);
+      expect(result).not.toContain("<blockquote>");
+      expect(result).not.toContain("<b>");
       expect(result).toContain("sender@example.com");
       expect(result).toContain("Test Subject");
       expect(result).toContain("Hello, this is the email body.");
@@ -202,6 +205,33 @@ describe("renderEmail", () => {
       const result = renderEmail(email, "html", "alerts@example.com", []);
       expect(result).toContain("Alice &lt;alice@example.com&gt;");
       expect(result).not.toContain("<alice@example.com>");
+    });
+
+    it("wraps the classic header in a quote block with bold labels", () => {
+      const result = renderEmail(BASE, "html", "alerts@example.com", []);
+      expect(result.startsWith("<blockquote><b>From:</b> ")).toBe(true);
+      expect(result).toContain("\n<b>To:</b> alerts@example.com\n<b>Subject:</b> ");
+      expect(result).toContain("</blockquote>\n\n");
+      expect(result).not.toContain("<hr>");
+    });
+
+    it("caps an oversized subject so the header never forces the last-resort slice", () => {
+      const email = { ...BASE, subject: "s".repeat(4200), htmlBody: "<p>Body</p>", textBody: null };
+      const result = renderEmail(email, "html", "alerts@example.com", []);
+      expect(result.length).toBeLessThanOrEqual(4096);
+      expect(result.startsWith("<blockquote><b>From:</b> ")).toBe(true);
+      expect(result).toContain("</blockquote>\n\nBody");
+      expect(result).toContain(`${"s".repeat(511)}…`);
+      expect(result).not.toContain("s".repeat(512));
+      expect(result).not.toContain("&gt; ");
+    });
+
+    it("rich header is a quote block followed by a divider", () => {
+      const email = { ...BASE, htmlBody: "<p>Body</p>", textBody: null };
+      const rendered = renderEmailForDelivery(email, "html", "alerts@example.com", []);
+      expect(rendered.richHtml?.startsWith("<blockquote><b>From:</b> ")).toBe(true);
+      expect(rendered.richHtml).toContain("<br><b>To:</b> alerts@example.com<br><b>Subject:</b> ");
+      expect(rendered.richHtml).toContain("</blockquote><hr><p>Body</p>");
     });
 
     it("total length does not exceed 4096 chars", () => {
