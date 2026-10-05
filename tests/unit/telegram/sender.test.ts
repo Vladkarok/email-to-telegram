@@ -266,7 +266,7 @@ describe("sendTelegramMessage", () => {
       threadId: 9n,
       text: "Classic fallback",
       parseMode: "HTML",
-      richHtml: "<h2>Report</h2><table><tr><td>OK</td></tr></table>",
+      richHtml: "<h2>Report</h2><table bordered compact><tr><td>OK</td></tr></table>",
     });
 
     expect(result).toMatchObject({ ok: true, telegramMessageId: 77 });
@@ -276,7 +276,7 @@ describe("sendTelegramMessage", () => {
       { message_thread_id?: number },
     ];
     expect(chatId).toBe(123);
-    expect(richMessage.html).toContain("<table>");
+    expect(richMessage.html).toContain("<table bordered compact>");
     expect(richMessage.skip_entity_detection).toBe(true);
     expect(options).toEqual({ message_thread_id: 9 });
     expect(api.sendMessage).not.toHaveBeenCalled();
@@ -285,7 +285,10 @@ describe("sendTelegramMessage", () => {
   it("falls back exactly once after a structured rich-content 400", async () => {
     const api = makeApi(
       () => Promise.resolve({ message_id: 8 }),
-      () => Promise.reject(botApiError(400, "Bad Request: can't parse rich message HTML")),
+      () =>
+        Promise.reject(
+          botApiError(400, "Bad Request: can't parse rich message HTML: unsupported attribute"),
+        ),
     );
 
     const result = await sendTelegramMessage(api, {
@@ -293,7 +296,7 @@ describe("sendTelegramMessage", () => {
       threadId: null,
       text: "Classic fallback",
       parseMode: "HTML",
-      richHtml: "<table><tr><td>Report</td></tr></table>",
+      richHtml: "<table bordered compact><tr><td>Report</td></tr></table>",
     });
 
     expect(result).toMatchObject({ ok: true, telegramMessageId: 8 });

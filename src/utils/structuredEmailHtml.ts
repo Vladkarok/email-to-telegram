@@ -763,7 +763,7 @@ function renderRichTable(table: StructuredTable): string {
       return `<tr>${cells}</tr>`;
     })
     .join("");
-  return `<table>${caption}${rows}</table>`;
+  return `<table bordered compact>${caption}${rows}</table>`;
 }
 
 function measureRichStats(blocks: StructuredBlock[]): StructuredHtmlStats {
