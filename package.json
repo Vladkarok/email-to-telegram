@@ -1,6 +1,6 @@
 {
   "name": "email-to-telegram",
-  "version": "1.0.0",
+  "version": "1.6.3",
   "description": "Self-hosted email-to-Telegram forwarding bot via Cloudflare Email Worker",
   "type": "module",
   "scripts": {
