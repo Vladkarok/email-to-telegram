@@ -12,6 +12,8 @@ const TRUNCATION_NOTICE = "\n[... truncated]";
 const SEPARATOR = "\n\n";
 const MAX_RICH_TEXT_CHARACTERS = 32_768;
 const MAX_RICH_BLOCKS = 500;
+/** Blocks the rich header costs against MAX_RICH_BLOCKS: blockquote + hr. */
+const RICH_HEADER_BLOCKS = 2;
 
 export interface AttachmentLink {
   filename: string;
@@ -172,17 +174,26 @@ function clampToMaxLen(parts: string[], mode: RenderMode): string {
   return finalizeTruncatedRichText(result.slice(0, MAX_LEN), mode);
 }
 
+/**
+ * Longest header field (code points) rendered into a message. Caps a
+ * sender-controlled Subject/From so the header alone can never overflow the
+ * 4096 limit and force the last-resort slice, which would cut into header
+ * markup.
+ */
+const MAX_HEADER_FIELD_LENGTH = 512;
+
 // Strip newlines/CR, ASCII control characters, and Unicode BiDi overrides so
 // a crafted Subject/From cannot inject a forged second header block or flip
 // the apparent direction of the rendered header.
 function sanitizeHeaderField(value: string): string {
-  return (
-    value
-      .replace(/[\r\n]+/g, " ")
-      // eslint-disable-next-line no-control-regex
-      .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "")
-      .replace(/[‪-‮⁦-⁩]/g, "")
-  );
+  const cleaned = value
+    .replace(/[\r\n]+/g, " ")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "")
+    .replace(/[‪-‮⁦-⁩]/g, "");
+  const points = Array.from(cleaned);
+  if (points.length <= MAX_HEADER_FIELD_LENGTH) return cleaned;
+  return `${points.slice(0, MAX_HEADER_FIELD_LENGTH - 1).join("")}…`;
 }
 
 function buildHeader(mode: RenderMode, from: string, to: string, subject: string): string {
@@ -191,7 +202,9 @@ function buildHeader(mode: RenderMode, from: string, to: string, subject: string
   const s = sanitizeHeaderField(subject);
   if (mode === "html" || mode === "markdown") {
     const e = escapeHtml;
-    return `From: ${e(f)}\nTo: ${e(t)}\nSubject: ${e(s)}`;
+    // Quote block + bold labels: the header reads as a distinct block from
+    // the body in the classic HTML transport (no <hr> there).
+    return `<blockquote><b>From:</b> ${e(f)}\n<b>To:</b> ${e(t)}\n<b>Subject:</b> ${e(s)}</blockquote>`;
   }
   // plaintext — no parse_mode, no escaping needed
   return `From: ${f}\nTo: ${t}\nSubject: ${s}`;
@@ -274,12 +287,16 @@ function buildRichDeliveryHtml(input: {
   const headerText = `From: ${from}\nTo: ${to}\nSubject: ${subject}`;
   if (
     structured.stats.textCharacters + Array.from(headerText).length > MAX_RICH_TEXT_CHARACTERS ||
-    structured.stats.blocks + 1 > MAX_RICH_BLOCKS
+    structured.stats.blocks + RICH_HEADER_BLOCKS > MAX_RICH_BLOCKS
   ) {
     return undefined;
   }
 
-  const header = `<p>From: ${escapeHtml(from)}<br>To: ${escapeHtml(to)}<br>Subject: ${escapeHtml(subject)}</p>`;
+  // Header is bot-generated and identical for every sender: a quote block
+  // with bold labels, then a divider so the body starts on a visible boundary.
+  const header =
+    `<blockquote><b>From:</b> ${escapeHtml(from)}<br><b>To:</b> ${escapeHtml(to)}` +
+    `<br><b>Subject:</b> ${escapeHtml(subject)}</blockquote><hr>`;
   return `${header}${structured.richHtml}`;
 }
 
