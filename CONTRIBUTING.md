@@ -15,7 +15,8 @@ may close or hide comments that don't follow this.
 ### Prerequisites
 
 - Node.js 22.19 or newer (`node --version` should print `v22.19.0` or
-  higher; `mailauth` and `wrangler` both require it).
+  higher; `mailauth` and `wrangler` both require it). The Docker image and
+  CI run Node 24, so that is the version to develop against.
 - PostgreSQL 16+ for local development (the repo ships a
   `docker-compose.yml` that includes Postgres).
 - Docker Engine + Docker Compose v2 if you want to run the full stack
