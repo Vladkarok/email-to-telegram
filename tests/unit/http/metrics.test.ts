@@ -307,6 +307,9 @@ describe("GET /metrics", () => {
       /email_to_telegram_quota_rejections_total\{reason="storage_limit"[^}]*\} 0\n/,
       /email_to_telegram_delivery_latency_seconds_count\{[^}]*path="initial"[^}]*\} 0\n/,
       /email_to_telegram_delivery_latency_seconds_count\{[^}]*path="retry"[^}]*\} 0\n/,
+      /email_to_telegram_deliveries_lost_total\{stage="initial"[^}]*\} 0\n/,
+      /email_to_telegram_deliveries_lost_total\{stage="retry"[^}]*\} 0\n/,
+      /email_to_telegram_deliveries_lost_total\{stage="cleanup"[^}]*\} 0\n/,
     ]) {
       expect(res.body).toMatch(series);
     }

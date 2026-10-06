@@ -1398,7 +1398,7 @@ describe("deliverQueuedEmail", () => {
     );
   });
 
-  describe("delivery latency", () => {
+  describe("delivery metrics", () => {
     const latencyJob = (
       deliveryLog: object,
       attachments: Array<Record<string, unknown>> = [],
@@ -1501,6 +1501,65 @@ describe("deliverQueuedEmail", () => {
 
       expect(result).toEqual({ ok: true });
       expect((await initialLatency()).count).toBe(0);
+    });
+
+    const lostAt = async (stage: string): Promise<number> => {
+      const text = await metricsRegistry.getSingleMetricAsString(
+        "email_to_telegram_deliveries_lost_total",
+      );
+      return Number(new RegExp(`\\{stage="${stage}"[^}]*\\} ([\\d.]+)`).exec(text)?.[1]);
+    };
+
+    it("counts a first attempt to a blocked chat as lost (stage initial)", async () => {
+      mockSendTelegram.mockResolvedValue({
+        ok: false,
+        error: "Call to 'sendMessage' failed! (403: Forbidden: bot was blocked by the user)",
+      });
+
+      const result = await deliverQueuedEmail(
+        fakeDb() as Parameters<typeof processInboundEmail>[0],
+        {} as Parameters<typeof processInboundEmail>[1],
+        latencyJob({ id: "log-lost-blocked", receivedAt: new Date() }),
+      );
+
+      expect(result).toEqual({ ok: false, reason: "send_failed" });
+      expect(mockUpdateLogStatus).toHaveBeenCalledWith(
+        expect.anything(),
+        "log-lost-blocked",
+        "permanently_failed",
+      );
+      expect(await lostAt("initial")).toBe(1);
+    });
+
+    it("does not count a retryable first-attempt failure as lost", async () => {
+      mockSendTelegram.mockResolvedValue({ ok: false, error: "Bad Request: oops" });
+
+      await deliverQueuedEmail(
+        fakeDb() as Parameters<typeof processInboundEmail>[0],
+        {} as Parameters<typeof processInboundEmail>[1],
+        latencyJob({ id: "log-not-lost", receivedAt: new Date() }),
+      );
+
+      expect(mockUpdateLogStatus).toHaveBeenCalledWith(expect.anything(), "log-not-lost", "failed");
+      expect(await lostAt("initial")).toBe(0);
+    });
+
+    it("does not count a loss when persisting permanently_failed fails", async () => {
+      mockSendTelegram.mockResolvedValue({
+        ok: false,
+        error: "Call to 'sendMessage' failed! (403: Forbidden: bot was blocked by the user)",
+      });
+      mockUpdateLogStatus.mockRejectedValue(new Error("db down"));
+
+      await expect(
+        deliverQueuedEmail(
+          fakeDb() as Parameters<typeof processInboundEmail>[0],
+          {} as Parameters<typeof processInboundEmail>[1],
+          latencyJob({ id: "log-lost-unpersisted", receivedAt: new Date() }),
+        ),
+      ).rejects.toThrow("db down");
+
+      expect(await lostAt("initial")).toBe(0);
     });
   });
 });

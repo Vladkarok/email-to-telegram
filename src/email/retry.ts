@@ -42,6 +42,7 @@ import { pipelineTracker } from "../utils/inFlight.js";
 import { createPrivacyViewUrl } from "./privacy.js";
 import {
   recordDeliveryLatency,
+  recordDeliveryLost,
   recordRetryAttempt,
   recordTelegramSendFailure,
 } from "../observability/metrics.js";
@@ -295,6 +296,7 @@ async function retryDelivery(
   const closePermanentlyFailed = async (): Promise<void> => {
     recordRetryAttempt("permanently_failed");
     await updateDeliveryLogStatus(db, deliveryLog.id, "permanently_failed");
+    recordDeliveryLost("retry");
     await refundAcceptedEmail(db, {
       deliveryLogId: deliveryLog.id,
       userId: deliveryLog.userId,
@@ -442,6 +444,8 @@ async function retryDelivery(
   );
 
   if (finalStatus === "permanently_failed") {
+    // The status write above succeeded (it throws otherwise).
+    recordDeliveryLost("retry");
     await refundAcceptedEmail(db, {
       deliveryLogId: deliveryLog.id,
       userId: deliveryLog.userId,

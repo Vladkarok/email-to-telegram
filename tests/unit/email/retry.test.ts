@@ -176,7 +176,7 @@ describe("runRetryWorker", () => {
     expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "delivered");
   });
 
-  describe("delivery latency", () => {
+  describe("delivery metrics", () => {
     const retryLatency = async (): Promise<{ count: number; sum: number }> => {
       const text = await metricsRegistry.getSingleMetricAsString(
         "email_to_telegram_delivery_latency_seconds",
@@ -243,6 +243,52 @@ describe("runRetryWorker", () => {
 
       expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
       expect((await retryLatency()).count).toBe(0);
+    });
+
+    const lostAt = async (stage: string): Promise<number> => {
+      const text = await metricsRegistry.getSingleMetricAsString(
+        "email_to_telegram_deliveries_lost_total",
+      );
+      return Number(new RegExp(`\\{stage="${stage}"[^}]*\\} ([\\d.]+)`).exec(text)?.[1]);
+    };
+
+    it("counts a retry that runs out of budget as lost (stage retry)", async () => {
+      mockFindFailedLogs.mockResolvedValue([fakeLog]);
+      mockCountAttempts.mockResolvedValue(2);
+      mockCountCountedFailed.mockResolvedValue(2);
+      mockSendTelegramMessage.mockResolvedValue({ ok: false, error: "Telegram error" });
+
+      await runRetryWorker(fakeDb, fakeApi);
+
+      expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+      expect(await lostAt("retry")).toBe(1);
+    });
+
+    it("counts a log closed before sending (raw email gone) as lost", async () => {
+      mockFindFailedLogs.mockResolvedValue([{ ...fakeLog, rawEmailPath: null }]);
+
+      await runRetryWorker(fakeDb, fakeApi);
+
+      expect(await lostAt("retry")).toBe(1);
+    });
+
+    it("does not count a loss when the permanently_failed write fails", async () => {
+      mockFindFailedLogs.mockResolvedValue([{ ...fakeLog, rawEmailPath: null }]);
+      mockUpdateLogStatus.mockRejectedValue(new Error("db down"));
+
+      await runRetryWorker(fakeDb, fakeApi);
+
+      expect(await lostAt("retry")).toBe(0);
+    });
+
+    it("does not count a retryable failure as lost", async () => {
+      mockFindFailedLogs.mockResolvedValue([fakeLog]);
+      mockSendTelegramMessage.mockResolvedValue({ ok: false, error: "Telegram error" });
+
+      await runRetryWorker(fakeDb, fakeApi);
+
+      expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
+      expect(await lostAt("retry")).toBe(0);
     });
   });
 

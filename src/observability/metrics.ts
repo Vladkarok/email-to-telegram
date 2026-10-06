@@ -27,6 +27,11 @@ type Db = NodePgDatabase<typeof schema>;
  */
 export type InboundPreflightResult = "accepted" | "rejected" | "deferred";
 export type DeliveryPath = "initial" | "retry";
+/**
+ * Where a delivery log was closed as permanently_failed: the first attempt
+ * (blocked or deleted chat), the retry worker, or raw-email expiry cleanup.
+ */
+export type DeliveryLostStage = "initial" | "retry" | "cleanup";
 
 const buckets = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
 
@@ -99,6 +104,13 @@ const deliveryAttemptsTotal = new Counter({
 const deliveriesDeferredTotal = new Counter({
   name: "email_to_telegram_deliveries_deferred_total",
   help: "Inbound deliveries deferred to the retry worker because the in-flight cap was reached.",
+  registers: [metricsRegistry],
+});
+
+const deliveriesLostTotal = new Counter({
+  name: "email_to_telegram_deliveries_lost_total",
+  help: "Delivery logs closed as permanently_failed (the user never got the mail), by stage: initial = first attempt, retry = retry worker, cleanup = raw email expired before a delivery succeeded.",
+  labelNames: ["stage"] as const,
   registers: [metricsRegistry],
 });
 
@@ -273,6 +285,7 @@ const TELEGRAM_ERROR_CLASSES = Object.keys({
 } satisfies Record<TelegramErrorClass, true>);
 
 const DELIVERY_PATHS: readonly DeliveryPath[] = ["initial", "retry"];
+const DELIVERY_LOST_STAGES: readonly DeliveryLostStage[] = ["initial", "retry", "cleanup"];
 
 function initializeSeries(): void {
   buildInfoGauge.set({ version: APP_VERSION }, 1);
@@ -292,6 +305,7 @@ function initializeSeries(): void {
   for (const result of ["success", "fallback", "disabled"]) richMessagesTotal.inc({ result }, 0);
   for (const reason of INBOUND_LIMIT_REASONS) quotaRejectionsTotal.inc({ reason }, 0);
   for (const path of DELIVERY_PATHS) deliveryLatencySeconds.zero({ path });
+  for (const stage of DELIVERY_LOST_STAGES) deliveriesLostTotal.inc({ stage }, 0);
 }
 
 initializeSeries();
@@ -326,6 +340,11 @@ export function recordDeliveryAttempt(result: "succeeded" | "failed"): void {
 
 export function recordDeliveryDeferred(): void {
   deliveriesDeferredTotal.inc();
+}
+
+/** Call only after the permanently_failed status write has succeeded. */
+export function recordDeliveryLost(stage: DeliveryLostStage): void {
+  deliveriesLostTotal.inc({ stage });
 }
 
 /**

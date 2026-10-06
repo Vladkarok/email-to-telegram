@@ -1,7 +1,7 @@
 import { readdir, stat } from "fs/promises";
 import { join } from "path";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { and, eq, isNotNull, isNull, lt, notExists, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lt, notExists, sql } from "drizzle-orm";
 import { deliveryLogs, attachments, users } from "../db/schema.js";
 import type * as schema from "../db/schema.js";
 import { deleteFile, deleteDir } from "./disk.js";
@@ -11,6 +11,8 @@ import { deleteExpiredDeliveryViewLinks } from "../db/repos/deliveryViewLinks.js
 import { deleteExpiredAttachmentLinks } from "../db/repos/attachmentLinks.js";
 import { deleteExpiredAliasTombstones } from "../db/repos/aliases.js";
 import { deleteOldQuotaNotifications } from "../db/repos/quotaNotifications.js";
+import { NON_FINAL_DELIVERY_STATUSES } from "../db/repos/deliveryLogs.js";
+import { recordDeliveryLost } from "../observability/metrics.js";
 import { getEffectivePlan } from "../billing/limits.js";
 import { listPlanDefinitions } from "../billing/plans.js";
 
@@ -220,29 +222,43 @@ async function cleanRawEmails(
       } catch {
         continue;
       }
-      const rows = await db.transaction(async (tx) => {
-        const result = await tx
+      const clearedRaw = {
+        rawEmailPath: null,
+        rawEmailEncryptionMode: "none",
+        rawEmailWrappedDek: null,
+        rawEmailKekKeyId: null,
+        rawEmailEncryptedAt: null,
+      };
+      const outcome = await db.transaction(async (tx) => {
+        // The raw file is the only retry source; once it expires an
+        // undelivered log can never deliver, so close it out. The status
+        // guard sits in the WHERE so the row count says whether this
+        // statement closed it (a lost mail) or it was already final.
+        const closeResult = await tx
           .update(deliveryLogs)
-          .set({
-            rawEmailPath: null,
-            rawEmailEncryptionMode: "none",
-            rawEmailWrappedDek: null,
-            rawEmailKekKeyId: null,
-            rawEmailEncryptedAt: null,
-            // The raw file is the only retry source; once it expires an
-            // undelivered log can never deliver, so close it out.
-            finalStatus: sql`case when ${deliveryLogs.finalStatus} in ('failed', 'received', 'retrying', 'processing') then 'permanently_failed' else ${deliveryLogs.finalStatus} end`,
-          })
-          .where(eq(deliveryLogs.id, row.id));
-        const rowCount = (result as unknown as { rowCount?: number }).rowCount ?? 0;
+          .set({ ...clearedRaw, finalStatus: "permanently_failed" })
+          .where(
+            and(
+              eq(deliveryLogs.id, row.id),
+              inArray(deliveryLogs.finalStatus, [...NON_FINAL_DELIVERY_STATUSES]),
+            ),
+          );
+        const closed = affectedRows(closeResult) > 0;
+        const rowCount = closed
+          ? 1
+          : affectedRows(
+              await tx.update(deliveryLogs).set(clearedRaw).where(eq(deliveryLogs.id, row.id)),
+            );
         if (rowCount > 0 && row.userId && row.rawSizeBytes != null && row.rawSizeBytes > 0) {
           await decrementUserStorageUsage(tx as Db, row.userId, {
             rawEmailBytes: BigInt(row.rawSizeBytes),
           });
         }
-        return rowCount;
+        return { rowCount, closed };
       });
-      cleared += rows;
+      // Counted after commit: a rolled-back close lost nothing.
+      if (outcome.closed) recordDeliveryLost("cleanup");
+      cleared += outcome.rowCount;
     }
     if (cleared > 0) {
       log.info({ rows: cleared }, "cleanup: cleared expired raw email references");
@@ -252,6 +268,10 @@ async function cleanRawEmails(
   }
 
   await cleanOrphanedDirs(rawEmailDir, ttlHours, now, log);
+}
+
+function affectedRows(result: unknown): number {
+  return (result as { rowCount?: number | null }).rowCount ?? 0;
 }
 
 /**

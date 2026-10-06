@@ -39,6 +39,7 @@ import type { Db, QueuedInboundEmail, PipelineResult } from "./types.js";
 import {
   recordDeliveryAttempt,
   recordDeliveryLatency,
+  recordDeliveryLost,
   recordTelegramSendFailure,
 } from "../../observability/metrics.js";
 import { classifyTelegramError, retryDispositionForError } from "../../telegram/errorClassifier.js";
@@ -342,6 +343,8 @@ export async function deliverQueuedEmail(
             : "delivery.telegram.failed",
         );
         if (failedStatus === "permanently_failed") {
+          // The status write above succeeded (it throws otherwise).
+          recordDeliveryLost("initial");
           // The user never received this email; give the monthly-quota
           // charge from acceptance back.
           await refundAcceptedEmail(db, {
