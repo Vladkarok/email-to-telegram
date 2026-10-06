@@ -17,7 +17,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
-    "prepare": "husky || true"
+    "prepare": "husky || true",
+    "render:preview": "tsx scripts/render-preview.ts"
   },
   "engines": {
     "node": ">=22.19.0"
