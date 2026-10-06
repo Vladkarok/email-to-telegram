@@ -5,7 +5,7 @@
   "tags": ["email-to-telegram", "operations"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 3,
+  "version": 4,
   "graphTooltip": 1,
   "refresh": "1m",
   "time": {
@@ -386,7 +386,7 @@
       "id": 6,
       "type": "stat",
       "title": "Lost (7d)",
-      "description": "Deliveries the retry worker gave up on in 7 days: the user never got the mail. Red above 0. (A first attempt to a blocked or deleted chat closes at once and shows as forbidden / chat_not_found in Telegram failures.)",
+      "description": "Mail closed as permanently failed in 7 days, so the user never got it: a first attempt to a blocked or deleted chat, a retry that ran out of budget, or a raw email that expired before delivery. Red above 0; the Delivery row splits it by stage.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -437,7 +437,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(increase(email_to_telegram_retry_attempts_total{result=\"permanently_failed\",env=~\"$env\"}[7d])) or vector(0)",
+          "expr": "sum(increase(email_to_telegram_deliveries_lost_total{env=~\"$env\"}[7d])) or vector(0)",
           "legendFormat": "lost",
           "instant": true,
           "range": false
@@ -1015,7 +1015,7 @@
       "id": 15,
       "type": "timeseries",
       "title": "Deliveries per hour",
-      "description": "Telegram sends by path and result. A failed first attempt goes to the retry worker; retry permanently_failed is lost mail. Bad: any permanently_failed, or failures rising while successes drop.",
+      "description": "Telegram sends by path and result. A failed first attempt goes to the retry worker; retry permanently_failed gave up (see Lost mail). Bad: failures rising while successes drop.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1154,13 +1154,78 @@
       "interval": "1h",
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 8,
         "x": 0,
         "y": 22
       }
     },
     {
       "id": 16,
+      "type": "timeseries",
+      "title": "Lost mail per hour by stage",
+      "description": "Mail closed as permanently failed, so the user never got it. initial: first attempt to a blocked or deleted chat; retry: the retry worker gave up; cleanup: the raw email expired before any delivery succeeded. Bad: any bar, and cleanup bars most of all (Telegram was unreachable for the whole raw-email TTL).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "pointSize": 4,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "barAlignment": -1
+          },
+          "color": {
+            "mode": "shades",
+            "fixedColor": "red"
+          },
+          "noValue": "No lost mail in this range",
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["sum"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (stage) (increase(email_to_telegram_deliveries_lost_total{env=~\"$env\"}[$__interval])) > 0",
+          "legendFormat": "{{stage}}"
+        }
+      ],
+      "interval": "1h",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 22
+      }
+    },
+    {
+      "id": 17,
       "type": "timeseries",
       "title": "Delivery latency p50 / p95 (1h window)",
       "description": "Time from receiving a mail to Telegram accepting its first message, over a sliding hour (log scale). A few seconds is normal; minutes mean mail went through the retry worker. Gaps: no deliveries in that hour.",
@@ -1257,13 +1322,13 @@
       ],
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 12,
+        "w": 8,
+        "x": 16,
         "y": 22
       }
     },
     {
-      "id": 17,
+      "id": 18,
       "type": "timeseries",
       "title": "First-attempt success rate per hour",
       "description": "Share of first delivery attempts Telegram accepted in each hour. A missing bar means no attempts that hour (idle, not failure). Bad: bars below ~95%, or several short ones in a row.",
@@ -1343,7 +1408,7 @@
       }
     },
     {
-      "id": 18,
+      "id": 19,
       "type": "timeseries",
       "title": "Delivery backlog",
       "description": "Delivery logs not in a final state, by status (stacked), and the oldest one's age (dashed, right axis). received / processing clear in seconds; failed / retrying wait for the retry worker. Bad: a count or age that keeps growing.",
@@ -1455,7 +1520,7 @@
       }
     },
     {
-      "id": 19,
+      "id": 20,
       "type": "timeseries",
       "title": "Telegram send failures per hour by class",
       "description": "Failed Telegram sends (first attempts, retries, attachment fallbacks). forbidden / chat_not_found: the user blocked the bot or deleted the chat; flood_wait / timeout / network / server: Telegram side, retried; bad_request: a message Telegram refuses. Bad: any class climbing.",
@@ -1520,7 +1585,7 @@
       }
     },
     {
-      "id": 20,
+      "id": 21,
       "type": "timeseries",
       "title": "Rich vs classic fallback per hour",
       "description": "Messages that carry rich formatting (not every mail does). success: sent rich; fallback: Telegram refused the rich message and the classic one went out; disabled: rich messages are off or unavailable. Bad: fallback rising against success.",
@@ -1629,7 +1694,7 @@
       }
     },
     {
-      "id": 21,
+      "id": 22,
       "type": "stat",
       "title": "Backpressure: sent to retry worker (24h)",
       "description": "Accepted mail handed straight to the retry worker because MAX_INFLIGHT_DELIVERIES was reached. Not the preflight deferral (that mail never reached the app); it is still delivered, minutes later. Bad: a steady non-zero count.",
@@ -1693,7 +1758,7 @@
       }
     },
     {
-      "id": 22,
+      "id": 23,
       "type": "timeseries",
       "title": "Backpressure per hour",
       "description": "Same signal per hour: mail queued past the in-flight delivery cap and left for the retry worker. Bad: bursts that line up with latency spikes.",
@@ -1774,7 +1839,7 @@
     },
     {
       "type": "row",
-      "id": 23,
+      "id": 24,
       "title": "HTTP",
       "collapsed": false,
       "gridPos": {
@@ -1786,7 +1851,7 @@
       "panels": []
     },
     {
-      "id": 24,
+      "id": 25,
       "type": "timeseries",
       "title": "Requests per hour by status class",
       "description": "All app routes except /healthz and /metrics (probe and scrape traffic). 4xx on the unknown route is internet scanning. Bad: any 5xx.",
@@ -1910,7 +1975,7 @@
       }
     },
     {
-      "id": 25,
+      "id": 26,
       "type": "timeseries",
       "title": "Requests per hour by route",
       "description": "Same traffic split by route, probes excluded. /inbound/preflight and /inbound/raw track mail volume; unknown is unmatched paths (scanners). Bad: a route that should be busy dropping to zero.",
@@ -1973,7 +2038,7 @@
       }
     },
     {
-      "id": 26,
+      "id": 27,
       "type": "timeseries",
       "title": "p95 latency by route (1h window)",
       "description": "95th percentile request time per route over a sliding hour, probes excluded. /inbound/raw includes storing the mail. Bad: seconds on /inbound/preflight, the Worker waits on it while the sender is connected.",
@@ -2034,7 +2099,7 @@
     },
     {
       "type": "row",
-      "id": 27,
+      "id": 28,
       "title": "Logs (prod logs not shipped to Loki yet)",
       "collapsed": true,
       "gridPos": {
@@ -2045,7 +2110,7 @@
       },
       "panels": [
         {
-          "id": 28,
+          "id": 29,
           "type": "logs",
           "title": "App error logs",
           "description": "Pino error and fatal lines from the app container of the selected env (Loki). Only staging ships logs today; prod stays empty until promtail runs there. Bad: anything here.",
@@ -2084,7 +2149,7 @@
     },
     {
       "type": "row",
-      "id": 29,
+      "id": 30,
       "title": "Host & database (needs node_exporter and postgres_exporter)",
       "collapsed": true,
       "gridPos": {
@@ -2095,7 +2160,7 @@
       },
       "panels": [
         {
-          "id": 30,
+          "id": 31,
           "type": "stat",
           "title": "Disk free (/)",
           "description": "Free space on the root filesystem (node_exporter). Orange under 20%, red under 10%: attachments, raw mail and backups soon stop being written.",
@@ -2167,7 +2232,7 @@
           }
         },
         {
-          "id": 31,
+          "id": 32,
           "type": "stat",
           "title": "RAM available",
           "description": "MemAvailable on the host. Orange under 500 MB, red under 200 MB: the kernel starts killing processes.",
@@ -2239,7 +2304,7 @@
           }
         },
         {
-          "id": 32,
+          "id": 33,
           "type": "stat",
           "title": "Load (1m)",
           "description": "1-minute load average. Bad: above the host's CPU count for a long stretch.",
@@ -2299,7 +2364,7 @@
           }
         },
         {
-          "id": 33,
+          "id": 34,
           "type": "stat",
           "title": "Swap used",
           "description": "Swap in use on the host. Bad: steadily growing, the host is short of memory.",
@@ -2359,7 +2424,7 @@
           }
         },
         {
-          "id": 34,
+          "id": 35,
           "type": "stat",
           "title": "Postgres up",
           "description": "postgres_exporter can query the database. DOWN: the database is unreachable and the app cannot accept or deliver mail.",
@@ -2442,7 +2507,7 @@
           }
         },
         {
-          "id": 35,
+          "id": 36,
           "type": "stat",
           "title": "DB connections",
           "description": "Backends connected to the emailtelegram database. Bad: near the server's max_connections, new queries start failing.",
@@ -2502,7 +2567,7 @@
           }
         },
         {
-          "id": 36,
+          "id": 37,
           "type": "stat",
           "title": "DB size",
           "description": "On-disk size of the emailtelegram database. Bad: fast growth (retention jobs not running).",
@@ -2562,7 +2627,7 @@
           }
         },
         {
-          "id": 37,
+          "id": 38,
           "type": "stat",
           "title": "Backup age",
           "description": "Time since the last successful off-site backup (node_exporter textfile collector). Red over 30 h: a nightly run failed.",
@@ -2630,7 +2695,7 @@
           }
         },
         {
-          "id": 38,
+          "id": 39,
           "type": "timeseries",
           "title": "Root filesystem free (%)",
           "description": "Free space on / over time. Bad: a steady downward slope; extrapolate it to see when the disk fills.",
@@ -2691,7 +2756,7 @@
           }
         },
         {
-          "id": 39,
+          "id": 40,
           "type": "timeseries",
           "title": "Memory available",
           "description": "MemAvailable over time. Bad: a downward trend that does not recover (a leak) or dips under ~200 MB.",
@@ -2751,7 +2816,7 @@
           }
         },
         {
-          "id": 40,
+          "id": 41,
           "type": "timeseries",
           "title": "Load (1m)",
           "description": "1-minute load average over time. Bad: long stretches above the CPU count.",

@@ -1,11 +1,11 @@
 {
   "uid": "e2t-product",
   "title": "Email to Telegram – Product",
-  "description": "Users, activation and usage trends.",
+  "description": "Users, activation and usage trends. Times are UTC, so daily bars are UTC days.",
   "tags": ["email-to-telegram", "product"],
-  "timezone": "browser",
+  "timezone": "utc",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "graphTooltip": 1,
   "refresh": "5m",
   "time": {

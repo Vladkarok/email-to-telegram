@@ -99,16 +99,16 @@ getting from the sender to Telegram, how fast, and where is it lost.
 
 - Top row, always visible: Scrape up · Version · Uptime · Offered (24h,
   preflight decisions without signature failures) · Delivered (24h, first
-  attempts plus retries) · Lost (7d, permanently failed retries; red above 0) ·
+  attempts plus retries) · Lost (7d, `deliveries_lost_total`; red above 0) ·
   Backlog now (pending logs and the oldest one's age) · Latency (24h, delivery
   p95).
 - **Inbound**: preflight decisions per hour (accepted / deferred / bounced),
   preflight bounces by reason, raw uploads per hour (accepted / rejected), raw
   rejections by reason.
-- **Delivery**: deliveries per hour by path and result, delivery latency p50 /
-  p95, first-attempt success rate per hour, delivery backlog, Telegram send
-  failures by class, rich vs classic fallback, backpressure (24h stat and per
-  hour).
+- **Delivery**: deliveries per hour by path and result, lost mail per hour by
+  stage, delivery latency p50 / p95, first-attempt success rate per hour,
+  delivery backlog, Telegram send failures by class, rich vs classic fallback,
+  backpressure (24h stat and per hour).
 - **HTTP**: requests per hour by status class and by route, p95 latency by route
   (1 h window). `/healthz` and `/metrics` are excluded: probe and scrape traffic
   would otherwise drown real requests.
@@ -122,10 +122,10 @@ getting from the sender to Telegram, how fast, and where is it lost.
   textfile collector. They show "No data" until those exporters are deployed.
 
 **Email to Telegram – Product** (`e2t-product`, default range 30 d, refresh 5
-min): activation funnel (signed up → created an alias → ever received mail →
-received mail this month), users and aliases over time, delivered per day,
-quota rejections per day by reason, users by plan, aliases by status, chats,
-attachments storage.
+min, UTC time axis so daily bars are UTC days): activation funnel (signed up →
+created an alias → ever received mail → received mail this month), users and
+aliases over time, delivered per day, quota rejections per day by reason, users
+by plan, aliases by status, chats, attachments storage.
 
 **Email to Telegram – Runtime** (`e2t-runtime`): process CPU, RSS, heap, event
 loop lag, GC time.
@@ -154,6 +154,13 @@ How to read them:
   using `process_start_time_seconds` as the timestamp and the version from
   `email_to_telegram_build_info` as text. Deploys and crashes both show up; a
   marker with no deploy behind it is a crash.
+- **Lost means the user never got the mail.** `deliveries_lost_total{stage}`
+  counts each delivery log closed as `permanently_failed`, once the status
+  write succeeds: `initial` (first attempt to a blocked or deleted chat),
+  `retry` (the retry worker gave up), `cleanup` (the raw email expired before
+  any delivery succeeded, e.g. Telegram unreachable for the whole TTL).
+  `retry_attempts_total{result="permanently_failed"}` covers only the retry
+  stage, so it undercounts loss.
 - **No data vs 0.** Counters start every known label set at 0 when the process
   starts, and stats use `or vector(0)`, so "0" means nothing happened. "No
   data" means the series does not exist: the target is not scraped, the
@@ -177,6 +184,7 @@ All gauges/counters are prefixed `email_to_telegram_`. Exposed at `GET /metrics`
 | `email_to_telegram_raw_inbound_total{result,reason}`               | counter   | Raw upload decisions (`accepted`, `rejected`) by reason                                                                                               | `sum by (reason)(increase(email_to_telegram_raw_inbound_total{result="rejected"}[1h]))`                          |
 | `email_to_telegram_delivery_attempts_total{result}`                | counter   | Delivery attempts by result                                                                                                                           | `sum by (result)(rate(email_to_telegram_delivery_attempts_total[5m]))`                                           |
 | `email_to_telegram_retry_attempts_total{result}`                   | counter   | Retry attempts by result                                                                                                                              | `rate(email_to_telegram_retry_attempts_total{result="succeeded"}[5m])`                                           |
+| `email_to_telegram_deliveries_lost_total{stage}`                   | counter   | Delivery logs closed as `permanently_failed` by stage: `initial`, `retry`, `cleanup` (raw email expired)                                              | `sum by (stage)(increase(email_to_telegram_deliveries_lost_total[7d]))`                                          |
 | `email_to_telegram_deliveries_deferred_total`                      | counter   | Backpressure: accepted mail left for the retry worker because `MAX_INFLIGHT_DELIVERIES` was reached (not the preflight deferral)                      | `increase(email_to_telegram_deliveries_deferred_total[24h])`                                                     |
 | `email_to_telegram_delivery_latency_seconds_*{path}`               | histogram | `received_at` to Telegram accepting the first message of a successful delivery; `path` = `initial` or `retry`                                         | `histogram_quantile(0.95, sum by (le)(rate(email_to_telegram_delivery_latency_seconds_bucket[1h])))`             |
 | `email_to_telegram_delivery_backlog{state}`                        | gauge     | Delivery logs not in a final state, by `final_status` (`received`, `processing`, `retrying`, `failed`)                                                | `sum(email_to_telegram_delivery_backlog)`                                                                        |
@@ -193,6 +201,10 @@ month of `user_usage_months`. That counter moves when mail is accepted into
 delivery and is refunded on a permanent Telegram failure. It is read from
 `user_usage_months`, not `delivery_logs`, because free-plan delivery logs are
 purged after 7 days.
+
+The `delivery_backlog` gauges are refreshed on every scrape from the partial
+index `idx_log_backlog_received` (migration `0010`), which holds only the
+non-final rows, so a scrape does not scan `delivery_logs`.
 
 ## Adding a new business gauge
 
