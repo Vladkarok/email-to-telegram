@@ -184,8 +184,9 @@ export async function claimDeliveryLogForRetry(
 
 /**
  * The delivery backlog for /metrics: non-final logs per status and the oldest
- * one's received_at, in one grouped query. Non-final rows stay few (cleanup
- * closes them once the raw email expires), so this is cheap.
+ * one's received_at, in one grouped query. The partial index
+ * idx_log_backlog_received covers exactly these rows, which stay few (cleanup
+ * closes them once the raw email expires), so no full scan per scrape.
  */
 export async function summarizeDeliveryBacklog(db: Db): Promise<DeliveryBacklogSummary> {
   const rows = await db

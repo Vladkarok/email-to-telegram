@@ -1,9 +1,12 @@
 import { describe, it, expect } from "vitest";
+import { PgDialect, getTableConfig } from "drizzle-orm/pg-core";
 import {
+  NON_FINAL_DELIVERY_STATUSES,
   monthStart,
   nextMonthStart,
   summarizeDeliveryBacklog,
 } from "../../../../src/db/repos/deliveryLogs.js";
+import { deliveryLogs } from "../../../../src/db/schema.js";
 
 /** select().from().where().groupBy() resolving to `rows`. */
 function groupedSelectDb(rows: unknown[]): Parameters<typeof summarizeDeliveryBacklog>[0] {
@@ -14,6 +17,19 @@ function groupedSelectDb(rows: unknown[]): Parameters<typeof summarizeDeliveryBa
   };
   return { select: () => chain } as unknown as Parameters<typeof summarizeDeliveryBacklog>[0];
 }
+
+describe("idx_log_backlog_received", () => {
+  it("covers exactly the non-final statuses the backlog query filters on", () => {
+    const index = getTableConfig(deliveryLogs).indexes.find(
+      (candidate) => candidate.config.name === "idx_log_backlog_received",
+    );
+    const where = index?.config.where;
+    expect(where).toBeDefined();
+    const predicate = new PgDialect().sqlToQuery(where!).sql;
+    const statuses = [...predicate.matchAll(/'([a-z_]+)'/g)].map((match) => match[1]);
+    expect(statuses.sort()).toEqual([...NON_FINAL_DELIVERY_STATUSES].sort());
+  });
+});
 
 describe("summarizeDeliveryBacklog", () => {
   it("maps per-status counts and keeps the oldest received_at across statuses", async () => {

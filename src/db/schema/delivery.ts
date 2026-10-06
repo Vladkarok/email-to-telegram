@@ -71,6 +71,12 @@ export const deliveryLogs = pgTable(
     uniqueIndex("idx_log_dedup_bodyhash")
       .on(t.emailAddressId, t.bodySha256)
       .where(sql`body_sha256 IS NOT NULL AND body_dedup_applied = true`),
+    // The delivery backlog (non-final rows, NON_FINAL_DELIVERY_STATUSES in
+    // repos/deliveryLogs.ts): keeps the /metrics backlog query off a full
+    // scan. Stays small, since rows leave it once they reach a final status.
+    index("idx_log_backlog_received")
+      .on(t.receivedAt)
+      .where(sql`final_status IN ('received', 'processing', 'retrying', 'failed')`),
   ],
 );
 
