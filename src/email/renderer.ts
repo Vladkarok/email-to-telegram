@@ -63,7 +63,9 @@ export function renderEmailForDelivery(
   aliasFullAddress: string,
   attachmentLinks: AttachmentLink[],
 ): RenderedEmailForDelivery {
-  const from = email.headerFrom ?? email.envelopeFrom ?? "unknown";
+  // headerFromDisplay is null only when the From header has no address or
+  // name at all, and then headerFrom and envelopeFrom are empty as well.
+  const from = email.headerFromDisplay ?? "unknown";
   const subject = email.subject ?? "(no subject)";
   const selectedBody = selectBodySource(email, mode);
   const header = buildHeader(mode, from, aliasFullAddress, subject);

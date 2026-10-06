@@ -161,7 +161,12 @@ export function deliveryViewRoute(
         },
       );
 
-      const from = deliveryMetadata.headerFrom ?? deliveryMetadata.envelopeFrom ?? "unknown";
+      // Stored metadata stays the source of truth. The unquoted display form
+      // is used only when it was derived from that same stored value.
+      const storedFrom = deliveryMetadata.headerFrom;
+      const displayFrom =
+        storedFrom !== null && storedFrom === parsed.headerFrom ? parsed.headerFromDisplay : null;
+      const from = displayFrom ?? storedFrom ?? deliveryMetadata.envelopeFrom ?? "unknown";
       const subject = deliveryMetadata.subject ?? parsed.subject ?? "(no subject)";
       const bodyHtml = renderEmailBodyHtml(parsed);
       const quotaExceededError = new Error("privacy_view_egress_limit_exceeded");

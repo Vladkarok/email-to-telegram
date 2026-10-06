@@ -415,4 +415,25 @@ describe("/view/:token", () => {
     expect(res.body).toContain("Encrypted Subject");
     expect(res.body).not.toContain("Parsed Subject");
   });
+
+  it("shows the stored From without mailparser's quotes when the raw email matches it", async () => {
+    const { token, expiresAt } = generateDeliveryViewToken("log-uuid-1", 24);
+    const row = viewLinkRow(expiresAt);
+    mockFindDeliveryViewLinkByTokenHash.mockResolvedValue({
+      ...row,
+      deliveryLog: { ...row.deliveryLog, headerFrom: '"GitHub" <noreply@github.com>' },
+    });
+    mockReadRawEmail.mockResolvedValue(
+      Buffer.from(
+        'From: "GitHub" <noreply@github.com>\r\nTo: alerts@example.com\r\nSubject: Privacy Test\r\n\r\nBody',
+      ),
+    );
+
+    const app = await buildApp();
+    const res = await app.inject({ method: "POST", url: `/view/${token}` });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("<dd>GitHub &lt;noreply@github.com&gt;</dd>");
+    expect(res.body).not.toContain('"GitHub"');
+  });
 });

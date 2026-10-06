@@ -18,6 +18,15 @@ that has been running in production.
 
 ## [Unreleased]
 
+### Fixed
+
+- The From line showed every sender name in quotes, as in
+  `"GitHub" <noreply@github.com>`. Telegram messages and the privacy view
+  now show `GitHub <noreply@github.com>`. A name keeps its quotes only when
+  it contains `<`, `>`, `@`, `,`, `;` or `:`, so it cannot pass for an
+  address. A message with an empty From now shows `unknown` instead of a
+  blank sender. The stored From and allow rules are unchanged.
+
 ## [1.11.0] — 2026-10-06
 
 Clearer allow rules for new aliases, a monitoring rework that counts what

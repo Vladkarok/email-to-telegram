@@ -1,9 +1,11 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
+import { parseEmail } from "../../../src/email/parser.js";
 import {
   normalizeRenderMode,
   renderEmail,
   renderEmailForDelivery,
+  type RenderMode,
 } from "../../../src/email/renderer.js";
 import type { ParsedEmail } from "../../../src/email/types.js";
 
@@ -11,7 +13,8 @@ const BASE: ParsedEmail = {
   messageId: "<test@example.com>",
   subject: "Test Subject",
   envelopeFrom: "sender@example.com",
-  headerFrom: "Sender <sender@example.com>",
+  headerFrom: '"Sender" <sender@example.com>',
+  headerFromDisplay: "Sender <sender@example.com>",
   headerFromEmail: "sender@example.com",
   headerFromDomain: "example.com",
   textBody: "Hello, this is the email body.",
@@ -189,7 +192,7 @@ describe("renderEmail", () => {
     });
 
     it("HTML-escapes angle brackets in From/Subject header", () => {
-      const email = { ...BASE, headerFrom: "Alice <alice@example.com>" };
+      const email = { ...BASE, headerFromDisplay: "Alice <alice@example.com>" };
       const result = renderEmail(email, "html", "alerts@example.com", []);
       expect(result).toContain("Alice &lt;alice@example.com&gt;");
       expect(result).not.toContain("<alice@example.com>");
@@ -526,6 +529,93 @@ describe("renderEmail", () => {
       expect(rendered.richHtml).toContain(
         '<p>Report</p><p><b>Attachments:</b><br><a href="https://example.com/dl/1">report.pdf</a></p>',
       );
+    });
+  });
+
+  describe("From header", () => {
+    const encodedWord = (text: string): string =>
+      `=?UTF-8?B?${Buffer.from(text, "utf8").toString("base64")}?=`;
+
+    async function renderFrom(
+      fromHeader: string,
+      mode: RenderMode,
+    ): Promise<ReturnType<typeof renderEmailForDelivery>> {
+      const raw = Buffer.from(
+        `From: ${fromHeader}\r\nTo: alerts@example.com\r\nSubject: Test Subject\r\n\r\nBody`,
+      );
+      const parsed = await parseEmail(raw, raw.length);
+      return renderEmailForDelivery(parsed, mode, "alerts@example.com", []);
+    }
+
+    it("shows a display name without mailparser's quotes on every transport", async () => {
+      const html = await renderFrom('"GitHub" <noreply@github.com>', "html");
+      const plain = await renderFrom('"GitHub" <noreply@github.com>', "plaintext");
+
+      expect(html.text).toContain("<b>From:</b> GitHub &lt;noreply@github.com&gt;\n");
+      expect(html.richHtml).toContain("<b>From:</b> GitHub &lt;noreply@github.com&gt;<br>");
+      expect(plain.text.startsWith("From: GitHub <noreply@github.com>\n")).toBe(true);
+      expect(plain.richHtml).toContain("<b>From:</b> GitHub &lt;noreply@github.com&gt;<br>");
+      for (const output of [html.text, html.richHtml, plain.text, plain.richHtml]) {
+        expect(output).not.toContain('"GitHub"');
+      }
+    });
+
+    it("keeps the quotes on a name that could pass for an address", async () => {
+      const plain = await renderFrom('"support@paypal.com" <attacker@evil.com>', "plaintext");
+
+      expect(plain.text.startsWith('From: "support@paypal.com" <attacker@evil.com>\n')).toBe(true);
+    });
+
+    it("shows a name-only From as the bare name", async () => {
+      const plain = await renderFrom('"Just A Name"', "plaintext");
+
+      expect(plain.text.startsWith("From: Just A Name\n")).toBe(true);
+    });
+
+    it("shows unknown when the From header is empty", async () => {
+      const plain = await renderFrom("", "plaintext");
+
+      expect(plain.text.startsWith("From: unknown\n")).toBe(true);
+    });
+
+    it("shows unknown when there is no displayable sender", () => {
+      const email = { ...BASE, headerFrom: null, headerFromDisplay: null, envelopeFrom: null };
+
+      expect(renderEmail(email, "plaintext", "alerts@example.com", [])).toMatch(/^From: unknown\n/);
+    });
+
+    it("keeps an encoded line break in the name from forging a header line", async () => {
+      const from = `${encodedWord("Alice\r\nSubject: forged")} <alice@example.com>`;
+      const plain = await renderFrom(from, "plaintext");
+      const html = await renderFrom(from, "html");
+
+      const plainHeader = plain.text.split("\n\n")[0] ?? "";
+      expect(plainHeader.split("\n")).toEqual([
+        'From: "Alice Subject: forged" <alice@example.com>',
+        "To: alerts@example.com",
+        "Subject: Test Subject",
+      ]);
+      expect(html.text).toContain(
+        '<blockquote><b>From:</b> "Alice Subject: forged" &lt;alice@example.com&gt;\n<b>To:</b>',
+      );
+      expect(html.richHtml).toContain(
+        '<blockquote><b>From:</b> "Alice Subject: forged" &lt;alice@example.com&gt;<br><b>To:</b>',
+      );
+      for (const output of [plain.text, html.text, html.richHtml]) {
+        expect(output).not.toContain("\nSubject: forged");
+        expect(output).not.toContain("\r");
+      }
+    });
+
+    it("strips directional overrides from the name", async () => {
+      const from = `${encodedWord("Ali\u202eecilce")} <alice@example.com>`;
+      const plain = await renderFrom(from, "plaintext");
+      const html = await renderFrom(from, "html");
+
+      expect(plain.text.startsWith("From: Aliecilce <alice@example.com>\n")).toBe(true);
+      for (const output of [plain.text, plain.richHtml, html.text, html.richHtml]) {
+        expect(output).not.toContain("\u202e");
+      }
     });
   });
 });

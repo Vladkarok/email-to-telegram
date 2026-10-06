@@ -1,5 +1,6 @@
 import { simpleParser } from "mailparser";
 import { createHash } from "crypto";
+import { formatAddressDisplay } from "./addressDisplay.js";
 import type { ParsedEmail, ParsedEmailAttachment } from "./types.js";
 
 export async function parseEmail(raw: Buffer, rawSizeBytes: number): Promise<ParsedEmail> {
@@ -8,6 +9,7 @@ export async function parseEmail(raw: Buffer, rawSizeBytes: number): Promise<Par
   const fromAddr = parsed.from?.value[0];
   const envelopeFrom = fromAddr?.address ?? null;
   const headerFrom = parsed.from?.text ?? null;
+  const headerFromDisplay = parsed.from ? formatAddressDisplay(parsed.from.value) : null;
   const headerFromEmail =
     parsed.from?.value.length === 1 ? (parsed.from.value[0]?.address?.toLowerCase() ?? null) : null;
   const headerFromDomain = headerFromEmail?.split("@")[1] ?? null;
@@ -34,6 +36,7 @@ export async function parseEmail(raw: Buffer, rawSizeBytes: number): Promise<Par
     subject: parsed.subject ?? null,
     envelopeFrom,
     headerFrom,
+    headerFromDisplay,
     headerFromEmail,
     headerFromDomain,
     textBody,

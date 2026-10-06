@@ -51,4 +51,15 @@ describe("parseEmail", () => {
     const result = await parseEmail(fixture("simple.eml"), 100);
     expect(result.envelopeFrom).toBe("sender@example.com");
   });
+
+  it("keeps mailparser's From text for storage and adds an unquoted display form", async () => {
+    const raw = Buffer.from(
+      'From: "GitHub" <noreply@github.com>\r\nTo: alerts@example.com\r\nSubject: s\r\n\r\nBody',
+    );
+    const result = await parseEmail(raw, raw.length);
+    expect(result.headerFrom).toBe('"GitHub" <noreply@github.com>');
+    expect(result.headerFromDisplay).toBe("GitHub <noreply@github.com>");
+    expect(result.headerFromEmail).toBe("noreply@github.com");
+    expect(result.headerFromDomain).toBe("github.com");
+  });
 });

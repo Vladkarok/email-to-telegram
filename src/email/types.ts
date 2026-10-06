@@ -11,6 +11,10 @@ export interface ParsedEmail {
   subject: string | null;
   envelopeFrom: string | null;
   headerFrom: string | null;
+  // `Name <address>` for showing to the user, without the quotes mailparser
+  // puts around every name in headerFrom. Display only: never stored and
+  // never used for allow rules.
+  headerFromDisplay: string | null;
   headerFromEmail: string | null;
   headerFromDomain: string | null;
   textBody: string | null;
