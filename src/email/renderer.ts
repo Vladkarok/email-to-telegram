@@ -240,16 +240,20 @@ function renderSelectedBody(
   mode: RenderMode,
 ): { classic: string; structured: StructuredHtmlResult | null } {
   if (mode === "plaintext") {
-    return {
-      classic:
-        selectedBody.kind === "html" ? stripHtml(selectedBody.content) : selectedBody.content,
-      structured: null,
-    };
+    // Classic stays literal text (no parse_mode). The rich transport still
+    // gets the shared frame (header, divider) with the same text as
+    // paragraphs, so every alias looks alike.
+    const text =
+      selectedBody.kind === "html" ? stripHtml(selectedBody.content) : selectedBody.content;
+    return { classic: text, structured: structuredFromText(text) };
   }
 
   if (selectedBody.kind === "text") {
     // Raw text must be escaped before Telegram parses it as HTML.
-    return { classic: escapeHtml(selectedBody.content), structured: null };
+    return {
+      classic: escapeHtml(selectedBody.content),
+      structured: structuredFromText(selectedBody.content),
+    };
   }
 
   const safeSource =
@@ -263,6 +267,25 @@ function renderSelectedBody(
   return { classic: structured.classicHtml, structured };
 }
 
+/**
+ * Plain text as structured blocks for the rich transport: blank lines split
+ * paragraphs, single newlines become line breaks, everything is escaped
+ * before the structured parser sees it (so markup in a text email stays
+ * literal) and bare URLs get the same rich-only linkification as HTML mail.
+ * Classic output is never derived from this.
+ */
+function structuredFromText(text: string): StructuredHtmlResult | null {
+  const normalized = text.replace(/\r\n?/g, "\n").trim();
+  if (!normalized) return null;
+  // A blank line may carry spaces, tabs or NBSP and still separates paragraphs.
+  const html = normalized
+    .split(/\n[ \t\u00a0]*\n(?:[ \t\u00a0]*\n)*/)
+    .map((paragraph) => `<p>${escapeHtml(paragraph).replace(/\n/g, "<br>")}</p>`)
+    .join("");
+  const structured = renderStructuredEmailHtml(html);
+  return structured.richHtml ? structured : null;
+}
+
 function buildRichDeliveryHtml(input: {
   mode: RenderMode;
   from: string;
@@ -272,7 +295,7 @@ function buildRichDeliveryHtml(input: {
   attachmentLinks: AttachmentLink[];
 }): string | undefined {
   const structured = input.renderedBody.structured;
-  if (input.mode === "plaintext" || !structured?.richHtml) return undefined;
+  if (!structured?.richHtml) return undefined;
 
   const from = sanitizeHeaderField(input.from);
   const to = sanitizeHeaderField(input.to);

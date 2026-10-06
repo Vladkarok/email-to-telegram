@@ -48,6 +48,8 @@ export const en = {
     managing: (chatTitle: string) => `Managing: <b>${chatTitle}</b>`,
   },
   help: {
+    support: (contact: string, issuesUrl: string) =>
+      `Problems or ideas? Message ${contact} or open an issue: ${issuesUrl}`,
     billingStripe: `<b>Billing (hosted only)</b>
 /billing — account billing status with Upgrade and Manage Billing buttons
 /plan — show your current plan and limits

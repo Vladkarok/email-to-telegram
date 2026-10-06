@@ -24,6 +24,8 @@ describe("/help command", () => {
     expect(text).toContain("/portal");
     expect(text).toContain("/language");
     expect(text).toMatch(/Stripe checkout|billing portal/i);
+    expect(text).toContain("https://github.com/Vladkarok/email-to-telegram/issues");
+    expect(text).toMatch(/Message .* or open an issue/);
   });
 
   it("hides all billing commands in hosted mode without self-serve billing", async () => {

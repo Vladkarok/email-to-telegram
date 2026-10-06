@@ -442,6 +442,94 @@ describe("renderEmail", () => {
       );
     });
 
+    it("gives a text-only email the rich frame with paragraphs and line breaks", () => {
+      const rendered = renderEmailForDelivery(
+        {
+          ...BASE,
+          htmlBody: null,
+          textBody:
+            "EVENT TYPE: Illegal Login\nNVR: 28 Che <b>4</b>\n\nSee https://example.com/nvr.",
+        },
+        "html",
+        "alerts@example.com",
+        [],
+      );
+
+      expect(rendered.text).toContain(
+        "EVENT TYPE: Illegal Login\nNVR: 28 Che &lt;b&gt;4&lt;/b&gt;",
+      );
+      expect(rendered.richHtml).toContain(
+        "</blockquote><hr><p>EVENT TYPE: Illegal Login<br>NVR: 28 Che &lt;b&gt;4&lt;/b&gt;</p>" +
+          '<p>See <a href="https://example.com/nvr">https://example.com/nvr</a>.</p>',
+      );
+    });
+
+    it("keeps plaintext mode literal on classic but still sends the rich frame", () => {
+      const rendered = renderEmailForDelivery(
+        { ...BASE, htmlBody: "<p>Hello <b>there</b></p>", textBody: null },
+        "plaintext",
+        "alerts@example.com",
+        [],
+      );
+
+      expect(rendered.parseMode).toBeUndefined();
+      expect(rendered.text.startsWith("From: ")).toBe(true);
+      expect(rendered.text).toContain("Hello there");
+      expect(rendered.richHtml?.startsWith("<blockquote><b>From:</b> ")).toBe(true);
+      expect(rendered.richHtml).toContain("</blockquote><hr><p>Hello there</p>");
+    });
+
+    it("splits paragraphs on blank lines that carry spaces, tabs or NBSP, and keeps markup literal", () => {
+      const rendered = renderEmailForDelivery(
+        { ...BASE, htmlBody: null, textBody: "a\r\n \r\nb\n\t\nc\n\u00a0\n<p>&amp;</p>" },
+        "html",
+        "alerts@example.com",
+        [],
+      );
+
+      expect(rendered.richHtml).toContain(
+        "</blockquote><hr><p>a</p><p>b</p><p>c</p><p>&lt;p&gt;&amp;amp;&lt;/p&gt;</p>",
+      );
+      expect(rendered.text).toContain("a\r\n \r\nb\n\t\nc\n\u00a0\n&lt;p&gt;&amp;amp;&lt;/p&gt;");
+    });
+
+    it("falls back to classic when a text email has more paragraphs than the rich block budget", () => {
+      const fits = renderEmailForDelivery(
+        {
+          ...BASE,
+          htmlBody: null,
+          textBody: Array.from({ length: 498 }, (_, i) => `p${i}`).join("\n\n"),
+        },
+        "html",
+        "alerts@example.com",
+        [],
+      );
+      const over = renderEmailForDelivery(
+        {
+          ...BASE,
+          htmlBody: null,
+          textBody: Array.from({ length: 499 }, (_, i) => `p${i}`).join("\n\n"),
+        },
+        "html",
+        "alerts@example.com",
+        [],
+      );
+
+      expect(fits.richHtml).toBeDefined();
+      expect(over.richHtml).toBeUndefined();
+    });
+
+    it("sends no rich frame for an empty body", () => {
+      const rendered = renderEmailForDelivery(
+        { ...BASE, htmlBody: null, textBody: "   \n\n  " },
+        "html",
+        "alerts@example.com",
+        [],
+      );
+
+      expect(rendered.richHtml).toBeUndefined();
+    });
+
     it("renders source links on the rich transport", () => {
       const rendered = renderEmailForDelivery(
         {

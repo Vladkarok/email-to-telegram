@@ -6,6 +6,8 @@ import { getDb } from "../../db/client.js";
 import { getMessages, resolveLocale, type Messages } from "../../i18n/index.js";
 import { escapeHtml } from "../../utils/html.js";
 
+const ISSUES_URL = "https://github.com/Vladkarok/email-to-telegram/issues";
+
 export async function helpHandler(ctx: Context): Promise<void> {
   const config = loadConfig();
   const locale = await resolveHelpLocale(ctx);
@@ -18,7 +20,8 @@ export async function helpHandler(ctx: Context): Promise<void> {
     settingsHelpText(locale),
     safetyDisclaimerText(locale),
   );
-  await ctx.reply(`${body}\n\n${messages.common.languageHint}`, {
+  const support = messages.help.support(escapeHtml(resolveSupportContact(config)), ISSUES_URL);
+  await ctx.reply(`${body}\n\n${support}\n\n${messages.common.languageHint}`, {
     parse_mode: "HTML",
   });
 }

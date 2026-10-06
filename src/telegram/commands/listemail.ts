@@ -144,12 +144,12 @@ function statusIcon(status: string): string {
 /**
  * Renders a single alias as a text line for the message body.
  *
- * Hides the render mode tag when it's the default ("plaintext") to reduce noise.
+ * Hides the render mode tag when it's the default ("html") to reduce noise.
  * Shows the optional label when set.
  */
 function displayLine(a: EmailAddress): string {
   const labelPrefix = a.label ? `🏷️ ${escapeHtml(a.label)} · ` : "";
-  const modeSuffix = a.renderMode === "plaintext" ? "" : ` [${a.renderMode}]`;
+  const modeSuffix = a.renderMode === "html" ? "" : ` [${a.renderMode}]`;
   return `${statusIcon(a.status)} ${labelPrefix}<code>${escapeHtml(a.fullAddress)}</code>${modeSuffix}`;
 }
 
