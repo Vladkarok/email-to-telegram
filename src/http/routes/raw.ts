@@ -172,7 +172,7 @@ export function rawRoute(
             aliasId: alias.id,
             userId: alias.createdBy.toString(),
             blockType: hostedBlock.blockType,
-            blockValue: hostedBlock.value,
+            blockId: hostedBlock.id,
           },
           "inbound.raw.rejected",
         );

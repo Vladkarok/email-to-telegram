@@ -143,6 +143,34 @@ describe("logger", () => {
       expect(pgError.detail).toContain("secret-alias@example.com");
     });
 
+    it("replaces pg messages that carry the offending value", () => {
+      const pgError = Object.assign(
+        new Error('invalid input syntax for type uuid: "inbox-private-name"'),
+        { code: "22P02", severity: "ERROR", where: "unnamed portal parameter $1" },
+      );
+
+      const output = captureLog((logger) => {
+        logger.error({ err: new Error("lookup failed", { cause: pgError }) }, "x");
+      });
+
+      expect(output).not.toContain("inbox-private-name");
+      expect(output).not.toContain("unnamed portal parameter");
+      expect(output).toContain("pg error 22P02");
+    });
+
+    it("keeps pg messages that only name objects", () => {
+      const pgError = Object.assign(
+        new Error('duplicate key value violates unique constraint "idx_alias_full_address"'),
+        { code: "23505", severity: "ERROR", constraint: "idx_alias_full_address" },
+      );
+
+      const output = captureLog((logger) => {
+        logger.error({ err: pgError }, "x");
+      });
+
+      expect(output).toContain("duplicate key value violates unique constraint");
+    });
+
     it("logs ordinary errors unchanged", () => {
       const err = new Error("disk full");
       expect(sanitizeErrorForLog(err)).toBe(err);

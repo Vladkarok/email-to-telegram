@@ -24,34 +24,77 @@ const CENSOR = "[redacted]";
 const MAX_CAUSE_DEPTH = 5;
 
 /**
- * Query errors carry user content in their SQL parameters. Drizzle's
- * `DrizzleQueryError` puts them in its message, its stack and `params`, so a
- * failed insert into `delivery_logs` would log the subject and From address;
- * pg errors put row values in `detail` ("Key (...)=(...) already exists").
- * Returns a copy that keeps the SQL text, codes and constraint names and
- * drops the values. The thrown error itself is never modified.
+ * SQLSTATEs whose server message names only objects (constraint, column,
+ * table), never row values. Any other pg error message, e.g. 22P02
+ * `invalid input syntax for type uuid: "<value>"`, is replaced.
+ */
+const PG_CODES_WITH_SAFE_MESSAGES = new Set([
+  "23505", // unique_violation (values are in `detail`)
+  "23503", // foreign_key_violation
+  "23502", // not_null_violation
+  "23514", // check_violation
+  "23P01", // exclusion_violation
+  "22001", // string_data_right_truncation
+  "40001", // serialization_failure
+  "40P01", // deadlock_detected
+  "55P03", // lock_not_available
+  "57014", // query_canceled (statement_timeout)
+  "57P01", // admin_shutdown
+  "53300", // too_many_connections
+  "42P01", // undefined_table
+  "42703", // undefined_column
+]);
+
+/** pg error fields that can carry row values or statement text. */
+const PG_VALUE_FIELDS = ["detail", "where", "internalQuery"];
+
+function isPgError(fields: Record<string, unknown>): boolean {
+  return (
+    typeof fields["code"] === "string" &&
+    /^[0-9A-Z]{5}$/.test(fields["code"]) &&
+    typeof fields["severity"] === "string"
+  );
+}
+
+function withMessage(err: Error, copy: Error, message: string): void {
+  copy.message = message;
+  // Rebuild from the frames: the stack's header repeats the full message.
+  const frames = (err.stack ?? "").split("\n").filter((line) => /^\s+at /.test(line));
+  copy.stack = [`${err.name}: ${message}`, ...frames].join("\n");
+}
+
+/**
+ * Query errors carry user content. Drizzle's `DrizzleQueryError` puts every
+ * SQL parameter in its message, its stack and `params`, so a failed insert
+ * into `delivery_logs` would log the subject and From address. pg errors put
+ * row values in `detail` ("Key (...)=(...) already exists"), and some put the
+ * offending value in the message itself. Returns a copy that keeps the SQL
+ * text, SQLSTATE and object names and drops the values, through the `cause`
+ * chain. The thrown error itself is never modified.
  */
 export function sanitizeErrorForLog(err: unknown, depth = 0): unknown {
   if (!(err instanceof Error) || depth > MAX_CAUSE_DEPTH) return err;
   const fields = err as Error & Record<string, unknown>;
   const isQueryError = typeof fields["query"] === "string" && "params" in fields;
-  const hasDetail = typeof fields["detail"] === "string";
+  const isPg = isPgError(fields);
+  const valueFields = PG_VALUE_FIELDS.filter((key) => fields[key] !== undefined);
   const cause = fields.cause;
   const safeCause = sanitizeErrorForLog(cause, depth + 1);
-  if (!isQueryError && !hasDetail && safeCause === cause) return err;
+  if (!isQueryError && !isPg && valueFields.length === 0 && safeCause === cause) return err;
 
   const copy = Object.create(Object.getPrototypeOf(err) as object) as Error &
     Record<string, unknown>;
   for (const key of Object.getOwnPropertyNames(err)) copy[key] = fields[key];
   if (isQueryError) {
-    const safeMessage = `Failed query: ${String(fields["query"])}`;
-    copy.message = safeMessage;
-    // Rebuild from the frames: the stack's header repeats the full message.
-    const frames = (err.stack ?? "").split("\n").filter((line) => /^\s+at /.test(line));
-    copy.stack = [`${err.name}: ${safeMessage}`, ...frames].join("\n");
+    withMessage(err, copy, `Failed query: ${String(fields["query"])}`);
     copy["params"] = CENSOR;
+  } else if (isPg && !PG_CODES_WITH_SAFE_MESSAGES.has(String(fields["code"]))) {
+    const names = ["constraint", "table", "column"]
+      .filter((key) => typeof fields[key] === "string")
+      .map((key) => `${key} ${String(fields[key])}`);
+    withMessage(err, copy, [`pg error ${String(fields["code"])}`, ...names].join(", "));
   }
-  if (hasDetail) copy["detail"] = CENSOR;
+  for (const key of valueFields) copy[key] = CENSOR;
   if (cause !== undefined) copy.cause = safeCause;
   return copy;
 }
