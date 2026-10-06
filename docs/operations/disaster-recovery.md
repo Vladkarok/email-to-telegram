@@ -12,6 +12,7 @@ and how to rehearse it.
 | R2 key pair for the bucket             | Password manager, or create a new one in R2                 | Create a new token for the bucket; nothing is lost.                  |
 | Nightly encrypted DB dump              | R2 bucket, restic repository (host tag `etg-<environment>`) | Up to 24 h of data loss per missed night.                            |
 | Code, compose file, images             | GitHub, GHCR                                                | —                                                                    |
+| Full-VM image (hosted deployment)      | Backblaze B2, restic repository, weekly                     | Rebuild from the steps below instead of restoring the whole VM.      |
 
 Attachment and raw-email files are **not** copied off-site. They have short
 TTLs; after a rebuild, links to older stored files return "not found".
@@ -50,6 +51,31 @@ already locked". Check that no backup is running, then clear it:
 ```bash
 sudo bash -c 'set -a; . /etc/etg-r2/restic.env; . /etc/etg-r2/credentials.env; restic unlock'
 ```
+
+## Full-VM images (hosted deployment)
+
+The hosted deployment also keeps weekly whole-VM copies off the hypervisor,
+for a faster restore than a rebuild. A cron job on the Proxmox host runs
+`vzdump` for each VM uncompressed into a root-owned staging directory, backs
+the archive up with restic to a private Backblaze B2 bucket (restic encrypts
+and deduplicates, so a week's copy uploads only what changed), deletes the
+staged archive and keeps 4 weekly snapshots per VM. The restic password lives
+only on that host and in the operator's password manager. The bucket keeps
+only the latest version of each object, so pruned data stops counting
+against storage a day later.
+
+Restore a VM onto any Proxmox host:
+
+```bash
+export B2_ACCOUNT_ID=... B2_ACCOUNT_KEY=...   # from the password manager
+restic -r b2:<bucket>:etg-vms snapshots --tag vm-<vmid>
+restic -r b2:<bucket>:etg-vms restore latest --tag vm-<vmid> --target ./restore
+qmrestore "$(find ./restore -name 'vzdump-qemu-<vmid>-*.vma')" <new-vmid> --storage <storage>
+```
+
+The image includes the VM's `.env`, so a restored VM starts with its own
+keys. Data since the last weekly copy comes from the nightly database dump
+(`Rebuild a host`, steps 2–4) if needed.
 
 ## Rebuild a host
 
