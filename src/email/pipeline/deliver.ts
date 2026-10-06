@@ -46,6 +46,7 @@ import { classifyTelegramError, retryDispositionForError } from "../../telegram/
 import { readAttemptRoute } from "../deliveryRoute.js";
 import { repairChatMigration } from "../../telegram/chatMigration.js";
 import { refundAcceptedEmail } from "../../billing/usageRefund.js";
+import { markAliasFirstDelivered } from "../../db/repos/aliasActivation.js";
 
 interface StoredImageAttachment extends PhotoItem {
   attachmentId: string;
@@ -367,6 +368,18 @@ export async function deliverQueuedEmail(
           );
         }
         return { ok: false, reason: "send_failed" };
+      }
+
+      // The text landed and its success is persisted: the alias is working.
+      // Best-effort; a failed write is reconciled by the cleanup loop from
+      // the succeeded attempt, and never touches this delivery.
+      try {
+        await markAliasFirstDelivered(db, alias.id);
+      } catch (markErr: unknown) {
+        log.warn(
+          { err: markErr, deliveryLogId: deliveryLog.id, aliasId: alias.id },
+          "delivery.first_delivered_marker_failed",
+        );
       }
 
       /**

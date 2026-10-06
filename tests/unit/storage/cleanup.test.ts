@@ -61,6 +61,16 @@ vi.mock("../../../src/db/repos/quotaNotifications.js", () => ({
     mockDeleteOldQuotaNotifications(...args),
 }));
 
+const mockReconcileFirstDeliveredMarkers = vi.fn().mockResolvedValue(0);
+const mockClearExpiredActivationTokens = vi.fn().mockResolvedValue(0);
+
+vi.mock("../../../src/db/repos/aliasActivation.js", () => ({
+  reconcileFirstDeliveredMarkers: (...args: unknown[]): unknown =>
+    mockReconcileFirstDeliveredMarkers(...args),
+  clearExpiredActivationTokens: (...args: unknown[]): unknown =>
+    mockClearExpiredActivationTokens(...args),
+}));
+
 const { runCleanup, deliveryLogHasNoAttachments, broadRetentionCandidateCutoff } =
   await import("../../../src/storage/cleanup.js");
 const { applyPlanLimitOverrides } = await import("../../../src/billing/plans.js");
@@ -724,6 +734,79 @@ describe("runCleanup", () => {
       (call) => call[1] === "cleanup: alias tombstone purge failed",
     );
     expect(loggedFailure).toBe(true);
+  });
+
+  describe("first-bounce notice state", () => {
+    beforeEach(() => {
+      mockReconcileFirstDeliveredMarkers.mockReset().mockResolvedValue(0);
+      mockClearExpiredActivationTokens.mockReset().mockResolvedValue(0);
+    });
+
+    it("reconciles working-alias markers before any delivery log is purged", async () => {
+      const db = makeDb([], [], [{ id: "log-old" }]);
+      db._mocks.deliveryLogDeleteWhere.mockResolvedValue({ rowCount: 1 });
+      mockReconcileFirstDeliveredMarkers.mockResolvedValue(2);
+
+      await runCleanup(db, config);
+
+      expect(mockReconcileFirstDeliveredMarkers).toHaveBeenCalledTimes(1);
+      expect(mockReconcileFirstDeliveredMarkers.mock.invocationCallOrder[0]).toBeLessThan(
+        db._mocks.deliveryLogDeleteWhere.mock.invocationCallOrder[0] ?? 0,
+      );
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        { rows: 2 },
+        "cleanup: reconciled first-delivered markers",
+      );
+    });
+
+    it("clears expired tokens and domains every run", async () => {
+      mockClearExpiredActivationTokens.mockResolvedValue(3);
+
+      await runCleanup(makeDb(), config);
+
+      expect(mockClearExpiredActivationTokens).toHaveBeenCalledTimes(1);
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        { rows: 3 },
+        "cleanup: cleared expired bounce-notice tokens",
+      );
+    });
+
+    it("keeps delivery logs (the fallback evidence) when reconciliation fails, and runs the rest", async () => {
+      const db = makeDb([], [], [{ id: "log-old" }]);
+      db._mocks.deliveryLogDeleteWhere.mockResolvedValue({ rowCount: 1 });
+      mockReconcileFirstDeliveredMarkers.mockRejectedValueOnce(new Error("db down"));
+      mockClearExpiredActivationTokens.mockResolvedValue(2);
+
+      await expect(runCleanup(db, config)).resolves.toBeUndefined();
+
+      expect(db._mocks.deliveryLogDeleteWhere).not.toHaveBeenCalled();
+      expect(mockDeleteExpiredAliasTombstones).toHaveBeenCalled();
+      expect(mockDeleteOldQuotaNotifications).toHaveBeenCalled();
+      expect(mockClearExpiredActivationTokens).toHaveBeenCalledTimes(1);
+      const errors = mockLogger.error.mock.calls.map((call: unknown[]) => call[1]);
+      expect(errors).toContain("cleanup: first-delivered marker reconciliation failed");
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        "cleanup: delivery log purge skipped until first-delivered markers reconcile",
+      );
+
+      // The next run reconciles, then purges.
+      const nextRun = makeDb([], [], [{ id: "log-old" }]);
+      nextRun._mocks.deliveryLogDeleteWhere.mockResolvedValue({ rowCount: 1 });
+      await runCleanup(nextRun, config);
+      expect(nextRun._mocks.deliveryLogDeleteWhere).toHaveBeenCalled();
+    });
+
+    it("isolates an expiry cleanup failure from the other passes", async () => {
+      const db = makeDb([], [], [{ id: "log-old" }]);
+      db._mocks.deliveryLogDeleteWhere.mockResolvedValue({ rowCount: 1 });
+      mockClearExpiredActivationTokens.mockRejectedValueOnce(new Error("db down"));
+
+      await expect(runCleanup(db, config)).resolves.toBeUndefined();
+
+      expect(db._mocks.deliveryLogDeleteWhere).toHaveBeenCalled();
+      const errors = mockLogger.error.mock.calls.map((call: unknown[]) => call[1]);
+      expect(errors).toContain("cleanup: bounce-notice token cleanup failed");
+    });
   });
 
   it("renders the no-attachments purge guard as a parenthesized NOT EXISTS subquery", () => {

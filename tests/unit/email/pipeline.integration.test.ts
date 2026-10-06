@@ -355,7 +355,12 @@ describe("pipeline integration matrix", () => {
       envelopeFrom: "spam@attacker.com",
       ...PIPELINE_CONFIG,
     });
-    expect(result).toEqual({ ok: false, reason: "sender_not_allowed" });
+    // The header From domain travels with the rejection for the owner's notice.
+    expect(result).toEqual({
+      ok: false,
+      reason: "sender_not_allowed",
+      senderRejection: { aliasId: "alias-uuid", headerFromDomain: "example.com" },
+    });
     expect(mockSendTelegram).not.toHaveBeenCalled();
   });
 

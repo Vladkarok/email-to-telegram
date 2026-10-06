@@ -11,6 +11,7 @@ import { findHostedInboundRejection } from "../../abuse/hostedInboundBlocklist.j
 import { findAliasForInbound } from "../../email/inboundRouting.js";
 import { normalizeEnvelopeSender } from "../../email/envelopeSender.js";
 import { getLogger } from "../../utils/logger.js";
+import { admitPreflightNoRules } from "../../activation/notice.js";
 import { recordInboundPreflight, recordQuotaRejection } from "../../observability/metrics.js";
 
 function logWorkerForwardFailed(reason: string): void {
@@ -138,6 +139,9 @@ export function preflightRoute(app: FastifyInstance): void {
       if (!allowed) {
         recordInboundPreflight("rejected", "sender_not_allowed");
         await reply.send({ accept: false });
+        // After the response: tells the owner of a not-yet-working alias
+        // that it has no allow rules. Constant-time, never throws.
+        admitPreflightNoRules(alias.id);
         return;
       }
 

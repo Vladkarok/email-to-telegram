@@ -104,7 +104,8 @@ getting from the sender to Telegram, how fast, and where is it lost.
   p95).
 - **Inbound**: preflight decisions per hour (accepted / deferred / bounced),
   preflight bounces by reason, raw uploads per hour (accepted / rejected), raw
-  rejections by reason.
+  rejections by reason, bounce notices per hour by stage and result, one-tap
+  allows per hour by result.
 - **Delivery**: deliveries per hour by path and result, lost mail per hour by
   stage, delivery latency p50 / p95, first-attempt success rate per hour,
   delivery backlog, Telegram send failures by class, rich vs classic fallback,
@@ -192,6 +193,8 @@ All gauges/counters are prefixed `email_to_telegram_`. Exposed at `GET /metrics`
 | `email_to_telegram_rich_messages_total{result}`                    | counter   | Rich-message outcomes: `success`, `fallback` (classic message sent instead), `disabled`                                                               | `sum by (result)(increase(email_to_telegram_rich_messages_total[1h]))`                                           |
 | `email_to_telegram_telegram_send_failures_total{error_class}`      | counter   | Telegram send failures bucketed by error class                                                                                                        | `topk(5, sum by (error_class)(rate(email_to_telegram_telegram_send_failures_total[1h])))`                        |
 | `email_to_telegram_quota_rejections_total{reason}`                 | counter   | Quota rejections by reason                                                                                                                            | `sum by (reason)(rate(email_to_telegram_quota_rejections_total[1h]))`                                            |
+| `email_to_telegram_activation_notices_total{stage,result}`         | counter   | Bounce notices to the owner of a not-yet-working alias; `stage` = `raw` or `preflight`, `result` below                                                | `sum by (result)(increase(email_to_telegram_activation_notices_total[7d]))`                                      |
+| `email_to_telegram_activation_allows_total{result}`                | counter   | Taps on a notice's one-tap allow: `added`, `expired` (spent, replaced, expired or stale button), `failed` (rule limit or DB error)                    | `increase(email_to_telegram_activation_allows_total{result="added"}[7d])`                                        |
 | `email_to_telegram_manual_plan_grants_total{plan}`                 | counter   | Manual billing plan grants                                                                                                                            | `increase(email_to_telegram_manual_plan_grants_total[7d])`                                                       |
 | `email_to_telegram_http_requests_total{route,method,status_class}` | counter   | HTTP request count                                                                                                                                    | `sum by (status_class)(rate(email_to_telegram_http_requests_total[5m]))`                                         |
 | `email_to_telegram_http_request_duration_seconds_*`                | histogram | HTTP latency histogram (`_bucket`, `_sum`, `_count`)                                                                                                  | `histogram_quantile(0.95, sum by (le, route)(rate(email_to_telegram_http_request_duration_seconds_bucket[5m])))` |
@@ -201,6 +204,24 @@ month of `user_usage_months`. That counter moves when mail is accepted into
 delivery and is refunded on a permanent Telegram failure. It is read from
 `user_usage_months`, not `delivery_logs`, because free-plan delivery logs are
 purged after 7 days.
+
+`activation_notices_total` results: `sent` (Telegram accepted the notice),
+`gated` (the alias already delivered, is not active, or is older than 7 days
+with an owner who had mail accepted),
+`not_claimed` (the 24 h window or the 3-notice lifetime budget of the alias,
+or a concurrent bounce took the claim), `dropped` (the bounded queue was full
+or shutting down, or a deadline stopped the job), `stale` (the alias or its
+claim changed before the send), `failed` (a DB or Telegram error). A claim is
+spent before the send, so `failed` and `dropped` after a claim still use up
+budget. Conversion, from the database (`first_sent_at` is the first
+acknowledged notice):
+
+```sql
+SELECT count(*) FILTER (WHERE first_sent_at IS NOT NULL) AS notified,
+       count(*) FILTER (WHERE first_delivered_at > first_sent_at) AS delivered_after,
+       count(*) FILTER (WHERE claims_used > 0 AND first_sent_at IS NULL) AS claimed_never_sent
+FROM alias_activation;
+```
 
 The `delivery_backlog` gauges are refreshed on every scrape from the partial
 index `idx_log_backlog_received` (migration `0010`), which holds only the

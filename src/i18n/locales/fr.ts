@@ -442,6 +442,7 @@ Ce bot ne stocke que les données nécessaires pour livrer vos e-mails sur Teleg
 • <b>Alias :</b> adresses e-mail créées et leurs réglages
 • <b>Journaux de livraison :</b> métadonnées des e-mails (expéditeur, sujet, horodatages, taille) pour quotas et rétention
 • <b>Facturation :</b> plan, statut d'abonnement, références de paiement (le cas échéant)
+• <b>Avis de rejet :</b> quand un e-mail est renvoyé faute d'allow rule correspondante, le domaine de l'expéditeur est conservé jusqu'à 7 jours pour proposer une autorisation en un geste
 
 Les corps d'e-mails et pièces jointes sont conservés selon la durée de votre plan, puis purgés.
 
@@ -528,6 +529,25 @@ Cette action est <b>irréversible</b>. Confirmez pour continuer.`,
     billingTitle: "<b>💳 Facturation</b>",
     accountName: "Compte",
     thisMonth: (month: string) => `<b>Ce mois-ci — ${month}</b>`,
+  },
+  activationNotice: {
+    bouncedFromDomain: (address: string, domain: string) =>
+      `Un e-mail pour <code>${address}</code> venant de ${domain} a été renvoyé : aucune allow rule ne lui correspond. Une règle porte sur l'adresse de la ligne From (De) de l'e-mail.`,
+    bouncedNoSender: (address: string) =>
+      `Un e-mail pour <code>${address}</code> a été renvoyé : aucune allow rule ne correspond à son expéditeur.`,
+    bouncedNoRules: (address: string) =>
+      `Un e-mail pour <code>${address}</code> a été renvoyé : cet alias n'a encore aucune allow rule.`,
+    allowDomainButton: (domain: string) => `Autoriser ${domain}`,
+    added: (address: string, domain: string) =>
+      `Allow rule ajoutée pour <code>${address}</code> : ${domain}. Elle autorise toutes les adresses de ${domain}.`,
+    alreadyAllowed: (address: string, domain: string) =>
+      `<code>${address}</code> a déjà une allow rule pour ${domain}. Elle autorise toutes les adresses de ${domain}.`,
+    expired: "Ce bouton a expiré.",
+    ruleLimit: (address: string, domain: string, limit: number) =>
+      `Impossible d'autoriser ${domain} pour <code>${address}</code> : la limite de ${limit} allow rules est atteinte.`,
+    addFailed: (address: string, domain: string) =>
+      `Impossible d'autoriser ${domain} pour <code>${address}</code>.`,
+    tryAgainToast: "Impossible d'ajouter la règle. Réessayez.",
   },
   quotaNotice: {
     higherLimitsUpgrade: "Utilisez /upgrade pour des limites plus élevées.",

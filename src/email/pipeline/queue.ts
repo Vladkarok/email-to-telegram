@@ -48,9 +48,18 @@ export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<Q
   }
   const allowEvaluation = evaluateAllowRules(allowRules, senderAuth);
   if (!allowEvaluation.allowed) {
+    const reason = allowEvaluation.reason ?? "sender_not_allowed";
     return {
       queued: false,
-      result: { ok: false, reason: allowEvaluation.reason ?? "sender_not_allowed" },
+      result: {
+        ok: false,
+        reason,
+        ...(reason === "sender_not_allowed"
+          ? {
+              senderRejection: { aliasId: alias.id, headerFromDomain: parsed.headerFromDomain },
+            }
+          : {}),
+      },
     };
   }
 

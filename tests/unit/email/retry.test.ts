@@ -50,6 +50,10 @@ vi.mock("../../../src/db/repos/deliveryAttempts.js", () => ({
   countCountedFailedAttemptsByLog: (...args: unknown[]): unknown => mockCountCountedFailed(...args),
   insertDeliveryAttempt: (...args: unknown[]): unknown => mockInsertAttempt(...args),
 }));
+const mockMarkAliasFirstDelivered = vi.fn();
+vi.mock("../../../src/db/repos/aliasActivation.js", () => ({
+  markAliasFirstDelivered: (...args: unknown[]): unknown => mockMarkAliasFirstDelivered(...args),
+}));
 vi.mock("../../../src/storage/disk.js", () => ({
   readRawEmail: (...args: unknown[]): unknown => mockReadRawEmail(...args),
   listPendingRawEmails: (...args: unknown[]): unknown => mockListPendingRawEmails(...args),
@@ -174,6 +178,27 @@ describe("runRetryWorker", () => {
       expect.objectContaining({ status: "succeeded", attemptNo: 1 }),
     );
     expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "delivered");
+    expect(mockMarkAliasFirstDelivered).toHaveBeenCalledWith(fakeDb, fakeLog.emailAddressId);
+  });
+
+  it("keeps a retry delivered, with one send, when the marker write fails", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockMarkAliasFirstDelivered.mockRejectedValueOnce(new Error("db down"));
+
+    await runRetryWorker(fakeDb, fakeApi);
+
+    expect(mockSendTelegramMessage).toHaveBeenCalledOnce();
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "delivered");
+    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
+  });
+
+  it("writes no marker when the retry send fails", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockSendTelegramMessage.mockResolvedValue({ ok: false, error: "Telegram error" });
+
+    await runRetryWorker(fakeDb, fakeApi);
+
+    expect(mockMarkAliasFirstDelivered).not.toHaveBeenCalled();
   });
 
   describe("delivery metrics", () => {

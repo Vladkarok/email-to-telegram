@@ -58,6 +58,10 @@ vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
 vi.mock("../../../src/db/repos/deliveryAttempts.js", () => ({
   insertDeliveryAttempt: vi.fn().mockResolvedValue(undefined),
 }));
+const mockMarkAliasFirstDelivered = vi.fn();
+vi.mock("../../../src/db/repos/aliasActivation.js", () => ({
+  markAliasFirstDelivered: (...args: unknown[]): unknown => mockMarkAliasFirstDelivered(...args),
+}));
 
 const mockSendTelegram = vi.fn();
 vi.mock("../../../src/telegram/sender.js", () => ({
@@ -202,8 +206,30 @@ describe("processInboundEmail", () => {
         ...PIPELINE_CONFIG,
       },
     );
-    expect(result).toEqual({ ok: false, reason: "sender_not_allowed" });
+    expect(result).toEqual({
+      ok: false,
+      reason: "sender_not_allowed",
+      senderRejection: { aliasId: "alias-uuid-1", headerFromDomain: "attacker.com" },
+    });
     expect(mockAuthenticateSender).not.toHaveBeenCalled();
+  });
+
+  it("returns a domainless sender rejection when the mail has several From addresses", async () => {
+    mockFindAlias.mockResolvedValue(activeAlias);
+    const result = await processInboundEmail(
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
+      null,
+      {
+        rawEmail: Buffer.from("From: a@one.example, b@two.example\r\nSubject: two\r\n\r\nbody"),
+        localPart: "alerts",
+        ...PIPELINE_CONFIG,
+      },
+    );
+    expect(result).toEqual({
+      ok: false,
+      reason: "sender_not_allowed",
+      senderRejection: { aliasId: "alias-uuid-1", headerFromDomain: null },
+    });
   });
 
   it("allows authenticated RFC5322 From when envelopeFrom is missing", async () => {
@@ -516,6 +542,44 @@ describe("processInboundEmail", () => {
     );
     expect(result).toEqual({ ok: true });
     expect(mockUpdateLogStatus).toHaveBeenCalledWith(expect.anything(), "log-uuid-2", "delivered");
+    // The alias is now working: the first-delivered marker follows the
+    // persisted success.
+    expect(mockMarkAliasFirstDelivered).toHaveBeenCalledWith(expect.anything(), activeAlias.id);
+    expect(mockMarkAliasFirstDelivered.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockUpdateLogStatus.mock.invocationCallOrder[0] ?? Infinity,
+    );
+  });
+
+  it("keeps a delivery successful, with one send, when the marker write fails", async () => {
+    mockFindAlias.mockResolvedValue(activeAlias);
+    mockIsDuplicate.mockResolvedValue(false);
+    mockCreateLog.mockResolvedValue({ id: "log-uuid-marker" });
+    mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 42 });
+    mockMarkAliasFirstDelivered.mockRejectedValue(new Error("db down"));
+
+    const result = await processInboundEmail(
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
+      {} as Parameters<typeof processInboundEmail>[1],
+      {
+        rawEmail: simpleEmail(),
+        localPart: "alerts",
+        envelopeFrom: "sender@example.com",
+        ...PIPELINE_CONFIG,
+      },
+    );
+    expect(result).toEqual({ ok: true });
+    expect(mockSendTelegram).toHaveBeenCalledTimes(1);
+    expect(mockUpdateLogStatus).toHaveBeenCalledWith(
+      expect.anything(),
+      "log-uuid-marker",
+      "delivered",
+    );
+    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "log-uuid-marker",
+      "failed",
+    );
   });
 
   it("returns send_failed when Telegram delivery fails", async () => {
@@ -538,6 +602,7 @@ describe("processInboundEmail", () => {
     );
     expect(result).toEqual({ ok: false, reason: "send_failed" });
     expect(mockUpdateLogStatus).toHaveBeenCalledWith(expect.anything(), "log-uuid-3", "failed");
+    expect(mockMarkAliasFirstDelivered).not.toHaveBeenCalled();
     expect(mockIncrementOrganizationUsageMonth).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({

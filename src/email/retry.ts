@@ -3,6 +3,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema.js";
 import { queueInboundEmail, deliverQueuedEmail } from "./pipeline.js";
 import { refundAcceptedEmail } from "../billing/usageRefund.js";
+import { markAliasFirstDelivered } from "../db/repos/aliasActivation.js";
 import { notifyApproachingMonthlyLimit } from "../billing/quotaNotifier.js";
 import { parseEmail } from "./parser.js";
 import { cleanEmailBody } from "./cleaner.js";
@@ -470,6 +471,15 @@ async function retryDelivery(
   if (result.ok) {
     recordRetryAttempt("succeeded");
     log.info({ deliveryLogId: deliveryLog.id, attemptNo: newAttemptNo }, "retry worker: delivered");
+    // Best-effort working-alias marker, as on the initial path.
+    try {
+      await markAliasFirstDelivered(db, deliveryLog.emailAddressId);
+    } catch (markErr: unknown) {
+      log.warn(
+        { err: markErr, deliveryLogId: deliveryLog.id, aliasId: deliveryLog.emailAddressId },
+        "retry worker: first_delivered_marker_failed",
+      );
+    }
 
     /**
      * Chat upgraded mid-attempt, after the text landed. Repair, then hand the

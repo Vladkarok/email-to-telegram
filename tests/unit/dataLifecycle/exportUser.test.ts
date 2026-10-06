@@ -36,6 +36,7 @@ interface MockRows {
   attachments?: unknown[];
   manualBillingEvents?: unknown[];
   aliasMoveEvents?: unknown[];
+  aliasActivation?: unknown[];
 }
 
 function makeDb(userRow: Record<string, unknown> | null, rows: MockRows = {}) {
@@ -58,6 +59,7 @@ function makeDb(userRow: Record<string, unknown> | null, rows: MockRows = {}) {
     rows.attachments ?? [],
     rows.manualBillingEvents ?? [],
     rows.aliasMoveEvents ?? [],
+    rows.aliasActivation ?? [],
   ];
   let call = 0;
   const select = vi.fn(() => {
@@ -242,6 +244,86 @@ describe("exportHostedUserData", () => {
       },
       manualBillingEvents: [{ id: "event-1", paymentReference: "wise-1" }],
     });
+  });
+
+  it("exports first-bounce notice rows with the token redacted and expired data nulled", async () => {
+    const db = makeDb(
+      {
+        id: 1n,
+        username: "owner",
+        planCode: "free",
+        subscriptionStatus: "free",
+        createdAt: new Date("2025-01-01T00:00:00.000Z"),
+        updatedAt: new Date("2025-01-02T00:00:00.000Z"),
+      },
+      {
+        aliasActivation: [
+          {
+            aliasId: "alias-live",
+            firstDeliveredAt: null,
+            claimsUsed: 1,
+            lastClaimAt: new Date("2026-10-01T00:00:00.000Z"),
+            firstNoticeAt: new Date("2026-10-01T00:00:00.000Z"),
+            token: "AbCdEfGhIjKlMnOpQrSt_-",
+            expiresAt: new Date("2026-10-08T00:00:00.000Z"),
+            domain: "github.com",
+            chatId: -100n,
+            routingVersion: 2,
+            sentAt: new Date("2026-10-01T00:00:01.000Z"),
+            firstSentAt: new Date("2026-10-01T00:00:01.000Z"),
+          },
+          {
+            aliasId: "alias-expired",
+            firstDeliveredAt: new Date("2026-09-20T00:00:00.000Z"),
+            claimsUsed: 3,
+            lastClaimAt: new Date("2026-09-01T00:00:00.000Z"),
+            firstNoticeAt: new Date("2026-08-20T00:00:00.000Z"),
+            token: "ZZZZZZZZZZZZZZZZZZZZZZ",
+            expiresAt: new Date("2026-09-08T00:00:00.000Z"),
+            domain: "example.org",
+            chatId: null,
+            routingVersion: null,
+            sentAt: null,
+            firstSentAt: null,
+          },
+        ],
+      },
+    );
+
+    const result = await exportHostedUserData(db, 1n, new Date("2026-10-02T00:00:00.000Z"));
+
+    expect(result!.schemaVersion).toBe(5);
+    expect(result!.aliasActivation).toEqual([
+      {
+        aliasId: "alias-live",
+        firstDeliveredAt: null,
+        claimsUsed: 1,
+        lastClaimAt: "2026-10-01T00:00:00.000Z",
+        firstNoticeAt: "2026-10-01T00:00:00.000Z",
+        token: "[redacted]",
+        expiresAt: "2026-10-08T00:00:00.000Z",
+        domain: "github.com",
+        chatId: "-100",
+        routingVersion: 2,
+        sentAt: "2026-10-01T00:00:01.000Z",
+        firstSentAt: "2026-10-01T00:00:01.000Z",
+      },
+      {
+        aliasId: "alias-expired",
+        firstDeliveredAt: "2026-09-20T00:00:00.000Z",
+        claimsUsed: 3,
+        lastClaimAt: "2026-09-01T00:00:00.000Z",
+        firstNoticeAt: "2026-08-20T00:00:00.000Z",
+        token: null,
+        expiresAt: "2026-09-08T00:00:00.000Z",
+        domain: null,
+        chatId: null,
+        routingVersion: null,
+        sentAt: null,
+        firstSentAt: null,
+      },
+    ]);
+    expect(JSON.stringify(result)).not.toContain("AbCdEfGhIjKlMnOpQrSt_-");
   });
 
   it("exports the requester's own move events in full", async () => {

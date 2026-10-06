@@ -1,8 +1,11 @@
 import { InlineKeyboard } from "grammy";
 import type { CommandContext, Context } from "grammy";
+import { eq } from "drizzle-orm";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type * as schema from "../../db/schema.js";
 import { CB_BILLING_UPGRADE } from "../callbacks.js";
 import { getDb } from "../../db/client.js";
-import type { EmailAddress } from "../../db/schema.js";
+import { emailAddresses, type EmailAddress } from "../../db/schema.js";
 import {
   addAllowRule,
   findAllowRuleByMatch,
@@ -13,8 +16,9 @@ import {
   checkAllowRuleCreateLimit,
   hasActiveHostedUser,
   withUserQuotaLock,
+  type LimitResult,
 } from "../../billing/limits.js";
-import { parseAllowValue } from "../allowValue.js";
+import { parseAllowValue, type ParsedAllowValue } from "../allowValue.js";
 import { escapeHtml } from "../../utils/html.js";
 import { getMessages, resolveLocale } from "../../i18n/index.js";
 import { aliasResolutionError, resolveManageableAlias } from "../aliasResolver.js";
@@ -116,47 +120,19 @@ export async function addAllowRuleForAlias(
     await ctx.reply(messages.allowCommand.invalidFormat, { parse_mode: "HTML" });
     return false;
   }
-  let blockedLimit: Awaited<ReturnType<typeof checkAllowRuleCreateLimit>> | null = null;
-  let duplicateRule = false;
-
-  try {
-    await withUserQuotaLock(db, alias.createdBy, async (tx) => {
-      const existingRule = await findAllowRuleByMatch(tx, {
-        emailAddressId: alias.id,
-        matchType: parsedValue.matchType,
-        matchValue: parsedValue.normalized,
-      });
-      if (existingRule) {
-        duplicateRule = true;
-        return;
-      }
-
-      const lockedLimit = await checkAllowRuleCreateLimit(tx, alias.createdBy);
-      if (!lockedLimit.ok) {
-        blockedLimit = lockedLimit;
-        throw new Error("quota-blocked");
-      }
-
-      await addAllowRule(tx, {
-        emailAddressId: alias.id,
-        matchType: parsedValue.matchType,
-        matchValue: parsedValue.normalized,
-      });
-    });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg === "quota-blocked") {
-      if (blockedLimit) await replyForAllowRuleLimitFailure(ctx, alias.localPart, blockedLimit);
-      return false;
-    }
-    throw err;
+  const outcome = await withUserQuotaLock(db, alias.createdBy, (tx) =>
+    insertAllowRule(tx, { aliasId: alias.id, ownerId: alias.createdBy, rule: parsedValue }),
+  );
+  if (outcome.kind === "limit") {
+    await replyForAllowRuleLimitFailure(ctx, alias.localPart, outcome.limit);
+    return false;
   }
 
   const icon = allowRuleIcon();
   const value_escaped = escapeHtml(parsedValue.normalized);
   const localPart_escaped = escapeHtml(alias.localPart);
 
-  if (duplicateRule) {
+  if (outcome.kind === "duplicate") {
     await ctx.reply(messages.allowCommand.alreadyExists(localPart_escaped, icon, value_escaped), {
       parse_mode: "HTML",
     });
@@ -167,6 +143,70 @@ export async function addAllowRuleForAlias(
     parse_mode: "HTML",
   });
   return true;
+}
+
+/** The alias state a caller authorized against; see `insertAllowRule`. */
+export interface ExpectedAliasSnapshot {
+  chatId: bigint;
+  routingVersion: number;
+}
+
+export type AllowRuleInsertResult =
+  | { kind: "added" }
+  | { kind: "duplicate" }
+  | { kind: "limit"; limit: Exclude<LimitResult, { ok: true }> }
+  | { kind: "stale" };
+
+/**
+ * Adds one allow rule: duplicate check, plan limit, insert. Runs on the
+ * caller's handle, so the caller decides the transaction and the locks (the
+ * owner's quota lock in hosted mode). With `expected`, the alias row is
+ * locked first (`FOR UPDATE`) and nothing is written unless the alias is
+ * still active, owned by `ownerId`, and on that chat and routing version.
+ */
+export async function insertAllowRule(
+  tx: NodePgDatabase<typeof schema>,
+  input: {
+    aliasId: string;
+    ownerId: bigint;
+    rule: ParsedAllowValue;
+    expected?: ExpectedAliasSnapshot;
+  },
+): Promise<AllowRuleInsertResult> {
+  if (input.expected) {
+    const [current] = await tx
+      .select({
+        status: emailAddresses.status,
+        createdBy: emailAddresses.createdBy,
+        chatId: emailAddresses.chatId,
+        routingVersion: emailAddresses.routingVersion,
+      })
+      .from(emailAddresses)
+      .where(eq(emailAddresses.id, input.aliasId))
+      .for("update");
+    if (
+      !current ||
+      current.status !== "active" ||
+      current.createdBy !== input.ownerId ||
+      current.chatId !== input.expected.chatId ||
+      current.routingVersion !== input.expected.routingVersion
+    ) {
+      return { kind: "stale" };
+    }
+  }
+
+  const match = {
+    emailAddressId: input.aliasId,
+    matchType: input.rule.matchType,
+    matchValue: input.rule.normalized,
+  };
+  if (await findAllowRuleByMatch(tx, match)) return { kind: "duplicate" };
+
+  const limit = await checkAllowRuleCreateLimit(tx, input.ownerId);
+  if (!limit.ok) return { kind: "limit", limit };
+
+  await addAllowRule(tx, match);
+  return { kind: "added" };
 }
 
 async function replyForAllowRuleLimitFailure(

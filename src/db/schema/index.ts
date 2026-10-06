@@ -8,3 +8,4 @@ export * from "./storage.js";
 export * from "./billing.js";
 export * from "./abuse.js";
 export * from "./security.js";
+export * from "./activation.js";

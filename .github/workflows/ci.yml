@@ -32,6 +32,8 @@ jobs:
 
     env:
       DATABASE_URL: postgres://app:test@localhost:5432/emailbot_test
+      # Real-Postgres suites (tests/db) create and drop their own databases here.
+      TEST_DATABASE_URL: postgres://app:test@localhost:5432/postgres
       TELEGRAM_BOT_TOKEN: 123456:test
       MAIL_DOMAIN: example.com
       PUBLIC_BASE_URL: https://mail.example.com

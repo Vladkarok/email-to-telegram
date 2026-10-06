@@ -15,6 +15,8 @@ import {
 import { incrementUserUsageMonth, usageMonthForDate } from "../../db/repos/usage.js";
 import { findHostedInboundRejection } from "../../abuse/hostedInboundBlocklist.js";
 import { findAliasForInbound } from "../../email/inboundRouting.js";
+import { normalizeEnvelopeSender } from "../../email/envelopeSender.js";
+import { admitRawSenderRejection } from "../../activation/notice.js";
 import {
   writeRawEmail,
   writePendingRawEmailMeta,
@@ -294,6 +296,16 @@ export function rawRoute(
             );
           }
           await reply.status(rejectionStatus).send({ error: "rejected" });
+          // After the response: tells the owner of a not-yet-working alias
+          // why the mail bounced. Constant-time, never throws.
+          if (reason === "sender_not_allowed") {
+            admitRawSenderRejection({
+              aliasId: queued.result.senderRejection?.aliasId ?? alias.id,
+              headerFromDomain: queued.result.senderRejection?.headerFromDomain ?? null,
+              envelopeFrom: normalizeEnvelopeSender(envelopeFrom),
+              rawMime: body,
+            });
+          }
           return;
         }
       }

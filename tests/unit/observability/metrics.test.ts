@@ -6,6 +6,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   metricsRegistry,
   readAppVersion,
+  recordActivationAllow,
+  recordActivationNotice,
   recordDeliveryLatency,
   recordInboundPreflight,
   resetMetricsForTests,
@@ -91,5 +93,39 @@ describe("resetMetricsForTests", () => {
     expect(preflight).toMatch(/\{result="deferred",reason="rate_limited"[^}]*\} 0$/m);
     const buildInfo = await exposition("email_to_telegram_build_info");
     expect(buildInfo).toMatch(/\{version="[^"]+"[^}]*\} 1/);
+  });
+});
+
+describe("first-bounce notice counters", () => {
+  beforeEach(() => {
+    resetMetricsForTests();
+  });
+
+  it("start every stage and result at 0", async () => {
+    const notices = await exposition("email_to_telegram_activation_notices_total");
+    for (const stage of ["raw", "preflight"]) {
+      for (const result of ["sent", "gated", "not_claimed", "dropped", "stale", "failed"]) {
+        expect(notices).toMatch(
+          new RegExp(`\\{stage="${stage}",result="${result}"[^}]*\\} 0$`, "m"),
+        );
+      }
+    }
+    const allows = await exposition("email_to_telegram_activation_allows_total");
+    for (const result of ["added", "expired", "failed"]) {
+      expect(allows).toMatch(new RegExp(`\\{result="${result}"[^}]*\\} 0$`, "m"));
+    }
+  });
+
+  it("count notices by stage and result, and allows by result", async () => {
+    recordActivationNotice("raw", "sent");
+    recordActivationNotice("raw", "sent");
+    recordActivationNotice("preflight", "gated");
+    recordActivationAllow("expired");
+
+    const notices = await exposition("email_to_telegram_activation_notices_total");
+    expect(sample(notices, /\{stage="raw",result="sent"[^}]*\} (\d+)/)).toBe(2);
+    expect(sample(notices, /\{stage="preflight",result="gated"[^}]*\} (\d+)/)).toBe(1);
+    const allows = await exposition("email_to_telegram_activation_allows_total");
+    expect(sample(allows, /\{result="expired"[^}]*\} (\d+)/)).toBe(1);
   });
 });
