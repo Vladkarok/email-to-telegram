@@ -49,11 +49,17 @@ export async function runCleanup(db: Db, config: CleanupConfig): Promise<void> {
   const now = Date.now();
 
   // Before any purge: succeeded attempts are the fallback evidence that an
-  // alias is working, and the delivery-log purge below removes them.
-  await reconcileActivationMarkers(db, log);
+  // alias is working, and the delivery-log purge below removes them (the
+  // attempts go with their log). When the markers could not be reconciled,
+  // this run keeps the logs; the next run tries again.
+  const markersReconciled = await reconcileActivationMarkers(db, log);
   await cleanAttachments(db, config.attachmentDir, config.attachmentTtlHours, now, log);
   await cleanRawEmails(db, config.rawEmailDir, config.rawEmailTtlHours, now, log);
-  await cleanDeliveryLogs(db, config.deliveryLogRetentionDays, now, log);
+  if (markersReconciled) {
+    await cleanDeliveryLogs(db, config.deliveryLogRetentionDays, now, log);
+  } else {
+    log.warn("cleanup: delivery log purge skipped until first-delivered markers reconcile");
+  }
   await cleanExpiredLinks(db, now, log);
   await cleanAliasTombstones(db, now, log);
   await cleanQuotaNotifications(db, now, log);
@@ -62,20 +68,23 @@ export async function runCleanup(db: Db, config: CleanupConfig): Promise<void> {
 
 /**
  * Writes the working-alias marker for every alias with a surviving succeeded
- * delivery attempt but no marker. Also run once at startup. Failure is
- * isolated: the notice path still treats a succeeded attempt as working.
+ * delivery attempt but no marker. Also run once at startup. Returns false on
+ * failure, which is logged and otherwise isolated: the notice path still
+ * treats a succeeded attempt as working, as long as the attempt survives.
  */
 export async function reconcileActivationMarkers(
   db: Db,
   log: ReturnType<typeof getLogger> = getLogger(),
-): Promise<void> {
+): Promise<boolean> {
   try {
     const rows = await reconcileFirstDeliveredMarkers(db);
     if (rows > 0) {
       log.info({ rows }, "cleanup: reconciled first-delivered markers");
     }
+    return true;
   } catch (err: unknown) {
     log.error({ err }, "cleanup: first-delivered marker reconciliation failed");
+    return false;
   }
 }
 

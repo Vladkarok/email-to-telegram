@@ -771,19 +771,41 @@ describe("runCleanup", () => {
       );
     });
 
-    it("isolates reconciliation and expiry failures from the other passes", async () => {
+    it("keeps delivery logs (the fallback evidence) when reconciliation fails, and runs the rest", async () => {
       const db = makeDb([], [], [{ id: "log-old" }]);
       db._mocks.deliveryLogDeleteWhere.mockResolvedValue({ rowCount: 1 });
       mockReconcileFirstDeliveredMarkers.mockRejectedValueOnce(new Error("db down"));
+      mockClearExpiredActivationTokens.mockResolvedValue(2);
+
+      await expect(runCleanup(db, config)).resolves.toBeUndefined();
+
+      expect(db._mocks.deliveryLogDeleteWhere).not.toHaveBeenCalled();
+      expect(mockDeleteExpiredAliasTombstones).toHaveBeenCalled();
+      expect(mockDeleteOldQuotaNotifications).toHaveBeenCalled();
+      expect(mockClearExpiredActivationTokens).toHaveBeenCalledTimes(1);
+      const errors = mockLogger.error.mock.calls.map((call: unknown[]) => call[1]);
+      expect(errors).toContain("cleanup: first-delivered marker reconciliation failed");
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        "cleanup: delivery log purge skipped until first-delivered markers reconcile",
+      );
+
+      // The next run reconciles, then purges.
+      const nextRun = makeDb([], [], [{ id: "log-old" }]);
+      nextRun._mocks.deliveryLogDeleteWhere.mockResolvedValue({ rowCount: 1 });
+      await runCleanup(nextRun, config);
+      expect(nextRun._mocks.deliveryLogDeleteWhere).toHaveBeenCalled();
+    });
+
+    it("isolates an expiry cleanup failure from the other passes", async () => {
+      const db = makeDb([], [], [{ id: "log-old" }]);
+      db._mocks.deliveryLogDeleteWhere.mockResolvedValue({ rowCount: 1 });
       mockClearExpiredActivationTokens.mockRejectedValueOnce(new Error("db down"));
 
       await expect(runCleanup(db, config)).resolves.toBeUndefined();
 
       expect(db._mocks.deliveryLogDeleteWhere).toHaveBeenCalled();
-      expect(mockDeleteOldQuotaNotifications).toHaveBeenCalled();
-      const messages = mockLogger.error.mock.calls.map((call: unknown[]) => call[1]);
-      expect(messages).toContain("cleanup: first-delivered marker reconciliation failed");
-      expect(messages).toContain("cleanup: bounce-notice token cleanup failed");
+      const errors = mockLogger.error.mock.calls.map((call: unknown[]) => call[1]);
+      expect(errors).toContain("cleanup: bounce-notice token cleanup failed");
     });
   });
 

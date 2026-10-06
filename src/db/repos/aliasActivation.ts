@@ -14,6 +14,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { asc, eq, sql } from "drizzle-orm";
 import { aliasActivation, emailAddresses } from "../schema.js";
 import type * as schema from "../schema.js";
+import { SIDE_WORK_TIMEOUTS, withBoundedTransaction } from "../boundedTransaction.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -49,15 +50,22 @@ function succeededAttemptExists(aliasIdColumn: ReturnType<typeof sql.raw>) {
 /**
  * Records that the alias delivered mail once. Idempotent; an existing marker
  * is never moved and the row is not rewritten when it is already set.
+ *
+ * Runs in its own bounded transaction (5 s statement, 2 s lock wait): it sits
+ * on the delivery path, so a row held by a notice claim or a button tap must
+ * cost at most a logged failure, never a stalled attachment follow-up or
+ * retry cycle. The cleanup loop reconciles a marker that failed.
  */
 export async function markAliasFirstDelivered(db: Db, aliasId: string): Promise<void> {
-  await db.execute(sql`
-    insert into alias_activation (alias_id, first_delivered_at)
-    values (${aliasId}, now())
-    on conflict (alias_id) do update
-      set first_delivered_at = coalesce(alias_activation.first_delivered_at, excluded.first_delivered_at)
-      where alias_activation.first_delivered_at is null
-  `);
+  await withBoundedTransaction(db, SIDE_WORK_TIMEOUTS, (tx) =>
+    tx.execute(sql`
+      insert into alias_activation (alias_id, first_delivered_at)
+      values (${aliasId}, now())
+      on conflict (alias_id) do update
+        set first_delivered_at = coalesce(alias_activation.first_delivered_at, excluded.first_delivered_at)
+        where alias_activation.first_delivered_at is null
+    `),
+  );
 }
 
 /**

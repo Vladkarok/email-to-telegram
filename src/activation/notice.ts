@@ -16,7 +16,12 @@
  * 3. Revalidate right before the send: same active alias, owner and routing
  *    version as at the claim, the claim's token still current, still not
  *    working.
- * 4. Send to the owner's private chat, then record the acknowledgement.
+ * 4. Send to the owner's private chat, then record the acknowledgement
+ *    (not started once shutdown began or the deadline passed).
+ *
+ * The stop check (shutdown, deadline) runs before every phase, again once a
+ * phase's transaction holds its pool client, and between the gate and the
+ * claim; a stop inside a transaction rolls it back, so no claim is spent.
  *
  * Logs carry identifiers only, never the sender domain.
  */
@@ -38,15 +43,21 @@ import {
 } from "../db/repos/aliasActivation.js";
 import { authenticateSender, type SenderAuthResult } from "../email/authenticateSender.js";
 import { parseAllowValue } from "../telegram/allowValue.js";
-import { CB_ACTIVATION_ALLOW, CB_ALLOW_RULES } from "../telegram/callbacks.js";
+import { CB_ACTIVATION_ALLOW, CB_ACTIVATION_RULES } from "../telegram/callbacks.js";
 import { DEFAULT_LOCALE, getMessages, normalizeLocale, type Messages } from "../i18n/index.js";
 import { escapeHtml } from "../utils/html.js";
 import { getLogger } from "../utils/logger.js";
-import type { ActivationNoticeResult, ActivationNoticeStage } from "../observability/metrics.js";
+import {
+  recordActivationNotice,
+  type ActivationNoticeResult,
+  type ActivationNoticeStage,
+} from "../observability/metrics.js";
 import { NOTICE_BOUNDS, type NoticeBounds } from "./bounds.js";
 import {
   ActivationNoticeQueue,
+  NoticePhaseStopped,
   type ActivationNoticeJob,
+  type ActivationNoticeRequest,
   type NoticeJobContext,
   type NoticeRunner,
 } from "./noticeQueue.js";
@@ -139,7 +150,7 @@ export function buildActivationNotice(
       )
       .row();
   }
-  keyboard.text(messages.aliasMenu.allowRulesButton, CB_ALLOW_RULES.build(input.aliasId));
+  keyboard.text(messages.aliasMenu.allowRulesButton, CB_ACTIVATION_RULES.build(input.aliasId));
   return { text, keyboard };
 }
 
@@ -171,6 +182,11 @@ export function createNoticeRunner(overrides: Partial<NoticeRunnerDeps> = {}): N
   return (job, ctx) => runNotice(deps, job, ctx);
 }
 
+/** A stop is not a failure: let it reach the queue, which counts it as dropped. */
+function rethrowIfStopped(err: unknown): void {
+  if (err instanceof NoticePhaseStopped) throw err;
+}
+
 async function runNotice(
   deps: NoticeRunnerDeps,
   job: ActivationNoticeJob,
@@ -178,8 +194,14 @@ async function runNotice(
 ): Promise<ActivationNoticeResult> {
   const log = getLogger();
   const db = deps.getDb();
+  // Every phase transaction checks again once it holds a pool client: a job
+  // that waited for a connection past shutdown or its deadline does nothing,
+  // and the throw rolls the transaction back.
   const tx = <T>(work: (tx: Db) => Promise<T>): Promise<T> =>
-    withBoundedTransaction(db, deps.bounds, work);
+    withBoundedTransaction(db, deps.bounds, (t) => {
+      ctx.beginPhase();
+      return work(t);
+    });
 
   // 1. Gate and claim. Any error here means no notice.
   ctx.beginPhase();
@@ -188,6 +210,8 @@ async function runNotice(
     claimResult = await tx(async (t) => {
       const gate = await readActivationGate(t, job.aliasId);
       if (!gate || !passesActivationGate(gate)) return "gated" as const;
+      // The last stop before the claim spends budget.
+      ctx.beginPhase();
       const token = deps.generateToken();
       const won = await claimActivationNotice(t, {
         aliasId: gate.aliasId,
@@ -198,6 +222,7 @@ async function runNotice(
       return won ? { token, gate } : ("not_claimed" as const);
     });
   } catch (err: unknown) {
+    rethrowIfStopped(err);
     log.warn({ err, aliasId: job.aliasId }, "activation.notice.claim_failed");
     return "failed";
   }
@@ -218,6 +243,7 @@ async function runNotice(
           setActivationDomain(t, { aliasId: job.aliasId, token: claim.token, domain }),
         );
       } catch (err: unknown) {
+        rethrowIfStopped(err);
         // The notice still goes out, without the one-tap button.
         log.warn(
           { err, aliasId: job.aliasId, userId: ownerId.toString() },
@@ -233,6 +259,7 @@ async function runNotice(
   try {
     current = await tx((t) => readActivationRevalidation(t, job.aliasId));
   } catch (err: unknown) {
+    rethrowIfStopped(err);
     log.warn(
       { err, aliasId: job.aliasId, userId: ownerId.toString() },
       "activation.notice.revalidate_failed",
@@ -244,7 +271,7 @@ async function runNotice(
     return "stale";
   }
 
-  // 4. Send to the owner's private chat.
+  // 4. Send to the owner's private chat, whatever chat the alias routes to.
   const api = deps.getApi();
   if (!api) return "failed";
   ctx.beginPhase();
@@ -280,14 +307,20 @@ async function runNotice(
     return "failed";
   }
 
-  // The budget was spent at claim time; this only records the acknowledgement.
-  try {
-    await tx((t) => recordActivationNoticeSent(t, job.aliasId));
-  } catch (err: unknown) {
-    log.warn(
-      { err, aliasId: job.aliasId, userId: ownerId.toString() },
-      "activation.notice.ack_failed",
-    );
+  // The budget was spent at claim time; this only records the acknowledgement,
+  // and is not started after shutdown or the deadline. The notice is sent
+  // either way.
+  if (ctx.canStartPhase()) {
+    try {
+      await tx((t) => recordActivationNoticeSent(t, job.aliasId));
+    } catch (err: unknown) {
+      if (!(err instanceof NoticePhaseStopped)) {
+        log.warn(
+          { err, aliasId: job.aliasId, userId: ownerId.toString() },
+          "activation.notice.ack_failed",
+        );
+      }
+    }
   }
   log.info(
     {
@@ -304,15 +337,33 @@ async function runNotice(
 // ─── Process-wide queue ──────────────────────────────────────────────────────
 
 let queue: ActivationNoticeQueue | null = null;
+/** Set by shutdownActivationNotices(); from then on nothing is admitted or created. */
+let stopped = false;
 
-export function getActivationNoticeQueue(): ActivationNoticeQueue {
+/** The process-wide queue, created on first use; null once shutdown began. */
+export function getActivationNoticeQueue(): ActivationNoticeQueue | null {
+  if (stopped) return null;
   queue ??= new ActivationNoticeQueue(createNoticeRunner());
   return queue;
 }
 
-/** Replaces the process-wide queue (tests). */
+/** Replaces the process-wide queue and clears the shutdown flag (tests). */
 export function setActivationNoticeQueue(next: ActivationNoticeQueue | null): void {
   queue = next;
+  stopped = false;
+}
+
+function admit(request: ActivationNoticeRequest): void {
+  try {
+    const current = getActivationNoticeQueue();
+    if (!current) {
+      recordActivationNotice(request.stage, "dropped");
+      return;
+    }
+    current.admit(request);
+  } catch {
+    // The notice is best-effort; the inbound response is already sent.
+  }
 }
 
 /**
@@ -326,7 +377,7 @@ export function admitRawSenderRejection(input: {
   rawMime: Buffer;
 }): void {
   try {
-    getActivationNoticeQueue().admit({
+    admit({
       stage: "raw",
       aliasId: input.aliasId,
       headerFromDomain: usableFromDomain(input.headerFromDomain),
@@ -334,7 +385,7 @@ export function admitRawSenderRejection(input: {
       rawMime: input.rawMime,
     });
   } catch {
-    // The notice is best-effort; the inbound response is already sent.
+    // Best-effort, as above.
   }
 }
 
@@ -344,21 +395,22 @@ export function admitRawSenderRejection(input: {
  * Call after the response is sent. Constant-time, never throws.
  */
 export function admitPreflightNoRules(aliasId: string): void {
-  try {
-    getActivationNoticeQueue().admit({
-      stage: "preflight",
-      aliasId,
-      headerFromDomain: null,
-      envelopeFrom: null,
-      rawMime: null,
-    });
-  } catch {
-    // Best-effort, as above.
-  }
+  admit({
+    stage: "preflight",
+    aliasId,
+    headerFromDomain: null,
+    envelopeFrom: null,
+    rawMime: null,
+  });
 }
 
-/** Shutdown hook: see ActivationNoticeQueue.shutdown(). Never throws. */
+/**
+ * Shutdown hook: from now on every admission is dropped and no queue is
+ * created, even when no bounce happened since boot; a running queue stops as
+ * in ActivationNoticeQueue.shutdown(). Never throws.
+ */
 export async function shutdownActivationNotices(): Promise<void> {
+  stopped = true;
   try {
     await queue?.shutdown();
   } catch {

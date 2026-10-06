@@ -5,6 +5,8 @@
  * still shares the event loop, the DB pool and Telegram's rate limits with
  * delivery. These limits keep that share small.
  */
+import { SIDE_WORK_TIMEOUTS } from "../db/boundedTransaction.js";
+
 export interface NoticeBounds {
   /** Jobs admitted at once, queued plus running, counted until each settles. */
   maxAdmittedJobs: number;
@@ -41,8 +43,9 @@ export const NOTICE_BOUNDS: Readonly<NoticeBounds> = Object.freeze({
   maxJobAgeAtStartMs: 60_000,
   jobDeadlineMs: 20_000,
   authenticationBudgetMs: 8_000,
-  statementTimeout: "5s",
-  lockTimeout: "2s",
+  // 5 s statements, 2 s lock waits: the same bounds as the marker write.
+  statementTimeout: SIDE_WORK_TIMEOUTS.statementTimeout,
+  lockTimeout: SIDE_WORK_TIMEOUTS.lockTimeout,
   telegramSendTimeoutMs: 10_000,
   shutdownWaitMs: 2_000,
   buttonAccessCheckTimeoutMs: 5_000,

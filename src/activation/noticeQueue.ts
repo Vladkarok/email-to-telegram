@@ -65,6 +65,8 @@ export type AuthenticationOutcome<T> =
 export interface NoticeJobContext {
   /** Call before every phase; throws NoticePhaseStopped after shutdown or the deadline. */
   beginPhase(): void;
+  /** The non-throwing form of beginPhase(): false after shutdown or the deadline. */
+  canStartPhase(): boolean;
   /**
    * Runs `work` holding an authentication slot, within the authentication
    * budget (and the job deadline). The slot stays taken until `work` settles,
@@ -135,6 +137,10 @@ class JobContext implements NoticeJobContext {
   beginPhase(): void {
     if (this.shutdownSignal.aborted) throw new NoticePhaseStopped("shutdown");
     if (this.now() >= this.deadlineAt) throw new NoticePhaseStopped("deadline");
+  }
+
+  canStartPhase(): boolean {
+    return !this.shutdownSignal.aborted && this.now() < this.deadlineAt;
   }
 
   async authenticate<T>(work: () => Promise<T>): Promise<AuthenticationOutcome<T>> {

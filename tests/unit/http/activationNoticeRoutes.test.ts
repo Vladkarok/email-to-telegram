@@ -14,7 +14,11 @@ import {
   type ActivationNoticeJob,
 } from "../../../src/activation/noticeQueue.js";
 import { NOTICE_BOUNDS } from "../../../src/activation/bounds.js";
-import { setActivationNoticeQueue } from "../../../src/activation/notice.js";
+import {
+  getActivationNoticeQueue,
+  setActivationNoticeQueue,
+  shutdownActivationNotices,
+} from "../../../src/activation/notice.js";
 
 vi.mock("../../../src/utils/logger.js", () => ({
   getLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), child: vi.fn() }),
@@ -155,7 +159,7 @@ function wire(res: LightMyRequestResponse) {
   return { status: res.statusCode, headers, body: res.body };
 }
 
-type Mode = "off" | "on" | "throwing" | "admit-throws" | "saturated";
+type Mode = "off" | "stopped" | "on" | "throwing" | "admit-throws" | "saturated";
 
 async function installQueue(mode: Mode): Promise<{ jobs: ActivationNoticeJob[] }> {
   const jobs: ActivationNoticeJob[] = [];
@@ -164,6 +168,12 @@ async function installQueue(mode: Mode): Promise<{ jobs: ActivationNoticeJob[] }
       const queue = new ActivationNoticeQueue(() => Promise.resolve("sent"));
       await queue.shutdown();
       setActivationNoticeQueue(queue);
+      break;
+    }
+    case "stopped": {
+      // Shut down with no queue ever created (no bounce since boot).
+      setActivationNoticeQueue(null);
+      await shutdownActivationNotices();
       break;
     }
     case "on": {
@@ -231,7 +241,7 @@ describe("inbound wire responses with the first-bounce notice path", () => {
     else process.env["WORKER_SECRET"] = savedSecret;
   });
 
-  const modes: Mode[] = ["on", "throwing", "admit-throws", "saturated"];
+  const modes: Mode[] = ["stopped", "on", "throwing", "admit-throws", "saturated"];
 
   it.each([
     ["raw sender_not_allowed", rawBounce],
@@ -273,5 +283,12 @@ describe("inbound wire responses with the first-bounce notice path", () => {
 
     expect(order).toEqual(["response", "admit", "notice"]);
     expect(jobs[0]).toMatchObject({ stage: "preflight", aliasId: ALIAS_ID, mime: null });
+  });
+
+  it("a request that finishes after shutdown creates no queue", async () => {
+    await installQueue("stopped");
+    await rawBounce(await buildApp());
+    await preflightBounce(await buildApp());
+    expect(getActivationNoticeQueue()).toBeNull();
   });
 });

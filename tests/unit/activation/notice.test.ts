@@ -25,9 +25,16 @@ vi.mock("../../../src/db/repos/aliasActivation.js", () => ({
   recordActivationNoticeSent: (...args: unknown[]): unknown => mockAck(...args),
 }));
 const mockTransactionBounds = vi.fn();
+/** Runs while a transaction "waits" for its pool client, before its work starts. */
+const checkout = { wait: (): Promise<void> => Promise.resolve() };
 vi.mock("../../../src/activation/transaction.js", () => ({
-  withBoundedTransaction: (db: unknown, bounds: unknown, work: (tx: unknown) => unknown) => {
+  withBoundedTransaction: async (
+    db: unknown,
+    bounds: unknown,
+    work: (tx: unknown) => Promise<unknown>,
+  ) => {
     mockTransactionBounds(bounds);
+    await checkout.wait();
     return work(db);
   },
 }));
@@ -48,7 +55,8 @@ const {
 } = await import("../../../src/activation/notice.js");
 const { ActivationNoticeQueue } = await import("../../../src/activation/noticeQueue.js");
 const { NOTICE_BOUNDS } = await import("../../../src/activation/bounds.js");
-const { CB_ACTIVATION_ALLOW, CB_ALLOW_RULES } = await import("../../../src/telegram/callbacks.js");
+const { CB_ACTIVATION_ALLOW, CB_ACTIVATION_RULES } =
+  await import("../../../src/telegram/callbacks.js");
 const { getMessages } = await import("../../../src/i18n/index.js");
 const { metricsRegistry, resetMetricsForTests } =
   await import("../../../src/observability/metrics.js");
@@ -140,8 +148,17 @@ async function run(
     bounds,
   });
   const queue = new ActivationNoticeQueue(runner, bounds);
+  current.queue = queue;
   queue.admit(request);
   await queue.whenIdle();
+}
+
+/** The queue `run()` is driving, so a mock can shut it down mid-job. */
+const current: { queue: InstanceType<typeof ActivationNoticeQueue> | null } = { queue: null };
+
+/** Begins shutdown without waiting: the signal fires synchronously. */
+function beginShutdown(): void {
+  void current.queue!.shutdown(10);
 }
 
 function rawRequest(overrides: Record<string, unknown> = {}) {
@@ -241,7 +258,7 @@ describe("copy", () => {
     );
     expect(notice.keyboard.inline_keyboard).toEqual([
       [{ text: "Allow github.com", callback_data: CB_ACTIVATION_ALLOW.build(ALIAS_ID, TOKEN) }],
-      [{ text: "📋 Allow Rules", callback_data: CB_ALLOW_RULES.build(ALIAS_ID) }],
+      [{ text: "📋 Allow Rules", callback_data: CB_ACTIVATION_RULES.build(ALIAS_ID) }],
     ]);
   });
 
@@ -255,7 +272,7 @@ describe("copy", () => {
     });
     expect(notice.text).toContain("from github.com bounced");
     expect(notice.keyboard.inline_keyboard).toEqual([
-      [{ text: "📋 Allow Rules", callback_data: CB_ALLOW_RULES.build(ALIAS_ID) }],
+      [{ text: "📋 Allow Rules", callback_data: CB_ACTIVATION_RULES.build(ALIAS_ID) }],
     ]);
   });
 
@@ -330,6 +347,82 @@ describe("runner", () => {
     mockSetDomain.mockResolvedValue(true);
     mockRevalidate.mockResolvedValue(revalidation({ domain: "github.com" }));
     mockAck.mockResolvedValue(undefined);
+    checkout.wait = () => Promise.resolve();
+  });
+
+  it("sends to the owner's private chat when the alias routes to a group", async () => {
+    const group = -1001234567890n;
+    const { api, sent } = makeApi();
+    mockReadGate.mockResolvedValue(gateRow({ chatId: group }));
+    mockRevalidate.mockResolvedValue(revalidation({ chatId: group, domain: "github.com" }));
+    await run(rawRequest(), { api });
+    expect(mockClaim).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ chatId: group }),
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0].chatId).toBe(OWNER.toString());
+  });
+
+  it("does nothing when shutdown begins while the claim waits for a pool client", async () => {
+    const { api, sendMessage } = makeApi();
+    checkout.wait = () => {
+      beginShutdown();
+      return Promise.resolve();
+    };
+    await run(rawRequest(), { api });
+    expect(mockReadGate).not.toHaveBeenCalled();
+    expect(mockClaim).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(await noticeCount("raw", "dropped")).toBe(1);
+  });
+
+  it("spends no claim when shutdown begins between the gate and the claim", async () => {
+    const { api, sendMessage } = makeApi();
+    mockReadGate.mockImplementation(() => {
+      beginShutdown();
+      return Promise.resolve(gateRow());
+    });
+    await run(rawRequest(), { api });
+    expect(mockReadGate).toHaveBeenCalledTimes(1);
+    expect(mockClaim).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(await noticeCount("raw", "dropped")).toBe(1);
+    expect(await noticeCount("raw", "failed")).toBe(0);
+  });
+
+  it("stops at any later phase's pool checkout, too", async () => {
+    const { api, sendMessage } = makeApi();
+    let transactions = 0;
+    checkout.wait = () => {
+      // The second transaction is the domain write after authentication.
+      if (++transactions === 2) beginShutdown();
+      return Promise.resolve();
+    };
+    await run(rawRequest(), { api });
+    expect(mockClaim).toHaveBeenCalledTimes(1);
+    expect(mockSetDomain).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(await noticeCount("raw", "dropped")).toBe(1);
+  });
+
+  it("a send that succeeds after shutdown began counts as sent, without the acknowledgement", async () => {
+    const { api, sent } = makeApi(() => {
+      beginShutdown();
+      return Promise.resolve();
+    });
+    await run(rawRequest(), { api });
+    expect(sent).toHaveLength(1);
+    expect(mockAck).not.toHaveBeenCalled();
+    expect(await noticeCount("raw", "sent")).toBe(1);
+  });
+
+  it("a send that succeeds after the deadline counts as sent, without the acknowledgement", async () => {
+    const { api, sent } = makeApi(() => new Promise((resolve) => setTimeout(resolve, 60)));
+    await run(rawRequest(), { api, bounds: { jobDeadlineMs: 30 } });
+    expect(sent).toHaveLength(1);
+    expect(mockAck).not.toHaveBeenCalled();
+    expect(await noticeCount("raw", "sent")).toBe(1);
   });
 
   it("claims with the gate's routing snapshot, then sends with the one-tap on a pass", async () => {
@@ -594,10 +687,44 @@ describe("process-wide admission", () => {
   it("creates one queue lazily and shuts it down", async () => {
     setActivationNoticeQueue(null);
     const queue = getActivationNoticeQueue();
+    expect(queue).not.toBeNull();
     expect(getActivationNoticeQueue()).toBe(queue);
     await shutdownActivationNotices();
-    expect(queue.isClosed).toBe(true);
+    expect(queue!.isClosed).toBe(true);
     admitPreflightNoRules(ALIAS_ID);
+    expect(await noticeCount("preflight", "dropped")).toBe(1);
+    setActivationNoticeQueue(null);
+  });
+
+  it("after a shutdown with no bounce since boot, admits nothing and creates no queue", async () => {
+    setActivationNoticeQueue(null);
+    await shutdownActivationNotices();
+
+    admitPreflightNoRules(ALIAS_ID);
+    admitRawSenderRejection({
+      aliasId: ALIAS_ID,
+      headerFromDomain: "github.com",
+      envelopeFrom: null,
+      rawMime: Buffer.from("x"),
+    });
+
+    expect(getActivationNoticeQueue()).toBeNull();
+    expect(await noticeCount("preflight", "dropped")).toBe(1);
+    expect(await noticeCount("raw", "dropped")).toBe(1);
+    setActivationNoticeQueue(null);
+  });
+
+  it("after a shutdown, a queue set earlier is never handed a job", async () => {
+    const runner = vi.fn(() => Promise.resolve("sent" as const));
+    const queue = new ActivationNoticeQueue(runner);
+    setActivationNoticeQueue(queue);
+    await shutdownActivationNotices();
+
+    admitPreflightNoRules(ALIAS_ID);
+    await queue.whenIdle();
+
+    expect(queue.admitted).toBe(0);
+    expect(runner).not.toHaveBeenCalled();
     expect(await noticeCount("preflight", "dropped")).toBe(1);
     setActivationNoticeQueue(null);
   });
