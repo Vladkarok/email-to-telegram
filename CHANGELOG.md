@@ -24,6 +24,25 @@ that has been running in production.
 - Public-facing documentation: `SECURITY.md`, `CONTRIBUTING.md`,
   `CHANGELOG.md`, issue/PR templates, CODEOWNERS.
 
+## [1.9.0] — 2026-10-06
+
+Every alias now looks the same, and new aliases start with rich rendering.
+
+### Changed
+
+- **One message frame for every alias.** Text-only emails and `plaintext`
+  aliases get the same quoted From/To/Subject header, divider and paragraph
+  body as HTML mail. `plaintext` still sends the email text literally.
+- **`html` is the default render mode** for new aliases. Existing aliases
+  keep their setting; switch with `/settings <alias> html|plaintext`.
+- `/help` ends with where to report problems: the operator contact and the
+  GitHub issues page.
+
+### Removed
+
+- The `markdown` render mode. It had no users; any alias still set to it
+  renders as `html`.
+
 ## [1.8.0] — 2026-10-06
 
 Rich messages for the mail that actually arrives: links and attachments no
