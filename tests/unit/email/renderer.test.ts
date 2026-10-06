@@ -1,6 +1,10 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
-import { renderEmail, renderEmailForDelivery } from "../../../src/email/renderer.js";
+import {
+  normalizeRenderMode,
+  renderEmail,
+  renderEmailForDelivery,
+} from "../../../src/email/renderer.js";
 import type { ParsedEmail } from "../../../src/email/types.js";
 
 const BASE: ParsedEmail = {
@@ -16,6 +20,17 @@ const BASE: ParsedEmail = {
   attachments: [],
   rawSizeBytes: 500,
 };
+
+describe("normalizeRenderMode", () => {
+  it("maps stored values to the two supported modes", () => {
+    expect(normalizeRenderMode("html")).toBe("html");
+    expect(normalizeRenderMode("markdown")).toBe("html");
+    expect(normalizeRenderMode("plaintext")).toBe("plaintext");
+    expect(normalizeRenderMode(null)).toBe("plaintext");
+    expect(normalizeRenderMode(undefined)).toBe("plaintext");
+    expect(normalizeRenderMode("rich")).toBe("plaintext");
+  });
+});
 
 describe("renderEmail", () => {
   describe("plaintext mode", () => {
@@ -86,33 +101,6 @@ describe("renderEmail", () => {
         url: `https://example.com/dl/${"a".repeat(64)}${i}`,
       }));
       const result = renderEmail(BASE, "html", "alerts@example.com", manyLinks);
-      expect(result.length).toBeLessThanOrEqual(4096);
-      expect(result.match(/<a\b/g)?.length ?? 0).toBe(result.match(/<\/a>/g)?.length ?? 0);
-    });
-  });
-
-  describe("markdown mode attachments", () => {
-    it("renders attachment as HTML link with an escaped filename", () => {
-      const attachmentLinks = [
-        {
-          filename: "report <final>.pdf",
-          sizeBytes: 1000,
-          url: "https://example.com/dl/token1",
-        },
-      ];
-      const result = renderEmail(BASE, "markdown", "alerts@example.com", attachmentLinks);
-      expect(result).toContain('<a href="https://example.com/dl/token1">');
-      expect(result).toContain("report &lt;final&gt;.pdf");
-      expect(result).not.toContain("report <final>.pdf");
-    });
-
-    it("total length does not exceed 4096 even when many attachments are present", () => {
-      const manyLinks = Array.from({ length: 40 }, (_, i) => ({
-        filename: `attachment_long_name_${i}.pdf`,
-        sizeBytes: 100,
-        url: `https://example.com/dl/${"a".repeat(64)}${i}`,
-      }));
-      const result = renderEmail(BASE, "markdown", "alerts@example.com", manyLinks);
       expect(result.length).toBeLessThanOrEqual(4096);
       expect(result.match(/<a\b/g)?.length ?? 0).toBe(result.match(/<\/a>/g)?.length ?? 0);
     });
@@ -241,161 +229,6 @@ describe("renderEmail", () => {
     });
   });
 
-  describe("markdown mode", () => {
-    it("renders common markdown syntax as Telegram-safe HTML", () => {
-      const email = {
-        ...BASE,
-        textBody: [
-          "# Release Notes",
-          "",
-          "Use **bold**, _italic_, and ~~strike~~.",
-          "",
-          "- first item",
-          "2. second item",
-          "> quoted line",
-          "",
-          "Open [docs](https://example.com/docs) and run `npm test`.",
-          "",
-          "```",
-          "const ok = true;",
-          "```",
-        ].join("\n"),
-      };
-      const result = renderEmail(email, "markdown", "alerts@example.com", []);
-      expect(result).toContain("<b>Release Notes</b>");
-      expect(result).toContain("<b>bold</b>");
-      expect(result).toContain("<i>italic</i>");
-      expect(result).toContain("<s>strike</s>");
-      expect(result).toContain("• first item");
-      expect(result).toContain("2. second item");
-      expect(result).toContain("&gt; quoted line");
-      expect(result).toContain('<a href="https://example.com/docs">docs</a>');
-      expect(result).toContain("<code>npm test</code>");
-      expect(result).toContain("<pre>const ok = true;</pre>");
-    });
-
-    it("prefers the HTML body when the plain-text body is not markdown-authored", () => {
-      const email = {
-        ...BASE,
-        textBody: "Hello team\n\nThis came from a rich-text composer.",
-        htmlBody: "<p>Hello <b>team</b></p><blockquote>Quoted</blockquote><ul><li>First</li></ul>",
-      };
-      const result = renderEmail(email, "markdown", "alerts@example.com", []);
-      expect(result).toContain("<b>team</b>");
-      expect(result).toContain("Quoted");
-      expect(result).toContain("• First");
-    });
-
-    it("keeps ordinary plain text when the HTML alternative has no visible content", () => {
-      const email = {
-        ...BASE,
-        textBody: "Plain fallback survives",
-        htmlBody: '<img src="https://tracker.example/pixel.png">',
-      };
-
-      const result = renderEmail(email, "markdown", "alerts@example.com", []);
-
-      expect(result).toContain("Plain fallback survives");
-    });
-
-    it("keeps plain text when bounded HTML contains only dropped media and an omission notice", () => {
-      const email = {
-        ...BASE,
-        textBody: "Plain fallback survives truncation",
-        htmlBody: "<img>".repeat(20_001),
-      };
-
-      const result = renderEmail(email, "markdown", "alerts@example.com", []);
-
-      expect(result).toContain("Plain fallback survives truncation");
-      expect(result).not.toContain("content omitted");
-    });
-
-    it("groups Markdown list runs into native rich lists", () => {
-      const rendered = renderEmailForDelivery(
-        { ...BASE, textBody: "- alpha\n- beta\n- gamma", htmlBody: null },
-        "markdown",
-        "alerts@example.com",
-        [],
-      );
-
-      expect(rendered.text).toContain("• alpha\n• beta\n• gamma");
-      expect(rendered.richHtml).toContain("<ul><li>alpha</li><li>beta</li><li>gamma</li></ul>");
-    });
-
-    it("preserves the starting number of Markdown ordered lists", () => {
-      const rendered = renderEmailForDelivery(
-        { ...BASE, textBody: "2. second\n3. third", htmlBody: null },
-        "markdown",
-        "alerts@example.com",
-        [],
-      );
-
-      expect(rendered.text).toContain("2. second\n3. third");
-      expect(rendered.richHtml).toContain('<ol start="2"><li>second</li><li>third</li></ol>');
-    });
-
-    it("treats repeated ordered Markdown markers as one list", () => {
-      const rendered = renderEmailForDelivery(
-        { ...BASE, textBody: "1. first\n1. second\n1. third", htmlBody: null },
-        "markdown",
-        "alerts@example.com",
-        [],
-      );
-
-      expect(rendered.text).toContain("1. first\n2. second\n3. third");
-      expect(rendered.richHtml).toContain("<ol><li>first</li><li>second</li><li>third</li></ol>");
-    });
-
-    it("keeps soft-wrapped Markdown paragraph lines in one paragraph", () => {
-      const result = renderEmail(
-        { ...BASE, textBody: "**Status** first line\ncontinues here", htmlBody: null },
-        "markdown",
-        "alerts@example.com",
-        [],
-      );
-
-      expect(result).toContain("<b>Status</b> first line continues here");
-      expect(result).not.toContain("first line\n\ncontinues");
-    });
-
-    it("keeps HTML tables readable when markdown mode falls back to the HTML body", () => {
-      const email = {
-        ...BASE,
-        textBody: "Backup report attached below.",
-        htmlBody: [
-          "<table>",
-          "<tr><th>Name</th><th>Status</th><th>Transferred</th></tr>",
-          "<tr><td>KM-1C</td><td>Warning</td><td>14.9 GB</td></tr>",
-          "</table>",
-        ].join(""),
-      };
-      const result = renderEmail(email, "markdown", "alerts@example.com", []);
-      expect(result).not.toContain("<pre>");
-      expect(result).toContain("<b>KM-1C</b>");
-      expect(result).toContain("Status");
-      expect(result).toContain("14.9 GB");
-    });
-
-    it("prefers markdown-authored plain text over an HTML wrapper copy", () => {
-      const email = {
-        ...BASE,
-        textBody: "# Heading\n\n**Bold** and `code`",
-        htmlBody: "<div># Heading</div><div>**Bold** and `code`</div>",
-      };
-      const result = renderEmail(email, "markdown", "alerts@example.com", []);
-      expect(result).toContain("<b>Heading</b>");
-      expect(result).toContain("<b>Bold</b>");
-      expect(result).toContain("<code>code</code>");
-    });
-
-    it("HTML-escapes angle brackets in the header", () => {
-      const email = { ...BASE, headerFrom: "Alice <alice@example.com>" };
-      const result = renderEmail(email, "markdown", "alerts@example.com", []);
-      expect(result).toContain("Alice &lt;alice@example.com&gt;");
-    });
-  });
-
   describe("plaintext mode table fallback", () => {
     it("keeps table values readable when HTML is stripped to text", () => {
       const email = {
@@ -424,7 +257,7 @@ describe("renderEmail", () => {
       );
       const rendered = renderEmailForDelivery(
         { ...BASE, textBody: "Backup report", htmlBody },
-        "markdown",
+        "html",
         "alerts@example.com",
         [],
       );

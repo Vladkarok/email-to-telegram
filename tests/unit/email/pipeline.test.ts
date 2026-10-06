@@ -327,7 +327,7 @@ describe("processInboundEmail", () => {
     mockFindAlias.mockResolvedValue({
       ...activeAlias,
       privacyModeEnabled: true,
-      renderMode: "markdown",
+      renderMode: "html",
     });
     mockIsDuplicate.mockResolvedValue(false);
     mockCreateLog.mockResolvedValue({
@@ -743,14 +743,14 @@ describe("deliverQueuedEmail", () => {
     );
   });
 
-  it("uses HTML parse mode for markdown-rendered deliveries", async () => {
+  it("uses HTML parse mode for html-rendered deliveries", async () => {
     mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 77 });
 
     await deliverQueuedEmail(
       fakeDb() as Parameters<typeof processInboundEmail>[0],
       {} as Parameters<typeof processInboundEmail>[1],
       {
-        alias: { ...activeAlias, renderMode: "markdown" },
+        alias: { ...activeAlias, renderMode: "html" },
         parsed: {
           messageId: "<id@test>",
           subject: "Markdown",
@@ -758,8 +758,8 @@ describe("deliverQueuedEmail", () => {
           headerFrom: "Sender <sender@example.com>",
           headerFromEmail: "sender@example.com",
           headerFromDomain: "example.com",
-          textBody: "# Heading\n\n**Bold**",
-          htmlBody: "<div># Heading</div><div>**Bold**</div>",
+          textBody: "Heading\n\nBold",
+          htmlBody: "<h1>Heading</h1><p><b>Bold</b></p>",
           bodySha256: "hash",
           attachments: [],
           rawSizeBytes: 5,

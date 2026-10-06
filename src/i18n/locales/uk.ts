@@ -99,8 +99,6 @@ ${safetyNotes}
     plaintextGuidance: "Plaintext: надсилає буквальний текст без змін.",
     htmlGuidance:
       "HTML: використовуйте rich-text панель вашого поштового клієнта. Не вводьте сирі HTML-теги.",
-    markdownGuidance:
-      "Markdown: вводьте markdown-синтаксис буквально. Не використовуйте rich-text панель.",
     bodyDedupOn:
       "Дедуплікація тіла: увімкнено. Майбутні листи з тим самим тілом можуть бути приглушені для цього аліаса. Дублікати Message-ID все одно блокуються, коли цей заголовок присутній.",
     bodyDedupOff:
@@ -113,7 +111,6 @@ ${safetyNotes}
       "<b>Режими відображення</b>",
       "plaintext — надсилає буквальний текст без змін",
       "html — використовуйте кнопки форматування Gmail або поштового клієнта, а не сирі <code>&lt;b&gt;</code> теги",
-      "markdown — вводьте markdown-синтаксис буквально, не використовуйте rich-text toolbar",
     ].join("\n"),
     bodyDedupHelp: [
       "<b>Дедуплікація тіла</b>",
@@ -296,7 +293,7 @@ ${safetyNotes}
   },
   settingsCommand: {
     usage: [
-      "Використання: /settings <alias-name> [plaintext|html|markdown]",
+      "Використання: /settings <alias-name> [plaintext|html]",
       "Використання: /settings <alias-name> dedup <on|off>",
       "Використання: /settings <alias-name> privacy <on|off>",
     ].join("\n"),

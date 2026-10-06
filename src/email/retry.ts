@@ -10,6 +10,7 @@ import {
   renderEmailForDelivery,
   renderAttachmentFallback,
   renderPrivacyAlert,
+  normalizeRenderMode,
 } from "./renderer.js";
 import { isImageContentType, isInlinePhoto } from "./imageTypes.js";
 import { sendTelegramMessage, sendTelegramPhotos } from "../telegram/sender.js";
@@ -384,7 +385,7 @@ async function retryDelivery(
       kekKeyId: attachment.kekKeyId,
     }));
 
-  const renderMode = (alias.renderMode ?? "plaintext") as "plaintext" | "html" | "markdown";
+  const renderMode = normalizeRenderMode(alias.renderMode);
   const rendered = privacyMode
     ? {
         text: await buildPrivacyRetryMessage(db, deliveryLog, parsed, alias.fullAddress, opts),

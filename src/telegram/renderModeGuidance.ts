@@ -1,6 +1,6 @@
 import { DEFAULT_LOCALE, getMessages, type Locale } from "../i18n/index.js";
 
-export const RENDER_MODES = ["plaintext", "html", "markdown"] as const;
+export const RENDER_MODES = ["plaintext", "html"] as const;
 
 export type TelegramRenderMode = (typeof RENDER_MODES)[number];
 
@@ -10,8 +10,7 @@ export function renderModeGuidance(
 ): string {
   const messages = getMessages(locale);
   if (mode === "plaintext") return messages.renderGuidance.plaintextGuidance;
-  if (mode === "html") return messages.renderGuidance.htmlGuidance;
-  return messages.renderGuidance.markdownGuidance;
+  return messages.renderGuidance.htmlGuidance;
 }
 
 export function renderModeHelpText(locale: Locale = DEFAULT_LOCALE): string {

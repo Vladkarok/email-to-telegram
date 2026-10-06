@@ -9,6 +9,7 @@ import { listRecoverableOrphans } from "../orphanRecovery.js";
 import { escapeHtml } from "../../utils/html.js";
 import { CB_ALIAS_DETAIL, CB_ALIAS_ORPHAN } from "../callbacks.js";
 import { getMessages, resolveLocale } from "../../i18n/index.js";
+import { normalizeRenderMode } from "../../email/renderer.js";
 
 export async function listemailHandler(ctx: Context): Promise<void> {
   if (!ctx.from || !ctx.chat) return;
@@ -149,7 +150,8 @@ function statusIcon(status: string): string {
  */
 function displayLine(a: EmailAddress): string {
   const labelPrefix = a.label ? `🏷️ ${escapeHtml(a.label)} · ` : "";
-  const modeSuffix = a.renderMode === "html" ? "" : ` [${a.renderMode}]`;
+  const mode = normalizeRenderMode(a.renderMode);
+  const modeSuffix = mode === "html" ? "" : ` [${mode}]`;
   return `${statusIcon(a.status)} ${labelPrefix}<code>${escapeHtml(a.fullAddress)}</code>${modeSuffix}`;
 }
 

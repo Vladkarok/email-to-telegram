@@ -10,6 +10,7 @@ import { canManageAlias } from "../authorization.js";
 import { escapeHtml } from "../../utils/html.js";
 import { getMessages, resolveLocale } from "../../i18n/index.js";
 import { allowRuleIcon } from "../allowRuleDisplay.js";
+import { normalizeRenderMode } from "../../email/renderer.js";
 import {
   CB_NEW_EMAIL,
   CB_ALIAS_DETAIL,
@@ -130,7 +131,7 @@ async function buildAliasDetailMenu(
     address: escapeHtml(alias.fullAddress),
     statusIcon: statusIcon(alias.status),
     statusText: statusText(alias.status, messages),
-    renderMode: alias.renderMode,
+    renderMode: normalizeRenderMode(alias.renderMode),
     privacyOn: alias.privacyModeEnabled,
     bodyDedupOn: alias.bodyDedupEnabled,
     rulesText,

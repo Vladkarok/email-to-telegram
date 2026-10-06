@@ -211,6 +211,29 @@ describe("/settings command", () => {
     );
   });
 
+  it("rejects the retired markdown mode with usage and writes nothing", async () => {
+    mockResolve.mockResolvedValue({
+      ok: true,
+      alias: {
+        id: "uuid-1",
+        fullAddress: "alerts@example.com",
+        renderMode: "plaintext",
+        privacyModeEnabled: false,
+        bodyDedupEnabled: false,
+      },
+    });
+
+    mockUpdateMode.mockClear();
+    const ctx = createMockCtx({ commandMatch: "alerts markdown" });
+    await settingsHandler(ctx);
+
+    expect(ctx.reply).toHaveBeenCalledWith(
+      expect.stringContaining("[plaintext|html]"),
+      expect.anything(),
+    );
+    expect(mockUpdateMode).not.toHaveBeenCalled();
+  });
+
   it("adds a back button when requested in the settings keyboard", () => {
     const keyboard = buildAliasSettingsKeyboard(
       {

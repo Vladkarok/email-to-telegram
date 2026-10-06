@@ -266,7 +266,7 @@ Without an allow rule, all mail to that alias is rejected.
 
 Each alias currently has three delivery-format settings:
 
-- Render mode: `plaintext`, `html`, or `markdown`
+- Render mode: `html` (default) or `plaintext`
 - Privacy mode: `on` or `off`
 - Body dedup: `on` or `off`
 
