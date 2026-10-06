@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from "prom-client";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema.js";
@@ -5,13 +6,57 @@ import { countUsers, countUsersByPlan } from "../db/repos/users.js";
 import { countChats } from "../db/repos/chats.js";
 import { countAliasesByStatus, countUsersWithAlias } from "../db/repos/aliases.js";
 import { countAttachmentStorage } from "../db/repos/attachments.js";
-import { countUsersWithAcceptedMailInMonth, usageMonthForDate } from "../db/repos/usage.js";
-import { classifyTelegramError } from "../telegram/errorClassifier.js";
+import {
+  NON_FINAL_DELIVERY_STATUSES,
+  summarizeDeliveryBacklog,
+  type DeliveryBacklogSummary,
+} from "../db/repos/deliveryLogs.js";
+import {
+  countUsersEverDelivered,
+  countUsersWithAcceptedMailInMonth,
+  usageMonthForDate,
+} from "../db/repos/usage.js";
+import { classifyTelegramError, type TelegramErrorClass } from "../telegram/errorClassifier.js";
+import { PLAN_CODES } from "../billing/plans.js";
 import { noteRawInboundOutcome } from "./inboundHealth.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
+/**
+ * accepted = the Worker may upload the mail; rejected = the Worker bounces it
+ * (permanent 550); deferred = a 429, so the sending server retries later.
+ */
+export type InboundPreflightResult = "accepted" | "rejected" | "deferred";
+export type DeliveryPath = "initial" | "retry";
+/**
+ * Where a delivery log was closed as permanently_failed: the first attempt
+ * (blocked or deleted chat), the retry worker, or raw-email expiry cleanup.
+ */
+export type DeliveryLostStage = "initial" | "retry" | "cleanup";
+
 const buckets = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
+
+// Received → Telegram accepted. Most deliveries take a second or two; the
+// tail covers the retry worker (minutes) up to the raw-email TTL (a day).
+const deliveryLatencyBuckets = [0.5, 1, 2, 5, 10, 30, 60, 300, 900, 3600, 21600, 86400];
+
+/**
+ * The running version, from the package.json one level above `src/` and
+ * `dist/` (the image copies it to /app). "unknown" when it cannot be read, so
+ * a packaging mistake never stops the app from starting.
+ */
+export function readAppVersion(
+  packageJsonUrl: URL = new URL("../../package.json", import.meta.url),
+): string {
+  try {
+    const parsed = JSON.parse(readFileSync(packageJsonUrl, "utf8")) as { version?: unknown };
+    return typeof parsed.version === "string" && parsed.version !== "" ? parsed.version : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+const APP_VERSION = readAppVersion();
 
 export const metricsRegistry = new Registry();
 metricsRegistry.setDefaultLabels({ service: "email_to_telegram" });
@@ -38,7 +83,7 @@ const httpRequestDurationSeconds = new Histogram({
 
 const inboundPreflightTotal = new Counter({
   name: "email_to_telegram_inbound_preflight_total",
-  help: "Inbound preflight decisions by result and reason.",
+  help: "Inbound preflight decisions by result and reason. accepted = the Worker may upload the mail; rejected = the Worker bounces it (permanent 550); deferred = answered 429 so the sending server retries later (reason rate_limited: the alias hourly cap).",
   labelNames: ["result", "reason"] as const,
   registers: [metricsRegistry],
 });
@@ -60,6 +105,13 @@ const deliveryAttemptsTotal = new Counter({
 const deliveriesDeferredTotal = new Counter({
   name: "email_to_telegram_deliveries_deferred_total",
   help: "Inbound deliveries deferred to the retry worker because the in-flight cap was reached.",
+  registers: [metricsRegistry],
+});
+
+const deliveriesLostTotal = new Counter({
+  name: "email_to_telegram_deliveries_lost_total",
+  help: "Delivery logs closed as permanently_failed (the user never got the mail), by stage: initial = first attempt, retry = retry worker, cleanup = raw email expired before a delivery succeeded.",
+  labelNames: ["stage"] as const,
   registers: [metricsRegistry],
 });
 
@@ -107,7 +159,7 @@ const activeUsersByPlan = new Gauge({
 
 const usersGauge = new Gauge({
   name: "email_to_telegram_users",
-  help: "Telegram users known to the bot, partitioned by state (total, allowed, with_alias = has an undeleted alias, accepted_mail_this_month = mail accepted into processing this month; Telegram send failures still count).",
+  help: "Telegram users known to the bot, partitioned by state (total, allowed, with_alias = has an undeleted alias, accepted_mail_this_month = mail accepted into processing this month, ever_delivered = mail accepted into processing in any month; Telegram send failures still count, permanent failures are refunded).",
   labelNames: ["state"] as const,
   registers: [metricsRegistry],
 });
@@ -144,6 +196,122 @@ const attachmentsStoredBytesGauge = new Gauge({
   registers: [metricsRegistry],
 });
 
+const buildInfoGauge = new Gauge({
+  name: "email_to_telegram_build_info",
+  help: "Always 1; the version label is the running app version from package.json.",
+  labelNames: ["version"] as const,
+  registers: [metricsRegistry],
+});
+
+const deliveryLatencySeconds = new Histogram({
+  name: "email_to_telegram_delivery_latency_seconds",
+  help: "Seconds from a delivery log's received_at to Telegram accepting the first message of a successful delivery, by path (initial = the delivery right after acceptance, retry = the retry worker).",
+  labelNames: ["path"] as const,
+  buckets: deliveryLatencyBuckets,
+  registers: [metricsRegistry],
+});
+
+const deliveryBacklogGauge = new Gauge({
+  name: "email_to_telegram_delivery_backlog",
+  help: "Delivery logs not in a final state yet, by final_status (received, processing, retrying, failed = waiting for the retry worker).",
+  labelNames: ["state"] as const,
+  registers: [metricsRegistry],
+});
+
+const deliveryBacklogOldestAgeGauge = new Gauge({
+  name: "email_to_telegram_delivery_backlog_oldest_age_seconds",
+  help: "Age in seconds (from received_at) of the oldest delivery log not in a final state; 0 when the backlog is empty.",
+  registers: [metricsRegistry],
+});
+
+// Label values the counters can take, enumerated from their call sites. Each
+// combination starts at 0 so its series exists before the first event:
+// otherwise increase() cannot count that first event and stat panels show
+// "No data" instead of 0. A reason missing here still works; its series just
+// appears on its first event.
+const INBOUND_LIMIT_REASONS = [
+  "subscription_inactive",
+  "message_size_limit",
+  "storage_limit",
+  "monthly_email_limit",
+] as const;
+
+const PREFLIGHT_REASONS: Record<InboundPreflightResult, readonly string[]> = {
+  accepted: ["accepted"],
+  rejected: [
+    "missing_signature",
+    "invalid_signature",
+    "missing_local_part",
+    "alias_not_found",
+    "hosted_blocklist",
+    "subscription_inactive",
+    "monthly_email_limit",
+    "sender_not_allowed",
+  ],
+  deferred: ["rate_limited"],
+};
+
+const RAW_REASONS: Record<"accepted" | "rejected", readonly string[]> = {
+  accepted: ["accepted"],
+  rejected: [
+    "missing_signature",
+    "unsupported_signature_version",
+    "empty_body",
+    "invalid_signature",
+    "replayed_signature",
+    "missing_local_part",
+    "alias_not_found",
+    "hosted_blocklist",
+    ...INBOUND_LIMIT_REASONS,
+    "duplicate",
+    "rate_limited",
+    "sender_not_allowed",
+    "sender_auth_failed",
+    "sender_auth_temperror",
+  ],
+};
+
+// `satisfies` makes the compiler flag an error class added later but missing here.
+const TELEGRAM_ERROR_CLASSES = Object.keys({
+  flood_wait: true,
+  forbidden: true,
+  chat_not_found: true,
+  migrated: true,
+  bad_request: true,
+  timeout: true,
+  network: true,
+  server: true,
+  other: true,
+  unknown: true,
+} satisfies Record<TelegramErrorClass, true>);
+
+const DELIVERY_PATHS: readonly DeliveryPath[] = ["initial", "retry"];
+const DELIVERY_LOST_STAGES: readonly DeliveryLostStage[] = ["initial", "retry", "cleanup"];
+
+function initializeSeries(): void {
+  buildInfoGauge.set({ version: APP_VERSION }, 1);
+  for (const [result, reasons] of Object.entries(PREFLIGHT_REASONS)) {
+    for (const reason of reasons) inboundPreflightTotal.inc({ result, reason }, 0);
+  }
+  for (const [result, reasons] of Object.entries(RAW_REASONS)) {
+    for (const reason of reasons) rawInboundTotal.inc({ result, reason }, 0);
+  }
+  for (const result of ["succeeded", "failed"]) deliveryAttemptsTotal.inc({ result }, 0);
+  for (const result of ["succeeded", "failed", "permanently_failed"]) {
+    retryAttemptsTotal.inc({ result }, 0);
+  }
+  for (const errorClass of TELEGRAM_ERROR_CLASSES) {
+    telegramSendFailuresTotal.inc({ error_class: errorClass }, 0);
+  }
+  for (const result of ["success", "fallback", "disabled"]) richMessagesTotal.inc({ result }, 0);
+  for (const reason of INBOUND_LIMIT_REASONS) quotaRejectionsTotal.inc({ reason }, 0);
+  for (const path of DELIVERY_PATHS) deliveryLatencySeconds.zero({ path });
+  for (const stage of DELIVERY_LOST_STAGES) deliveriesLostTotal.inc({ stage }, 0);
+  for (const plan of PLAN_CODES) manualPlanGrantsTotal.inc({ plan }, 0);
+}
+
+initializeSeries();
+
 export function recordHttpRequest(input: {
   route: string;
   method: string;
@@ -159,7 +327,7 @@ export function recordHttpRequest(input: {
   httpRequestDurationSeconds.observe(labels, input.durationSeconds);
 }
 
-export function recordInboundPreflight(result: "accepted" | "rejected", reason: string): void {
+export function recordInboundPreflight(result: InboundPreflightResult, reason: string): void {
   inboundPreflightTotal.inc({ result, reason });
 }
 
@@ -174,6 +342,29 @@ export function recordDeliveryAttempt(result: "succeeded" | "failed"): void {
 
 export function recordDeliveryDeferred(): void {
   deliveriesDeferredTotal.inc();
+}
+
+/** Call only after the permanently_failed status write has succeeded. */
+export function recordDeliveryLost(stage: DeliveryLostStage): void {
+  deliveriesLostTotal.inc({ stage });
+}
+
+/**
+ * Observes received → Telegram-accepted latency for a successful delivery.
+ * Never throws: an invalid timestamp is dropped and clock skew is clamped to 0.
+ */
+export function recordDeliveryLatency(
+  path: DeliveryPath,
+  receivedAt: Date,
+  deliveredAt: Date = new Date(),
+): void {
+  try {
+    const seconds = (deliveredAt.getTime() - receivedAt.getTime()) / 1000;
+    if (!Number.isFinite(seconds)) return;
+    deliveryLatencySeconds.observe({ path }, Math.max(0, seconds));
+  } catch {
+    // Observability must never break the delivery path.
+  }
 }
 
 export function recordRetryAttempt(result: "succeeded" | "failed" | "permanently_failed"): void {
@@ -209,6 +400,8 @@ export async function refreshBusinessGauges(db: Db): Promise<void> {
     attachmentStats,
     usersWithAlias,
     usersAcceptedMailThisMonth,
+    usersEverDelivered,
+    deliveryBacklog,
   ] = await Promise.all([
     countUsersByPlan(db),
     countUsers(db),
@@ -217,13 +410,16 @@ export async function refreshBusinessGauges(db: Db): Promise<void> {
     countAttachmentStorage(db),
     countUsersWithAlias(db),
     countUsersWithAcceptedMailInMonth(db, usageMonthForDate()),
+    countUsersEverDelivered(db),
+    summarizeDeliveryBacklog(db),
   ]);
 
   applyUsersByPlanGauges(planRows);
-  applyUsersGauge(userCounts, { usersWithAlias, usersAcceptedMailThisMonth });
+  applyUsersGauge(userCounts, { usersWithAlias, usersAcceptedMailThisMonth, usersEverDelivered });
   applyChatsGauge(chatCounts);
   applyAliasesGauge(aliasRows);
   applyAttachmentsGauge(attachmentStats);
+  applyDeliveryBacklogGauges(deliveryBacklog);
 }
 
 function applyUsersByPlanGauges(rows: Array<{ planCode: string; count: number }>): void {
@@ -238,12 +434,17 @@ function applyUsersByPlanGauges(rows: Array<{ planCode: string; count: number }>
 
 function applyUsersGauge(
   counts: { total: number; allowed: number },
-  engagement: { usersWithAlias: number; usersAcceptedMailThisMonth: number },
+  engagement: {
+    usersWithAlias: number;
+    usersAcceptedMailThisMonth: number;
+    usersEverDelivered: number;
+  },
 ): void {
   usersGauge.set({ state: "total" }, counts.total);
   usersGauge.set({ state: "allowed" }, counts.allowed);
   usersGauge.set({ state: "with_alias" }, engagement.usersWithAlias);
   usersGauge.set({ state: "accepted_mail_this_month" }, engagement.usersAcceptedMailThisMonth);
+  usersGauge.set({ state: "ever_delivered" }, engagement.usersEverDelivered);
 }
 
 function applyChatsGauge(counts: { total: number; active: number }): void {
@@ -263,8 +464,24 @@ function applyAttachmentsGauge(stats: { count: number; bytes: number }): void {
   attachmentsStoredBytesGauge.set(stats.bytes);
 }
 
+function applyDeliveryBacklogGauges(backlog: DeliveryBacklogSummary): void {
+  // Every non-final state gets a series, so a drained state reads 0 instead
+  // of keeping its last count.
+  for (const state of NON_FINAL_DELIVERY_STATUSES) {
+    deliveryBacklogGauge.set({ state }, backlog.counts[state] ?? 0);
+  }
+  const oldestAgeSeconds = backlog.oldestReceivedAt
+    ? (Date.now() - backlog.oldestReceivedAt.getTime()) / 1000
+    : 0;
+  deliveryBacklogOldestAgeGauge.set(
+    Number.isFinite(oldestAgeSeconds) ? Math.max(0, oldestAgeSeconds) : 0,
+  );
+}
+
+/** Clears every metric, then restores the build info and zero-initialised series. */
 export function resetMetricsForTests(): void {
   metricsRegistry.resetMetrics();
+  initializeSeries();
 }
 
 function statusClass(statusCode: number): string {

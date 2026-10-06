@@ -1,5 +1,55 @@
 import { describe, it, expect } from "vitest";
-import { monthStart, nextMonthStart } from "../../../../src/db/repos/deliveryLogs.js";
+import { PgDialect, getTableConfig } from "drizzle-orm/pg-core";
+import {
+  NON_FINAL_DELIVERY_STATUSES,
+  monthStart,
+  nextMonthStart,
+  summarizeDeliveryBacklog,
+} from "../../../../src/db/repos/deliveryLogs.js";
+import { deliveryLogs } from "../../../../src/db/schema.js";
+
+/** select().from().where().groupBy() resolving to `rows`. */
+function groupedSelectDb(rows: unknown[]): Parameters<typeof summarizeDeliveryBacklog>[0] {
+  const chain = {
+    from: () => chain,
+    where: () => chain,
+    groupBy: () => Promise.resolve(rows),
+  };
+  return { select: () => chain } as unknown as Parameters<typeof summarizeDeliveryBacklog>[0];
+}
+
+describe("idx_log_backlog_received", () => {
+  it("covers exactly the non-final statuses the backlog query filters on", () => {
+    const index = getTableConfig(deliveryLogs).indexes.find(
+      (candidate) => candidate.config.name === "idx_log_backlog_received",
+    );
+    const where = index?.config.where;
+    expect(where).toBeDefined();
+    const predicate = new PgDialect().sqlToQuery(where!).sql;
+    const statuses = [...predicate.matchAll(/'([a-z_]+)'/g)].map((match) => match[1]);
+    expect(statuses.sort()).toEqual([...NON_FINAL_DELIVERY_STATUSES].sort());
+  });
+});
+
+describe("summarizeDeliveryBacklog", () => {
+  it("maps per-status counts and keeps the oldest received_at across statuses", async () => {
+    const summary = await summarizeDeliveryBacklog(
+      groupedSelectDb([
+        { status: "failed", count: 2, oldest: new Date("2026-10-06T09:00:00.000Z") },
+        { status: "received", count: "1", oldest: new Date("2026-10-06T08:30:00.000Z") },
+        { status: "processing", count: 1, oldest: new Date("2026-10-06T09:59:00.000Z") },
+      ]),
+    );
+
+    expect(summary.counts).toEqual({ failed: 2, received: 1, processing: 1 });
+    expect(summary.oldestReceivedAt?.toISOString()).toBe("2026-10-06T08:30:00.000Z");
+  });
+
+  it("reports an empty backlog with no oldest timestamp", async () => {
+    const summary = await summarizeDeliveryBacklog(groupedSelectDb([]));
+    expect(summary).toEqual({ counts: {}, oldestReceivedAt: null });
+  });
+});
 
 describe("monthStart", () => {
   it("returns the first of January UTC for 2026-01", () => {

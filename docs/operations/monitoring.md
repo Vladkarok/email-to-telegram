@@ -39,7 +39,7 @@ A self-hosted Prometheus + Grafana + Loki stack runs on the staging VM alongside
   # Enabled: prometheus --scrape--> prod app (10.0.88.2:3000) over the
   # private network (job email_to_telegram_prod in prometheus.yml).
   # Loki/promtail, however, ship STAGING container logs only — prod logs
-  # never reach Loki.
+  # do not reach Loki yet.
 ```
 
 ## First-time setup on the VM
@@ -87,26 +87,124 @@ ssh <staging-host> 'ss -tlnp | grep 3001'
 
 The output must bind to the VPN interface only (not `0.0.0.0`).
 
+## Dashboards
+
+Provisioned from `monitoring/grafana/provisioning/dashboards/json/` (read-only in
+the UI; edit the JSON and redeploy). All three have the `Env` variable
+(single-select, default `prod`). Every panel's info icon says what it shows and
+what "bad" looks like.
+
+**Email to Telegram – Operations** (`e2t-app`, default range 24 h): is mail
+getting from the sender to Telegram, how fast, and where is it lost.
+
+- Top row, always visible: Scrape up · Version · Uptime · Offered (24h,
+  preflight decisions without signature failures) · Delivered (24h, first
+  attempts plus retries) · Lost (7d, `deliveries_lost_total`; red above 0) ·
+  Backlog now (pending logs and the oldest one's age) · Latency (24h, delivery
+  p95).
+- **Inbound**: preflight decisions per hour (accepted / deferred / bounced),
+  preflight bounces by reason, raw uploads per hour (accepted / rejected), raw
+  rejections by reason.
+- **Delivery**: deliveries per hour by path and result, lost mail per hour by
+  stage, delivery latency p50 / p95, first-attempt success rate per hour,
+  delivery backlog, Telegram send failures by class, rich vs classic fallback,
+  backpressure (24h stat and per hour).
+- **HTTP**: requests per hour by status class and by route, p95 latency by route
+  (1 h window). `/healthz` and `/metrics` are excluded: probe and scrape traffic
+  would otherwise drown real requests.
+- **Logs** (collapsed): app error logs from Loki for the selected env. Only
+  staging ships logs today, so prod stays empty until promtail runs there.
+- **Host & database** (collapsed): root filesystem free, memory available,
+  load, swap, `pg_up`, connections and size of the `emailtelegram` database,
+  off-site backup age (red above 30 h). These read node_exporter (job `node`)
+  and postgres_exporter (job `postgres`), both labelled `env`, and
+  `etg_offsite_backup_last_success_timestamp_seconds` from node_exporter's
+  textfile collector. They show "No data" until those exporters are deployed.
+
+**Email to Telegram – Product** (`e2t-product`, default range 30 d, refresh 5
+min, UTC time axis so daily bars are UTC days): activation funnel (signed up →
+created an alias → ever received mail → received mail this month), users and
+aliases over time, delivered per day, quota rejections per day by reason, users
+by plan, aliases by status, chats, attachments storage.
+
+**Email to Telegram – Runtime** (`e2t-runtime`): process CPU, RSS, heap, event
+loop lag, GC time.
+
+How to read them:
+
+- **"Per hour" and "per day" panels are real buckets.** Each bar is
+  `increase(metric[$__interval])` with the panel's minimum interval set to `1h`
+  or `1d`, so a bar covers exactly the hour (or UTC day) ending at its right
+  edge and the legend's Total is the true sum over the range. The bucket still
+  in progress is not drawn. On ranges wide enough that Grafana picks a larger
+  interval, a bar covers that interval instead.
+- **Deferral is not backpressure.** A _deferral_ happens at preflight: over the
+  per-alias hourly cap the app answers 429, the Worker fails the SMTP
+  transaction temporarily and the sending server retries later
+  (`inbound_preflight_total{result="deferred",reason="rate_limited"}`). The mail
+  never reached the app and is not lost. _Backpressure_ happens after
+  acceptance: the mail is stored, but the in-flight delivery cap
+  (`MAX_INFLIGHT_DELIVERIES`) is full, so it waits for the retry worker
+  (`deliveries_deferred_total`, shown as "Backpressure: sent to retry worker").
+  It is delivered minutes later. Before the `deferred` result existed, hourly-cap
+  deferrals were recorded as `result="rejected",reason="rate_limited"` and show
+  up among the older preflight bounces.
+- **Process starts are annotated.** The `App start` annotation (toggle at the
+  top of Operations and Runtime) draws a marker at each app process start,
+  using `process_start_time_seconds` as the timestamp and the version from
+  `email_to_telegram_build_info` as text. Deploys and crashes both show up; a
+  marker with no deploy behind it is a crash.
+- **Lost means the user never got the mail.** `deliveries_lost_total{stage}`
+  counts each delivery log closed as `permanently_failed`, once the status
+  write succeeds: `initial` (first attempt to a blocked or deleted chat),
+  `retry` (the retry worker gave up), `cleanup` (the raw email expired before
+  any delivery succeeded, e.g. Telegram unreachable for the whole TTL).
+  `retry_attempts_total{result="permanently_failed"}` covers only the retry
+  stage, so it undercounts loss.
+- **No data vs 0.** Counters start every known label set at 0 when the process
+  starts, and stats use `or vector(0)`, so "0" means nothing happened. "No
+  data" means the series does not exist: the target is not scraped, the
+  exporter is not deployed, or the app predates the metric.
+
 ## Business metrics catalog
 
 All gauges/counters are prefixed `email_to_telegram_`. Exposed at `GET /metrics` (bearer-protected).
 
-| Metric                                                             | Type      | Description                                                                   | Example PromQL                                                                                                   |
-| ------------------------------------------------------------------ | --------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `email_to_telegram_users{state}`                                   | gauge     | Users by state (`total`, `allowed`, `with_alias`, `accepted_mail_this_month`) | `email_to_telegram_users{state="with_alias"}`                                                                    |
-| `email_to_telegram_users_total`                                    | gauge     | Total users across all plans                                                  | `email_to_telegram_users_total`                                                                                  |
-| `email_to_telegram_active_users_by_plan{plan}`                     | gauge     | Active users by plan                                                          | `email_to_telegram_active_users_by_plan{plan="pro"}`                                                             |
-| `email_to_telegram_chats{state}`                                   | gauge     | Chats by state (`total`, `active`)                                            | `email_to_telegram_chats{state="active"}`                                                                        |
-| `email_to_telegram_aliases{status}`                                | gauge     | Aliases grouped by status (`active`, `paused`, `deleted`)                     | `sum by (status)(email_to_telegram_aliases)`                                                                     |
-| `email_to_telegram_attachments_stored`                             | gauge     | Stored attachment count                                                       | `email_to_telegram_attachments_stored`                                                                           |
-| `email_to_telegram_attachments_stored_bytes`                       | gauge     | Total stored attachment bytes                                                 | `email_to_telegram_attachments_stored_bytes / 1024 / 1024 / 1024`                                                |
-| `email_to_telegram_delivery_attempts_total{result}`                | counter   | Delivery attempts by result                                                   | `sum by (result)(rate(email_to_telegram_delivery_attempts_total[5m]))`                                           |
-| `email_to_telegram_retry_attempts_total{result}`                   | counter   | Retry attempts by result                                                      | `rate(email_to_telegram_retry_attempts_total{result="succeeded"}[5m])`                                           |
-| `email_to_telegram_telegram_send_failures_total{error_class}`      | counter   | Telegram send failures bucketed by error class                                | `topk(5, sum by (error_class)(rate(email_to_telegram_telegram_send_failures_total[1h])))`                        |
-| `email_to_telegram_quota_rejections_total{reason}`                 | counter   | Quota rejections by reason                                                    | `sum by (reason)(rate(email_to_telegram_quota_rejections_total[1h]))`                                            |
-| `email_to_telegram_manual_plan_grants_total{plan}`                 | counter   | Manual billing plan grants                                                    | `increase(email_to_telegram_manual_plan_grants_total[7d])`                                                       |
-| `email_to_telegram_http_requests_total{route,method,status_class}` | counter   | HTTP request count                                                            | `sum by (status_class)(rate(email_to_telegram_http_requests_total[5m]))`                                         |
-| `email_to_telegram_http_request_duration_seconds_*`                | histogram | HTTP latency histogram (`_bucket`, `_sum`, `_count`)                          | `histogram_quantile(0.95, sum by (le, route)(rate(email_to_telegram_http_request_duration_seconds_bucket[5m])))` |
+| Metric                                                             | Type      | Description                                                                                                                                           | Example PromQL                                                                                                   |
+| ------------------------------------------------------------------ | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `email_to_telegram_build_info{version}`                            | gauge     | Always 1; `version` is the running app version from `package.json`                                                                                    | `max by (version)(email_to_telegram_build_info)`                                                                 |
+| `email_to_telegram_users{state}`                                   | gauge     | Users by state (`total`, `allowed`, `with_alias`, `accepted_mail_this_month`, `ever_delivered`; see below)                                            | `email_to_telegram_users{state="ever_delivered"}`                                                                |
+| `email_to_telegram_users_total`                                    | gauge     | Total users across all plans                                                                                                                          | `email_to_telegram_users_total`                                                                                  |
+| `email_to_telegram_active_users_by_plan{plan}`                     | gauge     | Active users by plan                                                                                                                                  | `email_to_telegram_active_users_by_plan{plan="pro"}`                                                             |
+| `email_to_telegram_chats{state}`                                   | gauge     | Chats by state (`total`, `active`)                                                                                                                    | `email_to_telegram_chats{state="active"}`                                                                        |
+| `email_to_telegram_aliases{status}`                                | gauge     | Aliases grouped by status (`active`, `paused`, `deleted`)                                                                                             | `sum by (status)(email_to_telegram_aliases)`                                                                     |
+| `email_to_telegram_attachments_stored`                             | gauge     | Stored attachment count                                                                                                                               | `email_to_telegram_attachments_stored`                                                                           |
+| `email_to_telegram_attachments_stored_bytes`                       | gauge     | Total stored attachment bytes                                                                                                                         | `email_to_telegram_attachments_stored_bytes / 1024 / 1024 / 1024`                                                |
+| `email_to_telegram_inbound_preflight_total{result,reason}`         | counter   | Preflight decisions: `accepted`, `rejected` (the Worker bounces with a permanent 550), `deferred` (429 over the alias hourly cap; the sender retries) | `sum by (result)(increase(email_to_telegram_inbound_preflight_total[1h]))`                                       |
+| `email_to_telegram_raw_inbound_total{result,reason}`               | counter   | Raw upload decisions (`accepted`, `rejected`) by reason                                                                                               | `sum by (reason)(increase(email_to_telegram_raw_inbound_total{result="rejected"}[1h]))`                          |
+| `email_to_telegram_delivery_attempts_total{result}`                | counter   | Delivery attempts by result                                                                                                                           | `sum by (result)(rate(email_to_telegram_delivery_attempts_total[5m]))`                                           |
+| `email_to_telegram_retry_attempts_total{result}`                   | counter   | Retry attempts by result                                                                                                                              | `rate(email_to_telegram_retry_attempts_total{result="succeeded"}[5m])`                                           |
+| `email_to_telegram_deliveries_lost_total{stage}`                   | counter   | Delivery logs closed as `permanently_failed` by stage: `initial`, `retry`, `cleanup` (raw email expired)                                              | `sum by (stage)(increase(email_to_telegram_deliveries_lost_total[7d]))`                                          |
+| `email_to_telegram_deliveries_deferred_total`                      | counter   | Backpressure: accepted mail left for the retry worker because `MAX_INFLIGHT_DELIVERIES` was reached (not the preflight deferral)                      | `increase(email_to_telegram_deliveries_deferred_total[24h])`                                                     |
+| `email_to_telegram_delivery_latency_seconds_*{path}`               | histogram | `received_at` to Telegram accepting the first message of a successful delivery; `path` = `initial` or `retry`                                         | `histogram_quantile(0.95, sum by (le)(rate(email_to_telegram_delivery_latency_seconds_bucket[1h])))`             |
+| `email_to_telegram_delivery_backlog{state}`                        | gauge     | Delivery logs not in a final state, by `final_status` (`received`, `processing`, `retrying`, `failed`)                                                | `sum(email_to_telegram_delivery_backlog)`                                                                        |
+| `email_to_telegram_delivery_backlog_oldest_age_seconds`            | gauge     | Age of the oldest non-final delivery log; 0 when there is none                                                                                        | `email_to_telegram_delivery_backlog_oldest_age_seconds > 600`                                                    |
+| `email_to_telegram_rich_messages_total{result}`                    | counter   | Rich-message outcomes: `success`, `fallback` (classic message sent instead), `disabled`                                                               | `sum by (result)(increase(email_to_telegram_rich_messages_total[1h]))`                                           |
+| `email_to_telegram_telegram_send_failures_total{error_class}`      | counter   | Telegram send failures bucketed by error class                                                                                                        | `topk(5, sum by (error_class)(rate(email_to_telegram_telegram_send_failures_total[1h])))`                        |
+| `email_to_telegram_quota_rejections_total{reason}`                 | counter   | Quota rejections by reason                                                                                                                            | `sum by (reason)(rate(email_to_telegram_quota_rejections_total[1h]))`                                            |
+| `email_to_telegram_manual_plan_grants_total{plan}`                 | counter   | Manual billing plan grants                                                                                                                            | `increase(email_to_telegram_manual_plan_grants_total[7d])`                                                       |
+| `email_to_telegram_http_requests_total{route,method,status_class}` | counter   | HTTP request count                                                                                                                                    | `sum by (status_class)(rate(email_to_telegram_http_requests_total[5m]))`                                         |
+| `email_to_telegram_http_request_duration_seconds_*`                | histogram | HTTP latency histogram (`_bucket`, `_sum`, `_count`)                                                                                                  | `histogram_quantile(0.95, sum by (le, route)(rate(email_to_telegram_http_request_duration_seconds_bucket[5m])))` |
+
+`users{state="ever_delivered"}` counts users with `delivered_count > 0` in any
+month of `user_usage_months`. That counter moves when mail is accepted into
+delivery and is refunded on a permanent Telegram failure. It is read from
+`user_usage_months`, not `delivery_logs`, because free-plan delivery logs are
+purged after 7 days.
+
+The `delivery_backlog` gauges are refreshed on every scrape from the partial
+index `idx_log_backlog_received` (migration `0010`), which holds only the
+non-final rows, so a scrape does not scan `delivery_logs`.
 
 ## Adding a new business gauge
 

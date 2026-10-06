@@ -64,6 +64,8 @@ vi.mock("../../../src/db/repos/quotaNotifications.js", () => ({
 const { runCleanup, deliveryLogHasNoAttachments, broadRetentionCandidateCutoff } =
   await import("../../../src/storage/cleanup.js");
 const { applyPlanLimitOverrides } = await import("../../../src/billing/plans.js");
+const { metricsRegistry, resetMetricsForTests } =
+  await import("../../../src/observability/metrics.js");
 
 function makeDb(
   expiredAttachments: {
@@ -297,6 +299,68 @@ describe("runCleanup", () => {
       { rows: 1 },
       "cleanup: cleared expired raw email references",
     );
+  });
+
+  describe("raw-email expiry closing undelivered logs", () => {
+    const expiredLog = {
+      id: "log-1",
+      rawEmailPath: "/data/rawemails/2025-01-01/log-1.eml",
+      rawSizeBytes: 42,
+      userId: 1n,
+    };
+    const lostAtCleanup = async (): Promise<number> => {
+      const text = await metricsRegistry.getSingleMetricAsString(
+        "email_to_telegram_deliveries_lost_total",
+      );
+      return Number(/\{stage="cleanup"[^}]*\} ([\d.]+)/.exec(text)?.[1]);
+    };
+
+    beforeEach(() => {
+      resetMetricsForTests();
+    });
+
+    it("counts a log it closes as lost (stage cleanup)", async () => {
+      const db = makeDb([], [expiredLog]);
+
+      await runCleanup(db, config);
+
+      // One guarded statement both closes the log and clears the raw path.
+      expect(db._mocks.updateWhere).toHaveBeenCalledTimes(1);
+      expect(db._mocks.updateSet).toHaveBeenCalledWith(
+        expect.objectContaining({ rawEmailPath: null, finalStatus: "permanently_failed" }),
+      );
+      expect(await lostAtCleanup()).toBe(1);
+    });
+
+    it("only clears the raw path of an already-final log, without counting a loss", async () => {
+      const db = makeDb([], [expiredLog]);
+      // The status guard matched nothing: the log was already delivered.
+      db._mocks.updateWhere.mockResolvedValueOnce({ rowCount: 0 });
+
+      await runCleanup(db, config);
+
+      expect(db._mocks.updateSet).toHaveBeenCalledTimes(2);
+      expect(db._mocks.updateSet).toHaveBeenLastCalledWith({
+        rawEmailPath: null,
+        rawEmailEncryptionMode: "none",
+        rawEmailWrappedDek: null,
+        rawEmailKekKeyId: null,
+        rawEmailEncryptedAt: null,
+      });
+      expect(mockDecrementOrganizationStorageUsage).toHaveBeenCalledWith(expect.anything(), 1n, {
+        rawEmailBytes: 42n,
+      });
+      expect(await lostAtCleanup()).toBe(0);
+    });
+
+    it("does not count a loss when the close is rolled back", async () => {
+      const db = makeDb([], [expiredLog]);
+      mockDecrementOrganizationStorageUsage.mockRejectedValueOnce(new Error("transient"));
+
+      await runCleanup(db, config);
+
+      expect(await lostAtCleanup()).toBe(0);
+    });
   });
 
   it("applies free-plan retention before the global attachment TTL", async () => {

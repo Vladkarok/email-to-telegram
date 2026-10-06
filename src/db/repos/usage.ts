@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { and, count, eq, gt, sql } from "drizzle-orm";
+import { and, count, countDistinct, eq, gt, sql } from "drizzle-orm";
 import { userUsageMonths, type NewUserUsageMonth, type UserUsageMonth } from "../schema.js";
 import type * as schema from "../schema.js";
 
@@ -32,6 +32,21 @@ export async function countUsersWithAcceptedMailInMonth(db: Db, month: string): 
     .select({ count: count() })
     .from(userUsageMonths)
     .where(and(eq(userUsageMonths.month, month), gt(userUsageMonths.deliveredCount, 0)));
+  return Number(row?.count ?? 0);
+}
+
+/**
+ * Users with mail counted in delivered_count in any month: the activation
+ * funnel's "ever received mail" step. Read from user_usage_months, not
+ * delivery_logs, because free-plan delivery logs are purged after 7 days.
+ * Same caveat as above: the counter moves at acceptance, and a permanent
+ * Telegram failure refunds it.
+ */
+export async function countUsersEverDelivered(db: Db): Promise<number> {
+  const [row] = await db
+    .select({ count: countDistinct(userUsageMonths.userId) })
+    .from(userUsageMonths)
+    .where(gt(userUsageMonths.deliveredCount, 0));
   return Number(row?.count ?? 0);
 }
 

@@ -1,0 +1,1 @@
+CREATE INDEX "idx_log_backlog_received" ON "delivery_logs" USING btree ("received_at") WHERE final_status IN ('received', 'processing', 'retrying', 'failed');

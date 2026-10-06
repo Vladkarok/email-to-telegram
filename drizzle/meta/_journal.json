@@ -71,6 +71,13 @@
       "when": 1784578550056,
       "tag": "0009_alias-move-events-routing-version",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791316208316,
+      "tag": "0010_delivery-backlog-index",
+      "breakpoints": true
     }
   ]
 }

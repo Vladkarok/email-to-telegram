@@ -7,13 +7,26 @@ service published to the host and only on a private VPN-reachable IP.
 ## Services
 
 - **Prometheus** (`prom/prometheus:v2.55.1`) — scrapes the app `/metrics`
-  endpoint using a bearer token. 15-day TSDB retention.
+  endpoint using a bearer token. 90-day TSDB retention.
 - **Grafana** (`grafana/grafana-oss:11.3.0`) — UI on
   `${MONITORING_BIND_IP}:3001`. Provisioned datasources and dashboards.
 - **Loki** (`grafana/loki:2.9.10`) — single-binary, filesystem storage,
   7-day retention via compactor.
 - **Promtail** (`grafana/promtail:2.9.10`) — Docker SD; ships container
   logs with labels `service`, `compose_project`, `container_name`, `env`.
+
+## Dashboards
+
+Provisioned from `grafana/provisioning/dashboards/json/`:
+
+- **Email to Telegram – Operations** (`e2t-app`) — mail flow from preflight
+  to Telegram: inbound, delivery, latency, backlog, HTTP, logs, host and
+  database.
+- **Email to Telegram – Product** (`e2t-product`) — activation funnel, users,
+  aliases, daily volume, quota rejections.
+- **Email to Telegram – Runtime** (`e2t-runtime`) — Node.js process health.
+
+Panel guide: `docs/operations/monitoring.md#dashboards`.
 
 ## Networking
 
@@ -39,13 +52,12 @@ Grafana admin credentials and the bind IP come from `./.env` (see
 
 Edit `prometheus/prometheus.yml`, add a new job (mirror the staging job),
 then reload with `curl -X POST http://prometheus:9090/-/reload` from inside
-the `monitoring_internal` network or restart the container. The prod job is
-already present, commented out — enable it once VPN reachability to
-`10.0.88.2:3000` is confirmed.
+the `monitoring_internal` network or restart the container. The prod job
+(`10.0.88.2:3000` over the VPN) is enabled.
 
 ## Retention
 
-- Prometheus: 15 days TSDB (`--storage.tsdb.retention.time=15d`).
+- Prometheus: 90 days TSDB (`--storage.tsdb.retention.time=90d`).
 - Loki: 7 days (`retention_period: 168h`).
 
 See `docs/operations/monitoring.md` for the full operator runbook.

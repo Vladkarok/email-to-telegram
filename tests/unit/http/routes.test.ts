@@ -370,13 +370,17 @@ describe("POST /inbound/preflight", () => {
     infoSpy.mockRestore();
     expect(deferred?.[0]).toEqual({ localPart: "alerts", aliasId: "uuid-1", userId: "1" });
 
+    // A deferral, not a bounce: the sender retries, nothing is lost.
     const metrics = await metricsRegistry.metrics();
     expect(
       findMetricLine(metrics, "email_to_telegram_inbound_preflight_total", [
-        'result="rejected"',
+        'result="deferred"',
         'reason="rate_limited"',
       ]),
     ).toBeDefined();
+    expect(
+      findMetricLine(metrics, "email_to_telegram_inbound_preflight_total", ['result="rejected"']),
+    ).toBeUndefined();
   });
 
   it("uses one resolved plan for the quota check and the hourly cap", async () => {
@@ -1344,8 +1348,15 @@ function restoreEnv(key: string, value: string | undefined): void {
   }
 }
 
+// Known label sets are pre-initialised to 0, so a series merely existing
+// proves nothing: only a non-zero sample counts as recorded.
 function findMetricLine(metrics: string, name: string, labels: string[]): string | undefined {
   return metrics
     .split("\n")
-    .find((line) => line.startsWith(name) && labels.every((label) => line.includes(label)));
+    .find(
+      (line) =>
+        line.startsWith(name) &&
+        labels.every((label) => line.includes(label)) &&
+        Number(line.slice(line.lastIndexOf(" ") + 1)) > 0,
+    );
 }

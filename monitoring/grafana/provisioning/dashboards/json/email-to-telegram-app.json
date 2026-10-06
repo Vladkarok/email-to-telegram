@@ -1,13 +1,15 @@
 {
   "uid": "e2t-app",
-  "title": "Email to Telegram – Application",
-  "tags": ["email-to-telegram", "application"],
+  "title": "Email to Telegram – Operations",
+  "description": "Is mail getting from the sender to Telegram, how fast, and where is it lost.",
+  "tags": ["email-to-telegram", "operations"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 2,
-  "refresh": "30s",
+  "version": 4,
+  "graphTooltip": 1,
+  "refresh": "1m",
   "time": {
-    "from": "now-6h",
+    "from": "now-24h",
     "to": "now"
   },
   "templating": {
@@ -37,663 +39,2842 @@
     ]
   },
   "annotations": {
-    "list": []
+    "list": [
+      {
+        "name": "App start",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "#5794F2",
+        "expr": "(max by (instance, env, version) (process_start_time_seconds{job=~\"email_to_telegram_(staging|prod)\",env=~\"$env\"} * on (instance, job) group_left (version) email_to_telegram_build_info{env=~\"$env\"}) * 1000) or on (instance, env) (max by (instance, env) (process_start_time_seconds{job=~\"email_to_telegram_(staging|prod)\",env=~\"$env\"}) * 1000)",
+        "useValueForTime": true,
+        "step": "60s",
+        "titleFormat": "App start",
+        "textFormat": "{{env}} {{version}}",
+        "tagKeys": "env,version"
+      }
+    ]
   },
   "panels": [
     {
       "id": 1,
       "type": "stat",
       "title": "Scrape up",
-      "description": "Prometheus target health for the app. DOWN means the app process or its /metrics endpoint is unreachable.",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "description": "Prometheus reaches the app's /metrics. DOWN: the app or its metrics endpoint is unreachable, and every other panel goes stale.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "fieldConfig": {
         "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
           "mappings": [
             {
               "type": "value",
               "options": {
-                "0": { "text": "DOWN", "color": "red" },
-                "1": { "text": "UP", "color": "green" }
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "UP",
+                  "color": "green"
+                }
               }
             }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "red", "value": null },
-              { "color": "green", "value": 1 }
-            ]
-          }
+          ]
         },
         "overrides": []
       },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto",
         "colorMode": "background",
-        "graphMode": "none"
+        "graphMode": "none",
+        "justifyMode": "center",
+        "wideLayout": true
       },
       "targets": [
         {
           "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
           "expr": "min(up{job=~\"email_to_telegram_(staging|prod)\",env=~\"$env\"})",
-          "legendFormat": "up"
+          "legendFormat": "up",
+          "instant": true,
+          "range": false
         }
-      ]
+      ],
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 0,
+        "y": 0
+      }
     },
     {
       "id": 2,
       "type": "stat",
-      "title": "App restarts (24h)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "title": "Version",
+      "description": "App version the selected env runs (email_to_telegram_build_info). unknown: the running app predates that metric.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "decimals": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "orange", "value": 1 },
-              { "color": "red", "value": 3 }
+              {
+                "color": "text",
+                "value": null
+              }
             ]
-          }
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
         },
         "overrides": []
       },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "textMode": "auto",
-        "colorMode": "value",
-        "graphMode": "none"
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "name",
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "wideLayout": true
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(changes(process_start_time_seconds{job=~\"email_to_telegram_(staging|prod)\",env=~\"$env\"}[24h]))",
-          "legendFormat": "restarts"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (version) (email_to_telegram_build_info{env=~\"$env\"}) or on () label_replace(vector(1), \"version\", \"unknown\", \"\", \"\")",
+          "legendFormat": "{{version}}",
+          "instant": true,
+          "range": false
         }
-      ]
+      ],
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 3,
+        "y": 0
+      }
     },
     {
       "id": 3,
       "type": "stat",
-      "title": "Inbound accepted (24h)",
-      "description": "Emails accepted by /inbound/raw in the last 24h. 0 for a whole day usually means the Worker → app contract is broken (see the 2026-06 incident) or genuinely no mail.",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "title": "Uptime",
+      "description": "Time since the app process started. Blue markers on the time series are process starts (deploys or crashes); a restart without a deploy is the bad case.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
-          "decimals": 0,
+          "unit": "s",
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "orange", "value": null },
-              { "color": "green", "value": 1 }
+              {
+                "color": "text",
+                "value": null
+              }
             ]
-          }
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1
         },
         "overrides": []
       },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto",
-        "colorMode": "value",
-        "graphMode": "area"
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "wideLayout": true
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(increase(email_to_telegram_raw_inbound_total{result=\"accepted\",env=~\"$env\"}[24h]))",
-          "legendFormat": "accepted"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "time() - max(process_start_time_seconds{job=~\"email_to_telegram_(staging|prod)\",env=~\"$env\"})",
+          "legendFormat": "uptime",
+          "instant": true,
+          "range": false
         }
-      ]
+      ],
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 6,
+        "y": 0
+      }
     },
     {
       "id": 4,
       "type": "stat",
-      "title": "Permanently failed retries (7d)",
-      "description": "Deliveries the retry worker gave up on — user-visible mail loss. Anything above 0 deserves a look.",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "title": "Offered (24h)",
+      "description": "Mail offered: preflight checks the Worker ran in the last 24 h, accepted + bounced + deferred (a deferred mail is offered again on each retry). Signature failures excluded. Orange at 0: no mail reached the app for a day.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "decimals": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "red", "value": 1 }
+              {
+                "color": "orange",
+                "value": null
+              },
+              {
+                "color": "text",
+                "value": 0.5
+              }
             ]
-          }
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
         },
         "overrides": []
       },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto",
         "colorMode": "value",
-        "graphMode": "none"
+        "graphMode": "none",
+        "justifyMode": "center",
+        "wideLayout": true
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(increase(email_to_telegram_retry_attempts_total{result=\"permanently_failed\",env=~\"$env\"}[7d]))",
-          "legendFormat": "permanently failed"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(email_to_telegram_inbound_preflight_total{env=~\"$env\",reason!~\"missing_signature|invalid_signature\"}[24h])) or vector(0)",
+          "legendFormat": "offered",
+          "instant": true,
+          "range": false
         }
-      ]
+      ],
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 9,
+        "y": 0
+      }
     },
     {
       "id": 5,
       "type": "stat",
-      "title": "Deferred deliveries (24h)",
-      "description": "Deliveries pushed to the retry worker because the in-flight cap was reached — backpressure signal.",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "title": "Delivered (24h)",
+      "description": "Mails Telegram accepted in the last 24 h, first attempts plus retries. Compare with Mail offered: a large gap means mail is bounced, deferred or failing.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "decimals": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "orange", "value": 1 }
+              {
+                "color": "text",
+                "value": null
+              }
             ]
-          }
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
         },
         "overrides": []
       },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto",
-        "colorMode": "value",
-        "graphMode": "none"
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "wideLayout": true
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(increase(email_to_telegram_deliveries_deferred_total{env=~\"$env\"}[24h]))",
-          "legendFormat": "deferred"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "(sum(increase(email_to_telegram_delivery_attempts_total{result=\"succeeded\",env=~\"$env\"}[24h])) or vector(0)) + (sum(increase(email_to_telegram_retry_attempts_total{result=\"succeeded\",env=~\"$env\"}[24h])) or vector(0))",
+          "legendFormat": "delivered",
+          "instant": true,
+          "range": false
         }
-      ]
+      ],
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 12,
+        "y": 0
+      }
     },
     {
       "id": 6,
       "type": "stat",
-      "title": "Quota rejections (7d)",
-      "description": "Emails rejected because a user hit plan limits — early signal a free user is outgrowing their plan.",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "title": "Lost (7d)",
+      "description": "Mail closed as permanently failed in 7 days, so the user never got it: a first attempt to a blocked or deleted chat, a retry that ran out of budget, or a raw email that expired before delivery. Red above 0; the Delivery row splits it by stage.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "decimals": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "orange", "value": 1 }
+              {
+                "color": "text",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
             ]
-          }
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
         },
         "overrides": []
       },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto",
         "colorMode": "value",
-        "graphMode": "none"
+        "graphMode": "none",
+        "justifyMode": "center",
+        "wideLayout": true
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(increase(email_to_telegram_quota_rejections_total{env=~\"$env\"}[7d]))",
-          "legendFormat": "quota rejections"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(email_to_telegram_deliveries_lost_total{env=~\"$env\"}[7d])) or vector(0)",
+          "legendFormat": "lost",
+          "instant": true,
+          "range": false
         }
-      ]
+      ],
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 15,
+        "y": 0
+      }
     },
     {
       "id": 7,
-      "type": "timeseries",
-      "title": "Inbound emails per hour (accepted vs rejected)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "type": "stat",
+      "title": "Backlog now",
+      "description": "Delivery logs not delivered or closed yet, and the age of the oldest. A few seconds is normal; the retry worker runs every 5 min. Orange past 10 min, red past 1 h: mail is stuck.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "fieldConfig": {
-        "defaults": { "unit": "short", "min": 0 },
-        "overrides": []
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "orange",
+                "value": 600
+              },
+              {
+                "color": "red",
+                "value": 3600
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pending"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "text"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
-        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "wideLayout": true
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (result) (increase(email_to_telegram_raw_inbound_total{env=~\"$env\"}[1h]))",
-          "legendFormat": "{{result}}"
-        }
-      ]
-    },
-    {
-      "id": 8,
-      "type": "timeseries",
-      "title": "Inbound rejections by reason (per hour)",
-      "description": "raw = /inbound/raw contract failures (signature, replay, schema); preflight = pre-acceptance rejections. A sustained raw-rejection plateau with zero accepted = broken Worker contract.",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
-      "fieldConfig": {
-        "defaults": { "unit": "short", "min": 0 },
-        "overrides": []
-      },
-      "options": {
-        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum by (reason) (increase(email_to_telegram_raw_inbound_total{result=\"rejected\",env=~\"$env\"}[1h]))",
-          "legendFormat": "raw: {{reason}}"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(email_to_telegram_delivery_backlog{env=~\"$env\"})",
+          "legendFormat": "pending",
+          "instant": true,
+          "range": false
         },
         {
           "refId": "B",
-          "expr": "sum by (reason) (increase(email_to_telegram_inbound_preflight_total{result=\"rejected\",env=~\"$env\"}[1h]))",
-          "legendFormat": "preflight: {{reason}}"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(email_to_telegram_delivery_backlog_oldest_age_seconds{env=~\"$env\"})",
+          "legendFormat": "oldest",
+          "instant": true,
+          "range": false
         }
-      ]
+      ],
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 18,
+        "y": 0
+      }
     },
     {
-      "id": 9,
-      "type": "timeseries",
-      "title": "Deliveries per hour by result",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 12 },
+      "id": 8,
+      "type": "stat",
+      "title": "Latency (24h)",
+      "description": "Delivery p95: 95th percentile of receive-to-Telegram time over 24 h. Seconds is normal; orange past 1 min (mail going through the retry worker), red past 15 min.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "fieldConfig": {
-        "defaults": { "unit": "short", "min": 0 },
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "orange",
+                "value": 60
+              },
+              {
+                "color": "red",
+                "value": 900
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1
+        },
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "wideLayout": true
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (result) (increase(email_to_telegram_delivery_attempts_total{env=~\"$env\"}[1h]))",
-          "legendFormat": "{{result}}"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (increase(email_to_telegram_delivery_latency_seconds_bucket{env=~\"$env\"}[24h]))) and on () (sum(increase(email_to_telegram_delivery_latency_seconds_count{env=~\"$env\"}[24h])) > 0)",
+          "legendFormat": "p95",
+          "instant": true,
+          "range": false
         }
-      ]
+      ],
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 21,
+        "y": 0
+      }
+    },
+    {
+      "type": "row",
+      "id": 9,
+      "title": "Inbound",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "panels": []
     },
     {
       "id": 10,
       "type": "timeseries",
-      "title": "Delivery success rate (1h window)",
-      "description": "Gaps mean no delivery attempts in the window — that is idle, not failure. (The old panel clamped the denominator and drew a misleading 0% while idle.)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 12 },
+      "title": "Preflight decisions per hour",
+      "description": "What the Worker asked before taking a mail. accepted: uploaded next; deferred: 429 over the alias hourly cap, the sender retries later (not a loss); bounced: refused with a permanent 550. Bad: bounced dominating, or nothing accepted while mail is expected.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "fieldConfig": {
         "defaults": {
-          "unit": "percentunit",
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "pointSize": 4,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "barAlignment": -1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
           "min": 0,
-          "max": 1,
-          "custom": { "spanNulls": false }
+          "decimals": 0
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "accepted"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "deferred"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bounced"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "single", "sort": "none" }
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["sum"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(email_to_telegram_delivery_attempts_total{result=\"succeeded\",env=~\"$env\"}[1h])) / sum(rate(email_to_telegram_delivery_attempts_total{env=~\"$env\"}[1h]))",
-          "legendFormat": "success rate"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(email_to_telegram_inbound_preflight_total{result=\"accepted\",env=~\"$env\"}[$__interval]))",
+          "legendFormat": "accepted"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(email_to_telegram_inbound_preflight_total{result=\"deferred\",env=~\"$env\"}[$__interval]))",
+          "legendFormat": "deferred"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(email_to_telegram_inbound_preflight_total{result=\"rejected\",env=~\"$env\"}[$__interval]))",
+          "legendFormat": "bounced"
         }
-      ]
+      ],
+      "interval": "1h",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      }
     },
     {
       "id": 11,
       "type": "timeseries",
-      "title": "Retry attempts per hour by result",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 12 },
+      "title": "Preflight bounces by reason per hour",
+      "description": "Why preflight refused mail (the sender gets a permanent bounce). monthly_email_limit: a user over the monthly cap; sender_not_allowed: an alias with no allow rules; alias_not_found: unknown address. Older data also counts hourly-cap deferrals here as rate_limited.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "fieldConfig": {
-        "defaults": { "unit": "short", "min": 0 },
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "pointSize": 4,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "barAlignment": -1
+          },
+          "color": {
+            "mode": "shades",
+            "fixedColor": "red"
+          },
+          "noValue": "No bounces in this range",
+          "min": 0,
+          "decimals": 0
+        },
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["sum"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (result) (increase(email_to_telegram_retry_attempts_total{env=~\"$env\"}[1h]))",
-          "legendFormat": "{{result}}"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (reason) (increase(email_to_telegram_inbound_preflight_total{result=\"rejected\",env=~\"$env\"}[$__interval])) > 0",
+          "legendFormat": "{{reason}}"
         }
-      ]
+      ],
+      "interval": "1h",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      }
     },
     {
       "id": 12,
       "type": "timeseries",
-      "title": "Telegram send failures per hour by error_class",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "title": "Raw uploads per hour",
+      "description": "Mail the Worker uploaded after preflight accepted it. accepted: stored and queued for delivery. Bad: rejected climbing, or nothing accepted while preflight accepts (the Worker to app contract is broken).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "fieldConfig": {
-        "defaults": { "unit": "short", "min": 0 },
-        "overrides": []
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "pointSize": 4,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "barAlignment": -1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "accepted"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "rejected"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
-        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["sum"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (error_class) (increase(email_to_telegram_telegram_send_failures_total{env=~\"$env\"}[1h]))",
-          "legendFormat": "{{error_class}}"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(email_to_telegram_raw_inbound_total{result=\"accepted\",env=~\"$env\"}[$__interval]))",
+          "legendFormat": "accepted"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(email_to_telegram_raw_inbound_total{result=\"rejected\",env=~\"$env\"}[$__interval]))",
+          "legendFormat": "rejected"
         }
-      ]
+      ],
+      "interval": "1h",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 13
+      }
     },
     {
       "id": 13,
       "type": "timeseries",
-      "title": "Quota rejections per hour by reason",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "title": "Raw rejections by reason per hour",
+      "description": "Why an uploaded mail was not queued. sender_not_allowed / sender_auth_failed: failed the alias allow rules; duplicate: already received. rate_limited (kept for recovery) and sender_auth_temperror (503, the sender retries) are not losses. Any *_signature reason: the Worker and app disagree on the signing secret or version.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "fieldConfig": {
-        "defaults": { "unit": "short", "min": 0 },
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "pointSize": 4,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "barAlignment": -1
+          },
+          "color": {
+            "mode": "shades",
+            "fixedColor": "red"
+          },
+          "noValue": "No rejections in this range",
+          "min": 0,
+          "decimals": 0
+        },
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["sum"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (reason) (increase(email_to_telegram_quota_rejections_total{env=~\"$env\"}[1h]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (reason) (increase(email_to_telegram_raw_inbound_total{result=\"rejected\",env=~\"$env\"}[$__interval])) > 0",
           "legendFormat": "{{reason}}"
         }
-      ]
+      ],
+      "interval": "1h",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      }
     },
     {
+      "type": "row",
       "id": 14,
-      "type": "timeseries",
-      "title": "HTTP requests rate by status_class",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
-      "fieldConfig": {
-        "defaults": { "unit": "reqps" },
-        "overrides": []
+      "title": "Delivery",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 21
       },
-      "options": {
-        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum by (status_class) (rate(email_to_telegram_http_requests_total{env=~\"$env\"}[$__rate_interval]))",
-          "legendFormat": "{{status_class}}"
-        }
-      ]
+      "panels": []
     },
     {
       "id": 15,
       "type": "timeseries",
-      "title": "HTTP p95 latency by route (probe routes excluded)",
-      "description": "Excludes /healthz and /metrics so scrape/probe traffic does not mask real endpoint latency.",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "title": "Deliveries per hour",
+      "description": "Telegram sends by path and result. A failed first attempt goes to the retry worker; retry permanently_failed gave up (see Lost mail). Bad: failures rising while successes drop.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "fieldConfig": {
-        "defaults": { "unit": "s" },
-        "overrides": []
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "pointSize": 4,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "barAlignment": -1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "first attempt succeeded"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "first attempt failed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "retry succeeded"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "light-green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "retry failed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "retry permanently_failed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
-        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["max"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(email_to_telegram_http_request_duration_seconds_bucket{env=~\"$env\",route!~\"/healthz|/metrics\"}[$__rate_interval])))",
-          "legendFormat": "{{route}}"
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["sum"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
         }
-      ]
-    },
-    {
-      "id": 16,
-      "type": "stat",
-      "title": "Users (total)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 6, "w": 4, "x": 0, "y": 36 },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "textMode": "auto",
-        "colorMode": "value",
-        "graphMode": "area"
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(email_to_telegram_users{state=\"total\",env=~\"$env\"})",
-          "legendFormat": "users"
-        }
-      ]
-    },
-    {
-      "id": 18,
-      "type": "bargauge",
-      "title": "Activation funnel",
-      "description": "signed up → created an alias (undeleted, incl. paused) → mail accepted this month. Note: 'accepted' counts at acceptance into processing; a later Telegram send failure still counts (watch the perm-failed retries stat for that).",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 6, "w": 10, "x": 4, "y": 36 },
-      "fieldConfig": {
-        "defaults": { "unit": "short", "decimals": 0, "min": 0 },
-        "overrides": []
-      },
-      "options": {
-        "displayMode": "gradient",
-        "orientation": "horizontal",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "showUnfilled": true
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum(email_to_telegram_users{state=\"total\",env=~\"$env\"})",
-          "legendFormat": "signed up"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (result) (increase(email_to_telegram_delivery_attempts_total{env=~\"$env\"}[$__interval]))",
+          "legendFormat": "first attempt {{result}}"
         },
         {
           "refId": "B",
-          "expr": "sum(email_to_telegram_users{state=\"with_alias\",env=~\"$env\"})",
-          "legendFormat": "created an alias"
-        },
-        {
-          "refId": "C",
-          "expr": "sum(email_to_telegram_users{state=\"accepted_mail_this_month\",env=~\"$env\"})",
-          "legendFormat": "mail accepted this month"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (result) (increase(email_to_telegram_retry_attempts_total{env=~\"$env\"}[$__interval]))",
+          "legendFormat": "retry {{result}}"
         }
-      ]
+      ],
+      "interval": "1h",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 22
+      }
     },
     {
-      "id": 19,
-      "type": "bargauge",
-      "title": "Active users by plan",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 6, "w": 10, "x": 14, "y": 36 },
+      "id": 16,
+      "type": "timeseries",
+      "title": "Lost mail per hour by stage",
+      "description": "Mail closed as permanently failed, so the user never got it. initial: first attempt to a blocked or deleted chat; retry: the retry worker gave up; cleanup: the raw email expired before any delivery succeeded. Bad: any bar, and cleanup bars most of all (Telegram was unreachable for the whole raw-email TTL).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "fieldConfig": {
-        "defaults": { "unit": "short" },
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "pointSize": 4,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "barAlignment": -1
+          },
+          "color": {
+            "mode": "shades",
+            "fixedColor": "red"
+          },
+          "noValue": "No lost mail in this range",
+          "min": 0,
+          "decimals": 0
+        },
         "overrides": []
       },
       "options": {
-        "displayMode": "gradient",
-        "orientation": "horizontal",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "showUnfilled": true
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["sum"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (plan) (email_to_telegram_active_users_by_plan{env=~\"$env\"})",
-          "legendFormat": "{{plan}}"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (stage) (increase(email_to_telegram_deliveries_lost_total{env=~\"$env\"}[$__interval])) > 0",
+          "legendFormat": "{{stage}}"
         }
-      ]
+      ],
+      "interval": "1h",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 22
+      }
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Delivery latency p50 / p95 (1h window)",
+      "description": "Time from receiving a mail to Telegram accepting its first message, over a sliding hour (log scale). A few seconds is normal; minutes mean mail went through the retry worker. Gaps: no deliveries in that hour.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "auto",
+            "pointSize": 4,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "scaleDistribution": {
+              "type": "log",
+              "log": 10
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p50"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["mean", "max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(email_to_telegram_delivery_latency_seconds_bucket{env=~\"$env\"}[1h])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(email_to_telegram_delivery_latency_seconds_bucket{env=~\"$env\"}[1h])))",
+          "legendFormat": "p95"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 22
+      }
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "First-attempt success rate per hour",
+      "description": "Share of first delivery attempts Telegram accepted in each hour. A missing bar means no attempts that hour (idle, not failure). Bad: bars below ~95%, or several short ones in a row.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "pointSize": 4,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "barAlignment": -1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "noValue": "No first attempts in this range",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "success rate"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["min"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(email_to_telegram_delivery_attempts_total{result=\"succeeded\",env=~\"$env\"}[$__interval])) / sum(increase(email_to_telegram_delivery_attempts_total{env=~\"$env\"}[$__interval]))",
+          "legendFormat": "success rate"
+        }
+      ],
+      "interval": "1h",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 30
+      }
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "Delivery backlog",
+      "description": "Delivery logs not in a final state, by status (stacked), and the oldest one's age (dashed, right axis). received / processing clear in seconds; failed / retrying wait for the retry worker. Bad: a count or age that keeps growing.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "auto",
+            "pointSize": 4,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "oldest age"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [10, 10]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (state) (email_to_telegram_delivery_backlog{env=~\"$env\"})",
+          "legendFormat": "{{state}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(email_to_telegram_delivery_backlog_oldest_age_seconds{env=~\"$env\"})",
+          "legendFormat": "oldest age"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 30
+      }
     },
     {
       "id": 20,
       "type": "timeseries",
-      "title": "Delivered emails per day (30d)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 42 },
-      "timeFrom": "30d",
-      "hideTimeOverride": false,
+      "title": "Telegram send failures per hour by class",
+      "description": "Failed Telegram sends (first attempts, retries, attachment fallbacks). forbidden / chat_not_found: the user blocked the bot or deleted the chat; flood_wait / timeout / network / server: Telegram side, retried; bad_request: a message Telegram refuses. Bad: any class climbing.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "decimals": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "pointSize": 4,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "barAlignment": -1
+          },
+          "color": {
+            "mode": "shades",
+            "fixedColor": "orange"
+          },
+          "noValue": "No send failures in this range",
           "min": 0,
-          "custom": { "drawStyle": "bars", "fillOpacity": 80 }
+          "decimals": 0
         },
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "single", "sort": "none" }
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["sum"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(increase(email_to_telegram_delivery_attempts_total{result=\"succeeded\",env=~\"$env\"}[1d]))",
-          "legendFormat": "delivered / day"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (error_class) (increase(email_to_telegram_telegram_send_failures_total{env=~\"$env\"}[$__interval])) > 0",
+          "legendFormat": "{{error_class}}"
         }
-      ]
+      ],
+      "interval": "1h",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 30
+      }
     },
     {
       "id": 21,
       "type": "timeseries",
-      "title": "Users total (30d trend)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 42 },
-      "timeFrom": "30d",
-      "hideTimeOverride": false,
+      "title": "Rich vs classic fallback per hour",
+      "description": "Messages that carry rich formatting (not every mail does). success: sent rich; fallback: Telegram refused the rich message and the classic one went out; disabled: rich messages are off or unavailable. Bad: fallback rising against success.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "fieldConfig": {
-        "defaults": { "unit": "short", "decimals": 0, "min": 0 },
-        "overrides": []
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "pointSize": 4,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "barAlignment": -1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "success"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "fallback"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "disabled"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "text"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["sum"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(email_to_telegram_users{state=\"total\",env=~\"$env\"})",
-          "legendFormat": "total"
-        },
-        {
-          "refId": "B",
-          "expr": "sum(email_to_telegram_users{state=\"with_alias\",env=~\"$env\"})",
-          "legendFormat": "with alias"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (result) (increase(email_to_telegram_rich_messages_total{env=~\"$env\"}[$__interval]))",
+          "legendFormat": "{{result}}"
         }
-      ]
+      ],
+      "interval": "1h",
+      "gridPos": {
+        "h": 7,
+        "w": 10,
+        "x": 0,
+        "y": 38
+      }
     },
     {
       "id": 22,
       "type": "stat",
-      "title": "Chats (active)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 50 },
+      "title": "Backpressure: sent to retry worker (24h)",
+      "description": "Accepted mail handed straight to the retry worker because MAX_INFLIGHT_DELIVERIES was reached. Not the preflight deferral (that mail never reached the app); it is still delivered, minutes later. Bad: a steady non-zero count.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.5
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto",
         "colorMode": "value",
-        "graphMode": "area"
+        "graphMode": "none",
+        "justifyMode": "center",
+        "wideLayout": true
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(email_to_telegram_chats{state=\"active\",env=~\"$env\"})",
-          "legendFormat": "active chats"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(email_to_telegram_deliveries_deferred_total{env=~\"$env\"}[24h])) or vector(0)",
+          "legendFormat": "sent to retry worker",
+          "instant": true,
+          "range": false
         }
-      ]
+      ],
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 10,
+        "y": 38
+      }
     },
     {
       "id": 23,
-      "type": "stat",
-      "title": "Attachments storage",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 50 },
+      "type": "timeseries",
+      "title": "Backpressure per hour",
+      "description": "Same signal per hour: mail queued past the in-flight delivery cap and left for the retry worker. Bad: bursts that line up with latency spikes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "fieldConfig": {
-        "defaults": { "unit": "bytes", "decimals": 2 },
-        "overrides": []
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "pointSize": 4,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "barAlignment": -1,
+            "axisSoftMax": 5
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sent to retry worker"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "textMode": "auto",
-        "colorMode": "value",
-        "graphMode": "area"
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["sum"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "email_to_telegram_attachments_stored_bytes{env=~\"$env\"}",
-          "legendFormat": "stored"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(email_to_telegram_deliveries_deferred_total{env=~\"$env\"}[$__interval]))",
+          "legendFormat": "sent to retry worker"
         }
-      ]
+      ],
+      "interval": "1h",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 38
+      }
     },
     {
+      "type": "row",
       "id": 24,
-      "type": "bargauge",
-      "title": "Aliases by status",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 5, "w": 12, "x": 12, "y": 50 },
-      "fieldConfig": {
-        "defaults": { "unit": "short", "decimals": 0, "min": 0 },
-        "overrides": []
+      "title": "HTTP",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 45
       },
-      "options": {
-        "displayMode": "gradient",
-        "orientation": "horizontal",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "showUnfilled": true
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum by (status) (email_to_telegram_aliases{env=~\"$env\"})",
-          "legendFormat": "{{status}}"
-        }
-      ]
+      "panels": []
     },
     {
       "id": 25,
-      "type": "logs",
-      "title": "App error logs (staging only — prod containers are not shipped to Loki)",
-      "description": "Pino level >= 50 (error, fatal) from the staging app container. Promtail runs only on the staging VM with a static env=staging label, so this panel never shows prod.",
-      "datasource": { "type": "loki", "uid": "loki" },
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 55 },
+      "type": "timeseries",
+      "title": "Requests per hour by status class",
+      "description": "All app routes except /healthz and /metrics (probe and scrape traffic). 4xx on the unknown route is internet scanning. Bad: any 5xx.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "pointSize": 4,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "barAlignment": -1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "2xx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "3xx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "4xx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "5xx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
       "options": {
-        "showTime": true,
-        "showLabels": false,
-        "showCommonLabels": false,
-        "wrapLogMessage": true,
-        "prettifyLogMessage": false,
-        "enableLogDetails": true,
-        "dedupStrategy": "none",
-        "sortOrder": "Descending"
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["sum"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "{compose_project=\"email-to-telegram\", service=\"app\"} | json | level >= 50"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (status_class) (increase(email_to_telegram_http_requests_total{env=~\"$env\",route!~\"/healthz|/metrics\"}[$__interval]))",
+          "legendFormat": "{{status_class}}"
+        }
+      ],
+      "interval": "1h",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 46
+      }
+    },
+    {
+      "id": 26,
+      "type": "timeseries",
+      "title": "Requests per hour by route",
+      "description": "Same traffic split by route, probes excluded. /inbound/preflight and /inbound/raw track mail volume; unknown is unmatched paths (scanners). Bad: a route that should be busy dropping to zero.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "pointSize": 4,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "barAlignment": -1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["sum"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (route) (increase(email_to_telegram_http_requests_total{env=~\"$env\",route!~\"/healthz|/metrics\"}[$__interval])) > 0",
+          "legendFormat": "{{route}}"
+        }
+      ],
+      "interval": "1h",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 46
+      }
+    },
+    {
+      "id": 27,
+      "type": "timeseries",
+      "title": "p95 latency by route (1h window)",
+      "description": "95th percentile request time per route over a sliding hour, probes excluded. /inbound/raw includes storing the mail. Bad: seconds on /inbound/preflight, the Worker waits on it while the sender is connected.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "auto",
+            "pointSize": 4,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(email_to_telegram_http_request_duration_seconds_bucket{env=~\"$env\",route!~\"/healthz|/metrics\"}[1h])))",
+          "legendFormat": "{{route}}"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 46
+      }
+    },
+    {
+      "type": "row",
+      "id": 28,
+      "title": "Logs (prod logs not shipped to Loki yet)",
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 54
+      },
+      "panels": [
+        {
+          "id": 29,
+          "type": "logs",
+          "title": "App error logs",
+          "description": "Pino error and fatal lines from the app container of the selected env (Loki). Only staging ships logs today; prod stays empty until promtail runs there. Bad: anything here.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "options": {
+            "showTime": true,
+            "showLabels": false,
+            "showCommonLabels": false,
+            "wrapLogMessage": true,
+            "prettifyLogMessage": false,
+            "enableLogDetails": true,
+            "dedupStrategy": "none",
+            "sortOrder": "Descending"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "{compose_project=\"email-to-telegram\", service=\"app\", env=\"$env\"} | json | level >= 50"
+            }
+          ],
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 55
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 30,
+      "title": "Host & database (needs node_exporter and postgres_exporter)",
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 55
+      },
+      "panels": [
+        {
+          "id": 31,
+          "type": "stat",
+          "title": "Disk free (/)",
+          "description": "Free space on the root filesystem (node_exporter). Orange under 20%, red under 10%: attachments, raw mail and backups soon stop being written.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 0
+                  },
+                  {
+                    "color": "orange",
+                    "value": 10
+                  },
+                  {
+                    "color": "green",
+                    "value": 20
+                  }
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              },
+              "decimals": 1
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": ["lastNotNull"],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "auto",
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "100 * min(node_filesystem_avail_bytes{job=\"node\",env=~\"$env\",mountpoint=\"/\"} / node_filesystem_size_bytes{job=\"node\",env=~\"$env\",mountpoint=\"/\"})",
+              "legendFormat": "free",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "gridPos": {
+            "h": 4,
+            "w": 3,
+            "x": 0,
+            "y": 56
+          }
+        },
+        {
+          "id": 32,
+          "type": "stat",
+          "title": "RAM available",
+          "description": "MemAvailable on the host. Orange under 500 MB, red under 200 MB: the kernel starts killing processes.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 0
+                  },
+                  {
+                    "color": "orange",
+                    "value": 209715200
+                  },
+                  {
+                    "color": "green",
+                    "value": 524288000
+                  }
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              },
+              "decimals": 1
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": ["lastNotNull"],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "auto",
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "min(node_memory_MemAvailable_bytes{job=\"node\",env=~\"$env\"})",
+              "legendFormat": "available",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "gridPos": {
+            "h": 4,
+            "w": 3,
+            "x": 3,
+            "y": 56
+          }
+        },
+        {
+          "id": 33,
+          "type": "stat",
+          "title": "Load (1m)",
+          "description": "1-minute load average. Bad: above the host's CPU count for a long stretch.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              },
+              "decimals": 2
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": ["lastNotNull"],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "auto",
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "max(node_load1{job=\"node\",env=~\"$env\"})",
+              "legendFormat": "load1",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "gridPos": {
+            "h": 4,
+            "w": 3,
+            "x": 6,
+            "y": 56
+          }
+        },
+        {
+          "id": 34,
+          "type": "stat",
+          "title": "Swap used",
+          "description": "Swap in use on the host. Bad: steadily growing, the host is short of memory.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              },
+              "decimals": 1
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": ["lastNotNull"],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "auto",
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "max(node_memory_SwapTotal_bytes{job=\"node\",env=~\"$env\"} - node_memory_SwapFree_bytes{job=\"node\",env=~\"$env\"})",
+              "legendFormat": "swap used",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "gridPos": {
+            "h": 4,
+            "w": 3,
+            "x": 9,
+            "y": 56
+          }
+        },
+        {
+          "id": 35,
+          "type": "stat",
+          "title": "Postgres up",
+          "description": "postgres_exporter can query the database. DOWN: the database is unreachable and the app cannot accept or deliver mail.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 0
+                  },
+                  {
+                    "color": "green",
+                    "value": 1
+                  }
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              },
+              "decimals": 0,
+              "mappings": [
+                {
+                  "type": "value",
+                  "options": {
+                    "0": {
+                      "text": "DOWN",
+                      "color": "red"
+                    },
+                    "1": {
+                      "text": "UP",
+                      "color": "green"
+                    }
+                  }
+                }
+              ]
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": ["lastNotNull"],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "auto",
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "min(pg_up{job=\"postgres\",env=~\"$env\"})",
+              "legendFormat": "pg_up",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "gridPos": {
+            "h": 4,
+            "w": 3,
+            "x": 12,
+            "y": 56
+          }
+        },
+        {
+          "id": 36,
+          "type": "stat",
+          "title": "DB connections",
+          "description": "Backends connected to the emailtelegram database. Bad: near the server's max_connections, new queries start failing.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              },
+              "decimals": 0
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": ["lastNotNull"],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "auto",
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum(pg_stat_database_numbackends{job=\"postgres\",env=~\"$env\",datname=\"emailtelegram\"})",
+              "legendFormat": "connections",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "gridPos": {
+            "h": 4,
+            "w": 3,
+            "x": 15,
+            "y": 56
+          }
+        },
+        {
+          "id": 37,
+          "type": "stat",
+          "title": "DB size",
+          "description": "On-disk size of the emailtelegram database. Bad: fast growth (retention jobs not running).",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              },
+              "decimals": 1
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": ["lastNotNull"],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "auto",
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "max(pg_database_size_bytes{job=\"postgres\",env=~\"$env\",datname=\"emailtelegram\"})",
+              "legendFormat": "size",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "gridPos": {
+            "h": 4,
+            "w": 3,
+            "x": 18,
+            "y": 56
+          }
+        },
+        {
+          "id": 38,
+          "type": "stat",
+          "title": "Backup age",
+          "description": "Time since the last successful off-site backup (node_exporter textfile collector). Red over 30 h: a nightly run failed.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 108000
+                  }
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              },
+              "decimals": 1
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": ["lastNotNull"],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "auto",
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "time() - max(etg_offsite_backup_last_success_timestamp_seconds{env=~\"$env\"})",
+              "legendFormat": "age",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "gridPos": {
+            "h": 4,
+            "w": 3,
+            "x": 21,
+            "y": 56
+          }
+        },
+        {
+          "id": 39,
+          "type": "timeseries",
+          "title": "Root filesystem free (%)",
+          "description": "Free space on / over time. Bad: a steady downward slope; extrapolate it to see when the disk fills.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 1,
+                "showPoints": "auto",
+                "pointSize": 4,
+                "spanNulls": false,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "min": 0,
+              "max": 100
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "100 * min(node_filesystem_avail_bytes{job=\"node\",env=~\"$env\",mountpoint=\"/\"} / node_filesystem_size_bytes{job=\"node\",env=~\"$env\",mountpoint=\"/\"})",
+              "legendFormat": "free"
+            }
+          ],
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 0,
+            "y": 60
+          }
+        },
+        {
+          "id": 40,
+          "type": "timeseries",
+          "title": "Memory available",
+          "description": "MemAvailable over time. Bad: a downward trend that does not recover (a leak) or dips under ~200 MB.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 1,
+                "showPoints": "auto",
+                "pointSize": 4,
+                "spanNulls": false,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "min": 0
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "min(node_memory_MemAvailable_bytes{job=\"node\",env=~\"$env\"})",
+              "legendFormat": "available"
+            }
+          ],
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 8,
+            "y": 60
+          }
+        },
+        {
+          "id": 41,
+          "type": "timeseries",
+          "title": "Load (1m)",
+          "description": "1-minute load average over time. Bad: long stretches above the CPU count.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 1,
+                "showPoints": "auto",
+                "pointSize": 4,
+                "spanNulls": false,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "min": 0,
+              "decimals": 2
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "max(node_load1{job=\"node\",env=~\"$env\"})",
+              "legendFormat": "load1"
+            }
+          ],
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 16,
+            "y": 60
+          }
         }
       ]
     }
