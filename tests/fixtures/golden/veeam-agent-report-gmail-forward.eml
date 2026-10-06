@@ -1,0 +1,338 @@
+MIME-Version: 1.0
+Date: Tue, 6 Oct 2026 00:06:13 +0200
+Content-Type: multipart/alternative; boundary="0000000000001c43dd065d1f1798"
+From: Example Forwarder <veeam@example.com>
+To: alias@example.net
+Subject: Fwd: [Success] WIN-EXAMPLE01 - BackUp-base - Monday, 05 October
+ 2026 21:03:35
+Message-ID: <CAH4VShaRpadG7dLzLjfAvKZnn2syCbaViJHeKu0FHC47Ct1FRg@example.com>
+In-Reply-To: <CAH4VShZgn1-=NupA5Y77wFi9WGYuJLxdMffTz3tLBvVkCzc=aQ@example.com>
+References: <CAH4VShZgn1-=NupA5Y77wFi9WGYuJLxdMffTz3tLBvVkCzc=aQ@example.com>
+
+--0000000000001c43dd065d1f1798
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+---------- Forwarded message ---------
+=D0=9E=D1=82: <veeam@example.com>
+Date: =D0=BF=D0=BD, 5 =D0=BE=D0=BA=D1=82. 2026=E2=80=AF=D0=B3. =D0=B2 20:03
+Subject: [Success] WIN-EXAMPLE01 - BackUp-base - Monday, 05 October 2026
+21:03:35
+To: <alerts@example.net>
+
+
+Agent Backup job: BackUp-base
+Veeam Agent for Microsoft Windows
+Success
+Monday, 05 October 2026 21:00:00
+*Success* 1 *Start time* 21:00:00 *Total size* 307,2 GB *Backup size* 1,4 G=
+B
+
+*Warning* 0 *End time* 21:03:35 *Data read* 28,5 GB *Dedupe* 1,0x
+*Error* 0 *Duration* 0:03:34 *Transferred* 28,5 GB *Compression* 3,2x
+Details
+*Name* *Status* *Start time* *End time* *Size* *Read* *Transferred*
+*Duration* *Details*
+WIN-EXAMPLE01 Success 21:00:02 21:03:35 307,2 GB 28,5 GB 28,5 GB 0:03:32
+
+Veeam Agent for Microsoft Windows 13.1.1.700
+
+--0000000000001c43dd065d1f1798
+Content-Type: text/html; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+<div dir=3D"ltr"><br><br><div class=3D"gmail_quote gmail_quote_container"><=
+div dir=3D"ltr" class=3D"gmail_attr">---------- Forwarded message ---------=
+<br>=D0=9E=D1=82: <span dir=3D"auto">&lt;<a href=3D"mailto:veeam@example.co=
+m">veeam@example.com</a>&gt;</span><br>Date: =D0=BF=D0=BD, 5 =D0=BE=D0=BA=
+=D1=82. 2026=E2=80=AF=D0=B3. =D0=B2 20:03<br>Subject: [Success] WIN-EXAMPLE=
+01 - BackUp-base - Monday, 05 October 2026 21:03:35<br>To:  &lt;<a href=3D"=
+mailto:alerts@example.net">alerts@example.net</a>&gt;<br></div><br><br>
+ =20
+   =20
+   =20
+ =20
+  <div>
+    <table cellspacing=3D"0" cellpadding=3D"0" width=3D"100%" border=3D"0" =
+style=3D"border-collapse:collapse">
+      <tbody><tr>
+        <td style=3D"border:none;padding:0px;font-family:Tahoma;font-size:1=
+2px">
+          <table cellspacing=3D"0" cellpadding=3D"0" width=3D"100%" border=
+=3D"0" style=3D"border-collapse:collapse">
+            <tbody><tr style=3D"height:70px">
+              <td style=3D"width:80%;border:none;background-color:#00b050;c=
+olor:White;font-weight:bold;font-size:16px;height:70px;vertical-align:botto=
+m;padding:0 0 17px 15px;font-family:Tahoma">Agent Backup job: BackUp-base <=
+div style=3D"margin-top:5px;font-size:12px"> Veeam Agent for Microsoft Wind=
+ows </div>
+              </td>
+              <td style=3D"background-color:#00b050;color:White;font-weight=
+:bold;font-size:16px;height:70px;vertical-align:bottom;padding:0 0 17px 15p=
+x;font-family:Tahoma;padding-bottom:42px">Success</td>
+            </tr>
+            <tr>
+              <td colspan=3D"2" style=3D"border:none;padding:0px;font-famil=
+y:Tahoma;font-size:12px">
+                <table width=3D"100%" cellspacing=3D"0" cellpadding=3D"0" b=
+order=3D"0" style=3D"margin:0px;border-collapse:collapse">
+                  <tbody><tr style=3D"height:17px">
+                    <td colspan=3D"9" style=3D"border-style:solid;border-co=
+lor:#a7a9ac;border-width:1px 1px 0 1px;height:35px;background-color:#f3f4f4=
+;font-size:16px;vertical-align:middle;padding:5px 0 0 15px;color:#626365;fo=
+nt-family:Tahoma"><span>Monday, 05 October 2026 21:00:00</span></td>
+                  </tr>
+                  <tr style=3D"height:17px">
+                    <td nowrap style=3D"width:1%;padding:2px 3px 2px 3px;ve=
+rtical-align:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px=
+"><b>Success</b></td>
+                    <td nowrap style=3D"width:85px;padding:2px 3px 2px 3px;=
+vertical-align:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12=
+px">1</td>
+                    <td nowrap style=3D"width:85px;padding:2px 3px 2px 3px;=
+vertical-align:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12=
+px"><b>Start time</b></td>
+                    <td nowrap style=3D"width:85px;padding:2px 3px 2px 3px;=
+vertical-align:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12=
+px">21:00:00</td>
+                    <td nowrap style=3D"width:85px;padding:2px 3px 2px 3px;=
+vertical-align:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12=
+px"><b>Total size</b></td>
+                    <td nowrap style=3D"width:85px;padding:2px 3px 2px 3px;=
+vertical-align:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12=
+px">307,2 GB</td>
+                    <td nowrap style=3D"width:85px;padding:2px 3px 2px 3px;=
+vertical-align:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12=
+px"><b>Backup size</b></td>
+                    <td nowrap style=3D"width:85px;padding:2px 3px 2px 3px;=
+vertical-align:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12=
+px">1,4 GB</td>
+                    <td rowspan=3D"3" style=3D"border:1px solid #a7a9ac;fon=
+t-family:Tahoma;font-size:12px;vertical-align:top"><span style=3D"font-size=
+:10px">=C2=A0</span></td>
+                  </tr>
+                  <tr style=3D"height:17px">
+                    <td nowrap style=3D"padding:2px 3px 2px 3px;vertical-al=
+ign:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px"><b>Warn=
+ing</b></td>
+                    <td style=3D"padding:2px 3px 2px 3px;vertical-align:top=
+;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px">0</td>
+                    <td nowrap style=3D"padding:2px 3px 2px 3px;vertical-al=
+ign:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px"><b>End =
+time</b></td>
+                    <td nowrap style=3D"padding:2px 3px 2px 3px;vertical-al=
+ign:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px">21:03:3=
+5</td>
+                    <td nowrap style=3D"padding:2px 3px 2px 3px;vertical-al=
+ign:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px"><b>Data=
+ read</b></td>
+                    <td nowrap style=3D"padding:2px 3px 2px 3px;vertical-al=
+ign:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px">28,5 GB=
+</td>
+                    <td nowrap style=3D"padding:2px 3px 2px 3px;vertical-al=
+ign:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px"><b>Dedu=
+pe</b></td>
+                    <td nowrap style=3D"padding:2px 3px 2px 3px;vertical-al=
+ign:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px">1,0x</t=
+d>
+                  </tr>
+                  <tr style=3D"height:17px">
+                    <td nowrap style=3D"padding:2px 3px 2px 3px;vertical-al=
+ign:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px"><b>Erro=
+r</b></td>
+                    <td style=3D"padding:2px 3px 2px 3px;vertical-align:top=
+;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px">0</td>
+                    <td nowrap style=3D"padding:2px 3px 2px 3px;vertical-al=
+ign:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px"><b>Dura=
+tion</b></td>
+                    <td nowrap style=3D"padding:2px 3px 2px 3px;vertical-al=
+ign:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px">0:03:34
+</td>
+                    <td nowrap style=3D"padding:2px 3px 2px 3px;vertical-al=
+ign:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px"><b>Tran=
+sferred</b></td>
+                    <td nowrap style=3D"padding:2px 3px 2px 3px;vertical-al=
+ign:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px">28,5 GB=
+</td>
+                    <td nowrap style=3D"padding:2px 3px 2px 3px;vertical-al=
+ign:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px"><b>Comp=
+ression</b></td>
+                    <td nowrap style=3D"padding:2px 3px 2px 3px;vertical-al=
+ign:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px">3,2x</t=
+d>
+                  </tr>
+                  <tr style=3D"height:17px">
+                    <td colspan=3D"9" nowrap style=3D"height:35px;backgroun=
+d-color:#f3f4f4;font-size:16px;vertical-align:middle;padding:5px 0 0 15px;c=
+olor:#626365;font-family:Tahoma;border:1px solid #a7a9ac">
+                            Details
+                          </td>
+                  </tr>
+                  <tr style=3D"height:23px">
+                    <td nowrap style=3D"background-color:#e3e3e3;padding:2p=
+x 3px 2px 3px;vertical-align:top;border:1px solid #a7a9ac;border-top:none;f=
+ont-family:Tahoma;font-size:12px"><b>Name</b></td>
+                    <td nowrap style=3D"background-color:#e3e3e3;padding:2p=
+x 3px 2px 3px;vertical-align:top;border:1px solid #a7a9ac;border-top:none;f=
+ont-family:Tahoma;font-size:12px"><b>Status</b></td>
+                    <td nowrap style=3D"background-color:#e3e3e3;padding:2p=
+x 3px 2px 3px;vertical-align:top;border:1px solid #a7a9ac;border-top:none;f=
+ont-family:Tahoma;font-size:12px"><b>Start time</b></td>
+                    <td nowrap style=3D"background-color:#e3e3e3;padding:2p=
+x 3px 2px 3px;vertical-align:top;border:1px solid #a7a9ac;border-top:none;f=
+ont-family:Tahoma;font-size:12px"><b>End time</b></td>
+                    <td nowrap style=3D"background-color:#e3e3e3;padding:2p=
+x 3px 2px 3px;vertical-align:top;border:1px solid #a7a9ac;border-top:none;f=
+ont-family:Tahoma;font-size:12px"><b>Size</b></td>
+                    <td nowrap style=3D"background-color:#e3e3e3;padding:2p=
+x 3px 2px 3px;vertical-align:top;border:1px solid #a7a9ac;border-top:none;f=
+ont-family:Tahoma;font-size:12px"><b>Read</b></td>
+                    <td nowrap style=3D"width:1%;background-color:#e3e3e3;p=
+adding:2px 3px 2px 3px;vertical-align:top;border:1px solid #a7a9ac;border-t=
+op:none;font-family:Tahoma;font-size:12px"><b>Transferred</b></td>
+                    <td nowrap style=3D"background-color:#e3e3e3;padding:2p=
+x 3px 2px 3px;vertical-align:top;border:1px solid #a7a9ac;border-top:none;f=
+ont-family:Tahoma;font-size:12px"><b>Duration</b></td>
+                    <td style=3D"background-color:#e3e3e3;padding:2px 3px 2=
+px 3px;vertical-align:top;border:1px solid #a7a9ac;border-top:none;font-fam=
+ily:Tahoma;font-size:12px"><b>Details</b></td>
+                  </tr>
+                  <tr style=3D"height:17px">
+                    <td nowrap style=3D"padding:2px 3px 2px 3px;vertical-al=
+ign:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px">WIN-EXA=
+MPLE01</td>
+                    <td nowrap style=3D"padding:2px 3px 2px 3px;vertical-al=
+ign:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px"><span s=
+tyle=3D"color:#00b050">Success</span></td>
+                    <td nowrap style=3D"padding:2px 3px 2px 3px;vertical-al=
+ign:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px">21:00:0=
+2</td>
+                    <td nowrap style=3D"padding:2px 3px 2px 3px;vertical-al=
+ign:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px">21:03:3=
+5</td>
+                    <td nowrap style=3D"padding:2px 3px 2px 3px;vertical-al=
+ign:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px">307,2 G=
+B</td>
+                    <td nowrap style=3D"padding:2px 3px 2px 3px;vertical-al=
+ign:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px">28,5 GB=
+</td>
+                    <td nowrap style=3D"padding:2px 3px 2px 3px;vertical-al=
+ign:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px">28,5 GB=
+</td>
+                    <td nowrap style=3D"padding:2px 3px 2px 3px;vertical-al=
+ign:top;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px">0:03:32
+</td>
+                    <td style=3D"padding:2px 3px 2px 3px;vertical-align:top=
+;border:1px solid #a7a9ac;font-family:Tahoma;font-size:12px"><span style=3D=
+"font-size:10px">=C2=A0</span></td>
+                  </tr>
+                </tbody></table>
+              </td>
+            </tr>
+          </tbody></table>
+        </td>
+      </tr>
+      <tr>
+        <td>=C2=A0</td>
+      </tr>
+      <tr>
+        <td style=3D"font-size:12px;color:#626365;padding:2px 3px 2px 3px;v=
+ertical-align:top;font-family:Tahoma">
+                  Veeam Agent for Microsoft Windows 13.1.1.700</td>
+      </tr>
+    </tbody></table>
+  </div>
+
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                           =
+                                                                   </div></=
+div>
+
+--0000000000001c43dd065d1f1798--

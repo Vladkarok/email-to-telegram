@@ -1,0 +1,19 @@
+<blockquote><b>From:</b> veeam@example.com
+<b>To:</b> alias@example.net
+<b>Subject:</b> [Success] WIN-EXAMPLE01 - BackUp-base - Monday, 05 October 2026 21:03:35</blockquote>
+
+Agent Backup job: BackUp-base
+
+Veeam Agent for Microsoft Windows
+
+Success
+
+Monday, 05 October 2026 21:00:00
+<b>Success</b> · 1 · <b>Start time</b> · 21:00:00 · <b>Total size</b> · 307,2 GB · <b>Backup size</b> · 1,4 GB
+<b>Warning</b> · 0 · <b>End time</b> · 21:03:35 · <b>Data read</b> · 28,5 GB · <b>Dedupe</b> · 1,0x
+<b>Error</b> · 0 · <b>Duration</b> · 0:03:34 · <b>Transferred</b> · 28,5 GB · <b>Compression</b> · 3,2x
+Details
+<b>Name</b> · <b>Status</b> · <b>Start time</b> · <b>End time</b> · <b>Size</b> · <b>Read</b> · <b>Transferred</b> · <b>Duration</b> · <b>Details</b>
+WIN-EXAMPLE01 · Success · 21:00:02 · 21:03:35 · 307,2 GB · 28,5 GB · 28,5 GB · 0:03:32
+
+Veeam Agent for Microsoft Windows 13.1.1.700
