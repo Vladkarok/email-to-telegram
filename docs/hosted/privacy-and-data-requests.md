@@ -67,6 +67,13 @@ the course of delivering the service:
   via a Cloudflare Worker. Cloudflare also provides DNS and TLS termination
   for the hosted domain. Cloudflare may temporarily process message
   envelopes and bodies as part of routing.
+  Cloudflare R2 also stores the nightly off-site copies of the database
+  backup, encrypted on the hosted backend before upload with keys that are
+  not stored with them.
+- **Backblaze, Inc.** — Backblaze B2 stores weekly encrypted copies of the
+  hosted backend's virtual machine images for disaster recovery. The images
+  are encrypted before upload with a key that is not stored with them;
+  Backblaze cannot read them.
 - **Telegram FZ-LLC** — receives delivered message content (or, in privacy
   mode, minimal delivery notifications) for the Telegram chats you configure.
 - **Healthchecks.io** — receives uptime ping signals (no message content, no
@@ -81,8 +88,9 @@ shared with external observability vendors.
 
 Application processing, the Postgres database, raw email storage,
 operational logs, and metrics are all hosted on operator-controlled hardware
-located in Ukraine. There is no third-party cloud database or managed
-backup service in the pipeline beyond the sub-processors listed above.
+located in Ukraine. There is no third-party cloud database. Encrypted
+backup copies are stored off site with Cloudflare R2 and Backblaze B2, as
+listed above.
 
 Cloudflare's edge presence and Telegram's delivery infrastructure are
 globally distributed and operated by those vendors under their own terms.
