@@ -15,10 +15,11 @@ import {
   users,
 } from "../db/schema.js";
 import type * as schema from "../db/schema.js";
+import { listAliasActivationForOwner } from "../db/repos/aliasActivation.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
-export const EXPORT_SCHEMA_VERSION = 4;
+export const EXPORT_SCHEMA_VERSION = 5;
 
 export interface UserExport {
   schemaVersion: number;
@@ -144,6 +145,25 @@ export interface UserExport {
     outcome: string;
     createdAt: string;
   }>;
+  /**
+   * First-bounce notice state per owned alias. The one-tap token is a
+   * credential and is never exported, only whether one is live; an expired
+   * token or domain reads as null, as everywhere else.
+   */
+  aliasActivation: Array<{
+    aliasId: string;
+    firstDeliveredAt: string | null;
+    claimsUsed: number;
+    lastClaimAt: string | null;
+    firstNoticeAt: string | null;
+    token: "[redacted]" | null;
+    expiresAt: string | null;
+    domain: string | null;
+    chatId: string | null;
+    routingVersion: number | null;
+    sentAt: string | null;
+    firstSentAt: string | null;
+  }>;
 }
 
 export async function exportHostedUserData(
@@ -182,6 +202,7 @@ export async function exportHostedUserData(
     attachmentRows,
     manualEventRows,
     aliasMoveEventRows,
+    aliasActivationRows,
   ] = await Promise.all([
     listAllowRulesForUser(db, userId),
     listInboundDomainsForUser(db, userId),
@@ -193,6 +214,7 @@ export async function exportHostedUserData(
     listAttachmentsForUser(db, userId),
     listManualBillingEvents(db, userId),
     listAliasMoveEvents(db, userId),
+    listAliasActivationForOwner(db, userId),
   ]);
 
   return {
@@ -316,7 +338,28 @@ export async function exportHostedUserData(
         createdAt: row.createdAt.toISOString(),
       };
     }),
+    aliasActivation: aliasActivationRows.map((row) => {
+      const live = row.expiresAt !== null && row.expiresAt.getTime() > now.getTime();
+      return {
+        aliasId: row.aliasId,
+        firstDeliveredAt: isoOrNull(row.firstDeliveredAt),
+        claimsUsed: row.claimsUsed,
+        lastClaimAt: isoOrNull(row.lastClaimAt),
+        firstNoticeAt: isoOrNull(row.firstNoticeAt),
+        token: live && row.token ? ("[redacted]" as const) : null,
+        expiresAt: isoOrNull(row.expiresAt),
+        domain: live ? row.domain : null,
+        chatId: row.chatId?.toString() ?? null,
+        routingVersion: row.routingVersion,
+        sentAt: isoOrNull(row.sentAt),
+        firstSentAt: isoOrNull(row.firstSentAt),
+      };
+    }),
   };
+}
+
+function isoOrNull(value: Date | null): string | null {
+  return value ? value.toISOString() : null;
 }
 
 /**

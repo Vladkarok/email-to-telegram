@@ -56,6 +56,12 @@ export interface PipelineResult {
    * straddles the UTC month boundary cannot burn the fresh month's slot.
    */
   month?: string;
+  /**
+   * Set on a `sender_not_allowed` rejection: the alias the decision was made
+   * for and the header From domain when the mail has exactly one From
+   * address. Feeds the owner's first-bounce notice.
+   */
+  senderRejection?: { aliasId: string; headerFromDomain: string | null };
 }
 
 export interface QueuedInboundEmail {

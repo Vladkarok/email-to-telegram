@@ -33,6 +33,25 @@ export type DeliveryPath = "initial" | "retry";
  * (blocked or deleted chat), the retry worker, or raw-email expiry cleanup.
  */
 export type DeliveryLostStage = "initial" | "retry" | "cleanup";
+/** Where the bounce that triggered a first-bounce notice was decided. */
+export type ActivationNoticeStage = "raw" | "preflight";
+/**
+ * sent = Telegram acknowledged the notice; gated = the alias is working, not
+ * active, or old with an owner who had mail accepted; not_claimed = the 24 h
+ * window, the lifetime budget or a concurrent bounce took it; dropped = not
+ * admitted (saturated, shutting down) or stopped by a deadline or shutdown;
+ * stale = the alias or its claim changed before the send; failed = a DB or
+ * Telegram error (a gate that cannot be read included: no notice).
+ */
+export type ActivationNoticeResult =
+  | "sent"
+  | "gated"
+  | "not_claimed"
+  | "dropped"
+  | "stale"
+  | "failed";
+/** added = the rule exists now; expired = spent, replaced or stale button; failed = not added. */
+export type ActivationAllowResult = "added" | "expired" | "failed";
 
 const buckets = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
 
@@ -147,6 +166,20 @@ const quotaRejectionsTotal = new Counter({
   name: "email_to_telegram_quota_rejections_total",
   help: "Quota rejections by reason.",
   labelNames: ["reason"] as const,
+  registers: [metricsRegistry],
+});
+
+const activationNoticesTotal = new Counter({
+  name: "email_to_telegram_activation_notices_total",
+  help: "First-bounce notices to the owner of a not-yet-working alias, by the stage that bounced the mail (raw, preflight) and result: sent, gated, not_claimed (window or lifetime budget), dropped (admission or deadline), stale (alias or claim changed before the send), failed.",
+  labelNames: ["stage", "result"] as const,
+  registers: [metricsRegistry],
+});
+
+const activationAllowsTotal = new Counter({
+  name: "email_to_telegram_activation_allows_total",
+  help: "Taps on the one-tap allow button of a first-bounce notice, by result: added, expired (spent, replaced or stale button), failed (rule limit or DB error; the button is spent).",
+  labelNames: ["result"] as const,
   registers: [metricsRegistry],
 });
 
@@ -286,6 +319,20 @@ const TELEGRAM_ERROR_CLASSES = Object.keys({
 } satisfies Record<TelegramErrorClass, true>);
 
 const DELIVERY_PATHS: readonly DeliveryPath[] = ["initial", "retry"];
+const ACTIVATION_NOTICE_STAGES: readonly ActivationNoticeStage[] = ["raw", "preflight"];
+const ACTIVATION_NOTICE_RESULTS = Object.keys({
+  sent: true,
+  gated: true,
+  not_claimed: true,
+  dropped: true,
+  stale: true,
+  failed: true,
+} satisfies Record<ActivationNoticeResult, true>);
+const ACTIVATION_ALLOW_RESULTS = Object.keys({
+  added: true,
+  expired: true,
+  failed: true,
+} satisfies Record<ActivationAllowResult, true>);
 const DELIVERY_LOST_STAGES: readonly DeliveryLostStage[] = ["initial", "retry", "cleanup"];
 
 function initializeSeries(): void {
@@ -308,6 +355,11 @@ function initializeSeries(): void {
   for (const path of DELIVERY_PATHS) deliveryLatencySeconds.zero({ path });
   for (const stage of DELIVERY_LOST_STAGES) deliveriesLostTotal.inc({ stage }, 0);
   for (const plan of PLAN_CODES) manualPlanGrantsTotal.inc({ plan }, 0);
+  for (const stage of ACTIVATION_NOTICE_STAGES) {
+    for (const result of ACTIVATION_NOTICE_RESULTS)
+      activationNoticesTotal.inc({ stage, result }, 0);
+  }
+  for (const result of ACTIVATION_ALLOW_RESULTS) activationAllowsTotal.inc({ result }, 0);
 }
 
 initializeSeries();
@@ -385,6 +437,17 @@ export function recordManualPlanGrant(plan: string): void {
 
 export function recordQuotaRejection(reason: string): void {
   quotaRejectionsTotal.inc({ reason });
+}
+
+export function recordActivationNotice(
+  stage: ActivationNoticeStage,
+  result: ActivationNoticeResult,
+): void {
+  activationNoticesTotal.inc({ stage, result });
+}
+
+export function recordActivationAllow(result: ActivationAllowResult): void {
+  activationAllowsTotal.inc({ result });
 }
 
 // All business reads happen first; gauge mutations only execute once

@@ -433,6 +433,7 @@ ${safetyNotes}
 • <b>Аліаси:</b> створені вами email-адреси та їхні налаштування
 • <b>Журнал доставки:</b> метадані листів (відправник, тема, час, обсяг) для квот і політики зберігання
 • <b>Білінг:</b> план, статус підписки, посилання на платежі (якщо застосовно)
+• <b>Сповіщення про повернені листи:</b> коли лист повертається, бо жодне allow rule йому не відповідає, домен відправника зберігається до 7 днів, щоб запропонувати дозвіл одним дотиком
 
 Тіла листів і вкладення зберігаються лише в межах терміну вашого тарифу, після чого видаляються.
 
@@ -519,6 +520,25 @@ ${policyUrl ? `Повна політика: ${policyUrl}\n` : ""}${supportContac
     billingTitle: "<b>💳 Білінг</b>",
     accountName: "Акаунт",
     thisMonth: (month: string) => `<b>Цей місяць — ${month}</b>`,
+  },
+  activationNotice: {
+    bouncedFromDomain: (address: string, domain: string) =>
+      `Лист на <code>${address}</code> від ${domain} повернуто відправнику: жодне allow rule йому не відповідає. Правило звіряється з адресою в полі From листа.`,
+    bouncedNoSender: (address: string) =>
+      `Лист на <code>${address}</code> повернуто відправнику: жодне allow rule не відповідає його відправнику.`,
+    bouncedNoRules: (address: string) =>
+      `Лист на <code>${address}</code> повернуто відправнику: у цього аліаса ще немає allow rules.`,
+    allowDomainButton: (domain: string) => `Дозволити ${domain}`,
+    added: (address: string, domain: string) =>
+      `Додано allow rule для <code>${address}</code>: ${domain}. Воно дозволяє всі адреси на ${domain}.`,
+    alreadyAllowed: (address: string, domain: string) =>
+      `<code>${address}</code> вже має allow rule для ${domain}. Воно дозволяє всі адреси на ${domain}.`,
+    expired: "Ця кнопка вже недійсна.",
+    ruleLimit: (address: string, domain: string, limit: number) =>
+      `Не вдалося дозволити ${domain} для <code>${address}</code>: досягнуто ліміту в ${limit} allow rules.`,
+    addFailed: (address: string, domain: string) =>
+      `Не вдалося дозволити ${domain} для <code>${address}</code>.`,
+    tryAgainToast: "Не вдалося додати правило. Спробуйте ще раз.",
   },
   quotaNotice: {
     higherLimitsUpgrade: "Скористайтеся /upgrade, щоб отримати вищі ліміти.",

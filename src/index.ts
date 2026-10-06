@@ -18,7 +18,8 @@ import { setApi, getApi } from "./telegram/api.js";
 import { markBotHealthy, markBotUnhealthy } from "./telegram/health.js";
 import { upsertAllowedUser } from "./db/repos/users.js";
 import { runRetryWorker } from "./email/retry.js";
-import { runCleanup } from "./storage/cleanup.js";
+import { reconcileActivationMarkers, runCleanup } from "./storage/cleanup.js";
+import { shutdownActivationNotices } from "./activation/notice.js";
 import { runUptimeCheck } from "./utils/uptime.js";
 import { pipelineTracker } from "./utils/inFlight.js";
 import { startSessionSweep, destroySessionStore } from "./telegram/session.js";
@@ -95,6 +96,10 @@ async function main() {
     }),
   );
   await assertStorageEncryptionReadiness(getDb(), config);
+
+  // Deliveries made while this build was not running (a rollback window) set
+  // no first-delivered marker; restore them before any notice can go out.
+  await reconcileActivationMarkers(getDb(), logger);
 
   // 3b. Seed initial allowed users
   if (config.initialAllowedUsers.length > 0) {
@@ -224,6 +229,10 @@ async function main() {
       // 7a. Stop cron schedulers so no new background work starts.
       for (const task of cronTasks) void task.stop();
 
+      // Bounce notices: stop admission, discard queued jobs, abort sends.
+      // Waits at most 2 s, overlapping the HTTP close and the drain below.
+      const noticesStopped = shutdownActivationNotices();
+
       // 7b. Close HTTP and stop bot in parallel — both stop accepting new work.
       // HTTP is closed first priority so that /inbound/raw stops triggering
       // new pipelines immediately; bot.stop() runs concurrently.
@@ -236,6 +245,7 @@ async function main() {
           logger.warn({ err }, "Pipeline drain timed out; proceeding with shutdown");
         });
       }
+      await noticesStopped;
       destroySessionStore();
       await closeDb();
       logger.info("Shutdown complete.");

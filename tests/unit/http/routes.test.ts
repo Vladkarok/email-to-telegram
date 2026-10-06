@@ -80,6 +80,13 @@ vi.mock("../../../src/billing/quotaNotifier.js", async (importOriginal) => ({
   notifyQuotaExhausted: (...args: unknown[]): unknown => mockNotifyQuotaExhausted(...args),
 }));
 
+const mockAdmitRawSenderRejection = vi.fn();
+const mockAdmitPreflightNoRules = vi.fn();
+vi.mock("../../../src/activation/notice.js", () => ({
+  admitRawSenderRejection: (...args: unknown[]): unknown => mockAdmitRawSenderRejection(...args),
+  admitPreflightNoRules: (...args: unknown[]): unknown => mockAdmitPreflightNoRules(...args),
+}));
+
 const WORKER_SECRET = "test-worker-secret-32chars-abcde";
 
 const TEST_CONFIG = {
@@ -299,6 +306,8 @@ describe("POST /inbound/preflight", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ accept: false });
     expect(mockCheckAllow).toHaveBeenCalledWith(expect.anything(), "uuid-1");
+    // The owner hears why: the no-rules notice is admitted after the answer.
+    expect(mockAdmitPreflightNoRules).toHaveBeenCalledWith("uuid-1");
   });
 
   it("returns accept:true when the alias has allow rules", async () => {
@@ -1222,9 +1231,16 @@ describe("POST /inbound/raw", () => {
   it.each(["sender_not_allowed", "sender_auth_failed"])(
     "rejects %s with 403 and drops the stored raw email",
     async (reason) => {
+      mockAdmitRawSenderRejection.mockClear();
       mockQueueInboundEmail.mockResolvedValueOnce({
         queued: false,
-        result: { ok: false, reason },
+        result: {
+          ok: false,
+          reason,
+          ...(reason === "sender_not_allowed"
+            ? { senderRejection: { aliasId: "uuid-from-queue", headerFromDomain: "example.com" } }
+            : {}),
+        },
       });
 
       const rawEmail = Buffer.from("From: blocked@example.com\r\nSubject: Hi\r\n\r\nBody");
@@ -1249,6 +1265,17 @@ describe("POST /inbound/raw", () => {
       expect(mockDeleteFile).toHaveBeenCalledOnce();
       expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledOnce();
       expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
+      // Only a rule mismatch tells the owner; an authentication failure does not.
+      if (reason === "sender_not_allowed") {
+        expect(mockAdmitRawSenderRejection).toHaveBeenCalledWith({
+          aliasId: "uuid-from-queue",
+          headerFromDomain: "example.com",
+          envelopeFrom: null,
+          rawMime: rawEmail,
+        });
+      } else {
+        expect(mockAdmitRawSenderRejection).not.toHaveBeenCalled();
+      }
 
       const metrics = await metricsRegistry.metrics();
       expect(

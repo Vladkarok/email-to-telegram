@@ -441,6 +441,7 @@ Questo bot memorizza solo i dati necessari per consegnare email alle tue chat Te
 • <b>Alias:</b> indirizzi email creati e relative impostazioni
 • <b>Log di consegna:</b> metadati delle email (mittente, oggetto, timestamp, byte) per quote e retention
 • <b>Fatturazione:</b> piano, stato dell'abbonamento, riferimenti di pagamento (se applicabile)
+• <b>Avvisi di rifiuto:</b> quando un'email viene respinta perché nessuna allow rule corrisponde, il dominio del mittente viene conservato fino a 7 giorni per offrire l'autorizzazione con un tocco
 
 I corpi delle email e gli allegati vengono conservati solo per la durata prevista dal tuo piano, poi eliminati.
 
@@ -527,6 +528,25 @@ L'azione <b>non è reversibile</b>. Conferma per procedere.`,
     billingTitle: "<b>💳 Fatturazione</b>",
     accountName: "Account",
     thisMonth: (month: string) => `<b>Questo mese — ${month}</b>`,
+  },
+  activationNotice: {
+    bouncedFromDomain: (address: string, domain: string) =>
+      `Un'email per <code>${address}</code> da ${domain} è stata respinta: nessuna allow rule corrisponde. Una regola confronta l'indirizzo nella riga From (Da) dell'email.`,
+    bouncedNoSender: (address: string) =>
+      `Un'email per <code>${address}</code> è stata respinta: nessuna allow rule corrisponde al suo mittente.`,
+    bouncedNoRules: (address: string) =>
+      `Un'email per <code>${address}</code> è stata respinta: questo alias non ha ancora allow rules.`,
+    allowDomainButton: (domain: string) => `Autorizza ${domain}`,
+    added: (address: string, domain: string) =>
+      `Allow rule aggiunta per <code>${address}</code>: ${domain}. Autorizza tutti gli indirizzi di ${domain}.`,
+    alreadyAllowed: (address: string, domain: string) =>
+      `<code>${address}</code> ha già una allow rule per ${domain}. Autorizza tutti gli indirizzi di ${domain}.`,
+    expired: "Questo pulsante è scaduto.",
+    ruleLimit: (address: string, domain: string, limit: number) =>
+      `Impossibile autorizzare ${domain} per <code>${address}</code>: è stato raggiunto il limite di ${limit} allow rules.`,
+    addFailed: (address: string, domain: string) =>
+      `Impossibile autorizzare ${domain} per <code>${address}</code>.`,
+    tryAgainToast: "Impossibile aggiungere la regola. Riprova.",
   },
   quotaNotice: {
     higherLimitsUpgrade: "Usa /upgrade per limiti più alti.",

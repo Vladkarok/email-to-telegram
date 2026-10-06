@@ -435,6 +435,7 @@ This bot stores only what's needed to deliver email to your Telegram chats:
 • <b>Aliases:</b> the email addresses you create and their settings
 • <b>Delivery logs:</b> per-email metadata (sender, subject, timestamps, byte counts) for retention/quota enforcement
 • <b>Billing records:</b> plan, subscription status, payment references (if applicable)
+• <b>Bounce notices:</b> when mail bounces because no allow rule matches, the sender's domain is kept up to 7 days to offer a one-tap allow
 
 Email bodies and attachments are stored only as long as your plan's retention allows, then purged.
 
@@ -521,6 +522,25 @@ This action <b>cannot be undone</b>. Confirm to proceed.`,
     billingTitle: "<b>💳 Billing</b>",
     accountName: "Account",
     thisMonth: (month: string) => `<b>This month — ${month}</b>`,
+  },
+  activationNotice: {
+    bouncedFromDomain: (address: string, domain: string) =>
+      `Mail to <code>${address}</code> from ${domain} bounced: no allow rule matches it. A rule matches the address in the email's From line.`,
+    bouncedNoSender: (address: string) =>
+      `Mail to <code>${address}</code> bounced: no allow rule matches its sender.`,
+    bouncedNoRules: (address: string) =>
+      `Mail to <code>${address}</code> bounced: this alias has no allow rules yet.`,
+    allowDomainButton: (domain: string) => `Allow ${domain}`,
+    added: (address: string, domain: string) =>
+      `Added an allow rule for <code>${address}</code>: ${domain}. It allows every address at ${domain}.`,
+    alreadyAllowed: (address: string, domain: string) =>
+      `<code>${address}</code> already has an allow rule for ${domain}. It allows every address at ${domain}.`,
+    expired: "This button has expired.",
+    ruleLimit: (address: string, domain: string, limit: number) =>
+      `Could not allow ${domain} for <code>${address}</code>: the limit of ${limit} allow rules is reached.`,
+    addFailed: (address: string, domain: string) =>
+      `Could not allow ${domain} for <code>${address}</code>.`,
+    tryAgainToast: "Could not add the rule. Try again.",
   },
   quotaNotice: {
     higherLimitsUpgrade: "Use /upgrade for higher limits.",

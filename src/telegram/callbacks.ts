@@ -192,6 +192,19 @@ export const CB_QUICK_ALLOW_RULES = {
   build: (aliasId: string, domain: string): string => `qr:${aliasId}:${domain}`,
 } as const;
 
+/**
+ * One-tap allow from a first-bounce notice — rn:{aliasId}:{token}
+ *
+ * The token is the claim's 16 random bytes in base64url (22 chars, never a
+ * `:`), so the data is 62 bytes, under Telegram's 64. The domain is not in
+ * the data: it is read from the claim row, so a crafted callback cannot add
+ * an arbitrary rule.
+ */
+export const CB_ACTIVATION_ALLOW = {
+  pattern: /^rn:([0-9a-f-]{36}):([A-Za-z0-9_-]{22})$/,
+  build: (aliasId: string, token: string): string => `rn:${aliasId}:${token}`,
+} as const;
+
 /** Set render mode — set_mode:{aliasId}:{mode} */
 export const CB_SET_MODE = {
   pattern: /^set_mode:(.+):(.+)$/,
