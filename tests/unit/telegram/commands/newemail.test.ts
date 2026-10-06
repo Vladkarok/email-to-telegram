@@ -143,6 +143,10 @@ describe("/newemail command", () => {
     ];
     expect(lockedChatId).toBe(BigInt((ctx.chat as { id: number }).id));
     expect(mockCreateAlias).toHaveBeenCalledOnce();
+    expect(mockCreateAlias).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ renderMode: "html" }),
+    );
   });
 
   it("rejects creation when the target chat row was deactivated (migration won the race)", async () => {

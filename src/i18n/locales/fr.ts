@@ -51,6 +51,8 @@ export const fr = {
     managing: (chatTitle: string) => `Gestion : <b>${chatTitle}</b>`,
   },
   help: {
+    support: (contact: string, issuesUrl: string) =>
+      `Un problème ou une idée ? Écrivez à ${contact} ou ouvrez une issue : ${issuesUrl}`,
     billingStripe: `<b>Facturation (hosted uniquement)</b>
 /billing — statut de facturation avec boutons Upgrade et Manage Billing
 /plan — afficher votre plan actuel et ses limites

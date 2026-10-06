@@ -48,6 +48,8 @@ export const uk = {
     managing: (chatTitle: string) => `Керування: <b>${chatTitle}</b>`,
   },
   help: {
+    support: (contact: string, issuesUrl: string) =>
+      `Проблеми чи ідеї? Напишіть ${contact} або відкрийте issue: ${issuesUrl}`,
     billingStripe: `<b>Білінг (лише hosted)</b>
 /billing — статус білінгу акаунта з кнопками оновлення плану та керування білінгом
 /plan — показати поточний план і ліміти

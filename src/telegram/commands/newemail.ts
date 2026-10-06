@@ -312,7 +312,7 @@ export async function createEmailAlias(
             chatId,
             messageThreadId: threadId,
             createdBy,
-            renderMode: "plaintext",
+            renderMode: "html",
             privacyModeEnabled: false,
             bodyDedupEnabled: false,
             status: "active",
