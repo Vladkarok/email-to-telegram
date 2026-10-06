@@ -24,6 +24,43 @@ that has been running in production.
 - Public-facing documentation: `SECURITY.md`, `CONTRIBUTING.md`,
   `CHANGELOG.md`, issue/PR templates, CODEOWNERS.
 
+## [1.10.0] — 2026-10-06
+
+Plan limits move out of the code, the free plan doubles its monthly mail, and
+the inbound path stops losing or permanently bouncing mail it should not.
+
+### Added
+
+- **`PLAN_LIMITS`**: a JSON env var that overrides single limits of single
+  plans, e.g. `PLAN_LIMITS={"free":{"deliveredEmailsMonth":300}}`. Anything
+  not named keeps the code default. Unknown plans or keys and out-of-range
+  values stop startup. It takes effect when the container is recreated
+  (`docker compose up -d`), not on `docker compose restart`. See
+  `.env.example` for keys and bounds.
+- `/plan` lists the per-alias hourly cap.
+
+### Changed
+
+- **Free plan: 200 delivered emails a month** (was 100).
+- **The per-alias hourly cap is a plan limit**, `aliasEmailsPerHour`
+  (default 60 on every plan, so nothing changes by default). Self-hosters:
+  the `email_addresses.max_emails_hour` column is no longer read; set
+  `PLAN_LIMITS={"free":{"aliasEmailsPerHour":N}}` instead. The column stays
+  until a later release.
+- **Mail over the hourly cap is deferred, not bounced.** Preflight answers
+  429, the Worker turns that into a temporary SMTP failure, and the sending
+  server retries once the hour frees a slot. It used to be a permanent 550.
+- READMEs and the hosted terms point to `/plan` for current limits instead of
+  stating numbers.
+
+### Fixed
+
+- **Mail from a sender the alias does not allow now bounces.** When an alias
+  had allow rules and the From matched none of them, the raw upload answered
+  202 and dropped the message, so the sender saw success. It now answers 403
+  (a 550 bounce), the same as a sender that fails authentication, which also
+  stops the response from revealing which domains an alias allows.
+
 ## [1.9.0] — 2026-10-06
 
 Every alias now looks the same, and new aliases start with rich rendering.
