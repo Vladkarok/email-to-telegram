@@ -4,7 +4,9 @@ import {
   stderrLoggerDestination,
   getLogger,
   setLogger,
+  sanitizeErrorForLog,
 } from "../../../src/utils/logger.js";
+import { DrizzleQueryError } from "drizzle-orm";
 import { Writable } from "stream";
 
 describe("logger", () => {
@@ -109,6 +111,41 @@ describe("logger", () => {
 
       expect(output).not.toContain("payslip-march.pdf");
       expect(output).toContain("[redacted]");
+    });
+
+    it("drops SQL parameters and pg row details from query errors", () => {
+      const pgError = Object.assign(
+        new Error('duplicate key value violates unique constraint "idx_alias_full_address"'),
+        {
+          code: "23505",
+          constraint: "idx_alias_full_address",
+          detail: "Key (lower(full_address))=(secret-alias@example.com) already exists.",
+        },
+      );
+      const queryError = new DrizzleQueryError(
+        'insert into "delivery_logs" ("subject", "header_from") values ($1, $2)',
+        ["March payslip for Jane", "boss@corp.example"],
+        pgError,
+      );
+
+      const output = captureLog((logger) => {
+        logger.error({ err: new Error("store failed", { cause: queryError }) }, "x");
+        logger.error({ err: queryError }, "y");
+      });
+
+      for (const secret of ["March payslip", "boss@corp.example", "secret-alias@example.com"]) {
+        expect(output).not.toContain(secret);
+      }
+      expect(output).toContain('Failed query: insert into \\"delivery_logs\\"');
+      expect(output).toContain("idx_alias_full_address");
+      // The thrown error is untouched for code that still holds it.
+      expect(queryError.message).toContain("March payslip");
+      expect(pgError.detail).toContain("secret-alias@example.com");
+    });
+
+    it("logs ordinary errors unchanged", () => {
+      const err = new Error("disk full");
+      expect(sanitizeErrorForLog(err)).toBe(err);
     });
 
     it("keeps identifiers the privacy policy discloses", () => {
