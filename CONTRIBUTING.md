@@ -50,6 +50,17 @@ npm run test:coverage     # report coverage
 Tests must pass on `main`. New features and bug fixes should include
 tests that fail before your change and pass after it.
 
+The suites under `tests/db/` run against a real Postgres and are skipped
+unless `TEST_DATABASE_URL` points at a server where they may create and drop
+throwaway databases (CI sets it). Locally:
+
+```sh
+docker run -d --rm --name etg-test-pg -e POSTGRES_USER=app \
+  -e POSTGRES_PASSWORD=test -p 127.0.0.1:55432:5432 postgres:16-alpine
+TEST_DATABASE_URL=postgres://app:test@127.0.0.1:55432/postgres npm test
+docker stop etg-test-pg
+```
+
 ### Rendering changes
 
 `tests/fixtures/golden/*.eml` are real (redacted) emails rendered exactly as
