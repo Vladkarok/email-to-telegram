@@ -35,7 +35,7 @@ export async function chatMemberHandler(ctx: Context): Promise<void> {
       await ensureHostedActingUser(ctx);
     }
     await upsertChat(db, { id: chatId, title, type: chat.type });
-    getLogger().info({ chatId: chatId.toString(), title }, "Bot added to chat");
+    getLogger().info({ chatId: chatId.toString(), type: chat.type }, "Bot added to chat");
   } else if (status === "left" || status === "kicked") {
     await deactivateChat(db, chatId);
     getLogger().info({ chatId: chatId.toString() }, "Bot removed from chat");
