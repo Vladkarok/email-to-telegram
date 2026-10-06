@@ -137,6 +137,7 @@ async function run(
     api?: Api | null;
     authenticate?: (raw: Buffer, envelopeFrom: string | null) => Promise<SenderAuthResult>;
     bounds?: Partial<typeof NOTICE_BOUNDS>;
+    now?: () => number;
   } = {},
 ) {
   const bounds = { ...NOTICE_BOUNDS, ...opts.bounds };
@@ -147,7 +148,7 @@ async function run(
     generateToken: () => TOKEN,
     bounds,
   });
-  const queue = new ActivationNoticeQueue(runner, bounds);
+  const queue = new ActivationNoticeQueue(runner, bounds, opts.now);
   current.queue = queue;
   queue.admit(request);
   await queue.whenIdle();
@@ -418,8 +419,14 @@ describe("runner", () => {
   });
 
   it("a send that succeeds after the deadline counts as sent, without the acknowledgement", async () => {
-    const { api, sent } = makeApi(() => new Promise((resolve) => setTimeout(resolve, 60)));
-    await run(rawRequest(), { api, bounds: { jobDeadlineMs: 30 } });
+    // A controlled clock: the send itself moves time past the deadline, so a
+    // slow CI runner cannot expire the job before it reaches the send.
+    let clock = 1_000_000;
+    const { api, sent } = makeApi(() => {
+      clock += NOTICE_BOUNDS.jobDeadlineMs + 1;
+      return Promise.resolve();
+    });
+    await run(rawRequest(), { api, now: () => clock });
     expect(sent).toHaveLength(1);
     expect(mockAck).not.toHaveBeenCalled();
     expect(await noticeCount("raw", "sent")).toBe(1);
