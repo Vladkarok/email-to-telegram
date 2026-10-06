@@ -132,7 +132,6 @@ const baseAlias = {
   renderMode: "plaintext",
   privacyModeEnabled: false,
   bodyDedupEnabled: false,
-  maxEmailsHour: 60,
 };
 
 const authenticatedExampleRules = [{ matchType: "domain", matchValue: "example.com" }];

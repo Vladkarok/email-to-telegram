@@ -136,7 +136,6 @@ const activeAlias = {
   renderMode: "plaintext",
   privacyModeEnabled: false,
   bodyDedupEnabled: false,
-  maxEmailsHour: 60,
 };
 
 const authenticatedExampleRules = [{ matchType: "domain", matchValue: "example.com" }];
@@ -294,8 +293,7 @@ describe("processInboundEmail", () => {
     });
 
     async function queueWith(recent: number) {
-      // The legacy per-alias column must not matter any more.
-      mockFindAlias.mockResolvedValue({ ...activeAlias, maxEmailsHour: 1000 });
+      mockFindAlias.mockResolvedValue(activeAlias);
       mockIsDuplicate.mockResolvedValue(false);
       mockCreateLog.mockResolvedValue({ id: "log-uuid-cap" });
       mockCountRecentDeliveries.mockResolvedValue(recent);
@@ -330,7 +328,7 @@ describe("processInboundEmail", () => {
       // Only the first resolution gets the snapshot; a second one would see
       // the free plan's 60 and let the mail through.
       mockResolveInboundPlan.mockResolvedValueOnce(snapshot);
-      mockFindAlias.mockResolvedValue({ ...activeAlias, maxEmailsHour: 1000 });
+      mockFindAlias.mockResolvedValue(activeAlias);
       mockIsDuplicate.mockResolvedValue(false);
       mockCountRecentDeliveries.mockResolvedValue(2);
       const { db, execute } = fakeDbHarness();

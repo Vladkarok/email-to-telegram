@@ -168,7 +168,6 @@ describe("POST /inbound/preflight", () => {
       status: "active",
       localPart: "alerts",
       createdBy: 1n,
-      maxEmailsHour: 60,
     });
     mockFindAliasByDomain.mockReset();
     mockFindAliasByDomain.mockImplementation((...args: unknown[]) => {
@@ -336,8 +335,6 @@ describe("POST /inbound/preflight", () => {
       status: "active",
       localPart: "alerts",
       createdBy: 1n,
-      // Legacy per-alias column: no longer read.
-      maxEmailsHour: 1000,
     });
     mockCheckAllow.mockResolvedValue(true);
     mockCountRecentDeliveries.mockResolvedValue(2);
@@ -399,7 +396,6 @@ describe("POST /inbound/preflight", () => {
       status: "active",
       localPart: "alerts",
       createdBy: 1n,
-      maxEmailsHour: 1000,
     });
     mockCheckAllow.mockResolvedValue(true);
     mockCountRecentDeliveries.mockResolvedValue(2);
@@ -433,7 +429,6 @@ describe("POST /inbound/preflight", () => {
       status: "active",
       localPart: "alerts",
       createdBy: 1n,
-      maxEmailsHour: 1000,
     });
     mockCheckAllow.mockResolvedValue(true);
     mockCountRecentDeliveries.mockResolvedValue(1);
@@ -724,7 +719,6 @@ describe("POST /inbound/raw", () => {
       status: "active",
       localPart: "alerts",
       createdBy: 1n,
-      maxEmailsHour: 60,
     });
     mockFindAliasByDomain.mockReset();
     mockFindAliasByDomain.mockImplementation((...args: unknown[]) => {

@@ -42,10 +42,10 @@ export const emailAddresses = pgTable(
     // routing_version = ?`, so an A→B→A round trip invalidates it — chat id
     // alone would not. Zero rows updated ⇒ re-read, re-authorize, re-confirm.
     routingVersion: integer("routing_version").notNull().default(0),
-    // Not read any more: the hourly cap comes from the owner's plan
-    // (PlanLimits.aliasEmailsPerHour). Kept so an older image still finds it
-    // after a rollback; drop it in a later release.
-    maxEmailsHour: integer("max_emails_hour").notNull().default(60),
+    // The database still has `max_emails_hour` (NOT NULL DEFAULT 60) so a
+    // rollback to v1.10.0, which lists it in selects, keeps working. Nothing
+    // reads it: the hourly cap is PlanLimits.aliasEmailsPerHour. The next
+    // release drops the column (`npm run db:generate` emits the DROP).
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
