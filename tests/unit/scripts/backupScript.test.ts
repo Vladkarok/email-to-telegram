@@ -163,8 +163,7 @@ describe.skipIf(process.platform === "win32")("scripts/backup.sh", () => {
     expect(listOut()).toEqual([]);
   });
 
-  it("sweeps temp files left by killed runs once they are past retention", () => {
-    mkdirSync(outDir);
+  describe("temp files left by killed runs", () => {
     const stale = [
       ".backup-2026-01-01-41.archive-meta",
       ".backup-2026-01-01-41.sql",
@@ -173,22 +172,35 @@ describe.skipIf(process.platform === "win32")("scripts/backup.sh", () => {
       "backup-2026-01-01.sql.gz.etg.tmp",
       "backup-2026-01-01.meta.tmp",
     ];
-    for (const name of stale) {
-      writeFileSync(join(outDir, name), "leftover");
-      setAgeDays(join(outDir, name), 10);
-    }
     const fresh = [".backup-2026-01-02-42.sql", "backup-2026-01-02.sql.gz.tmp"];
-    for (const name of fresh) {
-      writeFileSync(join(outDir, name), "in progress");
-      setAgeDays(join(outDir, name), 3);
-    }
 
-    const result = runBackup({ BACKUP_ARCHIVE_ENCRYPTION: "storage-key" });
+    beforeEach(() => {
+      mkdirSync(outDir);
+      for (const name of stale) {
+        writeFileSync(join(outDir, name), "leftover");
+        setAgeDays(join(outDir, name), 10);
+      }
+      for (const name of fresh) {
+        writeFileSync(join(outDir, name), "in progress");
+        setAgeDays(join(outDir, name), 3);
+      }
+    });
 
-    expect(result.status).toBe(0);
-    const files = listOut();
-    for (const name of stale) expect(files).not.toContain(name);
-    for (const name of fresh) expect(files).toContain(name);
-    expect(files).toHaveLength(fresh.length + 2);
+    it("are swept once past retention", () => {
+      const result = runBackup({ BACKUP_ARCHIVE_ENCRYPTION: "storage-key" });
+
+      expect(result.status).toBe(0);
+      const files = listOut();
+      for (const name of stale) expect(files).not.toContain(name);
+      for (const name of fresh) expect(files).toContain(name);
+      expect(files).toHaveLength(fresh.length + 2);
+    });
+
+    it("are swept even when the run itself fails", () => {
+      const result = runBackup({ BACKUP_ARCHIVE_ENCRYPTION: "storage-key", STUB_PG_FAIL: "1" });
+
+      expect(result.status).not.toBe(0);
+      expect(listOut()).toEqual([...fresh].sort());
+    });
   });
 });

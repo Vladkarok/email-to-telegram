@@ -33,6 +33,14 @@ META_FILE="${BACKUP_DIR}/backup-${DATE}.meta"
 
 mkdir -p "$BACKUP_DIR"
 
+# Temp files from runs killed before their EXIT trap could run (SIGKILL, OOM).
+# They can hold a plaintext dump or DB credentials, and the rotation patterns
+# below never match them. Sweep them before the dump, so a run that fails
+# (for example on a disk those leftovers filled) still removes them. The mtime
+# filter leaves the in-progress files of a concurrent run alone.
+find "$BACKUP_DIR" -maxdepth 1 -type f -name '.backup-*' -mtime "+${KEEP_DAYS}" -delete
+find "$BACKUP_DIR" -maxdepth 1 -type f -name 'backup-*.tmp' -mtime "+${KEEP_DAYS}" -delete
+
 # Parse connection components from DATABASE_URL using Node's URL parser so that
 # percent-encoded characters and special chars in passwords are handled correctly.
 # PGPASSWORD is passed via environment (not argv) to keep the credential out of
@@ -148,9 +156,4 @@ echo "Backup metadata: $META_FILE"
 find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.sql.gz' -mtime "+${KEEP_DAYS}" -delete
 find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.sql.gz.etg' -mtime "+${KEEP_DAYS}" -delete
 find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.meta' -mtime "+${KEEP_DAYS}" -delete
-# Temp files from runs killed before their EXIT trap could run (SIGKILL, OOM).
-# They can hold a plaintext dump or DB credentials, and the patterns above
-# never match them.
-find "$BACKUP_DIR" -maxdepth 1 -type f -name '.backup-*' -mtime "+${KEEP_DAYS}" -delete
-find "$BACKUP_DIR" -maxdepth 1 -type f -name 'backup-*.tmp' -mtime "+${KEEP_DAYS}" -delete
 echo "Retention: kept last ${KEEP_DAYS} days of backups"
