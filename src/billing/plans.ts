@@ -22,6 +22,12 @@ export interface PlanLimits {
   maxMessageBytes: number;
   retentionDays: number;
   customDomains: number;
+  /**
+   * Per-alias flood guard: accepted mail per alias in a sliding hour. Applies
+   * in both app modes (self-hosted uses the free plan's value); the monthly
+   * quotas above are enforced only in hosted mode.
+   */
+  aliasEmailsPerHour: number;
 }
 
 export interface PlanDefinition {
@@ -35,7 +41,10 @@ export interface PlanDefinition {
 const mib = 1024 * 1024;
 const gib = 1024 * mib;
 
-export const PLAN_DEFINITIONS = {
+// Code defaults. The hosted operator overrides limits through PLAN_LIMITS
+// (see config.ts); read plans through getPlanDefinition/listPlanDefinitions so
+// overrides are never bypassed.
+const PLAN_DEFAULTS = {
   free: {
     code: "free",
     name: "Free",
@@ -44,12 +53,13 @@ export const PLAN_DEFINITIONS = {
     limits: {
       aliases: 3,
       allowRules: 10,
-      deliveredEmailsMonth: 100,
+      deliveredEmailsMonth: 200,
       egressBytesMonth: gib,
       storageBytes: 100 * mib,
       maxMessageBytes: 5 * mib,
       retentionDays: 7,
       customDomains: 0,
+      aliasEmailsPerHour: 60,
     },
   },
   personal: {
@@ -66,6 +76,7 @@ export const PLAN_DEFINITIONS = {
       maxMessageBytes: 10 * mib,
       retentionDays: 30,
       customDomains: 0,
+      aliasEmailsPerHour: 60,
     },
   },
   pro: {
@@ -82,6 +93,7 @@ export const PLAN_DEFINITIONS = {
       maxMessageBytes: 25 * mib,
       retentionDays: 90,
       customDomains: 0,
+      aliasEmailsPerHour: 60,
     },
   },
   team: {
@@ -98,6 +110,7 @@ export const PLAN_DEFINITIONS = {
       maxMessageBytes: 25 * mib,
       retentionDays: 180,
       customDomains: 3,
+      aliasEmailsPerHour: 60,
     },
   },
   business: {
@@ -114,11 +127,12 @@ export const PLAN_DEFINITIONS = {
       maxMessageBytes: 25 * mib,
       retentionDays: 365,
       customDomains: 25,
+      aliasEmailsPerHour: 60,
     },
   },
 } as const satisfies Record<PlanCode, PlanDefinition>;
 
-export const PLAN_CODES = Object.keys(PLAN_DEFINITIONS) as PlanCode[];
+export const PLAN_CODES = Object.keys(PLAN_DEFAULTS) as PlanCode[];
 export const SELF_SERVE_PLAN_CODES = [
   "personal",
   "pro",
@@ -126,10 +140,41 @@ export const SELF_SERVE_PLAN_CODES = [
 ] as const satisfies readonly Exclude<PlanCode, "free" | "business">[];
 export const NON_FREE_PLAN_CODES = PLAN_CODES.filter((code) => code !== "free");
 
+export type PlanLimitOverrides = Partial<Record<PlanCode, Partial<PlanLimits>>>;
+
+let effectivePlans = buildEffectivePlans({});
+
+/**
+ * Replaces the effective plans with the code defaults plus `overrides`.
+ * Always rebuilds from the defaults, so an earlier call never leaks into a
+ * later one. Called once from main() right after config loads.
+ */
+export function applyPlanLimitOverrides(overrides: PlanLimitOverrides): void {
+  effectivePlans = buildEffectivePlans(overrides);
+}
+
+function buildEffectivePlans(
+  overrides: PlanLimitOverrides,
+): Readonly<Record<PlanCode, PlanDefinition>> {
+  const plans = {} as Record<PlanCode, PlanDefinition>;
+  for (const code of PLAN_CODES) {
+    const defaults = PLAN_DEFAULTS[code];
+    plans[code] = Object.freeze({
+      ...defaults,
+      limits: Object.freeze({ ...defaults.limits, ...overrides[code] }),
+    });
+  }
+  return Object.freeze(plans);
+}
+
 export function isPlanCode(value: string): value is PlanCode {
-  return Object.hasOwn(PLAN_DEFINITIONS, value);
+  return Object.hasOwn(PLAN_DEFAULTS, value);
 }
 
 export function getPlanDefinition(code: PlanCode): PlanDefinition {
-  return PLAN_DEFINITIONS[code];
+  return effectivePlans[code];
+}
+
+export function listPlanDefinitions(): readonly PlanDefinition[] {
+  return PLAN_CODES.map((code) => effectivePlans[code]);
 }

@@ -496,6 +496,7 @@ ${policyUrl ? `Повна політика: ${policyUrl}\n` : ""}${supportContac
     aliases: "Аліаси",
     allowRules: "Allow rules",
     acceptedEmailsMonth: "Прийняті листи / місяць",
+    acceptedEmailsHourPerAlias: "Прийняті листи / година, на аліас",
     egressMonth: "Egress / місяць",
     storage: "Сховище",
     maxMessageSize: "Макс. розмір повідомлення",

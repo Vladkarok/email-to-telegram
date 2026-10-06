@@ -9,7 +9,7 @@
 
 ## 两种使用方式
 
-**直接使用托管机器人。** 打开 [@tgemails_Bot](https://t.me/tgemails_Bot)，发送 `/start`，再发送 `/newemail`，几秒钟后地址即可使用。不需要域名、服务器或 Cloudflare 账号。免费额度为 3 个别名、每月 100 封已投递邮件。如果你的场景需要更多，请联系 [@yolovlad](https://t.me/yolovlad)。正式依赖这项服务之前，请先阅读[使用规范](https://vladkarok.github.io/email-to-telegram/hosted/acceptable-use/)和[隐私说明](https://vladkarok.github.io/email-to-telegram/hosted/privacy-and-data-requests/)（英文）。
+**直接使用托管机器人。** 打开 [@tgemails_Bot](https://t.me/tgemails_Bot)，发送 `/start`，再发送 `/newemail`，几秒钟后地址即可使用。不需要域名、服务器或 Cloudflare 账号。提供免费套餐，当前额度可在机器人中发送 `/plan` 查看。如果你的场景需要更多，请联系 [@yolovlad](https://t.me/yolovlad)。正式依赖这项服务之前，请先阅读[使用规范](https://vladkarok.github.io/email-to-telegram/hosted/acceptable-use/)和[隐私说明](https://vladkarok.github.io/email-to-telegram/hosted/privacy-and-data-requests/)（英文）。
 
 **自行部署。** 代码以 MIT 许可证开源。Cloudflare Email Routing 接收发往你域名的邮件，一个小型 Worker 校验别名，你服务器上的 Node 应用把邮件投递到 Telegram。部署指南为英文：[First deployment guide](README.md#first-deployment-guide)。
 

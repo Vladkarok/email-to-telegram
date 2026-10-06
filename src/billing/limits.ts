@@ -101,6 +101,27 @@ export async function checkAllowRuleCreateLimit(
   return { ok: true };
 }
 
+/**
+ * The plan that governs one inbound decision. Resolve it once and use it for
+ * both the quota checks and the per-alias hourly cap, so a plan change landing
+ * mid-decision cannot make the two disagree. Self-hosted mode has no plans:
+ * the free definition supplies the hourly cap and quota checks are skipped.
+ */
+export interface InboundPlan {
+  hosted: boolean;
+  /** The hosted owner; null when the row is missing (quota checks reject). */
+  user: User | null;
+  plan: PlanDefinition;
+}
+
+export async function resolveInboundPlan(db: Db, userId: bigint | null): Promise<InboundPlan> {
+  if (!shouldEnforceHostedLimits()) {
+    return { hosted: false, user: null, plan: getPlanDefinition("free") };
+  }
+  const user = userId == null ? null : ((await findUserById(db, userId)) ?? null);
+  return { hosted: true, user, plan: user ? getEffectivePlan(user) : getPlanDefinition("free") };
+}
+
 export async function checkInboundLimit(
   db: Db,
   userId: bigint | null,
@@ -111,13 +132,26 @@ export async function checkInboundLimit(
   // UTC month boundary and disagree.
   month = usageMonthForDate(),
 ): Promise<LimitResult> {
-  if (!shouldEnforceHostedLimits()) return { ok: true };
-  if (userId == null) return { ok: false, code: "subscription_inactive" };
+  return checkInboundLimitForPlan(
+    db,
+    await resolveInboundPlan(db, userId),
+    rawSizeBytes,
+    storageDeltaBytes,
+    month,
+  );
+}
 
-  const user = await findUserById(db, userId);
+export async function checkInboundLimitForPlan(
+  db: Db,
+  inbound: InboundPlan,
+  rawSizeBytes?: number,
+  storageDeltaBytes?: bigint,
+  month = usageMonthForDate(),
+): Promise<LimitResult> {
+  if (!inbound.hosted) return { ok: true };
+  const { user, plan } = inbound;
   if (!user) return { ok: false, code: "subscription_inactive" };
 
-  const plan = getEffectivePlan(user);
   if (rawSizeBytes != null && rawSizeBytes > plan.limits.maxMessageBytes) {
     return {
       ok: false,

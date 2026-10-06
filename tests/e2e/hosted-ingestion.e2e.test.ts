@@ -233,12 +233,19 @@ vi.mock("../../src/db/repos/storageUsage.js", () => ({
 
 vi.mock("../../src/billing/limits.js", async () => {
   const actual = await vi.importActual<object>("../../src/billing/limits.js");
+  const { getPlanDefinition } = await import("../../src/billing/plans.js");
+  // Preflight, the raw pre-check and the queue each take the next result.
+  const nextInboundLimit = vi.fn(() => {
+    const next = state.inboundLimitResults.shift();
+    return Promise.resolve(next ?? { ok: true });
+  });
   return {
     ...actual,
-    checkInboundLimit: vi.fn(() => {
-      const next = state.inboundLimitResults.shift();
-      return Promise.resolve(next ?? { ok: true });
-    }),
+    checkInboundLimit: nextInboundLimit,
+    checkInboundLimitForPlan: nextInboundLimit,
+    resolveInboundPlan: vi.fn(() =>
+      Promise.resolve({ hosted: true, user: null, plan: getPlanDefinition("free") }),
+    ),
   };
 });
 

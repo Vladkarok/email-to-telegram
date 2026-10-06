@@ -3,7 +3,7 @@ import { verifyWorkerRequest } from "../../utils/workerAuth.js";
 import { getDb } from "../../db/client.js";
 import { checkPreflightAllowRules } from "../../db/repos/allowRules.js";
 import { countRecentDeliveriesByAlias } from "../../db/repos/deliveryLogs.js";
-import { checkInboundLimit } from "../../billing/limits.js";
+import { checkInboundLimitForPlan, resolveInboundPlan } from "../../billing/limits.js";
 import { isQuotaNotificationReason, notifyQuotaExhausted } from "../../billing/quotaNotifier.js";
 import { incrementUserUsageMonth, usageMonthForDate } from "../../db/repos/usage.js";
 import { getApi } from "../../telegram/api.js";
@@ -87,11 +87,13 @@ export function preflightRoute(app: FastifyInstance): void {
         return;
       }
 
-      // One month for the whole rejection decision (check, counter, claim).
+      // One month for the whole rejection decision (check, counter, claim),
+      // and one plan for both the quota check and the hourly cap below.
       const month = usageMonthForDate();
-      const inboundLimit = await checkInboundLimit(
+      const inboundPlan = await resolveInboundPlan(getDb(), alias.createdBy);
+      const inboundLimit = await checkInboundLimitForPlan(
         getDb(),
-        alias.createdBy,
+        inboundPlan,
         undefined,
         undefined,
         month,
@@ -144,7 +146,7 @@ export function preflightRoute(app: FastifyInstance): void {
         alias.id,
         new Date(Date.now() - 60 * 60 * 1000),
       );
-      if (recentDeliveries >= alias.maxEmailsHour) {
+      if (recentDeliveries >= inboundPlan.plan.limits.aliasEmailsPerHour) {
         // Defer, not bounce: the Worker turns any non-2xx into a thrown error
         // (a temporary SMTP failure), so the sender retries once the sliding
         // hour frees a slot. {accept:false} would be a permanent 550.

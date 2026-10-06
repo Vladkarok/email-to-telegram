@@ -42,6 +42,9 @@ export const emailAddresses = pgTable(
     // routing_version = ?`, so an A→B→A round trip invalidates it — chat id
     // alone would not. Zero rows updated ⇒ re-read, re-authorize, re-confirm.
     routingVersion: integer("routing_version").notNull().default(0),
+    // Not read any more: the hourly cap comes from the owner's plan
+    // (PlanLimits.aliasEmailsPerHour). Kept so an older image still finds it
+    // after a rollback; drop it in a later release.
     maxEmailsHour: integer("max_emails_hour").notNull().default(60),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

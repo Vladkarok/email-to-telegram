@@ -5,6 +5,7 @@ import { signWorkerRequest } from "../../../src/utils/workerAuth.js";
 import { markBotHealthy, markBotUnhealthy } from "../../../src/telegram/health.js";
 import { metricsRegistry, resetMetricsForTests } from "../../../src/observability/metrics.js";
 import { getLogger } from "../../../src/utils/logger.js";
+import { applyPlanLimitOverrides, getPlanDefinition } from "../../../src/billing/plans.js";
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
@@ -52,9 +53,19 @@ vi.mock("../../../src/db/repos/workerRequestNonces.js", () => ({
 vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
   countRecentDeliveriesByAlias: (...args: unknown[]): unknown => mockCountRecentDeliveries(...args),
 }));
-vi.mock("../../../src/billing/limits.js", () => ({
-  checkInboundLimit: (...args: unknown[]): unknown => mockCheckInboundLimit(...args),
-}));
+const mockResolveInboundPlan = vi.fn();
+vi.mock("../../../src/billing/limits.js", async () => {
+  const { getPlanDefinition } = await import("../../../src/billing/plans.js");
+  return {
+    checkInboundLimit: (...args: unknown[]): unknown => mockCheckInboundLimit(...args),
+    checkInboundLimitForPlan: (...args: unknown[]): unknown => mockCheckInboundLimit(...args),
+    // Tracked; falls back to the free plan, read at call time so
+    // applyPlanLimitOverrides in a test takes effect.
+    resolveInboundPlan: (...args: unknown[]): unknown =>
+      mockResolveInboundPlan(...args) ??
+      Promise.resolve({ hosted: true, user: null, plan: getPlanDefinition("free") }),
+  };
+});
 vi.mock("../../../src/db/repos/hostedInboundBlocks.js", () => ({
   findHostedInboundBlock: (...args: unknown[]): unknown => mockFindHostedInboundBlock(...args),
 }));
@@ -186,6 +197,7 @@ describe("POST /inbound/preflight", () => {
   afterEach(() => {
     restoreEnv("WORKER_SECRET", savedSecret);
     restoreEnv("APP_MODE", savedAppMode);
+    applyPlanLimitOverrides({});
   });
 
   it("returns 200 with accept:true for an active alias", async () => {
@@ -318,12 +330,14 @@ describe("POST /inbound/preflight", () => {
     resetMetricsForTests();
     mockIncrementUserUsageMonth.mockClear();
     mockNotifyQuotaExhausted.mockClear();
+    applyPlanLimitOverrides({ free: { aliasEmailsPerHour: 2 } });
     mockFindAlias.mockResolvedValue({
       id: "uuid-1",
       status: "active",
       localPart: "alerts",
       createdBy: 1n,
-      maxEmailsHour: 2,
+      // Legacy per-alias column: no longer read.
+      maxEmailsHour: 1000,
     });
     mockCheckAllow.mockResolvedValue(true);
     mockCountRecentDeliveries.mockResolvedValue(2);
@@ -368,13 +382,58 @@ describe("POST /inbound/preflight", () => {
     ).toBeDefined();
   });
 
-  it("accepts one mail below the alias hourly cap", async () => {
+  it("uses one resolved plan for the quota check and the hourly cap", async () => {
+    const pro = getPlanDefinition("pro");
+    const snapshot = {
+      hosted: true,
+      user: { id: 1n },
+      plan: { ...pro, limits: { ...pro.limits, aliasEmailsPerHour: 2 } },
+    };
+    // Only the first resolution gets the snapshot; a second one would see the
+    // free plan's 60 and accept.
+    mockResolveInboundPlan.mockReset();
+    mockResolveInboundPlan.mockResolvedValueOnce(snapshot);
+    mockCheckInboundLimit.mockClear();
     mockFindAlias.mockResolvedValue({
       id: "uuid-1",
       status: "active",
       localPart: "alerts",
       createdBy: 1n,
-      maxEmailsHour: 2,
+      maxEmailsHour: 1000,
+    });
+    mockCheckAllow.mockResolvedValue(true);
+    mockCountRecentDeliveries.mockResolvedValue(2);
+
+    const body = Buffer.from(
+      JSON.stringify({ localPart: "alerts", envelopeFrom: "allowed@example.com" }),
+    );
+    const { signature, timestamp } = signWorkerRequest(body);
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/preflight",
+      headers: {
+        "content-type": "application/json",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+      },
+      payload: body,
+    });
+
+    expect(res.statusCode).toBe(429);
+    expect(mockResolveInboundPlan).toHaveBeenCalledOnce();
+    expect(mockResolveInboundPlan.mock.calls[0]?.[1]).toBe(1n);
+    expect(mockCheckInboundLimit.mock.calls[0]?.[1]).toBe(snapshot);
+  });
+
+  it("accepts one mail below the alias hourly cap", async () => {
+    applyPlanLimitOverrides({ free: { aliasEmailsPerHour: 2 } });
+    mockFindAlias.mockResolvedValue({
+      id: "uuid-1",
+      status: "active",
+      localPart: "alerts",
+      createdBy: 1n,
+      maxEmailsHour: 1000,
     });
     mockCheckAllow.mockResolvedValue(true);
     mockCountRecentDeliveries.mockResolvedValue(1);

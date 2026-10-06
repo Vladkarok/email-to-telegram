@@ -12,7 +12,7 @@ import { deleteExpiredAttachmentLinks } from "../db/repos/attachmentLinks.js";
 import { deleteExpiredAliasTombstones } from "../db/repos/aliases.js";
 import { deleteOldQuotaNotifications } from "../db/repos/quotaNotifications.js";
 import { getEffectivePlan } from "../billing/limits.js";
-import { PLAN_DEFINITIONS } from "../billing/plans.js";
+import { listPlanDefinitions } from "../billing/plans.js";
 
 type Db = NodePgDatabase<typeof schema>;
 type RetentionUser = Parameters<typeof getEffectivePlan>[0] | null;
@@ -341,12 +341,12 @@ async function cleanExpiredLinks(
   }
 }
 
-function broadRetentionCandidateCutoff(now: number, globalTtlHours: number): Date {
+export function broadRetentionCandidateCutoff(now: number, globalTtlHours: number): Date {
   return new Date(Math.max(now - globalTtlHours * 3600 * 1000, now - minimumPlanRetentionMs()));
 }
 
 function minimumPlanRetentionMs(): number {
-  const retentionDays = Object.values(PLAN_DEFINITIONS).map((plan) => plan.limits.retentionDays);
+  const retentionDays = listPlanDefinitions().map((plan) => plan.limits.retentionDays);
   return Math.min(...retentionDays) * 24 * 3600 * 1000;
 }
 

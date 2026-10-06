@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { attachments } from "../../../src/db/schema.js";
 
@@ -61,7 +61,9 @@ vi.mock("../../../src/db/repos/quotaNotifications.js", () => ({
     mockDeleteOldQuotaNotifications(...args),
 }));
 
-const { runCleanup, deliveryLogHasNoAttachments } = await import("../../../src/storage/cleanup.js");
+const { runCleanup, deliveryLogHasNoAttachments, broadRetentionCandidateCutoff } =
+  await import("../../../src/storage/cleanup.js");
+const { applyPlanLimitOverrides } = await import("../../../src/billing/plans.js");
 
 function makeDb(
   expiredAttachments: {
@@ -666,5 +668,22 @@ describe("runCleanup", () => {
     const { sql } = new PgDialect().sqlToQuery(deliveryLogHasNoAttachments());
 
     expect(sql).toMatch(/not exists \(select 1/i);
+  });
+});
+
+describe("broadRetentionCandidateCutoff", () => {
+  const now = Date.UTC(2026, 9, 6);
+  const day = 24 * 3600 * 1000;
+
+  afterEach(() => {
+    applyPlanLimitOverrides({});
+  });
+
+  it("follows the shortest plan retention, including operator overrides", () => {
+    // 30-day global window; the free plan's 7 days is the shortest by default.
+    expect(broadRetentionCandidateCutoff(now, 30 * 24).getTime()).toBe(now - 7 * day);
+
+    applyPlanLimitOverrides({ free: { retentionDays: 3 } });
+    expect(broadRetentionCandidateCutoff(now, 30 * 24).getTime()).toBe(now - 3 * day);
   });
 });

@@ -13,8 +13,8 @@ un gruppo o in un topic del forum.
 
 **Il bot ospitato.** Apri [@tgemails_Bot](https://t.me/tgemails_Bot), invia
 `/start` e poi `/newemail`. Dopo pochi secondi l'indirizzo funziona. Non servono
-dominio, server o account Cloudflare. Il piano gratuito include 3 alias e 100
-email consegnate al mese. Se ti serve di più, scrivi a
+dominio, server o account Cloudflare. C'è un piano gratuito: `/plan` nel bot
+ne mostra i limiti attuali. Se ti serve di più, scrivi a
 [@yolovlad](https://t.me/yolovlad). Prima di farci affidamento, leggi le
 [regole d'uso](https://vladkarok.github.io/email-to-telegram/hosted/acceptable-use/)
 e l'[informativa sulla privacy](https://vladkarok.github.io/email-to-telegram/hosted/privacy-and-data-requests/)
