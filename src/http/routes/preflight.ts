@@ -154,7 +154,7 @@ export function preflightRoute(app: FastifyInstance): void {
           { localPart, aliasId: alias.id, userId: alias.createdBy.toString() },
           "inbound.preflight.deferred",
         );
-        recordInboundPreflight("rejected", "rate_limited");
+        recordInboundPreflight("deferred", "rate_limited");
         await reply.status(429).send({ error: "rate limited" });
         return;
       }

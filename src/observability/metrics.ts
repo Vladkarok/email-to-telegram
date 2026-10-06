@@ -38,7 +38,7 @@ const httpRequestDurationSeconds = new Histogram({
 
 const inboundPreflightTotal = new Counter({
   name: "email_to_telegram_inbound_preflight_total",
-  help: "Inbound preflight decisions by result and reason.",
+  help: "Inbound preflight decisions by result and reason. accepted = the Worker may upload the mail; rejected = the Worker bounces it (permanent 550); deferred = answered 429 so the sending server retries later (reason rate_limited: the alias hourly cap).",
   labelNames: ["result", "reason"] as const,
   registers: [metricsRegistry],
 });
@@ -159,7 +159,13 @@ export function recordHttpRequest(input: {
   httpRequestDurationSeconds.observe(labels, input.durationSeconds);
 }
 
-export function recordInboundPreflight(result: "accepted" | "rejected", reason: string): void {
+/**
+ * accepted = the Worker may upload the mail; rejected = the Worker bounces it
+ * (permanent 550); deferred = a 429, so the sending server retries later.
+ */
+export type InboundPreflightResult = "accepted" | "rejected" | "deferred";
+
+export function recordInboundPreflight(result: InboundPreflightResult, reason: string): void {
   inboundPreflightTotal.inc({ result, reason });
 }
 
