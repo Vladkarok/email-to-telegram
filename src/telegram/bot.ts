@@ -484,12 +484,12 @@ export function createBot(token: string): Bot {
     const [, aliasId, mode] = ctx.match;
     if (!(await assertAliasAccess(ctx, aliasId, { fresh: true }))) return;
     const messages = getMessages(await resolveLocale(ctx, getDb()));
-    const validModes = ["plaintext", "html", "markdown"];
+    const validModes = ["plaintext", "html"];
     if (!validModes.includes(mode)) {
       await ctx.answerCallbackQuery(messages.settingsCommand.invalidModeToast);
       return;
     }
-    await updateAliasRenderMode(getDb(), aliasId, mode as "plaintext" | "html" | "markdown");
+    await updateAliasRenderMode(getDb(), aliasId, mode as "plaintext" | "html");
     await ctx.answerCallbackQuery(messages.settingsCommand.modeSetToast(mode));
     const alias = await findAliasById(getDb(), aliasId);
     if (!alias) return;

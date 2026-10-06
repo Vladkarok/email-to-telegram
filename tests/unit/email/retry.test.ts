@@ -549,7 +549,7 @@ describe("runRetryWorker", () => {
     mockFindAliasById.mockResolvedValue({
       ...fakeAlias,
       privacyModeEnabled: true,
-      renderMode: "markdown",
+      renderMode: "html",
     });
     // Rich-capable body: without privacy mode this retry would carry richHtml.
     mockReadRawEmail.mockResolvedValue(
@@ -590,12 +590,12 @@ describe("runRetryWorker", () => {
     );
   });
 
-  it("uses HTML parse mode for markdown-rendered retries", async () => {
+  it("uses HTML parse mode for html-rendered retries", async () => {
     mockFindFailedLogs.mockResolvedValue([fakeLog]);
-    mockFindAliasById.mockResolvedValue({ ...fakeAlias, renderMode: "markdown" });
+    mockFindAliasById.mockResolvedValue({ ...fakeAlias, renderMode: "html" });
     mockReadRawEmail.mockResolvedValue(
       Buffer.from(
-        "From: sender@example.com\r\nTo: alias@example.com\r\nSubject: Markdown\r\n\r\n# Heading\r\n\r\n**Bold**",
+        "From: sender@example.com\r\nTo: alias@example.com\r\nSubject: Html\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<h1>Heading</h1><p><b>Bold</b></p>",
       ),
     );
 

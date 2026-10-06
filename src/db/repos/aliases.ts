@@ -286,7 +286,7 @@ export async function findRecentAliasTombstone(
 export async function updateAliasRenderMode(
   db: Db,
   id: string,
-  renderMode: "plaintext" | "html" | "markdown",
+  renderMode: "plaintext" | "html",
 ): Promise<void> {
   await db
     .update(emailAddresses)

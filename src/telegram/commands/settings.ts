@@ -24,6 +24,7 @@ import {
   CB_ALIAS_DETAIL,
 } from "../callbacks.js";
 import { DEFAULT_LOCALE, getMessages, resolveLocale, type Locale } from "../../i18n/index.js";
+import { normalizeRenderMode } from "../../email/renderer.js";
 
 export async function settingsHandler(ctx: CommandContext<Context>): Promise<void> {
   if (!ctx.from) return;
@@ -145,7 +146,7 @@ export function buildAliasSettingsKeyboard(
   const keyboard = new InlineKeyboard();
 
   for (const mode of RENDER_MODES) {
-    const current = mode === alias.renderMode ? "✓ " : "";
+    const current = mode === normalizeRenderMode(alias.renderMode) ? "✓ " : "";
     keyboard.text(`${current}${mode}`, CB_SET_MODE.build(alias.id, mode));
   }
 

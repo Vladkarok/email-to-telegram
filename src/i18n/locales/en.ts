@@ -98,7 +98,6 @@ ${safetyNotes}
   renderGuidance: {
     plaintextGuidance: "Plaintext: send literal text exactly as typed.",
     htmlGuidance: "HTML: use your mail client's rich-text toolbar. Do not type raw HTML tags.",
-    markdownGuidance: "Markdown: type markdown syntax literally. Do not use the rich-text toolbar.",
     bodyDedupOn:
       "Body dedup: on. Future emails with the same body may be suppressed for this alias. Message-ID duplicates are still blocked when that header is present.",
     bodyDedupOff:
@@ -111,7 +110,6 @@ ${safetyNotes}
       "<b>Render Modes</b>",
       "plaintext — sends literal text exactly as typed",
       "html — use Gmail or mail-client formatting buttons, not raw <code>&lt;b&gt;</code> tags",
-      "markdown — type markdown syntax literally, not the rich-text toolbar",
     ].join("\n"),
     bodyDedupHelp: [
       "<b>Body Dedup</b>",
@@ -297,7 +295,7 @@ ${safetyNotes}
   },
   settingsCommand: {
     usage: [
-      "Usage: /settings <alias-name> [plaintext|html|markdown]",
+      "Usage: /settings <alias-name> [plaintext|html]",
       "Usage: /settings <alias-name> dedup <on|off>",
       "Usage: /settings <alias-name> privacy <on|off>",
     ].join("\n"),

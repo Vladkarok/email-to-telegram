@@ -123,12 +123,11 @@ describe("/help command", () => {
     expect(String(text)).toContain("/allow");
   });
 
-  it("explains how to test html and markdown render modes", async () => {
+  it("explains how to test the html render mode", async () => {
     const ctx = createMockCtx();
     await helpHandler(ctx);
     const text = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as unknown;
     expect(String(text)).toContain("use Gmail or mail-client formatting buttons");
-    expect(String(text)).toContain("type markdown syntax literally");
     expect(String(text)).toContain("browser view link");
   });
 

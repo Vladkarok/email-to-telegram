@@ -102,8 +102,6 @@ ${safetyNotes}
     plaintextGuidance: "Plaintext: invia il testo letterale così come digitato.",
     htmlGuidance:
       "HTML: usa la barra di formattazione del tuo client di posta. Non scrivere tag HTML grezzi.",
-    markdownGuidance:
-      "Markdown: digita la sintassi markdown letteralmente. Non usare la barra rich-text.",
     bodyDedupOn:
       "Body dedup: attivo. Le email future con lo stesso corpo possono essere soppresse per questo alias. I duplicati Message-ID restano bloccati se l'header è presente.",
     bodyDedupOff:
@@ -116,7 +114,6 @@ ${safetyNotes}
       "<b>Render Mode</b>",
       "plaintext — invia il testo letterale così come digitato",
       "html — usa i pulsanti di formattazione di Gmail o del client di posta, non tag <code>&lt;b&gt;</code> grezzi",
-      "markdown — digita la sintassi markdown letteralmente, non usare la barra rich-text",
     ].join("\n"),
     bodyDedupHelp: [
       "<b>Body Dedup</b>",
@@ -300,7 +297,7 @@ ${safetyNotes}
   },
   settingsCommand: {
     usage: [
-      "Uso: /settings <alias-name> [plaintext|html|markdown]",
+      "Uso: /settings <alias-name> [plaintext|html]",
       "Uso: /settings <alias-name> dedup <on|off>",
       "Uso: /settings <alias-name> privacy <on|off>",
     ].join("\n"),

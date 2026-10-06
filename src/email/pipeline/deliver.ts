@@ -18,6 +18,7 @@ import {
   renderAttachmentFallback,
   renderPrivacyAlert,
   type AttachmentLink,
+  normalizeRenderMode,
 } from "../renderer.js";
 import { isInlinePhoto } from "../imageTypes.js";
 import type { PhotoItem } from "../../telegram/sender.js";
@@ -179,7 +180,7 @@ export async function deliverQueuedEmail(
       }
 
       // 8. Render
-      const renderMode = (alias.renderMode ?? "plaintext") as "plaintext" | "html" | "markdown";
+      const renderMode = normalizeRenderMode(alias.renderMode);
       const rendered = privacyMode
         ? {
             text: await buildPrivacyModeMessage(
