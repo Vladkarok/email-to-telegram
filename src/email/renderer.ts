@@ -154,20 +154,18 @@ function buildAttachmentsSection(links: AttachmentLink[], mode: RenderMode): str
 }
 
 /**
- * The privacy alert names only the sender's domain, taken from the parsed
- * address and never from the From text: a display name such as
- * "Support <help@bank.com>" must not choose the domain shown. Without a
- * parsed address the name is shown instead, unless it contains an `@`
- * that could pass for an address.
+ * The privacy alert names only the domain of the first parsed From address,
+ * the address the From line shows. Nothing else from the From text reaches
+ * the Sender line: a display name such as "Support <help@bank.com>", a
+ * name-only From such as "bank.com" or an address with no `@` such as
+ * "Support <bank.com>" would otherwise look like a real sender domain. These
+ * show as "unknown sender". The domain is what the header claims, not a
+ * verified sender.
  */
 function extractSenderHint(email: ParsedEmail): string {
-  const address = email.headerFromEmail || email.envelopeFrom?.toLowerCase();
-  if (address) {
-    const at = address.lastIndexOf("@");
-    return at >= 0 && at < address.length - 1 ? address.slice(at + 1) : address;
-  }
-  const display = email.headerFromDisplay;
-  return display && !display.includes("@") ? display : "unknown sender";
+  const address = email.headerFromEmail || email.envelopeFrom?.toLowerCase() || "";
+  const at = address.lastIndexOf("@");
+  return at > 0 && at < address.length - 1 ? address.slice(at + 1) : "unknown sender";
 }
 
 function clampToMaxLen(parts: string[], mode: RenderMode): string {

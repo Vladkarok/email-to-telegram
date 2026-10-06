@@ -570,10 +570,19 @@ describe("renderEmail", () => {
       expect(plain.text.startsWith('From: "support@paypal.com" <attacker@evil.com>\n')).toBe(true);
     });
 
-    it("shows a name-only From as the bare name", async () => {
-      const plain = await renderFrom('"Just A Name"', "plaintext");
+    it("keeps the quotes on a name with a full-width at sign", async () => {
+      const plain = await renderFrom(
+        `${encodedWord("help\uff20bank.com")} <x@evil.com>`,
+        "plaintext",
+      );
 
-      expect(plain.text.startsWith("From: Just A Name\n")).toBe(true);
+      expect(plain.text.startsWith('From: "help\uff20bank.com" <x@evil.com>\n')).toBe(true);
+    });
+
+    it("keeps the quotes on a name-only From", async () => {
+      const plain = await renderFrom("bank.com", "plaintext");
+
+      expect(plain.text.startsWith('From: "bank.com"\n')).toBe(true);
     });
 
     it("shows unknown when the From header is empty", async () => {
@@ -662,25 +671,52 @@ describe("renderPrivacyAlert", () => {
     expect(await alertLines("Team: a@example.com;")).toContain("Sender: unknown sender");
   });
 
-  it("keeps an encoded line break in a name-only From on the Sender line", async () => {
+  it("does not let an encoded line break in a name-only From add a line", async () => {
     const lines = await alertLines(encodedWord("Bank\r\nSubject: Your account is locked"));
 
-    expect(lines).toContain('Sender: "Bank Subject: Your account is locked"');
+    expect(lines).toContain("Sender: unknown sender");
     expect(lines.filter((line) => line.startsWith("Subject:"))).toEqual([
       "Subject: hidden by privacy mode",
     ]);
   });
 
   it("strips directional overrides from the Sender line", async () => {
-    expect(await alertLines(encodedWord("Ali\u202eecilce"))).toContain("Sender: Aliecilce");
+    expect(await alertLines("<alice@ali\u202eecilce.example>")).toContain(
+      "Sender: aliecilce.example",
+    );
   });
 
-  it("shows a name-only From as the name", async () => {
-    expect(await alertLines('"Just A Name"')).toContain("Sender: Just A Name");
+  it.each([
+    ["a name", '"Just A Name"'],
+    ["a name shaped like a domain", "bank.com"],
+    ["a bracketed domain with no at sign", "<security.bank.com>"],
+    ["a name with an empty address", '"bank.com" <>'],
+    ["an encoded name shaped like a domain", encodedWord("bank.com")],
+    ["a name with a zero-width prefix", "\u200bbank.com"],
+    ["an encoded name shaped like an address", encodedWord("support@bank.com")],
+    ["a name with a full-width at sign", "security\uff20bank.com"],
+  ])("shows unknown sender for a name-only From: %s", async (_label, fromHeader) => {
+    expect(await alertLines(fromHeader)).toContain("Sender: unknown sender");
   });
 
-  it("does not show a name-only From that could pass for an address", async () => {
-    expect(await alertLines(encodedWord("support@bank.com"))).toContain("Sender: unknown sender");
+  it.each([
+    ["no at sign", "Support <bank.com>"],
+    ["nothing before the at sign", "<@bank.com>"],
+    ["nothing after the at sign", "help@"],
+  ])("shows unknown sender for an address with %s", async (_label, fromHeader) => {
+    expect(await alertLines(fromHeader)).toContain("Sender: unknown sender");
+  });
+
+  it("names the domain mailparser decodes from an encoded-word-only From, as the From line does", async () => {
+    // Left open: mailparser turns a From made only of B-encoded words into an
+    // address when the decoded text holds one. The Sender line follows that
+    // parsed address, as the From line does; neither proves who sent it.
+    const email = await parseFrom(encodedWord("Support <help@bank.com>"));
+    const alert = renderPrivacyAlert(email, "alerts@example.com", "https://x.example/v", false);
+    const delivery = renderEmailForDelivery(email, "plaintext", "alerts@example.com", []);
+
+    expect(alert.split("\n")).toContain("Sender: bank.com");
+    expect(delivery.text.startsWith("From: Support <help@bank.com>\n")).toBe(true);
   });
 
   it("shows unknown sender for an empty From", async () => {

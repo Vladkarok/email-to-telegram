@@ -93,7 +93,26 @@ describe("formatAddressDisplay over real mailparser output", () => {
       `${encodedWord("\u00a0")} <a@example.com>`,
       "a@example.com",
     ],
-    ["a name without an address", '"Just A Name"', "Just A Name"],
+    [
+      "a name with a full-width at sign",
+      `${encodedWord("help\uff20bank.com")} <x@evil.com>`,
+      '"help\uff20bank.com" <x@evil.com>',
+    ],
+    [
+      "a name with full-width angle brackets",
+      `${encodedWord("PayPal \uff1cservice\uff20paypal.com\uff1e")} <x@evil.com>`,
+      '"PayPal \uff1cservice\uff20paypal.com\uff1e" <x@evil.com>',
+    ],
+    [
+      "a name with a small comma",
+      `${encodedWord("Doe\ufe50 John")} <j@example.com>`,
+      '"Doe\ufe50 John" <j@example.com>',
+    ],
+    ["a name without an address", '"Just A Name"', '"Just A Name"'],
+    ["a name-only From shaped like a domain", "bank.com", '"bank.com"'],
+    ["a bracketed domain with no at sign", "<security.bank.com>", '"security.bank.com"'],
+    ["a name with an empty address", '"bank.com" <>', '"bank.com"'],
+    ["a name-only From with a full-width at sign", "help\uff20bank.com", '"help\uff20bank.com"'],
     ["an empty header", "", null],
     ["an empty address", "<>", null],
     [

@@ -22,16 +22,21 @@ that has been running in production.
 
 - The From line showed every sender name in quotes, as in
   `"GitHub" <noreply@github.com>`. Telegram messages and the privacy view
-  now show `GitHub <noreply@github.com>`. A name keeps its quotes only when
-  it contains `<`, `>`, `@`, `,`, `;` or `:`, so it cannot pass for an
-  address. A message with an empty From now shows `unknown` instead of a
-  blank sender. The stored From and allow rules are unchanged.
-- **The privacy alert's Sender line can no longer be spoofed.** It took the
-  domain from the first `<…>` in the From text, so an encoded display name
-  such as `Support <help@bank.com>` made the alert say `bank.com` for mail
-  from another domain. A line break in a name-only From could also add a
-  fake line to the alert. The domain now comes from the parsed address and
-  the line goes through the same sanitizer as the message header.
+  now show `GitHub <noreply@github.com>`. A name keeps its quotes when it
+  contains `<`, `>`, `@`, `,`, `;` or `:`, or a lookalike such as the
+  full-width `＠`, so it cannot pass for an address. A name with no address
+  keeps them too. A message with an empty From now shows `unknown` instead
+  of a blank sender. The stored From and allow rules are unchanged.
+- **A display name could pick the domain on the privacy alert's Sender
+  line.** The alert took the domain from the first `<…>` in the From text,
+  so an encoded display name such as `Support <help@bank.com>` made it say
+  `bank.com` for mail from another domain. The Sender line now shows the
+  domain of the parsed From address, the one the From line shows. A From
+  with no `user@domain` address, such as a bare `bank.com`, shows
+  `unknown sender`. The domain is what the From header claims; it does not
+  prove who sent the message. A line break in a name-only From could also
+  add a fake line to the alert; the line now goes through the same
+  sanitizer as the message header.
 
 ## [1.11.0] — 2026-10-06
 

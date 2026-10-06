@@ -3,6 +3,8 @@ import type { EmailAddress } from "mailparser";
 /**
  * Left unquoted, a name with one of these could pass for an address (`<>@`)
  * or look like a second entry or a group (`,;:`), so it keeps its quotes.
+ * Checked after NFKC normalisation, which folds lookalikes such as the
+ * full-width `＠` and `＜` into these characters.
  */
 const NAME_NEEDS_QUOTES = /[<>@,;:]/;
 
@@ -35,10 +37,15 @@ function formatEntry(entry: EmailAddress): string {
   }
   const address = entry.address?.trim() ?? "";
   if (!name || name.toLowerCase() === address.toLowerCase()) return address;
-  return address ? `${displayName(name)} <${address}>` : displayName(name);
+  // A name with no address beside it stays quoted, so it cannot be taken for
+  // an address or a domain.
+  return address ? `${displayName(name)} <${address}>` : quoted(name);
 }
 
 function displayName(name: string): string {
-  if (!NAME_NEEDS_QUOTES.test(name)) return name;
+  return NAME_NEEDS_QUOTES.test(name.normalize("NFKC")) ? quoted(name) : name;
+}
+
+function quoted(name: string): string {
   return `"${name.replace(/[\\"]/g, "\\$&")}"`;
 }
