@@ -24,6 +24,31 @@ that has been running in production.
 - Public-facing documentation: `SECURITY.md`, `CONTRIBUTING.md`,
   `CHANGELOG.md`, issue/PR templates, CODEOWNERS.
 
+## [1.8.0] — 2026-10-06
+
+Rich messages for the mail that actually arrives: links and attachments no
+longer force the plain-text layout.
+
+### Added
+
+- **Links in rich messages.** Emails with links, including every Gmail and
+  Outlook forward, now keep native tables and headings. Links in the source
+  are clickable, bare `https://` and `mailto:` text becomes a link, and
+  attachment downloads appear as an "Attachments:" paragraph with the same
+  one-time links as before. Verified on staging that Telegram draws no link
+  preview for rich messages and never requests a linked URL before a click,
+  so one-time attachment links stay unused until you open them.
+- **Golden rendering tests** over real, redacted emails (a Veeam Agent
+  report and its Gmail forward) and `npm run render:preview -- file.eml` to
+  see exactly what Telegram would receive.
+
+### Fixed
+
+- A sender could stall delivery with a URL followed by tens of thousands of
+  closing brackets; trimming is now linear.
+- Directional-control characters are stripped from attachment filenames so
+  an extension cannot be disguised.
+
 ## [1.7.0] — 2026-10-06
 
 Rich-message polish and a dependency wave that clears every open
