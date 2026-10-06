@@ -17,6 +17,7 @@ import {
   usageMonthForDate,
 } from "../db/repos/usage.js";
 import { classifyTelegramError, type TelegramErrorClass } from "../telegram/errorClassifier.js";
+import { PLAN_CODES } from "../billing/plans.js";
 import { noteRawInboundOutcome } from "./inboundHealth.js";
 
 type Db = NodePgDatabase<typeof schema>;
@@ -306,6 +307,7 @@ function initializeSeries(): void {
   for (const reason of INBOUND_LIMIT_REASONS) quotaRejectionsTotal.inc({ reason }, 0);
   for (const path of DELIVERY_PATHS) deliveryLatencySeconds.zero({ path });
   for (const stage of DELIVERY_LOST_STAGES) deliveriesLostTotal.inc({ stage }, 0);
+  for (const plan of PLAN_CODES) manualPlanGrantsTotal.inc({ plan }, 0);
 }
 
 initializeSeries();

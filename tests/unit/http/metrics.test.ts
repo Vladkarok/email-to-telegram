@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createHttpServer } from "../../../src/http/server.js";
 import { resetMetricsForTests } from "../../../src/observability/metrics.js";
+import { PLAN_CODES } from "../../../src/billing/plans.js";
 import type { AppConfig } from "../../../src/config.js";
 
 const mockCountOrganizationsByPlan = vi.fn();
@@ -310,6 +311,10 @@ describe("GET /metrics", () => {
       /email_to_telegram_deliveries_lost_total\{stage="initial"[^}]*\} 0\n/,
       /email_to_telegram_deliveries_lost_total\{stage="retry"[^}]*\} 0\n/,
       /email_to_telegram_deliveries_lost_total\{stage="cleanup"[^}]*\} 0\n/,
+      ...PLAN_CODES.map(
+        (plan) =>
+          new RegExp(`email_to_telegram_manual_plan_grants_total\\{plan="${plan}"[^}]*\\} 0\\n`),
+      ),
     ]) {
       expect(res.body).toMatch(series);
     }
