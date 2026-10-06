@@ -81,7 +81,7 @@ export const it = {
 ${settingsHelp}
 
 <b>Allow rules</b>
-Solo i mittenti corrispondenti a un'allow rule possono consegnare posta a un alias.
+Solo i mittenti corrispondenti a un'allow rule possono consegnare posta a un alias. Una regola confronta l'indirizzo nella riga From (Da); l'inoltro automatico di Gmail mantiene il mittente originale.
 /allow list &lt;alias&gt;
 /allow add &lt;alias&gt; &lt;email_or_domain&gt;
 /allow remove &lt;alias&gt; &lt;email_or_domain&gt;
@@ -155,7 +155,7 @@ ${safetyNotes}
     nameCooldown:
       "❌ Questo nome è stato eliminato di recente da un altro utente ed è temporaneamente non disponibile. Riprova più tardi o scegline un altro.",
     created: (fullAddress: string, chatNote: string) =>
-      `✅ Alias email creato!\n\n📧 <code>${fullAddress}</code>${chatNote}\n\n⚠️ Tutta la posta viene rifiutata finché non autorizzi almeno un mittente.\nTocca una scelta rapida o aggiungi un dominio personalizzato:`,
+      `✅ Alias email creato!\n\n📧 <code>${fullAddress}</code>${chatNote}\n\nSolo i mittenti che autorizzi possono scrivere a questo alias. Una regola confronta l'indirizzo nella riga From (Da) dell'email.\n\nL'inoltro automatico di Gmail mantiene il mittente originale. Autorizza prima google.com, così arriva il codice di conferma di Gmail, poi ogni mittente che inoltri, per esempio github.com.\n\nTocca una scelta rapida o aggiungi un dominio personalizzato:`,
     deliveringTo: (chatTitle: string) => `\nConsegna a: <b>${chatTitle}</b>`,
     aliasLimitReached: (used: number | undefined, limit: number) =>
       `📦 Limite del piano raggiunto: ${used ?? limit}/${limit} alias usati. Effettua l'upgrade per crearne altri.`,
@@ -262,7 +262,7 @@ ${safetyNotes}
     addRuleButton: "➕ Aggiungi regola",
     backButton: "⬅️ Indietro",
     headerEmpty: (localPart: string) =>
-      `📋 <b>${localPart}</b> — Allow Rules\n\n⚠️ Nessuna regola — tutta la posta è rifiutata.\n\nAggiungi almeno un dominio o un'email per iniziare a ricevere posta.`,
+      `📋 <b>${localPart}</b> — Allow Rules\n\n⚠️ Nessuna regola — tutta la posta è rifiutata.\n\nAggiungi il dominio o l'email della riga From (Da) della posta che aspetti. Inoltri da Gmail? Autorizza prima google.com per il codice di conferma.`,
     headerWithRules: (localPart: string, count: number) =>
       `📋 <b>${localPart}</b> — ${count} allow rule\n\nTocca ❌ per rimuovere una regola.`,
   },
@@ -350,7 +350,7 @@ Esempi:
       "❌ La creazione di allow rule non è disponibile al momento. Riprova più tardi.",
     upgradePlanButton: "⬆️ Effettua upgrade",
     addRulePrompt: (localPart: string) =>
-      `📋 Aggiungi allow rule per <code>${localPart}</code>\n\nTocca una scelta rapida, oppure invia un dominio (es. <code>github.com</code>) o un'email (es. <code>user@example.com</code>).`,
+      `📋 Aggiungi allow rule per <code>${localPart}</code>\n\nUna regola confronta l'indirizzo nella riga From (Da) dell'email. Tocca una scelta rapida, oppure invia un dominio (es. <code>github.com</code>) o un'email (es. <code>user@example.com</code>).`,
     addingToast: "Aggiungo…",
     removedToast: "Regola rimossa.",
   },

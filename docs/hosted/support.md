@@ -6,23 +6,38 @@ Five things that commonly go wrong, and how to fix them.
 
 ## 1. Emails are not arriving
 
-**Most likely cause: no allow rule is set.**
+**Most likely cause: no allow rule matches the sender.**
 
-Every new alias starts with an empty allow-rule list, which means all
-incoming mail is **rejected by default**. You must add at least one rule
-before mail can be delivered.
+Every new alias starts with no allow rules. Mail from a sender that no rule
+allows bounces back to that sender. A rule matches the address in the
+email's `From:` line, and the sender's domain must authenticate the message
+(DKIM or DMARC).
 
 ```
-/allow add <alias> <sender@example.com>
-/allow add <alias> @example.com      ← whole domain
-/allow add <alias> *                 ← accept everything (not recommended)
+/allow add <alias> noreply@github.com   ← one address
+/allow add <alias> github.com           ← every address at that domain
 ```
+
+A domain rule covers that exact domain only: `github.com` does not cover
+`mail.github.com`.
 
 Check what rules are active:
 
 ```
 /allow list <alias>
 ```
+
+**Forwarding from Gmail.** Gmail's automatic forwarding keeps the original
+sender in the `From:` line, so a `gmail.com` rule does not cover forwarded
+mail. A `gmail.com` rule is for mail written from a Gmail account. To set up
+forwarding:
+
+1. `/allow add <alias> google.com`. Gmail sends its forwarding confirmation
+   code from `forwarding-noreply@google.com`.
+2. In Gmail, open Settings → Forwarding and POP/IMAP, add the alias address,
+   and enter the code that arrives in Telegram.
+3. Add a rule for each sender whose mail you forward, or forward only those
+   senders with a Gmail filter.
 
 **Other causes to check:**
 
@@ -32,8 +47,9 @@ Check what rules are active:
   `/listemail`.
 - Monthly quota is exhausted. Check with `/usage` — once the limit
   resets at the start of the next calendar month, delivery resumes.
-- The sender's domain has a strict DMARC/DKIM policy and the mail was
-  rejected at ingress. Rare, but possible with some automated senders.
+- The message failed sender authentication (DKIM/DMARC). Allow rules only
+  match mail that the sender's domain authenticates. Rare, but possible with
+  some automated senders.
 
 ---
 
@@ -100,11 +116,10 @@ window.
 
 ```
 /allow add <alias> noreply@github.com
-/allow add <alias> @stripe.com
+/allow add <alias> stripe.com
 ```
 
-Once an allow rule exists, only matching senders can deliver. All other
-mail is rejected silently at ingress (no bounce is sent to the sender).
+Only matching senders can deliver. Other mail bounces back to its sender.
 
 **Pause the alias** to temporarily stop all delivery without losing the
 address:
