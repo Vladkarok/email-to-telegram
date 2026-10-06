@@ -4,6 +4,7 @@ import { registerRoutes } from "../../../src/http/routes/index.js";
 import { signWorkerRequest } from "../../../src/utils/workerAuth.js";
 import { markBotHealthy, markBotUnhealthy } from "../../../src/telegram/health.js";
 import { metricsRegistry, resetMetricsForTests } from "../../../src/observability/metrics.js";
+import { getLogger } from "../../../src/utils/logger.js";
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
@@ -56,6 +57,16 @@ vi.mock("../../../src/billing/limits.js", () => ({
 }));
 vi.mock("../../../src/db/repos/hostedInboundBlocks.js", () => ({
   findHostedInboundBlock: (...args: unknown[]): unknown => mockFindHostedInboundBlock(...args),
+}));
+const mockIncrementUserUsageMonth = vi.fn().mockResolvedValue(undefined);
+vi.mock("../../../src/db/repos/usage.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/db/repos/usage.js")>()),
+  incrementUserUsageMonth: (...args: unknown[]): unknown => mockIncrementUserUsageMonth(...args),
+}));
+const mockNotifyQuotaExhausted = vi.fn().mockResolvedValue(undefined);
+vi.mock("../../../src/billing/quotaNotifier.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/billing/quotaNotifier.js")>()),
+  notifyQuotaExhausted: (...args: unknown[]): unknown => mockNotifyQuotaExhausted(...args),
 }));
 
 const WORKER_SECRET = "test-worker-secret-32chars-abcde";
@@ -303,15 +314,70 @@ describe("POST /inbound/preflight", () => {
     expect(res.json()).toMatchObject({ accept: true });
   });
 
-  it("returns accept:false when alias hourly cap has been reached", async () => {
+  it("defers with 429 once the alias hourly cap has been reached", async () => {
+    resetMetricsForTests();
+    mockIncrementUserUsageMonth.mockClear();
+    mockNotifyQuotaExhausted.mockClear();
     mockFindAlias.mockResolvedValue({
       id: "uuid-1",
       status: "active",
       localPart: "alerts",
+      createdBy: 1n,
       maxEmailsHour: 2,
     });
     mockCheckAllow.mockResolvedValue(true);
     mockCountRecentDeliveries.mockResolvedValue(2);
+    const infoSpy = vi.spyOn(getLogger(), "info");
+
+    const body = Buffer.from(
+      JSON.stringify({ localPart: "alerts", envelopeFrom: "allowed@example.com" }),
+    );
+    const { signature, timestamp } = signWorkerRequest(body);
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/inbound/preflight",
+      headers: {
+        "content-type": "application/json",
+        "x-worker-sig": signature,
+        "x-worker-ts": timestamp,
+      },
+      payload: body,
+    });
+
+    // Non-2xx, not {accept:false}: the Worker must throw (temporary SMTP
+    // failure) instead of bouncing with a permanent 550.
+    expect(res.statusCode).toBe(429);
+    expect(res.json()).toEqual({ error: "rate limited" });
+    expect(mockIncrementUserUsageMonth).not.toHaveBeenCalled();
+    expect(mockNotifyQuotaExhausted).not.toHaveBeenCalled();
+
+    // The Worker logs this and the per-IP limit alike ("preflight non-2xx
+    // 429"); only this app log line tells them apart. No sender data.
+    const deferred = infoSpy.mock.calls.find(([, msg]) => msg === "inbound.preflight.deferred");
+    infoSpy.mockRestore();
+    expect(deferred?.[0]).toEqual({ localPart: "alerts", aliasId: "uuid-1", userId: "1" });
+
+    const metrics = await metricsRegistry.metrics();
+    expect(
+      findMetricLine(metrics, "email_to_telegram_inbound_preflight_total", [
+        'result="rejected"',
+        'reason="rate_limited"',
+      ]),
+    ).toBeDefined();
+  });
+
+  it("accepts one mail below the alias hourly cap", async () => {
+    mockFindAlias.mockResolvedValue({
+      id: "uuid-1",
+      status: "active",
+      localPart: "alerts",
+      createdBy: 1n,
+      maxEmailsHour: 2,
+    });
+    mockCheckAllow.mockResolvedValue(true);
+    mockCountRecentDeliveries.mockResolvedValue(1);
 
     const body = Buffer.from(
       JSON.stringify({ localPart: "alerts", envelopeFrom: "allowed@example.com" }),
@@ -331,7 +397,7 @@ describe("POST /inbound/preflight", () => {
     });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ accept: false });
+    expect(res.json()).toMatchObject({ accept: true });
   });
 
   it("returns accept:false when the hosted subscription is inactive", async () => {
@@ -1077,7 +1143,9 @@ describe("POST /inbound/raw", () => {
     });
 
     expect(res.statusCode).toBe(202);
+    // Recovery needs both the metadata and the MIME to retry it later.
     expect(mockDeletePendingRawEmailMeta).not.toHaveBeenCalled();
+    expect(mockDeleteFile).not.toHaveBeenCalled();
     expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
 
     const metrics = await metricsRegistry.metrics();
@@ -1092,13 +1160,59 @@ describe("POST /inbound/raw", () => {
     ).toBeUndefined();
   });
 
-  it("drops pending recovery metadata for terminal queue rejections", async () => {
+  // Identical answers for both sender rejections: a 202/403 split would tell
+  // a prober which From domains the alias allows.
+  it.each(["sender_not_allowed", "sender_auth_failed"])(
+    "rejects %s with 403 and drops the stored raw email",
+    async (reason) => {
+      mockQueueInboundEmail.mockResolvedValueOnce({
+        queued: false,
+        result: { ok: false, reason },
+      });
+
+      const rawEmail = Buffer.from("From: blocked@example.com\r\nSubject: Hi\r\n\r\nBody");
+      const { signature, timestamp } = signWorkerRequest(rawEmail, { localPart: "alerts" });
+
+      const app = await buildApp();
+      const res = await app.inject({
+        method: "POST",
+        url: "/inbound/raw",
+        headers: {
+          "content-type": "application/octet-stream",
+          "x-worker-sig": signature,
+          "x-worker-sig-v": "v2",
+          "x-worker-ts": timestamp,
+          "x-local-part": "alerts",
+        },
+        payload: rawEmail,
+      });
+
+      expect(res.statusCode).toBe(403);
+      expect(res.json()).toEqual({ error: "rejected" });
+      expect(mockDeleteFile).toHaveBeenCalledOnce();
+      expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledOnce();
+      expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
+
+      const metrics = await metricsRegistry.metrics();
+      expect(
+        findMetricLine(metrics, "email_to_telegram_raw_inbound_total", [
+          'result="rejected"',
+          `reason="${reason}"`,
+        ]),
+      ).toBeDefined();
+      expect(
+        findMetricLine(metrics, "email_to_telegram_raw_inbound_total", ['result="accepted"']),
+      ).toBeUndefined();
+    },
+  );
+
+  it("acknowledges a duplicate with 202 and drops the second copy", async () => {
     mockQueueInboundEmail.mockResolvedValueOnce({
       queued: false,
-      result: { ok: false, reason: "sender_not_allowed" },
+      result: { ok: false, reason: "duplicate" },
     });
 
-    const rawEmail = Buffer.from("From: blocked@example.com\r\nSubject: Hi\r\n\r\nBody");
+    const rawEmail = Buffer.from("From: test@example.com\r\nSubject: Hi\r\n\r\nBody");
     const { signature, timestamp } = signWorkerRequest(rawEmail, { localPart: "alerts" });
 
     const app = await buildApp();
@@ -1116,19 +1230,9 @@ describe("POST /inbound/raw", () => {
     });
 
     expect(res.statusCode).toBe(202);
+    expect(mockDeleteFile).toHaveBeenCalledOnce();
     expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledOnce();
     expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
-
-    const metrics = await metricsRegistry.metrics();
-    expect(
-      findMetricLine(metrics, "email_to_telegram_raw_inbound_total", [
-        'result="rejected"',
-        'reason="sender_not_allowed"',
-      ]),
-    ).toBeDefined();
-    expect(
-      findMetricLine(metrics, "email_to_telegram_raw_inbound_total", ['result="accepted"']),
-    ).toBeUndefined();
   });
 
   it("returns 401 for unsigned request", async () => {

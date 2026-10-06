@@ -109,6 +109,20 @@ describe("Cloudflare Email Worker", () => {
     expect(message.setReject).toHaveBeenCalledWith("550 Mailbox unavailable");
   });
 
+  it("throws instead of permanently rejecting when preflight defers with 429", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: "rate limited" }, { status: 429 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const message = createMessage();
+
+    await expect(emailWorker.email(message, env, createContext())).rejects.toThrow(
+      "Transient preflight failure: 429",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(message.setReject).not.toHaveBeenCalled();
+  });
+
   it("throws instead of permanently rejecting when raw upload fetch fails", async () => {
     const fetchMock = vi
       .fn()

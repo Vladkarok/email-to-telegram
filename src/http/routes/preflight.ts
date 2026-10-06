@@ -145,8 +145,15 @@ export function preflightRoute(app: FastifyInstance): void {
         new Date(Date.now() - 60 * 60 * 1000),
       );
       if (recentDeliveries >= alias.maxEmailsHour) {
+        // Defer, not bounce: the Worker turns any non-2xx into a thrown error
+        // (a temporary SMTP failure), so the sender retries once the sliding
+        // hour frees a slot. {accept:false} would be a permanent 550.
+        getLogger().info(
+          { localPart, aliasId: alias.id, userId: alias.createdBy.toString() },
+          "inbound.preflight.deferred",
+        );
         recordInboundPreflight("rejected", "rate_limited");
-        await reply.send({ accept: false });
+        await reply.status(429).send({ error: "rate limited" });
         return;
       }
 
