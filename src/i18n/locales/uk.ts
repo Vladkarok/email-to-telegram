@@ -78,7 +78,7 @@ export const uk = {
 ${settingsHelp}
 
 <b>Allow rules</b>
-Лише відправники, що збігаються з allow rule, можуть доставляти листи на аліас.
+Лише відправники, що збігаються з allow rule, можуть доставляти листи на аліас. Правило звіряється з адресою в полі From; автоматичне пересилання з Gmail зберігає початкового відправника.
 /allow list &lt;alias&gt;
 /allow add &lt;alias&gt; &lt;email_or_domain&gt;
 /allow remove &lt;alias&gt; &lt;email_or_domain&gt;
@@ -151,7 +151,7 @@ ${safetyNotes}
     nameCooldown:
       "❌ Цю назву нещодавно видалив інший користувач, вона тимчасово недоступна. Спробуйте пізніше або оберіть іншу назву.",
     created: (fullAddress: string, chatNote: string) =>
-      `✅ Email-аліас створено!\n\n📧 <code>${fullAddress}</code>${chatNote}\n\n⚠️ Уся пошта відхилятиметься, доки ви не дозволите хоча б одного відправника.\nНатисніть швидкий варіант або додайте власний домен:`,
+      `✅ Email-аліас створено!\n\n📧 <code>${fullAddress}</code>${chatNote}\n\nНа цей аліас доходять листи лише від дозволених відправників. Правило звіряється з адресою в полі From листа.\n\nАвтоматичне пересилання з Gmail зберігає початкового відправника. Спершу дозвольте google.com, щоб дійшов код підтвердження від Gmail, потім дозвольте кожного відправника, чию пошту пересилаєте, наприклад github.com.\n\nНатисніть швидкий варіант або додайте власний домен:`,
     deliveringTo: (chatTitle: string) => `\nДоставка в: <b>${chatTitle}</b>`,
     aliasLimitReached: (used: number | undefined, limit: number) =>
       `📦 Досягнуто ліміт плану: використано аліасів ${used ?? limit}/${limit}. Оновіть план, щоб створити більше аліасів.`,
@@ -258,7 +258,7 @@ ${safetyNotes}
     addRuleButton: "➕ Додати правило",
     backButton: "⬅️ Назад",
     headerEmpty: (localPart: string) =>
-      `📋 <b>${localPart}</b> — Allow Rules\n\n⚠️ Немає правил — уся пошта відхиляється.\n\nДодайте хоча б один домен або email, щоб почати приймати листи.`,
+      `📋 <b>${localPart}</b> — Allow Rules\n\n⚠️ Немає правил — уся пошта відхиляється.\n\nДодайте домен або email з поля From листів, на які чекаєте. Пересилаєте з Gmail? Спершу дозвольте google.com, щоб дійшов код підтвердження.`,
     headerWithRules: (localPart: string, count: number) =>
       `📋 <b>${localPart}</b> — правил: ${count}\n\nНатисніть ❌, щоб видалити правило.`,
   },
@@ -345,7 +345,7 @@ ${safetyNotes}
     createUnavailable: "❌ Створення allow rules зараз недоступне. Спробуйте пізніше.",
     upgradePlanButton: "⬆️ Оновити план",
     addRulePrompt: (localPart: string) =>
-      `📋 Додати allow rule для <code>${localPart}</code>\n\nНатисніть швидкий варіант або надішліть домен (наприклад <code>github.com</code>) чи email (наприклад <code>user@example.com</code>).`,
+      `📋 Додати allow rule для <code>${localPart}</code>\n\nПравило звіряється з адресою в полі From листа. Натисніть швидкий варіант або надішліть домен (наприклад <code>github.com</code>) чи email (наприклад <code>user@example.com</code>).`,
     addingToast: "Додаю…",
     removedToast: "Правило видалено.",
   },

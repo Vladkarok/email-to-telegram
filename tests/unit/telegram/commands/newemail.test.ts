@@ -286,6 +286,21 @@ describe("/newemail command", () => {
     expect(buttonData).not.toContain("am:alerts");
   });
 
+  it("offers google.com first and explains that rules match the From line", async () => {
+    const ctx = createMockCtx({ commandMatch: "alerts" });
+
+    await newemailHandler(ctx);
+
+    const [text, opts] = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      { reply_markup?: { inline_keyboard: Array<Array<{ text: string }>> } },
+    ];
+    const quickPicks = opts.reply_markup?.inline_keyboard[0]?.map((b) => b.text);
+    expect(quickPicks).toEqual(["🔐 google.com", "🔐 github.com", "🔐 gmail.com"]);
+    expect(text).toContain("From line");
+    expect(text).toContain("Allow google.com first");
+  });
+
   it("starts the naming dialog when no name is provided to the direct command", async () => {
     const ctx = createMockCtx({ commandMatch: "" });
 

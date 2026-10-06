@@ -81,7 +81,7 @@ export const fr = {
 ${settingsHelp}
 
 <b>Allow rules</b>
-Seuls les expéditeurs correspondant à une allow rule peuvent envoyer du courrier à un alias.
+Seuls les expéditeurs correspondant à une allow rule peuvent envoyer du courrier à un alias. Une règle porte sur l'adresse de la ligne From (De) ; le transfert automatique de Gmail conserve l'expéditeur d'origine.
 /allow list &lt;alias&gt;
 /allow add &lt;alias&gt; &lt;email_or_domain&gt;
 /allow remove &lt;alias&gt; &lt;email_or_domain&gt;
@@ -155,7 +155,7 @@ ${safetyNotes}
     nameCooldown:
       "❌ Ce nom a été supprimé récemment par un autre utilisateur et est temporairement indisponible. Réessayez plus tard ou choisissez-en un autre.",
     created: (fullAddress: string, chatNote: string) =>
-      `✅ Alias e-mail créé !\n\n📧 <code>${fullAddress}</code>${chatNote}\n\n⚠️ Tout le courrier est rejeté tant que vous n'avez pas autorisé au moins un expéditeur.\nTapez un choix rapide ou ajoutez un domaine personnalisé :`,
+      `✅ Alias e-mail créé !\n\n📧 <code>${fullAddress}</code>${chatNote}\n\nSeuls les expéditeurs que vous autorisez peuvent écrire à cet alias. Une règle porte sur l'adresse de la ligne From (De) de l'e-mail.\n\nLe transfert automatique de Gmail conserve l'expéditeur d'origine. Autorisez d'abord google.com pour recevoir le code de confirmation de Gmail, puis chaque expéditeur que vous transférez, par exemple github.com.\n\nTapez un choix rapide ou ajoutez un domaine personnalisé :`,
     deliveringTo: (chatTitle: string) => `\nLivraison vers : <b>${chatTitle}</b>`,
     aliasLimitReached: (used: number | undefined, limit: number) =>
       `📦 Limite du plan atteinte : ${used ?? limit}/${limit} alias utilisés. Mettez à niveau pour en créer davantage.`,
@@ -262,7 +262,7 @@ ${safetyNotes}
     addRuleButton: "➕ Ajouter une règle",
     backButton: "⬅️ Retour",
     headerEmpty: (localPart: string) =>
-      `📋 <b>${localPart}</b> — Allow Rules\n\n⚠️ Aucune règle — tout le courrier est rejeté.\n\nAjoutez au moins un domaine ou e-mail pour commencer à recevoir du courrier.`,
+      `📋 <b>${localPart}</b> — Allow Rules\n\n⚠️ Aucune règle — tout le courrier est rejeté.\n\nAjoutez le domaine ou l'e-mail de la ligne From (De) du courrier attendu. Transfert depuis Gmail ? Autorisez d'abord google.com pour le code de confirmation.`,
     headerWithRules: (localPart: string, count: number) =>
       `📋 <b>${localPart}</b> — ${count} allow rule(s)\n\nTapez ❌ pour supprimer une règle.`,
   },
@@ -350,7 +350,7 @@ Exemples :
       "❌ La création d'allow rules n'est pas disponible pour le moment. Réessayez plus tard.",
     upgradePlanButton: "⬆️ Mettre à niveau",
     addRulePrompt: (localPart: string) =>
-      `📋 Ajouter une allow rule pour <code>${localPart}</code>\n\nTapez un choix rapide, ou envoyez un domaine (ex. <code>github.com</code>) ou e-mail (ex. <code>user@example.com</code>).`,
+      `📋 Ajouter une allow rule pour <code>${localPart}</code>\n\nUne règle porte sur l'adresse de la ligne From (De) de l'e-mail. Tapez un choix rapide, ou envoyez un domaine (ex. <code>github.com</code>) ou e-mail (ex. <code>user@example.com</code>).`,
     addingToast: "Ajout en cours…",
     removedToast: "Règle retirée.",
   },

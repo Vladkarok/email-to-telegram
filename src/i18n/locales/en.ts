@@ -78,7 +78,7 @@ export const en = {
 ${settingsHelp}
 
 <b>Allow rules</b>
-Only senders matching an allow rule can deliver mail to an alias.
+Only senders matching an allow rule can deliver mail to an alias. A rule matches the address in the email's From line; Gmail's automatic forwarding keeps the original sender.
 /allow list &lt;alias&gt;
 /allow add &lt;alias&gt; &lt;email_or_domain&gt;
 /allow remove &lt;alias&gt; &lt;email_or_domain&gt;
@@ -150,7 +150,7 @@ ${safetyNotes}
     nameCooldown:
       "❌ That name was recently deleted by another user and is cooling down. Try again later or pick a different name.",
     created: (fullAddress: string, chatNote: string) =>
-      `✅ Email alias created!\n\n📧 <code>${fullAddress}</code>${chatNote}\n\n⚠️ All mail is rejected until you allow at least one sender.\nTap a quick pick or add a custom domain:`,
+      `✅ Email alias created!\n\n📧 <code>${fullAddress}</code>${chatNote}\n\nOnly senders you allow can reach this alias. A rule matches the address in the email's From line.\n\nGmail's automatic forwarding keeps the original sender. Allow google.com first so Gmail's confirmation code gets through, then allow each sender you forward, such as github.com.\n\nTap a quick pick or add a custom domain:`,
     deliveringTo: (chatTitle: string) => `\nDelivering to: <b>${chatTitle}</b>`,
     aliasLimitReached: (used: number | undefined, limit: number) =>
       `📦 Plan limit reached: ${used ?? limit}/${limit} aliases used. Upgrade to create more aliases.`,
@@ -260,7 +260,7 @@ ${safetyNotes}
     addRuleButton: "➕ Add Rule",
     backButton: "⬅️ Back",
     headerEmpty: (localPart: string) =>
-      `📋 <b>${localPart}</b> — Allow Rules\n\n⚠️ No rules — all mail is rejected.\n\nAdd at least one domain or email to start receiving mail.`,
+      `📋 <b>${localPart}</b> — Allow Rules\n\n⚠️ No rules — all mail is rejected.\n\nAdd the domain or email from the From line of the mail you expect. Forwarding from Gmail? Allow google.com first for the confirmation code.`,
     headerWithRules: (localPart: string, count: number) =>
       `📋 <b>${localPart}</b> — ${count} allow rule(s)\n\nTap ❌ to remove a rule.`,
   },
@@ -347,7 +347,7 @@ Examples:
     createUnavailable: "❌ Allow rule creation is not available right now. Please try again later.",
     upgradePlanButton: "⬆️ Upgrade Plan",
     addRulePrompt: (localPart: string) =>
-      `📋 Add allow rule for <code>${localPart}</code>\n\nTap a quick pick, or send a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).`,
+      `📋 Add allow rule for <code>${localPart}</code>\n\nA rule matches the address in the email's From line. Tap a quick pick, or send a domain (e.g. <code>github.com</code>) or email (e.g. <code>user@example.com</code>).`,
     addingToast: "Adding…",
     removedToast: "Rule removed.",
   },

@@ -56,8 +56,12 @@ const MAX_NAME_ATTEMPTS = 5;
  */
 const NAME_REUSE_COOLDOWN_HOURS = 24;
 
-/** Quick-pick allow-rule domains shown right after alias creation. */
-const QUICK_ALLOW_DOMAINS = ["gmail.com", "github.com", "stripe.com"] as const;
+/**
+ * Quick-pick allow-rule domains shown right after alias creation. google.com
+ * comes first: Gmail's forwarding confirmation is sent from it, and the
+ * creation message tells users to allow it before turning forwarding on.
+ */
+const QUICK_ALLOW_DOMAINS = ["google.com", "github.com", "gmail.com"] as const;
 
 export function buildQuickAllowKeyboard(
   aliasId: string,
