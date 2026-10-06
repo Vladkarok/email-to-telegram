@@ -81,6 +81,7 @@ import {
   CB_QUICK_ALLOW,
   CB_QUICK_ALLOW_RULES,
   CB_ACTIVATION_ALLOW,
+  CB_ACTIVATION_RULES,
   CB_ALIAS_LABEL_EDIT,
   CB_ALIAS_LABEL_CLEAR,
   CB_ALIAS_LABEL_CANCEL,
@@ -123,7 +124,7 @@ import { canManageChat, canManageAlias } from "./authorization.js";
 import { aliasResolutionError, resolveManageableAlias } from "./aliasResolver.js";
 import { parseAllowValue } from "./allowValue.js";
 import { getLogger } from "../utils/logger.js";
-import { activationAllowCallback } from "../activation/allowButton.js";
+import { activationAllowCallback, activationRulesCallback } from "../activation/allowButton.js";
 import { RateLimiter } from "../utils/rateLimit.js";
 import { InlineKeyboard } from "grammy";
 import { hasActiveHostedUser } from "../billing/limits.js";
@@ -651,6 +652,9 @@ export function createBot(token: string): Bot {
 
   // rn:{aliasId}:{token} — one-tap allow from a first-bounce notice
   bot.callbackQuery(CB_ACTIVATION_ALLOW.pattern, (ctx) => activationAllowCallback(ctx));
+
+  // rl:{aliasId} — allow-rules menu from a first-bounce notice, as a new message
+  bot.callbackQuery(CB_ACTIVATION_RULES.pattern, activationRulesCallback);
 
   // ale:{aliasId} — start label-edit flow
   bot.callbackQuery(CB_ALIAS_LABEL_EDIT.pattern, async (ctx) => {

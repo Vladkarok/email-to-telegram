@@ -3,15 +3,19 @@
  *
  * 1. Fresh authorization (no cached admin status), bounded by a timeout,
  *    outside any transaction.
- * 2. One transaction, in hosted and self-hosted mode alike: lock the owner
- *    (the per-user advisory lock every alias writer takes first), then the
- *    alias row `FOR UPDATE`; spend the token; check the alias is still
+ * 2. One bounded transaction, in hosted and self-hosted mode alike: read the
+ *    alias's owner, lock the owner (the per-user advisory lock every alias
+ *    writer takes first), then the alias row `FOR UPDATE`; spend the token;
+ *    check the alias is still
  *    active on the chat and routing version of the claim; then, inside a
  *    savepoint, add the rule under the usual limits. An insert error rolls
  *    back to the savepoint and the transaction still commits the spent token,
  *    so a failed add spends the button. Only a failed commit leaves the
  *    button usable.
  * 3. Telegram replies, after the transaction.
+ *
+ * The notice's "Allow rules" button (`rl:`) opens the allow-rules menu as a
+ * new message, so the bounce explanation and its one-tap button stay.
  */
 import type { CallbackQueryContext, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
@@ -26,7 +30,7 @@ import { insertAllowRule } from "../telegram/commands/allow.js";
 import { assertAliasAccess } from "../telegram/middleware/authorization.js";
 import { sendAllowRulesMenu } from "../telegram/menu/allowRulesMenu.js";
 import { parseAllowValue } from "../telegram/allowValue.js";
-import { CB_ALLOW_RULES } from "../telegram/callbacks.js";
+import { CB_ACTIVATION_RULES } from "../telegram/callbacks.js";
 import { getMessages, resolveLocale, type Messages } from "../i18n/index.js";
 import { escapeHtml } from "../utils/html.js";
 import { getLogger } from "../utils/logger.js";
@@ -52,12 +56,11 @@ export async function applyActivationAllow(
   input: { aliasId: string; token: string },
   bounds: Pick<NoticeBounds, "statementTimeout" | "lockTimeout"> = NOTICE_BOUNDS,
 ): Promise<ActivationAllowOutcome> {
-  // The owner is needed before the transaction for the lock order.
-  const before = await findAliasById(db, input.aliasId);
-  if (!before) return { kind: "expired" };
-  const ownerId = before.createdBy;
-
   return withBoundedTransaction(db, bounds, async (tx) => {
+    // The owner comes first in the lock order, so read it (unlocked) first.
+    const before = await findAliasById(tx, input.aliasId);
+    if (!before) return { kind: "expired" as const };
+    const ownerId = before.createdBy;
     await tx.execute(sql`select pg_advisory_xact_lock(${ownerId})`);
     const [alias] = await tx
       .select()
@@ -120,7 +123,7 @@ export async function applyActivationAllow(
 function allowRulesOnlyKeyboard(messages: Messages, aliasId: string): InlineKeyboard {
   return new InlineKeyboard().text(
     messages.aliasMenu.allowRulesButton,
-    CB_ALLOW_RULES.build(aliasId),
+    CB_ACTIVATION_RULES.build(aliasId),
   );
 }
 
@@ -218,4 +221,16 @@ export async function activationAllowCallback(
       await sendAllowRulesMenu(ctx, db, aliasId);
       return;
   }
+}
+
+/**
+ * rl:{aliasId} — the notice's "Allow rules" button. Read-only, so the cached
+ * access check is enough (as for the alias menu's own button); the menu
+ * arrives as a new message and the notice stays as it is.
+ */
+export async function activationRulesCallback(ctx: CallbackQueryContext<Context>): Promise<void> {
+  const aliasId = ctx.match[1] ?? "";
+  if (!(await assertAliasAccess(ctx, aliasId))) return;
+  await ctx.answerCallbackQuery();
+  await sendAllowRulesMenu(ctx, getDb(), aliasId);
 }

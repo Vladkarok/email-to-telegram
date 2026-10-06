@@ -40,7 +40,10 @@ vi.mock("../../../src/activation/transaction.js", () => ({
 
 const mockFindAliasById = vi.fn();
 vi.mock("../../../src/db/repos/aliases.js", () => ({
-  findAliasById: (...args: unknown[]): unknown => mockFindAliasById(...args),
+  findAliasById: (...args: unknown[]): unknown => {
+    calls.push("owner-lookup");
+    return mockFindAliasById(...args);
+  },
 }));
 const mockConsume = vi.fn();
 vi.mock("../../../src/db/repos/aliasActivation.js", () => ({
@@ -68,7 +71,9 @@ vi.mock("../../../src/db/repos/users.js", () => ({
   findUserById: vi.fn().mockResolvedValue({ locale: "en" }),
 }));
 
-const { activationAllowCallback } = await import("../../../src/activation/allowButton.js");
+const { activationAllowCallback, activationRulesCallback } =
+  await import("../../../src/activation/allowButton.js");
+const { CB_ACTIVATION_RULES } = await import("../../../src/telegram/callbacks.js");
 const { NOTICE_BOUNDS } = await import("../../../src/activation/bounds.js");
 const { metricsRegistry, resetMetricsForTests } =
   await import("../../../src/observability/metrics.js");
@@ -127,14 +132,29 @@ describe("one-tap allow button", () => {
     mockSendAllowRulesMenu.mockResolvedValue(undefined);
   });
 
-  it("checks fresh access first, then locks owner and alias, spends the token, inserts in a savepoint", async () => {
+  it("checks fresh access first, then in one bounded transaction reads the owner, locks owner and alias, spends the token, inserts in a savepoint", async () => {
     const c = await tap();
 
     expect(mockAssertAliasAccess).toHaveBeenCalledWith(c, ALIAS_ID, { fresh: true });
     expect(mockAssertAliasAccess.mock.invocationCallOrder[0]).toBeLessThan(
       mockWithBoundedTransaction.mock.invocationCallOrder[0],
     );
-    expect(calls).toEqual(["owner-lock", "alias-update", "consume", "savepoint", "insert"]);
+    expect(mockWithBoundedTransaction).toHaveBeenCalledTimes(1);
+    expect(mockWithBoundedTransaction).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({ statementTimeout: "5s", lockTimeout: "2s" }),
+      expect.any(Function),
+    );
+    expect(calls).toEqual([
+      "owner-lookup",
+      "owner-lock",
+      "alias-update",
+      "consume",
+      "savepoint",
+      "insert",
+    ]);
+    // The owner lookup runs on the transaction, not the pool.
+    expect(mockFindAliasById).toHaveBeenCalledWith(tx, ALIAS_ID);
     expect(mockConsume).toHaveBeenCalledWith(tx, { aliasId: ALIAS_ID, token: TOKEN });
     expect(mockInsertAllowRule).toHaveBeenCalledWith(tx, {
       aliasId: ALIAS_ID,
@@ -146,12 +166,13 @@ describe("one-tap allow button", () => {
       "Added an allow rule for <code>inbox@mail.example.com</code>: github.com. It allows every address at github.com.",
       { parse_mode: "HTML" },
     );
-    // The spent one-tap button leaves the notice; "Allow rules" stays.
+    // The spent one-tap button leaves the notice; "Allow rules" stays, and
+    // still opens the menu as a new message.
     const markup = c.editMessageReplyMarkup.mock.calls[0][0] as {
-      reply_markup: { inline_keyboard: Array<Array<{ text: string }>> };
+      reply_markup: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> };
     };
-    expect(markup.reply_markup.inline_keyboard.flat().map((b) => b.text)).toEqual([
-      "📋 Allow Rules",
+    expect(markup.reply_markup.inline_keyboard.flat()).toEqual([
+      { text: "📋 Allow Rules", callback_data: CB_ACTIVATION_RULES.build(ALIAS_ID) },
     ]);
     expect(mockSendAllowRulesMenu).not.toHaveBeenCalled();
     expect(await allowCount("added")).toBe(1);
@@ -200,10 +221,10 @@ describe("one-tap allow button", () => {
     expect(c.reply).toHaveBeenCalledWith("This button has expired.");
   });
 
-  it("expired when the alias row is gone", async () => {
+  it("expired when the alias row is gone: no lock taken, nothing spent", async () => {
     mockFindAliasById.mockResolvedValue(null);
     const c = await tap();
-    expect(mockWithBoundedTransaction).not.toHaveBeenCalled();
+    expect(calls).toEqual(["owner-lookup"]);
     expect(c.reply).toHaveBeenCalledWith("This button has expired.");
   });
 
@@ -268,5 +289,42 @@ describe("one-tap allow button", () => {
     expect(c.reply).not.toHaveBeenCalled();
     expect(c.editMessageReplyMarkup).not.toHaveBeenCalled();
     expect(await allowCount("failed")).toBe(1);
+  });
+});
+
+describe("the notice's allow-rules button", () => {
+  function rulesCtx() {
+    const c = ctx();
+    (c as unknown as { match: string[] }).match = [CB_ACTIVATION_RULES.build(ALIAS_ID), ALIAS_ID];
+    return c;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAssertAliasAccess.mockResolvedValue(true);
+    mockSendAllowRulesMenu.mockResolvedValue(undefined);
+  });
+
+  it("opens the menu as a new message and leaves the notice and its one-tap alone", async () => {
+    const c = rulesCtx();
+    await activationRulesCallback(c as unknown as CallbackQueryContext<Context>);
+    expect(mockAssertAliasAccess).toHaveBeenCalledWith(c, ALIAS_ID);
+    expect(c.answerCallbackQuery).toHaveBeenCalled();
+    expect(mockSendAllowRulesMenu).toHaveBeenCalledWith(c, db, ALIAS_ID);
+    expect(c.editMessageText).not.toHaveBeenCalled();
+    expect(c.editMessageReplyMarkup).not.toHaveBeenCalled();
+    expect(mockWithBoundedTransaction).not.toHaveBeenCalled();
+  });
+
+  it("opens nothing for someone who cannot manage the alias", async () => {
+    mockAssertAliasAccess.mockResolvedValue(false);
+    const c = rulesCtx();
+    await activationRulesCallback(c as unknown as CallbackQueryContext<Context>);
+    expect(mockSendAllowRulesMenu).not.toHaveBeenCalled();
+  });
+
+  it("has callback data distinct from the alias menu's own button", () => {
+    expect(CB_ACTIVATION_RULES.build(ALIAS_ID)).toBe(`rl:${ALIAS_ID}`);
+    expect(CB_ACTIVATION_RULES.pattern.test(`al:${ALIAS_ID}`)).toBe(false);
   });
 });

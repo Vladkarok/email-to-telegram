@@ -205,6 +205,18 @@ export const CB_ACTIVATION_ALLOW = {
   build: (aliasId: string, token: string): string => `rn:${aliasId}:${token}`,
 } as const;
 
+/**
+ * Allow-rules menu from a first-bounce notice — rl:{aliasId}
+ *
+ * Opens the menu as a new message. The alias menu's `al:` edits its message
+ * in place, which here would erase the bounce explanation and a one-tap
+ * button that may still be valid.
+ */
+export const CB_ACTIVATION_RULES = {
+  pattern: /^rl:([0-9a-f-]{36})$/,
+  build: (aliasId: string): string => `rl:${aliasId}`,
+} as const;
+
 /** Set render mode — set_mode:{aliasId}:{mode} */
 export const CB_SET_MODE = {
   pattern: /^set_mode:(.+):(.+)$/,
