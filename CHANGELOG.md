@@ -18,6 +18,57 @@ that has been running in production.
 
 ## [Unreleased]
 
+## [1.11.0] — 2026-10-06
+
+Clearer allow rules for new aliases, a monitoring rework that counts what
+matters, and logs that no longer carry message data.
+
+### Added
+
+- **Delivery metrics**: `email_to_telegram_build_info{version}`,
+  `email_to_telegram_delivery_latency_seconds{path}` (from receipt to the
+  first Telegram message), `email_to_telegram_delivery_backlog{state}` with
+  the age of the oldest undelivered mail,
+  `email_to_telegram_deliveries_lost_total{stage}` (also counts mail whose
+  raw copy expired before delivery), and `users{state="ever_delivered"}`.
+- **Grafana**: the Application dashboard becomes **Operations** (is mail
+  getting from sender to Telegram, how fast, where is it lost), a new
+  **Product** dashboard (30 days, UTC) holds the funnel and daily volumes,
+  and every dashboard marks process starts. Hourly and daily panels are real
+  buckets, so their totals add up. See `docs/operations/monitoring.md`.
+
+### Changed
+
+- **After `/newemail`** the bot says that a rule matches the address in the
+  email's From line, and how to forward from Gmail: allow `google.com` first
+  so Gmail's confirmation code arrives. Quick picks are now `google.com`,
+  `github.com` and `gmail.com`. The add-rule prompt, the empty rules menu and
+  `/help` say the same, in all four languages.
+- Preflight mail over the hourly cap is counted as `deferred`, not
+  `rejected`, in `email_to_telegram_inbound_preflight_total`.
+- Counters for known outcomes start at 0, so dashboards show 0 instead of
+  "No data".
+- App migration `0010` adds a partial index for the delivery backlog query.
+  It applies on startup and is ignored by older images.
+- The drizzle schema no longer lists `email_addresses.max_emails_hour`; the
+  column stays in the database for one more release so a rollback to 1.10.0
+  keeps working.
+
+### Fixed
+
+- **Logs no longer carry message data.** Database errors logged their SQL
+  parameters (subject, From, attachment names) and pg row values; they now
+  log the SQL text, the error code and object names only. The hosted
+  blocklist logs the block's id instead of the blocked address, and the
+  bot logs a chat's type instead of its title.
+- The hosted support page listed `/allow add <alias> @example.com` and `*`,
+  which the bot never accepted, and said rejected mail was dropped silently.
+
+### Security
+
+- Cloudflare Worker dev dependencies: `sharp` 0.35.5 through an npm override
+  (librsvg advisory; wrangler still pins 0.35.4).
+
 ## [1.10.0] — 2026-10-06
 
 Plan limits move out of the code, the free plan doubles its monthly mail, and
