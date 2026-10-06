@@ -1,0 +1,11 @@
+<blockquote><b>From:</b> newsletter@example.com
+<b>To:</b> alias@example.net
+<b>Subject:</b> Weekly Digest</blockquote>
+
+<b>Weekly Digest</b>
+
+This is the <b>HTML</b> version with <i>formatting</i>.
+
+Check out our <a href="https://example.com/">latest features</a>!
+
+Styled text

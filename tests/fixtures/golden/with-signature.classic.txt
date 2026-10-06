@@ -1,0 +1,11 @@
+<blockquote><b>From:</b> support@example.com
+<b>To:</b> alias@example.net
+<b>Subject:</b> Ticket #1234 resolved</blockquote>
+
+Your ticket #1234 has been resolved. Please let us know if you need further help.
+
+--
+John Smith
+Support Engineer
+Example Corp | support@example.com
++1-555-0100

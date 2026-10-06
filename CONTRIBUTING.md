@@ -50,6 +50,27 @@ npm run test:coverage     # report coverage
 Tests must pass on `main`. New features and bug fixes should include
 tests that fail before your change and pass after it.
 
+### Rendering changes
+
+`tests/fixtures/golden/*.eml` are real (redacted) emails rendered exactly as
+the delivery pipeline renders them; the recorded output lives next to each
+file as `<name>.classic.txt` and `<name>.rich.html`. A rendering change
+shows up as a diff of what Telegram would receive. After an intentional
+change, refresh the recordings and review the diff:
+
+```sh
+UPDATE_GOLDEN=1 npx vitest run goldenRender
+```
+
+To see how any `.eml` renders without sending it anywhere:
+
+```sh
+npm run render:preview -- path/to/message.eml
+```
+
+Fixtures are public: replace addresses with `example.com` ones and strip
+hostnames, `Received:` and signature headers before adding one.
+
 ## Code style
 
 - TypeScript with strict mode; prefer types over `any`.
