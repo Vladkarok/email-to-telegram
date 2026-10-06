@@ -1,5 +1,39 @@
 import { describe, it, expect } from "vitest";
-import { monthStart, nextMonthStart } from "../../../../src/db/repos/deliveryLogs.js";
+import {
+  monthStart,
+  nextMonthStart,
+  summarizeDeliveryBacklog,
+} from "../../../../src/db/repos/deliveryLogs.js";
+
+/** select().from().where().groupBy() resolving to `rows`. */
+function groupedSelectDb(rows: unknown[]): Parameters<typeof summarizeDeliveryBacklog>[0] {
+  const chain = {
+    from: () => chain,
+    where: () => chain,
+    groupBy: () => Promise.resolve(rows),
+  };
+  return { select: () => chain } as unknown as Parameters<typeof summarizeDeliveryBacklog>[0];
+}
+
+describe("summarizeDeliveryBacklog", () => {
+  it("maps per-status counts and keeps the oldest received_at across statuses", async () => {
+    const summary = await summarizeDeliveryBacklog(
+      groupedSelectDb([
+        { status: "failed", count: 2, oldest: new Date("2026-10-06T09:00:00.000Z") },
+        { status: "received", count: "1", oldest: new Date("2026-10-06T08:30:00.000Z") },
+        { status: "processing", count: 1, oldest: new Date("2026-10-06T09:59:00.000Z") },
+      ]),
+    );
+
+    expect(summary.counts).toEqual({ failed: 2, received: 1, processing: 1 });
+    expect(summary.oldestReceivedAt?.toISOString()).toBe("2026-10-06T08:30:00.000Z");
+  });
+
+  it("reports an empty backlog with no oldest timestamp", async () => {
+    const summary = await summarizeDeliveryBacklog(groupedSelectDb([]));
+    expect(summary).toEqual({ counts: {}, oldestReceivedAt: null });
+  });
+});
 
 describe("monthStart", () => {
   it("returns the first of January UTC for 2026-01", () => {

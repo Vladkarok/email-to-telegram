@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { markBotHealthy, markBotUnhealthy } from "../../../src/telegram/health.js";
+import { metricsRegistry, resetMetricsForTests } from "../../../src/observability/metrics.js";
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
@@ -173,6 +174,76 @@ describe("runRetryWorker", () => {
       expect.objectContaining({ status: "succeeded", attemptNo: 1 }),
     );
     expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "delivered");
+  });
+
+  describe("delivery latency", () => {
+    const retryLatency = async (): Promise<{ count: number; sum: number }> => {
+      const text = await metricsRegistry.getSingleMetricAsString(
+        "email_to_telegram_delivery_latency_seconds",
+      );
+      return {
+        count: Number(/_count\{[^}]*path="retry"[^}]*\} ([\d.]+)/.exec(text)?.[1]),
+        sum: Number(/_sum\{[^}]*path="retry"[^}]*\} ([\d.]+)/.exec(text)?.[1]),
+      };
+    };
+
+    beforeEach(() => {
+      resetMetricsForTests();
+    });
+
+    it("observes received_at → Telegram accepted when a retry delivers", async () => {
+      const receivedAt = new Date(Date.now() - 5 * 60 * 1000);
+      mockFindFailedLogs.mockResolvedValue([{ ...fakeLog, receivedAt }]);
+
+      await runRetryWorker(fakeDb, fakeApi);
+
+      expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "delivered");
+      const latency = await retryLatency();
+      expect(latency.count).toBe(1);
+      expect(latency.sum).toBeGreaterThanOrEqual(300);
+      expect(latency.sum).toBeLessThan(330);
+    });
+
+    it("observes nothing when the retry fails", async () => {
+      mockFindFailedLogs.mockResolvedValue([fakeLog]);
+      mockSendTelegramMessage.mockResolvedValue({ ok: false, error: "Telegram error" });
+
+      await runRetryWorker(fakeDb, fakeApi);
+
+      expect((await retryLatency()).count).toBe(0);
+    });
+
+    it("observes nothing when the retry is handed back for a chat migration", async () => {
+      mockFindFailedLogs.mockResolvedValue([fakeLog]);
+      mockRepairChatMigration.mockResolvedValue({ aliasCount: 1 });
+      mockListAttachments.mockResolvedValue([
+        {
+          id: "att-1",
+          storagePath: "/data/att-1.bin",
+          originalFilename: "photo.png",
+          contentType: "image/png",
+          sizeBytes: 10,
+          encryptionMode: null,
+          wrappedDek: null,
+          kekKeyId: null,
+        },
+      ]);
+      mockSendTelegramPhotos.mockResolvedValue({
+        ok: false,
+        failedPhotos: [{ id: "att-1", storagePath: "/data/att-1.bin" }],
+        failure: {
+          code: 400,
+          description: "Bad Request: group chat was upgraded to a supergroup chat",
+          transient: false,
+          migrateToChatId: -1002222333444n,
+        },
+      });
+
+      await runRetryWorker(fakeDb, fakeApi);
+
+      expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
+      expect((await retryLatency()).count).toBe(0);
+    });
   });
 
   it("repairs from a REAL GrammyError shape, not a hand-built failure", async () => {

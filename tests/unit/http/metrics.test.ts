@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createHttpServer } from "../../../src/http/server.js";
 import { resetMetricsForTests } from "../../../src/observability/metrics.js";
@@ -10,8 +11,20 @@ const mockCountAliasesByStatus = vi.fn();
 const mockCountAttachmentStorage = vi.fn();
 const mockCountUsersWithAlias = vi.fn();
 const mockCountUsersWithAcceptedMailInMonth = vi.fn();
+const mockCountUsersEverDelivered = vi.fn();
+const mockSummarizeDeliveryBacklog = vi.fn();
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
+vi.mock("../../../src/db/repos/deliveryLogs.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/db/repos/deliveryLogs.js")>(
+    "../../../src/db/repos/deliveryLogs.js",
+  );
+  return {
+    ...actual,
+    summarizeDeliveryBacklog: (...args: unknown[]): unknown =>
+      mockSummarizeDeliveryBacklog(...args),
+  };
+});
 vi.mock("../../../src/db/repos/users.js", async () => {
   const actual = await vi.importActual<typeof import("../../../src/db/repos/users.js")>(
     "../../../src/db/repos/users.js",
@@ -46,6 +59,7 @@ vi.mock("../../../src/db/repos/usage.js", async () => {
     ...actual,
     countUsersWithAcceptedMailInMonth: (...args: unknown[]): unknown =>
       mockCountUsersWithAcceptedMailInMonth(...args),
+    countUsersEverDelivered: (...args: unknown[]): unknown => mockCountUsersEverDelivered(...args),
   };
 });
 vi.mock("../../../src/db/repos/attachments.js", async () => {
@@ -120,6 +134,11 @@ describe("GET /metrics", () => {
     mockCountAttachmentStorage.mockResolvedValue({ count: 12, bytes: 34567 });
     mockCountUsersWithAlias.mockResolvedValue(4);
     mockCountUsersWithAcceptedMailInMonth.mockResolvedValue(2);
+    mockCountUsersEverDelivered.mockResolvedValue(3);
+    mockSummarizeDeliveryBacklog.mockResolvedValue({
+      counts: { failed: 2, received: 1 },
+      oldestReceivedAt: new Date(Date.now() - 10 * 60 * 1000),
+    });
   });
 
   it("returns 404 when metrics are disabled", async () => {
@@ -177,6 +196,7 @@ describe("GET /metrics", () => {
     expect(res.body).toMatch(/email_to_telegram_aliases\{[^}]*status="active"[^}]*\} 7/);
     expect(res.body).toMatch(/email_to_telegram_attachments_stored\{[^}]*\} 12/);
     expect(res.body).toMatch(/email_to_telegram_attachments_stored_bytes\{[^}]*\} 34567/);
+    expect(res.body).toMatch(/email_to_telegram_users\{[^}]*state="ever_delivered"[^}]*\} 3/);
     expect(mockCountOrganizationsByPlan).toHaveBeenCalledOnce();
     expect(mockCountUsers).toHaveBeenCalledOnce();
     expect(mockCountChats).toHaveBeenCalledOnce();
@@ -184,6 +204,112 @@ describe("GET /metrics", () => {
     expect(mockCountAttachmentStorage).toHaveBeenCalledOnce();
     expect(mockCountUsersWithAlias).toHaveBeenCalledOnce();
     expect(mockCountUsersWithAcceptedMailInMonth).toHaveBeenCalledOnce();
+    expect(mockCountUsersEverDelivered).toHaveBeenCalledOnce();
+    expect(mockSummarizeDeliveryBacklog).toHaveBeenCalledOnce();
+  });
+
+  it("exposes the delivery backlog per non-final state with the oldest age", async () => {
+    const app = await createHttpServer({
+      ...BASE_CONFIG,
+      metricsEnabled: true,
+      metricsToken: METRICS_TOKEN,
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/metrics",
+      headers: { authorization: `Bearer ${METRICS_TOKEN}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatch(/email_to_telegram_delivery_backlog\{[^}]*state="failed"[^}]*\} 2/);
+    expect(res.body).toMatch(/email_to_telegram_delivery_backlog\{[^}]*state="received"[^}]*\} 1/);
+    // States without rows still get a series, at 0.
+    expect(res.body).toMatch(
+      /email_to_telegram_delivery_backlog\{[^}]*state="processing"[^}]*\} 0\n/,
+    );
+    expect(res.body).toMatch(
+      /email_to_telegram_delivery_backlog\{[^}]*state="retrying"[^}]*\} 0\n/,
+    );
+    const age = Number(
+      /email_to_telegram_delivery_backlog_oldest_age_seconds\{[^}]*\} ([\d.]+)/.exec(res.body)?.[1],
+    );
+    expect(age).toBeGreaterThanOrEqual(600);
+    expect(age).toBeLessThan(660);
+  });
+
+  it("drops a drained backlog to 0 with an oldest age of 0", async () => {
+    const app = await createHttpServer({
+      ...BASE_CONFIG,
+      metricsEnabled: true,
+      metricsToken: METRICS_TOKEN,
+    });
+    const scrape = async (): Promise<string> =>
+      (
+        await app.inject({
+          method: "GET",
+          url: "/metrics",
+          headers: { authorization: `Bearer ${METRICS_TOKEN}` },
+        })
+      ).body;
+
+    await scrape();
+    mockSummarizeDeliveryBacklog.mockResolvedValueOnce({ counts: {}, oldestReceivedAt: null });
+    const body = await scrape();
+
+    expect(body).toMatch(/email_to_telegram_delivery_backlog\{[^}]*state="failed"[^}]*\} 0\n/);
+    expect(body).toMatch(/email_to_telegram_delivery_backlog_oldest_age_seconds\{[^}]*\} 0\n/);
+  });
+
+  it("exposes build info with the package.json version", async () => {
+    const { version } = JSON.parse(
+      readFileSync(new URL("../../../package.json", import.meta.url), "utf8"),
+    ) as { version: string };
+    const app = await createHttpServer({
+      ...BASE_CONFIG,
+      metricsEnabled: true,
+      metricsToken: METRICS_TOKEN,
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/metrics",
+      headers: { authorization: `Bearer ${METRICS_TOKEN}` },
+    });
+
+    expect(res.body).toMatch(
+      new RegExp(`email_to_telegram_build_info\\{[^}]*version="${version}"[^}]*\\} 1\\n`),
+    );
+  });
+
+  it("exposes known counter label sets at 0 before any event", async () => {
+    const app = await createHttpServer({
+      ...BASE_CONFIG,
+      metricsEnabled: true,
+      metricsToken: METRICS_TOKEN,
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/metrics",
+      headers: { authorization: `Bearer ${METRICS_TOKEN}` },
+    });
+
+    for (const series of [
+      /email_to_telegram_inbound_preflight_total\{result="accepted",reason="accepted"[^}]*\} 0\n/,
+      /email_to_telegram_inbound_preflight_total\{result="deferred",reason="rate_limited"[^}]*\} 0\n/,
+      /email_to_telegram_inbound_preflight_total\{result="rejected",reason="monthly_email_limit"[^}]*\} 0\n/,
+      /email_to_telegram_raw_inbound_total\{result="rejected",reason="sender_auth_failed"[^}]*\} 0\n/,
+      /email_to_telegram_delivery_attempts_total\{result="succeeded"[^}]*\} 0\n/,
+      /email_to_telegram_retry_attempts_total\{result="permanently_failed"[^}]*\} 0\n/,
+      /email_to_telegram_telegram_send_failures_total\{error_class="forbidden"[^}]*\} 0\n/,
+      /email_to_telegram_rich_messages_total\{result="fallback"[^}]*\} 0\n/,
+      /email_to_telegram_quota_rejections_total\{reason="storage_limit"[^}]*\} 0\n/,
+      /email_to_telegram_delivery_latency_seconds_count\{[^}]*path="initial"[^}]*\} 0\n/,
+      /email_to_telegram_delivery_latency_seconds_count\{[^}]*path="retry"[^}]*\} 0\n/,
+    ]) {
+      expect(res.body).toMatch(series);
+    }
   });
 
   it("still serves metrics when business gauge refresh fails", async () => {
@@ -224,6 +350,11 @@ describe("GET /metrics", () => {
     mockCountChats.mockResolvedValueOnce({ total: 999, active: 999 });
     mockCountUsersWithAlias.mockResolvedValueOnce(999);
     mockCountUsersWithAcceptedMailInMonth.mockResolvedValueOnce(999);
+    mockCountUsersEverDelivered.mockResolvedValueOnce(999);
+    mockSummarizeDeliveryBacklog.mockResolvedValueOnce({
+      counts: { failed: 999 },
+      oldestReceivedAt: null,
+    });
 
     const stale = await app.inject({
       method: "GET",
@@ -241,6 +372,8 @@ describe("GET /metrics", () => {
     expect(stale.body).toMatch(
       /email_to_telegram_users\{[^}]*state="accepted_mail_this_month"[^}]*\} 2/,
     );
+    expect(stale.body).toMatch(/email_to_telegram_users\{[^}]*state="ever_delivered"[^}]*\} 3/);
+    expect(stale.body).toMatch(/email_to_telegram_delivery_backlog\{[^}]*state="failed"[^}]*\} 2/);
     expect(stale.body).not.toMatch(/email_to_telegram_users\{[^}]*state="total"[^}]*\} 999/);
   });
 

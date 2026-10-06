@@ -1,9 +1,28 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { drizzle } from "drizzle-orm/node-postgres";
 import {
+  countUsersEverDelivered,
   decrementUserUsageMonth,
   incrementUserUsageMonth,
   usageMonthForDate,
 } from "../../../../src/db/repos/usage.js";
+
+describe("countUsersEverDelivered", () => {
+  it("counts distinct users with delivered mail in any month of user_usage_months", async () => {
+    const query = vi.fn(() => Promise.resolve({ rows: [["7"]], fields: [] }));
+    const db = drizzle({ client: { query } as never }) as unknown as Parameters<
+      typeof countUsersEverDelivered
+    >[0];
+
+    await expect(countUsersEverDelivered(db)).resolves.toBe(7);
+
+    const [{ text }, params] = query.mock.calls[0] as unknown as [{ text: string }, unknown[]];
+    expect(text).toBe(
+      'select count(distinct "user_id") from "user_usage_months" where "user_usage_months"."delivered_count" > $1',
+    );
+    expect(params).toEqual([0]);
+  });
+});
 
 describe("usageMonthForDate", () => {
   it("formats dates as UTC YYYY-MM month keys", () => {

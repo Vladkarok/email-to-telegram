@@ -6,6 +6,7 @@ import {
 } from "../../../src/email/pipeline.js";
 import { insertDeliveryAttempt } from "../../../src/db/repos/deliveryAttempts.js";
 import { applyPlanLimitOverrides, getPlanDefinition } from "../../../src/billing/plans.js";
+import { metricsRegistry, resetMetricsForTests } from "../../../src/observability/metrics.js";
 import { readFileSync } from "fs";
 import { join } from "path";
 
@@ -1395,5 +1396,111 @@ describe("deliverQueuedEmail", () => {
       "log-fallback-nonfatal",
       "failed",
     );
+  });
+
+  describe("delivery latency", () => {
+    const latencyJob = (
+      deliveryLog: object,
+      attachments: Array<Record<string, unknown>> = [],
+    ): Parameters<typeof deliverQueuedEmail>[2] => ({
+      alias: activeAlias,
+      parsed: {
+        messageId: "<id@test>",
+        subject: "Hi",
+        envelopeFrom: "sender@example.com",
+        headerFrom: "Sender <sender@example.com>",
+        headerFromEmail: "sender@example.com",
+        headerFromDomain: "example.com",
+        textBody: "hello",
+        htmlBody: null,
+        bodySha256: "hash",
+        attachments,
+        rawSizeBytes: 10,
+      },
+      deliveryLog: deliveryLog as never,
+      envelopeFrom: "sender@example.com",
+      ...PIPELINE_CONFIG,
+    });
+
+    const initialLatency = async (): Promise<{ count: number; sum: number }> => {
+      const text = await metricsRegistry.getSingleMetricAsString(
+        "email_to_telegram_delivery_latency_seconds",
+      );
+      return {
+        count: Number(/_count\{[^}]*path="initial"[^}]*\} ([\d.]+)/.exec(text)?.[1]),
+        sum: Number(/_sum\{[^}]*path="initial"[^}]*\} ([\d.]+)/.exec(text)?.[1]),
+      };
+    };
+
+    beforeEach(() => {
+      resetMetricsForTests();
+    });
+
+    it("observes received_at → Telegram accepted on a successful delivery", async () => {
+      mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 77 });
+
+      const result = await deliverQueuedEmail(
+        fakeDb() as Parameters<typeof processInboundEmail>[0],
+        {} as Parameters<typeof processInboundEmail>[1],
+        latencyJob({ id: "log-latency", receivedAt: new Date(Date.now() - 90_000) }),
+      );
+
+      expect(result).toEqual({ ok: true });
+      const latency = await initialLatency();
+      expect(latency.count).toBe(1);
+      expect(latency.sum).toBeGreaterThanOrEqual(90);
+      expect(latency.sum).toBeLessThan(120);
+    });
+
+    it("observes nothing when the send fails", async () => {
+      mockSendTelegram.mockResolvedValue({ ok: false, error: "Bad Request: oops" });
+
+      await deliverQueuedEmail(
+        fakeDb() as Parameters<typeof processInboundEmail>[0],
+        {} as Parameters<typeof processInboundEmail>[1],
+        latencyJob({ id: "log-latency-failed", receivedAt: new Date() }),
+      );
+
+      expect((await initialLatency()).count).toBe(0);
+    });
+
+    it("observes nothing when the attempt is handed back for a chat migration", async () => {
+      mockRepairChatMigration.mockResolvedValue({ aliasCount: 1 });
+      mockCreateAttachment.mockResolvedValueOnce({ id: "att-image" });
+      mockSendTelegram.mockResolvedValueOnce({ ok: true, telegramMessageId: 99 });
+      mockSendTelegramPhotos.mockImplementationOnce((_api, opts: { photos: unknown[] }) =>
+        Promise.resolve({ ok: false, failedPhotos: opts.photos, failure: MIGRATE_FAILURE }),
+      );
+
+      const result = await deliverQueuedEmail(
+        fakeDb() as Parameters<typeof processInboundEmail>[0],
+        {} as Parameters<typeof processInboundEmail>[1],
+        latencyJob({ id: "log-latency-migrated", receivedAt: new Date() }, [
+          {
+            filename: "image.png",
+            contentType: "image/png",
+            sizeBytes: 10,
+            sha256: "img-hash",
+            content: Buffer.from("image-bytes"),
+          },
+        ]),
+      );
+
+      expect(result).toEqual({ ok: false, reason: "chat_migrated" });
+      expect((await initialLatency()).count).toBe(0);
+    });
+
+    it("still delivers when received_at is missing", async () => {
+      mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 77 });
+
+      const result = await deliverQueuedEmail(
+        fakeDb() as Parameters<typeof processInboundEmail>[0],
+        {} as Parameters<typeof processInboundEmail>[1],
+        latencyJob({ id: "log-latency-no-received-at" }),
+      );
+
+      expect(result).toEqual({ ok: true });
+      expect((await initialLatency()).count).toBe(0);
+    });
   });
 });

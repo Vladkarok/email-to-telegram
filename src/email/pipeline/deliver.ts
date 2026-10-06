@@ -36,7 +36,11 @@ import { decrementUserStorageUsage } from "../../db/repos/storageUsage.js";
 import type { DeliveryLog } from "../../db/schema.js";
 import type { parseEmail } from "../parser.js";
 import type { Db, QueuedInboundEmail, PipelineResult } from "./types.js";
-import { recordDeliveryAttempt, recordTelegramSendFailure } from "../../observability/metrics.js";
+import {
+  recordDeliveryAttempt,
+  recordDeliveryLatency,
+  recordTelegramSendFailure,
+} from "../../observability/metrics.js";
 import { classifyTelegramError, retryDispositionForError } from "../../telegram/errorClassifier.js";
 import { readAttemptRoute } from "../deliveryRoute.js";
 import { repairChatMigration } from "../../telegram/chatMigration.js";
@@ -268,6 +272,8 @@ export async function deliverQueuedEmail(
         richHtml: prepared.richHtml,
         richMessagesEnabled: job.telegramRichMessagesEnabled,
       });
+      // When Telegram accepted the first message: the delivery latency end.
+      const firstMessageAcceptedAt = new Date();
 
       // A chat-level permanent error (bot blocked, chat deleted) can never
       // succeed on retry; close the log immediately instead of burning retry
@@ -462,6 +468,7 @@ export async function deliverQueuedEmail(
         }
       }
 
+      recordDeliveryLatency("initial", deliveryLog.receivedAt, firstMessageAcceptedAt);
       return { ok: true };
     }
 

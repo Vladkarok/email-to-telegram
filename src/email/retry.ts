@@ -40,7 +40,11 @@ import { getLogger } from "../utils/logger.js";
 import { retryAsync } from "../utils/retryAsync.js";
 import { pipelineTracker } from "../utils/inFlight.js";
 import { createPrivacyViewUrl } from "./privacy.js";
-import { recordRetryAttempt, recordTelegramSendFailure } from "../observability/metrics.js";
+import {
+  recordDeliveryLatency,
+  recordRetryAttempt,
+  recordTelegramSendFailure,
+} from "../observability/metrics.js";
 import { isBotHealthy } from "../telegram/health.js";
 import {
   classifyTelegramError,
@@ -402,6 +406,8 @@ async function retryDelivery(
     richHtml: rendered.richHtml,
     richMessagesEnabled: opts.telegramRichMessagesEnabled,
   });
+  // When Telegram accepted the first message: the delivery latency end.
+  const firstMessageAcceptedAt = new Date();
 
   const newAttemptNo = attempts + 1;
   const sendErrorClass = result.ok ? null : classifyTelegramError(result.failure ?? result.error);
@@ -549,6 +555,7 @@ async function retryDelivery(
         );
       }
     }
+    recordDeliveryLatency("retry", deliveryLog.receivedAt, firstMessageAcceptedAt);
   } else if (finalStatus === "permanently_failed") {
     recordRetryAttempt("permanently_failed");
     recordTelegramSendFailure(result.error);

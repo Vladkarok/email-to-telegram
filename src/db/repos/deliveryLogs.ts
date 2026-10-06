@@ -1,9 +1,28 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { eq, and, or, isNull, isNotNull, inArray, lt, count, gte } from "drizzle-orm";
+import { eq, and, or, isNull, isNotNull, inArray, lt, count, gte, min } from "drizzle-orm";
 import { deliveryLogs, type DeliveryLog, type NewDeliveryLog } from "../schema.js";
 import type * as schema from "../schema.js";
 
 type Db = NodePgDatabase<typeof schema>;
+
+/**
+ * `final_status` values a delivery log can still leave: queued (`received`),
+ * mid-delivery (`processing`), claimed by the retry worker (`retrying`), or
+ * waiting for it (`failed`). `delivered` and `permanently_failed` are final.
+ */
+export const NON_FINAL_DELIVERY_STATUSES = [
+  "received",
+  "processing",
+  "retrying",
+  "failed",
+] as const;
+export type NonFinalDeliveryStatus = (typeof NON_FINAL_DELIVERY_STATUSES)[number];
+
+export interface DeliveryBacklogSummary {
+  counts: Partial<Record<NonFinalDeliveryStatus, number>>;
+  /** received_at of the oldest non-final log; null when there is none. */
+  oldestReceivedAt: Date | null;
+}
 
 /**
  * Returns the first day of `month` (UTC) as a Date.
@@ -161,6 +180,33 @@ export async function claimDeliveryLogForRetry(
     .where(and(eq(deliveryLogs.id, id), inArray(deliveryLogs.finalStatus, [...expectedStatuses])))
     .returning({ id: deliveryLogs.id });
   return rows.length > 0;
+}
+
+/**
+ * The delivery backlog for /metrics: non-final logs per status and the oldest
+ * one's received_at, in one grouped query. Non-final rows stay few (cleanup
+ * closes them once the raw email expires), so this is cheap.
+ */
+export async function summarizeDeliveryBacklog(db: Db): Promise<DeliveryBacklogSummary> {
+  const rows = await db
+    .select({
+      status: deliveryLogs.finalStatus,
+      count: count(),
+      oldest: min(deliveryLogs.receivedAt),
+    })
+    .from(deliveryLogs)
+    .where(inArray(deliveryLogs.finalStatus, [...NON_FINAL_DELIVERY_STATUSES]))
+    .groupBy(deliveryLogs.finalStatus);
+
+  const counts: DeliveryBacklogSummary["counts"] = {};
+  let oldestReceivedAt: Date | null = null;
+  for (const row of rows) {
+    counts[row.status as NonFinalDeliveryStatus] = Number(row.count);
+    if (row.oldest && (oldestReceivedAt === null || row.oldest < oldestReceivedAt)) {
+      oldestReceivedAt = row.oldest;
+    }
+  }
+  return { counts, oldestReceivedAt };
 }
 
 export async function countRecentDeliveriesByAlias(
