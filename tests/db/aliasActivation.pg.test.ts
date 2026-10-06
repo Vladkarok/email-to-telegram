@@ -1,10 +1,12 @@
 /**
  * First-bounce notice against a real Postgres (TEST_DATABASE_URL, see
  * tests/helpers/pgTestDb.ts): the claim race, the lifetime budget under
- * failed and unknown sends, click-before-send, the button against
- * move/delete, a failed insert and a failed commit, expiry cleanup, marker
- * reconciliation and the migration backfill, export and erasure, and
- * shutdown with a notice transaction holding a pool client.
+ * failed and unknown sends, click-before-send, the owner's private chat for
+ * a group alias, the button against move/delete, a failed insert and a
+ * failed commit, expiry cleanup, the marker under lock contention, marker
+ * reconciliation (and the purge it guards) and the migration backfill,
+ * export and erasure, and shutdown while a job holds or waits for a pool
+ * client. Races are ordered by observed lock waits, not by sleeps.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Api } from "grammy";
@@ -19,10 +21,12 @@ import { applyActivationAllow } from "../../src/activation/allowButton.js";
 import { insertAllowRule } from "../../src/telegram/commands/allow.js";
 import { NOTICE_BOUNDS, type NoticeBounds } from "../../src/activation/bounds.js";
 import { sql } from "drizzle-orm";
+import { runCleanup } from "../../src/storage/cleanup.js";
 import {
   claimActivationNotice,
   clearExpiredActivationTokens,
   consumeActivationToken,
+  readActivationGate,
   markAliasFirstDelivered,
   reconcileFirstDeliveredMarkers,
 } from "../../src/db/repos/aliasActivation.js";
@@ -183,6 +187,26 @@ describe.skipIf(!hasTestDatabase)("first-bounce notice on real Postgres", () => 
       "update alias_activation set last_claim_at = last_claim_at - interval '25 hours' where alias_id = $1",
       [aliasId],
     );
+  }
+
+  /** Polls until `check` holds; generous, so slow CI only waits longer. */
+  async function waitUntil(check: () => boolean | Promise<boolean>, what: string): Promise<void> {
+    const giveUpAt = Date.now() + 15_000;
+    while (!(await check())) {
+      if (Date.now() > giveUpAt) throw new Error(`timed out waiting for ${what}`);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+
+  /** Waits until `count` backends of this database are blocked on a lock. */
+  async function waitForLockWaiters(count: number): Promise<void> {
+    await waitUntil(async () => {
+      const { rows } = await t.pool.query<{ n: number }>(
+        `select count(*)::int as n from pg_stat_activity
+         where datname = current_database() and wait_event_type = 'Lock'`,
+      );
+      return (rows[0]?.n ?? 0) >= count;
+    }, `${count} lock waiter(s)`);
   }
 
   function makeQueue(
@@ -533,7 +557,8 @@ describe.skipIf(!hasTestDatabase)("first-bounce notice on real Postgres", () => 
           [aliasId, DM_CHAT.toString()],
         );
         const tap = applyActivationAllow(t.db, { aliasId, token });
-        await new Promise((resolve) => setTimeout(resolve, 150));
+        // The tap is queued behind the mover's owner lock before the move commits.
+        await waitForLockWaiters(1);
         await mover.query("commit");
         expect(await tap).toEqual({ kind: "expired" });
       } finally {
@@ -546,23 +571,53 @@ describe.skipIf(!hasTestDatabase)("first-bounce notice on real Postgres", () => 
     it("wins against a move that comes after it: the rule lands, the move still happens", async () => {
       const aliasId = await seedAlias({ chatId: GROUP_CHAT });
       const token = await claimWithDomain(aliasId);
-      const [tap, move] = await Promise.all([
-        applyActivationAllow(t.db, { aliasId, token }),
-        new Promise((resolve) => setTimeout(resolve, 50)).then(() =>
-          moveAliasWithCas(t.db, {
-            aliasId,
-            expectedVersion: 0,
-            newChatId: DM_CHAT,
-            oldChatId: GROUP_CHAT,
-            oldThreadId: null,
-            actorId: OWNER,
-            authzPath: "admin",
-            aliasOwnerId: OWNER,
-          }),
-        ),
-      ]);
-      expect(tap.kind).toBe("added");
-      expect(move.ok).toBe(true);
+
+      // A reader holding the alias row orders the two: the tap takes the
+      // owner lock and waits for the row; the move then waits for the owner
+      // lock behind the tap.
+      const blocker = await t.client();
+      await blocker.query("begin");
+      await blocker.query("select id from email_addresses where id = $1 for update", [aliasId]);
+      const tap = applyActivationAllow(t.db, { aliasId, token });
+      const move = waitForLockWaiters(1).then(() =>
+        moveAliasWithCas(t.db, {
+          aliasId,
+          expectedVersion: 0,
+          newChatId: DM_CHAT,
+          oldChatId: GROUP_CHAT,
+          oldThreadId: null,
+          actorId: OWNER,
+          authzPath: "admin",
+          aliasOwnerId: OWNER,
+        }),
+      );
+      try {
+        await waitForLockWaiters(2);
+      } finally {
+        await blocker.query("rollback");
+        await blocker.end();
+      }
+      expect((await tap).kind).toBe("added");
+      expect((await move).ok).toBe(true);
+      expect(await rules(aliasId)).toEqual(["github.com"]);
+    });
+
+    it("an alias routed to a group: the notice goes to the owner's private chat, the one-tap works", async () => {
+      const aliasId = await seedAlias({ chatId: GROUP_CHAT });
+      const { api, sent } = fakeApi();
+      const queue = makeQueue(api);
+      queue.admit(rawRequest(aliasId));
+      await queue.whenIdle();
+
+      expect(sent).toHaveLength(1);
+      expect(sent[0].chatId).toBe(OWNER.toString());
+      expect((await activation(aliasId)).chat_id).toBe(GROUP_CHAT.toString());
+      const token = tokenOf(sent[0]);
+      expect(token).not.toBeNull();
+      expect(await applyActivationAllow(t.db, { aliasId, token: token! })).toMatchObject({
+        kind: "added",
+        domain: "github.com",
+      });
       expect(await rules(aliasId)).toEqual(["github.com"]);
     });
 
@@ -685,6 +740,36 @@ describe.skipIf(!hasTestDatabase)("first-bounce notice on real Postgres", () => 
       expect((await activation(aliasId)).first_delivered_at).toEqual(first);
     });
 
+    it("gives up within its lock timeout while a claim or tap holds the row, then succeeds", async () => {
+      const aliasId = await seedAlias();
+      await t.pool.query("insert into alias_activation (alias_id) values ($1)", [aliasId]);
+      const locker = await t.client();
+      await locker.query("begin");
+      await locker.query("select * from alias_activation where alias_id = $1 for update", [
+        aliasId,
+      ]);
+      const started = Date.now();
+      const failure: unknown = await markAliasFirstDelivered(t.db, aliasId)
+        .then(
+          () => null,
+          (err: unknown) => err,
+        )
+        .finally(async () => {
+          await locker.query("rollback");
+          await locker.end();
+        });
+      const elapsed = Date.now() - started;
+      // lock_timeout (55P03), not a hang: the delivery that called it logs and moves on.
+      const pgError = (failure as { cause?: { code?: string } } | null)?.cause ?? failure;
+      expect((pgError as { code?: string } | null)?.code).toBe("55P03");
+      expect(elapsed).toBeGreaterThanOrEqual(1_500);
+      expect(elapsed).toBeLessThan(10_000);
+      expect((await activation(aliasId)).first_delivered_at).toBeNull();
+
+      await markAliasFirstDelivered(t.db, aliasId);
+      expect((await activation(aliasId)).first_delivered_at).not.toBeNull();
+    }, 20_000);
+
     it("blocks a claim on an existing row", async () => {
       const aliasId = await seedAlias();
       const { api } = fakeApi();
@@ -764,47 +849,135 @@ describe.skipIf(!hasTestDatabase)("first-bounce notice on real Postgres", () => 
     });
   });
 
-  it("shutdown with a notice transaction holding a pool client: bounded, and the pool drains", async () => {
-    const aliasId = await seedAlias();
-    await t.pool.query("insert into alias_activation (alias_id) values ($1)", [aliasId]);
-    const pool = new pg.Pool({ connectionString: t.url, max: 2 });
-    const db = drizzle(pool, { schema });
-    const { api, sendMessage } = fakeApi();
-    // lock_timeout above the shutdown wait, so the statement outlives it.
-    const queue = makeQueue(api, { db, bounds: { lockTimeout: "3s" } });
+  describe("shutdown", () => {
+    it("with a notice transaction holding a pool client: bounded wait, then the pool drains", async () => {
+      const aliasId = await seedAlias();
+      await t.pool.query("insert into alias_activation (alias_id) values ($1)", [aliasId]);
+      const pool = new pg.Pool({ connectionString: t.url, max: 2 });
+      const db = drizzle(pool, { schema });
+      const { api, sendMessage } = fakeApi();
+      // A lock wait well past the 2 s shutdown wait, inside the 5 s statement bound.
+      const queue = makeQueue(api, { db, bounds: { lockTimeout: "4s" } });
 
-    const locker = await t.client();
-    try {
-      await locker.query("begin");
-      await locker.query("select * from alias_activation where alias_id = $1 for update", [
-        aliasId,
-      ]);
-      const admittedAt = Date.now();
-      queue.admit(rawRequest(aliasId));
-      await new Promise((resolve) => setTimeout(resolve, 200));
-      expect(pool.totalCount - pool.idleCount).toBe(1);
+      const locker = await t.client();
+      try {
+        await locker.query("begin");
+        await locker.query("select * from alias_activation where alias_id = $1 for update", [
+          aliasId,
+        ]);
+        queue.admit(rawRequest(aliasId));
+        // The claim is blocked on the row, holding its pool client.
+        await waitForLockWaiters(1);
+        expect(pool.totalCount - pool.idleCount).toBe(1);
 
-      const shutdownStart = Date.now();
-      await queue.shutdown();
-      const shutdownMs = Date.now() - shutdownStart;
-      expect(shutdownMs).toBeGreaterThanOrEqual(1_900);
-      expect(shutdownMs).toBeLessThan(2_600);
-      expect(queue.admit(rawRequest(aliasId))).toBe(false);
+        const shutdownStart = Date.now();
+        await queue.shutdown();
+        const shutdownMs = Date.now() - shutdownStart;
+        expect(shutdownMs).toBeGreaterThanOrEqual(1_900);
+        expect(shutdownMs).toBeLessThan(3_500);
+        // Shutdown returned while the statement still holds the client …
+        expect(pool.totalCount - pool.idleCount).toBe(1);
+        expect(queue.admit(rawRequest(aliasId))).toBe(false);
 
-      // closeDb: waits for the checked-out client until its lock_timeout.
+        // … so closeDb waits for it, until the lock timeout ends the statement.
+        await pool.end();
+        expect(pool.totalCount).toBe(0);
+      } finally {
+        await locker.query("rollback").catch(() => {});
+        await locker.end();
+      }
+      await queue.whenIdle();
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(await noticeCount("raw", "failed")).toBe(1);
+      expect((await activation(aliasId)).claims_used).toBe(0);
+    }, 20_000);
+
+    it("while the job waits for a pool client: it starts nothing, and no claim is spent", async () => {
+      const aliasId = await seedAlias();
+      const pool = new pg.Pool({ connectionString: t.url, max: 1 });
+      const db = drizzle(pool, { schema });
+      const { api, sendMessage } = fakeApi();
+      const queue = makeQueue(api, { db });
+
+      const held = await pool.connect();
+      let released = false;
+      try {
+        queue.admit(rawRequest(aliasId));
+        await waitUntil(() => pool.waitingCount === 1, "the job to wait for a client");
+        const stopping = queue.shutdown();
+        held.release();
+        released = true;
+        await stopping;
+      } finally {
+        if (!released) held.release();
+      }
+      await queue.whenIdle();
       await pool.end();
-      const drainedMs = Date.now() - admittedAt;
-      expect(drainedMs).toBeGreaterThanOrEqual(2_900);
-      expect(drainedMs).toBeLessThan(4_500);
-    } finally {
-      await locker.query("rollback").catch(() => {});
-      await locker.end();
+
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(await activation(aliasId)).toBeNull();
+      expect(await noticeCount("raw", "dropped")).toBe(1);
+      expect(await noticeCount("raw", "failed")).toBe(0);
+    });
+  });
+
+  describe("cleanup", () => {
+    const cleanupConfig = {
+      attachmentDir: "/nonexistent/etg-test-attachments",
+      rawEmailDir: "/nonexistent/etg-test-rawemails",
+      attachmentTtlHours: 24,
+      rawEmailTtlHours: 24,
+      deliveryLogRetentionDays: 7,
+    };
+
+    async function logsOf(aliasId: string): Promise<number> {
+      const { rows } = await t.pool.query<{ n: number }>(
+        "select count(*)::int as n from delivery_logs where email_address_id = $1",
+        [aliasId],
+      );
+      return rows[0].n;
     }
-    await queue.whenIdle();
-    expect(sendMessage).not.toHaveBeenCalled();
-    expect(await noticeCount("raw", "failed")).toBe(1);
-    expect((await activation(aliasId)).claims_used).toBe(0);
-  }, 15_000);
+
+    it("keeps the only working-alias evidence when reconciliation fails, and purges once it succeeds", async () => {
+      const aliasId = await seedAlias({ ageDays: 40 });
+      const deliveredAt = "2026-08-01T10:00:00Z";
+      const { rows } = await t.pool.query<{ id: string }>(
+        `insert into delivery_logs (email_address_id, user_id, final_status, received_at, created_at)
+         values ($1, $2, 'delivered', $3, $3) returning id`,
+        [aliasId, OWNER.toString(), deliveredAt],
+      );
+      await t.pool.query(
+        `insert into delivery_attempts (delivery_log_id, attempt_no, target_chat_id, status, created_at)
+         values ($1, 1, $2, 'succeeded', $3)`,
+        [rows[0].id, DM_CHAT.toString(), deliveredAt],
+      );
+
+      await t.pool.query(`
+        create function etg_test_refuse_marker() returns trigger language plpgsql
+        as $$ begin raise exception 'marker refused'; end $$;
+        create trigger etg_test_refuse_marker before insert on alias_activation
+        for each row execute function etg_test_refuse_marker();
+      `);
+      try {
+        await runCleanup(t.db, cleanupConfig);
+      } finally {
+        await t.pool.query(`
+          drop trigger etg_test_refuse_marker on alias_activation;
+          drop function etg_test_refuse_marker();
+        `);
+      }
+      // The purge was skipped: the succeeded attempt still marks the alias working.
+      expect(await logsOf(aliasId)).toBe(1);
+      expect(await activation(aliasId)).toBeNull();
+      expect((await readActivationGate(t.db, aliasId))!.working).toBe(true);
+
+      // The next run reconciles first, then purges.
+      await runCleanup(t.db, cleanupConfig);
+      expect(await logsOf(aliasId)).toBe(0);
+      expect((await activation(aliasId)).first_delivered_at).toEqual(new Date(deliveredAt));
+      expect((await readActivationGate(t.db, aliasId))!.working).toBe(true);
+    });
+  });
 });
 
 describe.skipIf(!hasTestDatabase)("migration 0011 backfill", () => {
