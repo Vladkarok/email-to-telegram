@@ -125,7 +125,7 @@ export function renderPrivacyAlert(
   viewUrl: string,
   hasAttachments: boolean,
 ): string {
-  const sender = escapeHtml(extractSenderHint(email));
+  const sender = escapeHtml(sanitizeHeaderField(extractSenderHint(email)));
   const alias = escapeHtml(aliasFullAddress);
   const attachmentLine = hasAttachments ? "\nAttachments: hidden by privacy mode" : "";
 
@@ -153,14 +153,21 @@ function buildAttachmentsSection(links: AttachmentLink[], mode: RenderMode): str
   return "Attachments:\n" + items.join("\n");
 }
 
+/**
+ * The privacy alert names only the sender's domain, taken from the parsed
+ * address and never from the From text: a display name such as
+ * "Support <help@bank.com>" must not choose the domain shown. Without a
+ * parsed address the name is shown instead, unless it contains an `@`
+ * that could pass for an address.
+ */
 function extractSenderHint(email: ParsedEmail): string {
-  const source = email.headerFrom ?? email.envelopeFrom ?? "unknown sender";
-  const lowered = source.toLowerCase();
-  const angleMatch = lowered.match(/<([^>]+)>/);
-  const address = angleMatch?.[1] ?? lowered.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/)?.[0];
-  if (!address) return source;
-  const [, domain] = address.split("@");
-  return domain ?? address;
+  const address = email.headerFromEmail || email.envelopeFrom?.toLowerCase();
+  if (address) {
+    const at = address.lastIndexOf("@");
+    return at >= 0 && at < address.length - 1 ? address.slice(at + 1) : address;
+  }
+  const display = email.headerFromDisplay;
+  return display && !display.includes("@") ? display : "unknown sender";
 }
 
 function clampToMaxLen(parts: string[], mode: RenderMode): string {

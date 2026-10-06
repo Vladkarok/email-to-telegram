@@ -5,6 +5,7 @@ import {
   normalizeRenderMode,
   renderEmail,
   renderEmailForDelivery,
+  renderPrivacyAlert,
   type RenderMode,
 } from "../../../src/email/renderer.js";
 import type { ParsedEmail } from "../../../src/email/types.js";
@@ -23,6 +24,16 @@ const BASE: ParsedEmail = {
   attachments: [],
   rawSizeBytes: 500,
 };
+
+const encodedWord = (text: string): string =>
+  `=?UTF-8?B?${Buffer.from(text, "utf8").toString("base64")}?=`;
+
+async function parseFrom(fromHeader: string): Promise<ParsedEmail> {
+  const raw = Buffer.from(
+    `From: ${fromHeader}\r\nTo: alerts@example.com\r\nSubject: Test Subject\r\n\r\nBody`,
+  );
+  return parseEmail(raw, raw.length);
+}
 
 describe("normalizeRenderMode", () => {
   it("maps stored values to the two supported modes", () => {
@@ -533,18 +544,11 @@ describe("renderEmail", () => {
   });
 
   describe("From header", () => {
-    const encodedWord = (text: string): string =>
-      `=?UTF-8?B?${Buffer.from(text, "utf8").toString("base64")}?=`;
-
     async function renderFrom(
       fromHeader: string,
       mode: RenderMode,
     ): Promise<ReturnType<typeof renderEmailForDelivery>> {
-      const raw = Buffer.from(
-        `From: ${fromHeader}\r\nTo: alerts@example.com\r\nSubject: Test Subject\r\n\r\nBody`,
-      );
-      const parsed = await parseEmail(raw, raw.length);
-      return renderEmailForDelivery(parsed, mode, "alerts@example.com", []);
+      return renderEmailForDelivery(await parseFrom(fromHeader), mode, "alerts@example.com", []);
     }
 
     it("shows a display name without mailparser's quotes on every transport", async () => {
@@ -617,5 +621,69 @@ describe("renderEmail", () => {
         expect(output).not.toContain("\u202e");
       }
     });
+  });
+});
+
+describe("renderPrivacyAlert", () => {
+  async function alertLines(fromHeader: string): Promise<string[]> {
+    const alert = renderPrivacyAlert(
+      await parseFrom(fromHeader),
+      "alerts@example.com",
+      "https://mail.example.com/view/token",
+      false,
+    );
+    return alert.split("\n");
+  }
+
+  it("names the sender's domain", async () => {
+    expect(await alertLines('"GitHub" <noreply@github.com>')).toEqual([
+      "<b>Private email alert</b>",
+      "Alias: <code>alerts@example.com</code>",
+      "Sender: github.com",
+      "Subject: hidden by privacy mode",
+      'Open: <a href="https://mail.example.com/view/token">view email</a>',
+    ]);
+  });
+
+  it("takes the domain from the parsed address, not from the display name", async () => {
+    const lines = await alertLines(`${encodedWord("Support <help@bank.com>")} <real@evil.com>`);
+
+    expect(lines).toContain("Sender: evil.com");
+    expect(lines.join("\n")).not.toContain("bank.com");
+  });
+
+  it("names the first sender's domain when From lists several addresses", async () => {
+    expect(await alertLines('a@first.example, "B" <b@second.example>')).toContain(
+      "Sender: first.example",
+    );
+  });
+
+  it("shows unknown sender for a group From, whose members carry no single address", async () => {
+    expect(await alertLines("Team: a@example.com;")).toContain("Sender: unknown sender");
+  });
+
+  it("keeps an encoded line break in a name-only From on the Sender line", async () => {
+    const lines = await alertLines(encodedWord("Bank\r\nSubject: Your account is locked"));
+
+    expect(lines).toContain('Sender: "Bank Subject: Your account is locked"');
+    expect(lines.filter((line) => line.startsWith("Subject:"))).toEqual([
+      "Subject: hidden by privacy mode",
+    ]);
+  });
+
+  it("strips directional overrides from the Sender line", async () => {
+    expect(await alertLines(encodedWord("Ali\u202eecilce"))).toContain("Sender: Aliecilce");
+  });
+
+  it("shows a name-only From as the name", async () => {
+    expect(await alertLines('"Just A Name"')).toContain("Sender: Just A Name");
+  });
+
+  it("does not show a name-only From that could pass for an address", async () => {
+    expect(await alertLines(encodedWord("support@bank.com"))).toContain("Sender: unknown sender");
+  });
+
+  it("shows unknown sender for an empty From", async () => {
+    expect(await alertLines("")).toContain("Sender: unknown sender");
   });
 });

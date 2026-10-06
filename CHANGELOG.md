@@ -26,6 +26,12 @@ that has been running in production.
   it contains `<`, `>`, `@`, `,`, `;` or `:`, so it cannot pass for an
   address. A message with an empty From now shows `unknown` instead of a
   blank sender. The stored From and allow rules are unchanged.
+- **The privacy alert's Sender line can no longer be spoofed.** It took the
+  domain from the first `<…>` in the From text, so an encoded display name
+  such as `Support <help@bank.com>` made the alert say `bank.com` for mail
+  from another domain. A line break in a name-only From could also add a
+  fake line to the alert. The domain now comes from the parsed address and
+  the line goes through the same sanitizer as the message header.
 
 ## [1.11.0] — 2026-10-06
 
