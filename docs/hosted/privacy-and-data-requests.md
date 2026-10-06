@@ -33,6 +33,10 @@ Depending on your settings and message content, the hosted service may process:
 - attachments and attachment download links while retention settings require
   them
 - privacy-view links and one-time view/download state
+- for a new alias whose mail bounced because no allow rule matched: the
+  sender domain of the bounced message, kept up to 7 days to offer the
+  one-tap allow in the bounce notice, plus when notices were sent and when the
+  alias first delivered mail (no sender addresses, subjects or bodies)
 - billing identifiers from the chosen payment provider, once managed billing
   is implemented (to be implemented)
 - manual payment references and operator billing notes when a hosted plan is
@@ -44,6 +48,10 @@ Depending on your settings and message content, the hosted service may process:
 Plan retention controls how long raw email and attachment data are kept for
 hosted delivery, retry, privacy-view, and download workflows. Current plan
 retention is documented in [`pricing-and-terms.md`](./pricing-and-terms.md).
+
+The sender domain stored for a bounce notice is deleted at most 7 days after
+the bounce (plus one 15-minute cleanup run), whether or not the notice was
+delivered and whatever happened to the alias since.
 
 Operational logs, billing records, abuse records, and backup copies may be kept
 longer when needed for security, accounting, fraud prevention, legal compliance,
@@ -139,8 +147,9 @@ pages.
 
 Hosted account owners can self-serve a basic export of account metadata,
 aliases, allow rules, custom domains, per-row delivery metadata, delivery
-attempts, attachment manifest, usage counters, storage usage, and manual
-billing events by running `/export_me` in a DM with the bot. The bot replies
+attempts, attachment manifest, usage counters, storage usage, manual billing
+events, and bounce-notice state per alias (the one-tap token is redacted) by
+running `/export_me` in a DM with the bot. The bot replies
 with a JSON file built from your live data. There is a 60-second cooldown
 per user.
 
@@ -162,8 +171,9 @@ Target handling time for the email fallback:
 ## Erasure
 
 Hosted account owners can self-serve deletion of hosted account records,
-aliases, allow rules, custom domains, delivery logs, and stored raw email and
-attachment files by running `/delete_me` in a DM with the bot. The bot shows
+aliases, allow rules, bounce-notice state, custom domains, delivery logs, and
+stored raw email and attachment files by running `/delete_me` in a DM with the
+bot. The bot shows
 a preview of what will be wiped and asks for inline confirmation. On confirm,
 deletion happens immediately.
 
@@ -183,6 +193,34 @@ Target handling time for the email fallback:
 - acknowledge the request within 7 calendar days
 - complete erasure within 30 calendar days unless retention is legally
   required
+
+## Operator Notes
+
+Bounce-notice state lives in the `alias_activation` table. A release older
+than the one that added it neither cleans nor exports that table, so after a
+rollback to such a release:
+
+- run once, right after the rollback deploy, so no sender domain or one-tap
+  token outlives its 7 days:
+
+  ```sql
+  UPDATE alias_activation SET token = NULL, domain = NULL;
+  ```
+
+  Counters, markers and timestamps stay for a later re-enable.
+
+- `/export_me` leaves the table out. Answer a data request in that window
+  with an operator query, token column omitted:
+
+  ```sql
+  SELECT alias_id, first_delivered_at, claims_used, last_claim_at,
+         first_notice_at, expires_at, domain, chat_id, routing_version,
+         sent_at, first_sent_at
+  FROM alias_activation
+  WHERE alias_id IN (SELECT id FROM email_addresses WHERE created_by = <user id>);
+  ```
+
+`/delete_me` keeps working in that window: the rows go with the aliases.
 
 ## Ownership Verification
 

@@ -999,6 +999,226 @@
       }
     },
     {
+      "id": 42,
+      "type": "timeseries",
+      "title": "Bounce notices per hour by result",
+      "description": "Messages telling the owner of a not-yet-working alias that mail bounced because no allow rule matched (raw stage: rules exist but none matched; preflight: the alias has no rules). sent: Telegram accepted it. gated: the alias already delivered, is not active, or is older than 7 days with an owner who had mail accepted. not_claimed: the 24 h window or the 3-notice budget of that alias. dropped: the bounded queue was full, or a deadline or shutdown stopped the job. stale: the alias or its claim changed before the send. failed: a DB or Telegram error. Bad: failed or dropped climbing.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "pointSize": 4,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "barAlignment": -1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "noValue": "No bounce notices in this range",
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "raw sent"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "preflight sent"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "raw failed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "preflight failed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["sum"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (stage, result) (increase(email_to_telegram_activation_notices_total{env=~\"$env\"}[$__interval])) > 0",
+          "legendFormat": "{{stage}} {{result}}"
+        }
+      ],
+      "interval": "1h",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      }
+    },
+    {
+      "id": 43,
+      "type": "timeseries",
+      "title": "One-tap allows per hour by result",
+      "description": "Taps on \"Allow <domain>\" in a bounce notice. added: the rule exists now. expired: the button was spent, replaced by a newer notice, older than 7 days, or the alias moved, paused or was deleted. failed: the rule limit or a DB error (the button is spent). Read with the sent notices next to it: added over sent is the share of notices that ended in a rule.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "pointSize": 4,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "barAlignment": -1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "noValue": "No taps in this range",
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "added"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["sum"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (result) (increase(email_to_telegram_activation_allows_total{env=~\"$env\"}[$__interval])) > 0",
+          "legendFormat": "{{result}}"
+        }
+      ],
+      "interval": "1h",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 21
+      }
+    },
+    {
       "type": "row",
       "id": 14,
       "title": "Delivery",
@@ -1007,7 +1227,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 21
+        "y": 29
       },
       "panels": []
     },
@@ -1156,7 +1376,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 22
+        "y": 30
       }
     },
     {
@@ -1221,7 +1441,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 22
+        "y": 30
       }
     },
     {
@@ -1324,7 +1544,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 22
+        "y": 30
       }
     },
     {
@@ -1404,7 +1624,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 30
+        "y": 38
       }
     },
     {
@@ -1516,7 +1736,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 30
+        "y": 38
       }
     },
     {
@@ -1581,7 +1801,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 30
+        "y": 38
       }
     },
     {
@@ -1690,7 +1910,7 @@
         "h": 7,
         "w": 10,
         "x": 0,
-        "y": 38
+        "y": 46
       }
     },
     {
@@ -1754,7 +1974,7 @@
         "h": 7,
         "w": 6,
         "x": 10,
-        "y": 38
+        "y": 46
       }
     },
     {
@@ -1834,7 +2054,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 38
+        "y": 46
       }
     },
     {
@@ -1846,7 +2066,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 45
+        "y": 53
       },
       "panels": []
     },
@@ -1971,7 +2191,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 46
+        "y": 54
       }
     },
     {
@@ -2034,7 +2254,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 46
+        "y": 54
       }
     },
     {
@@ -2094,7 +2314,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 46
+        "y": 54
       }
     },
     {
@@ -2106,7 +2326,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 54
+        "y": 62
       },
       "panels": [
         {
@@ -2142,7 +2362,7 @@
             "h": 8,
             "w": 24,
             "x": 0,
-            "y": 55
+            "y": 63
           }
         }
       ]
@@ -2156,7 +2376,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 55
+        "y": 63
       },
       "panels": [
         {
@@ -2228,7 +2448,7 @@
             "h": 4,
             "w": 3,
             "x": 0,
-            "y": 56
+            "y": 64
           }
         },
         {
@@ -2300,7 +2520,7 @@
             "h": 4,
             "w": 3,
             "x": 3,
-            "y": 56
+            "y": 64
           }
         },
         {
@@ -2360,7 +2580,7 @@
             "h": 4,
             "w": 3,
             "x": 6,
-            "y": 56
+            "y": 64
           }
         },
         {
@@ -2420,7 +2640,7 @@
             "h": 4,
             "w": 3,
             "x": 9,
-            "y": 56
+            "y": 64
           }
         },
         {
@@ -2503,7 +2723,7 @@
             "h": 4,
             "w": 3,
             "x": 12,
-            "y": 56
+            "y": 64
           }
         },
         {
@@ -2563,7 +2783,7 @@
             "h": 4,
             "w": 3,
             "x": 15,
-            "y": 56
+            "y": 64
           }
         },
         {
@@ -2623,7 +2843,7 @@
             "h": 4,
             "w": 3,
             "x": 18,
-            "y": 56
+            "y": 64
           }
         },
         {
@@ -2691,7 +2911,7 @@
             "h": 4,
             "w": 3,
             "x": 21,
-            "y": 56
+            "y": 64
           }
         },
         {
@@ -2752,7 +2972,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 60
+            "y": 68
           }
         },
         {
@@ -2812,7 +3032,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 60
+            "y": 68
           }
         },
         {
@@ -2873,7 +3093,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 60
+            "y": 68
           }
         }
       ]
