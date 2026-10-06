@@ -85,6 +85,9 @@ export function buildPlanSummaryText(
   lines.push(`• ${messages.allowRules}: <code>${plan.limits.allowRules}</code>`);
   lines.push(`• ${messages.acceptedEmailsMonth}: <code>${plan.limits.deliveredEmailsMonth}</code>`);
   lines.push(
+    `• ${messages.acceptedEmailsHourPerAlias}: <code>${plan.limits.aliasEmailsPerHour}</code>`,
+  );
+  lines.push(
     `• ${messages.egressMonth}: <code>${formatBytes(BigInt(plan.limits.egressBytesMonth))}</code>`,
   );
   lines.push(

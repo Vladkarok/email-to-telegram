@@ -13,8 +13,8 @@ Read this in: [Українська](README.uk.md) · [中文](README.zh-CN.md) 
 
 **Use the hosted bot.** Open [@tgemails_Bot](https://t.me/tgemails_Bot), send
 `/start`, then `/newemail`. The address works a few seconds later. You need no
-domain, no server and no Cloudflare account. The free tier covers 3 aliases and
-100 delivered emails a month. If your workflow needs more, message
+domain, no server and no Cloudflare account. There is a free tier; `/plan` in
+the bot shows its current limits. If your workflow needs more, message
 [@yolovlad](https://t.me/yolovlad). Before you rely on it, read the
 [acceptable use](https://vladkarok.github.io/email-to-telegram/hosted/acceptable-use/)
 and [privacy](https://vladkarok.github.io/email-to-telegram/hosted/privacy-and-data-requests/)

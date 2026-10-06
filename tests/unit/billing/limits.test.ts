@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockLoadConfig = vi.fn(() => ({ appMode: "self-hosted" }));
 const mockFindUserById = vi.fn();
@@ -37,14 +37,22 @@ const {
   checkAllowRuleCreateLimit,
   checkInboundLimit,
   checkEgressLimit,
+  checkInboundLimitForPlan,
   getEffectivePlan,
+  resolveInboundPlan,
 } = await import("../../../src/billing/limits.js");
+const { applyPlanLimitOverrides, getPlanDefinition } =
+  await import("../../../src/billing/plans.js");
 
 describe("billing limits", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLoadConfig.mockReturnValue({ appMode: "self-hosted" });
     mockGetUserStorageUsage.mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    applyPlanLimitOverrides({});
   });
 
   it("skips quota enforcement outside hosted mode", async () => {
@@ -157,15 +165,73 @@ describe("billing limits", () => {
       currentPeriodEnd: null,
     });
     mockGetUserUsageMonth.mockResolvedValue({
-      deliveredCount: 100,
+      deliveredCount: 200,
       rejectedCount: 0,
     });
 
     await expect(checkInboundLimit({} as never, 1n)).resolves.toEqual({
       ok: false,
       code: "monthly_email_limit",
-      limit: 100,
-      used: 100,
+      limit: 200,
+      used: 200,
+    });
+  });
+
+  describe("resolveInboundPlan", () => {
+    it("uses the free plan without a lookup in self-hosted mode", async () => {
+      applyPlanLimitOverrides({ free: { aliasEmailsPerHour: 9 } });
+      const inbound = await resolveInboundPlan({} as never, 1n);
+      expect(inbound).toEqual({ hosted: false, user: null, plan: getPlanDefinition("free") });
+      expect(inbound.plan.limits.aliasEmailsPerHour).toBe(9);
+      expect(mockFindUserById).not.toHaveBeenCalled();
+      await expect(checkInboundLimitForPlan({} as never, inbound)).resolves.toEqual({ ok: true });
+    });
+
+    it("uses the owner's effective plan in hosted mode", async () => {
+      applyPlanLimitOverrides({ pro: { aliasEmailsPerHour: 240 } });
+      mockLoadConfig.mockReturnValue({ appMode: "hosted" });
+      mockFindUserById.mockResolvedValue({
+        id: 1n,
+        planCode: "pro",
+        subscriptionStatus: "active",
+        currentPeriodEnd: null,
+      });
+      const inbound = await resolveInboundPlan({} as never, 1n);
+      expect(inbound.hosted).toBe(true);
+      expect(inbound.plan.code).toBe("pro");
+      expect(inbound.plan.limits.aliasEmailsPerHour).toBe(240);
+    });
+
+    it("falls back to the free cap but still rejects quota for a missing owner", async () => {
+      mockLoadConfig.mockReturnValue({ appMode: "hosted" });
+      mockFindUserById.mockResolvedValue(undefined);
+      const inbound = await resolveInboundPlan({} as never, 1n);
+      expect(inbound).toEqual({ hosted: true, user: null, plan: getPlanDefinition("free") });
+      await expect(checkInboundLimitForPlan({} as never, inbound)).resolves.toEqual({
+        ok: false,
+        code: "subscription_inactive",
+      });
+    });
+  });
+
+  it("enforces an operator override of the monthly cap", async () => {
+    applyPlanLimitOverrides({ free: { deliveredEmailsMonth: 50 } });
+    mockLoadConfig.mockReturnValue({ appMode: "hosted" });
+    mockFindUserById.mockResolvedValue({
+      id: 1n,
+      planCode: "free",
+      subscriptionStatus: "free",
+      currentPeriodEnd: null,
+    });
+    mockGetUserUsageMonth.mockResolvedValue({ deliveredCount: 49, rejectedCount: 0 });
+    await expect(checkInboundLimit({} as never, 1n)).resolves.toMatchObject({ ok: true });
+
+    mockGetUserUsageMonth.mockResolvedValue({ deliveredCount: 50, rejectedCount: 0 });
+    await expect(checkInboundLimit({} as never, 1n)).resolves.toEqual({
+      ok: false,
+      code: "monthly_email_limit",
+      limit: 50,
+      used: 50,
     });
   });
 

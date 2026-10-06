@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
 import {
   formatBytes,
   formatBytesQuota,
@@ -6,7 +6,7 @@ import {
   buildPlanSummaryText,
   buildUsageSummaryText,
 } from "../../../src/billing/usageSummary.js";
-import { getPlanDefinition } from "../../../src/billing/plans.js";
+import { applyPlanLimitOverrides, getPlanDefinition } from "../../../src/billing/plans.js";
 
 describe("formatBytes", () => {
   it("formats zero as '0 B'", () => {
@@ -77,6 +77,30 @@ describe("buildPlanSummaryText", () => {
   const freePlan = getPlanDefinition("free");
   const proPlan = getPlanDefinition("pro");
 
+  afterEach(() => {
+    applyPlanLimitOverrides({});
+  });
+
+  it("shows an operator override of the monthly cap", () => {
+    applyPlanLimitOverrides({ free: { deliveredEmailsMonth: 300 } });
+    // Read after applying: the suite-level freePlan still holds the defaults.
+    const text = buildPlanSummaryText({
+      plan: getPlanDefinition("free"),
+      user: { planCode: "free", subscriptionStatus: "free", currentPeriodEnd: null },
+    });
+    expect(text).toContain("<code>300</code>");
+    expect(text).not.toContain("<code>200</code>");
+  });
+
+  it("lists the per-alias hourly cap", () => {
+    applyPlanLimitOverrides({ free: { aliasEmailsPerHour: 45 } });
+    const text = buildPlanSummaryText({
+      plan: getPlanDefinition("free"),
+      user: { planCode: "free", subscriptionStatus: "free", currentPeriodEnd: null },
+    });
+    expect(text).toContain("Accepted emails / hour, per alias: <code>45</code>");
+  });
+
   it("renders plan name and free status", () => {
     const text = buildPlanSummaryText({
       plan: freePlan,
@@ -89,7 +113,7 @@ describe("buildPlanSummaryText", () => {
     expect(text).toContain("Free");
     expect(text).toMatch(/Status[^\n]*free/i);
     expect(text).toContain("3"); // alias limit
-    expect(text).toContain("100"); // emails/month
+    expect(text).toContain("<code>200</code>"); // emails/month
   });
 
   it("renders pro plan with active status", () => {

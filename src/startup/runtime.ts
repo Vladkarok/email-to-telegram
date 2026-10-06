@@ -1,4 +1,16 @@
-import type { AppConfig } from "../config.js";
+import { loadConfig, type AppConfig } from "../config.js";
+import { applyPlanLimitOverrides } from "../billing/plans.js";
+
+/**
+ * Loads config and makes PLAN_LIMITS effective in the same step, so nothing
+ * that runs after startup (operator commands included) can see the code
+ * defaults instead of the operator's overrides.
+ */
+export function loadStartupConfig(): AppConfig {
+  const config = loadConfig();
+  applyPlanLimitOverrides(config.planLimitOverrides);
+  return config;
+}
 
 export function nextPollingStartOptions(isInitialPollingStart: boolean): {
   dropPendingUpdates: boolean;

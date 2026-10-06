@@ -93,9 +93,14 @@ vi.mock("../../../src/db/repos/storageUsage.js", () => ({
   incrementUserStorageUsage: vi.fn().mockResolvedValue(undefined),
   decrementUserStorageUsage: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock("../../../src/billing/limits.js", () => ({
-  checkInboundLimit: vi.fn().mockResolvedValue({ ok: true }),
-}));
+vi.mock("../../../src/billing/limits.js", async () => {
+  const { getPlanDefinition } = await import("../../../src/billing/plans.js");
+  return {
+    checkInboundLimitForPlan: vi.fn().mockResolvedValue({ ok: true }),
+    resolveInboundPlan: () =>
+      Promise.resolve({ hosted: true, user: null, plan: getPlanDefinition("free") }),
+  };
+});
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

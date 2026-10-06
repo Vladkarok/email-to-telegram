@@ -4,8 +4,11 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { schedule } from "node-cron";
 import { parseStartupOptions } from "./cli.js";
-import { loadConfig } from "./config.js";
-import { buildRetryWorkerOptions, nextPollingStartOptions } from "./startup/runtime.js";
+import {
+  buildRetryWorkerOptions,
+  loadStartupConfig,
+  nextPollingStartOptions,
+} from "./startup/runtime.js";
 import { createLogger, setLogger, stderrLoggerDestination } from "./utils/logger.js";
 import { initDb, closeDb, getDb } from "./db/client.js";
 import { runMigrations } from "./db/migrate.js";
@@ -35,7 +38,7 @@ async function main() {
   const startup = parseStartupOptions(process.argv.slice(2));
 
   // 1. Load and validate config (fail fast)
-  const config = loadConfig();
+  const config = loadStartupConfig();
   const hostedDataLifecycleOperation = hasHostedDataLifecycleOperation(startup);
   const hostedManualBillingOperation = hasHostedManualBillingOperation(startup);
   if (hostedDataLifecycleOperation) {
@@ -60,6 +63,9 @@ async function main() {
     );
   }
   logger.info("Starting email-to-telegram");
+  if (Object.keys(config.planLimitOverrides).length > 0) {
+    logger.info({ planLimitOverrides: config.planLimitOverrides }, "plan limit overrides active");
+  }
   configureStorageEncryption({
     mode: config.storageEncryptionMode,
     masterKey: config.masterEncryptionKey,

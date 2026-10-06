@@ -13,9 +13,10 @@ Français · [Italiano](README.it.md)
 
 **Le bot hébergé.** Ouvrez [@tgemails_Bot](https://t.me/tgemails_Bot),
 envoyez `/start`, puis `/newemail`. L'adresse fonctionne quelques secondes
-plus tard. Pas besoin de domaine, de serveur ni de compte Cloudflare. L'offre
-gratuite comprend 3 alias et 100 e-mails livrés par mois. S'il vous en faut
-plus, écrivez à [@yolovlad](https://t.me/yolovlad). Avant d'en dépendre, lisez
+plus tard. Pas besoin de domaine, de serveur ni de compte Cloudflare. Il
+existe une offre gratuite ; `/plan` dans le bot en affiche les limites
+actuelles. Si vos besoins dépassent ces limites, écrivez à
+[@yolovlad](https://t.me/yolovlad). Avant d'en dépendre, lisez
 les [règles d'utilisation](https://vladkarok.github.io/email-to-telegram/hosted/acceptable-use/)
 et la [politique de confidentialité](https://vladkarok.github.io/email-to-telegram/hosted/privacy-and-data-requests/)
 (en anglais).

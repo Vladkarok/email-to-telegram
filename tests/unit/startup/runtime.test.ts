@@ -1,7 +1,34 @@
-import { describe, expect, it } from "vitest";
-import { buildRetryWorkerOptions, nextPollingStartOptions } from "../../../src/startup/runtime.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  buildRetryWorkerOptions,
+  loadStartupConfig,
+  nextPollingStartOptions,
+} from "../../../src/startup/runtime.js";
+import { applyPlanLimitOverrides, getPlanDefinition } from "../../../src/billing/plans.js";
 
 describe("startup runtime helpers", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    applyPlanLimitOverrides({});
+  });
+
+  it("makes PLAN_LIMITS effective while loading the startup config", () => {
+    vi.stubEnv("DATABASE_URL", "postgres://app:pass@localhost:5432/db");
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", "123456:ABC");
+    vi.stubEnv("MAIL_DOMAIN", "tgmail.example.com");
+    vi.stubEnv("PUBLIC_BASE_URL", "https://tgmail.example.com");
+    vi.stubEnv("HTTP_PORT", "3000");
+    vi.stubEnv("HMAC_SECRET", "a".repeat(32));
+    vi.stubEnv("WORKER_SECRET", "b".repeat(32));
+    vi.stubEnv("ATTACHMENT_DIR", "/tmp/attachments");
+    vi.stubEnv("RAW_EMAIL_DIR", "/tmp/rawemails");
+    vi.stubEnv("PLAN_LIMITS", '{"free":{"deliveredEmailsMonth":300}}');
+
+    loadStartupConfig();
+
+    expect(getPlanDefinition("free").limits.deliveredEmailsMonth).toBe(300);
+  });
+
   it("drops pending updates only on the first polling start", () => {
     const first = nextPollingStartOptions(true);
     const second = nextPollingStartOptions(first.nextIsInitialPollingStart);

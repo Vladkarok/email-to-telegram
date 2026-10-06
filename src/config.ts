@@ -4,6 +4,7 @@ import {
   parseMasterEncryptionKeyring,
   type StorageEncryptionMode,
 } from "./security/encryption.js";
+import type { PlanCode, PlanLimitOverrides, PlanLimits } from "./billing/plans.js";
 
 const portSchema = z.coerce
   .number()
@@ -61,6 +62,52 @@ function isValidDomainName(value: string): boolean {
     return /^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?$/.test(label);
   });
 }
+
+const limitCountSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+// user_usage_months.delivered_count is a Postgres integer.
+const PG_INTEGER_MAX = 2_147_483_647;
+const planLimitsOverrideSchema = z
+  .object({
+    aliases: limitCountSchema,
+    allowRules: limitCountSchema,
+    deliveredEmailsMonth: limitCountSchema.max(PG_INTEGER_MAX),
+    egressBytesMonth: limitCountSchema,
+    storageBytes: limitCountSchema,
+    maxMessageBytes: limitCountSchema,
+    // 0 would expire every stored file on the next cleanup run.
+    retentionDays: z.number().int().min(1).max(36_500),
+    customDomains: limitCountSchema,
+    // 0 would defer every mail until senders give up.
+    aliasEmailsPerHour: limitCountSchema.min(1),
+  } satisfies Record<keyof PlanLimits, z.ZodTypeAny>)
+  .partial()
+  .strict();
+// PLAN_LIMITS='{"free":{"deliveredEmailsMonth":200}}' overrides single limits
+// of single plans; anything not named keeps the code default.
+const planLimitsSchema = z
+  .string()
+  .optional()
+  .transform((value, ctx): unknown => {
+    if (!value?.trim()) return {};
+    try {
+      return JSON.parse(value);
+    } catch {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "must be valid JSON" });
+      return z.NEVER;
+    }
+  })
+  .pipe(
+    z
+      .object({
+        free: planLimitsOverrideSchema,
+        personal: planLimitsOverrideSchema,
+        pro: planLimitsOverrideSchema,
+        team: planLimitsOverrideSchema,
+        business: planLimitsOverrideSchema,
+      } satisfies Record<PlanCode, typeof planLimitsOverrideSchema>)
+      .partial()
+      .strict(),
+  );
 
 const adminSessionTtlSchema = z.coerce.number().int().min(1).max(1440).default(60);
 const optionalBooleanSchema = z
@@ -128,6 +175,7 @@ const envSchema = z.object({
   ALLOW_PLAINTEXT_DB_BACKUPS: optionalBooleanSchema,
   APP_MODE: appModeSchema,
   BILLING_PROVIDER: billingProviderSchema,
+  PLAN_LIMITS: planLimitsSchema,
   HOSTED_MAIL_DOMAIN: hostedMailDomainSchema,
   STRIPE_SECRET_KEY: stripeSecretKeySchema,
   STRIPE_WEBHOOK_SECRET: stripeWebhookSecretSchema,
@@ -166,6 +214,7 @@ export interface StripePriceIds {
 export interface AppConfig {
   appMode: AppMode;
   billingProvider: BillingProvider;
+  planLimitOverrides: PlanLimitOverrides;
   databaseUrl: string;
   telegramBotToken: string;
   telegramRichMessagesEnabled: boolean;
@@ -353,6 +402,7 @@ export function loadConfig(): AppConfig {
   return {
     appMode: env.APP_MODE,
     billingProvider: env.BILLING_PROVIDER,
+    planLimitOverrides: env.PLAN_LIMITS,
     databaseUrl: env.DATABASE_URL,
     telegramBotToken: env.TELEGRAM_BOT_TOKEN,
     telegramRichMessagesEnabled: env.TELEGRAM_RICH_MESSAGES_ENABLED,

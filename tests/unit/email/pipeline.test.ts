@@ -1,10 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   processInboundEmail,
   queueInboundEmail,
   deliverQueuedEmail,
 } from "../../../src/email/pipeline.js";
 import { insertDeliveryAttempt } from "../../../src/db/repos/deliveryAttempts.js";
+import { applyPlanLimitOverrides, getPlanDefinition } from "../../../src/billing/plans.js";
 import { readFileSync } from "fs";
 import { join } from "path";
 
@@ -88,9 +89,18 @@ vi.mock("../../../src/storage/disk.js", () => ({
   writeAttachment: (...args: unknown[]): unknown => mockWriteAttachment(...args),
   deleteFile: (...args: unknown[]): unknown => mockDeleteFile(...args),
 }));
-vi.mock("../../../src/billing/limits.js", () => ({
-  checkInboundLimit: (...args: unknown[]): unknown => mockCheckInboundLimit(...args),
-}));
+const mockResolveInboundPlan = vi.fn();
+vi.mock("../../../src/billing/limits.js", async () => {
+  const { getPlanDefinition } = await import("../../../src/billing/plans.js");
+  return {
+    checkInboundLimitForPlan: (...args: unknown[]): unknown => mockCheckInboundLimit(...args),
+    // Tracked; falls back to the free plan, read at call time so
+    // applyPlanLimitOverrides in a test takes effect.
+    resolveInboundPlan: (...args: unknown[]): unknown =>
+      mockResolveInboundPlan(...args) ??
+      Promise.resolve({ hosted: true, user: null, plan: getPlanDefinition("free") }),
+  };
+});
 vi.mock("../../../src/db/repos/usage.js", () => ({
   incrementUserUsageMonth: (...args: unknown[]): unknown =>
     mockIncrementOrganizationUsageMonth(...args),
@@ -276,6 +286,106 @@ describe("processInboundEmail", () => {
 
     expect(result).toEqual({ ok: false, reason: "rate_limited" });
     expect(mockCreateLog).not.toHaveBeenCalled();
+  });
+
+  describe("hourly cap from the owner's plan", () => {
+    afterEach(() => {
+      applyPlanLimitOverrides({});
+    });
+
+    async function queueWith(recent: number) {
+      // The legacy per-alias column must not matter any more.
+      mockFindAlias.mockResolvedValue({ ...activeAlias, maxEmailsHour: 1000 });
+      mockIsDuplicate.mockResolvedValue(false);
+      mockCreateLog.mockResolvedValue({ id: "log-uuid-cap" });
+      mockCountRecentDeliveries.mockResolvedValue(recent);
+      return queueInboundEmail(fakeDb() as Parameters<typeof queueInboundEmail>[0], {
+        rawEmail: simpleEmail(),
+        localPart: "alerts",
+        envelopeFrom: "sender@example.com",
+        ...PIPELINE_CONFIG,
+      });
+    }
+
+    it("rate-limits at the plan's cap and ignores the legacy column", async () => {
+      applyPlanLimitOverrides({ free: { aliasEmailsPerHour: 5 } });
+      const result = await queueWith(5);
+      expect(result).toMatchObject({ queued: false, result: { reason: "rate_limited" } });
+      expect(mockCreateLog).not.toHaveBeenCalled();
+    });
+
+    it("queues one below the plan's cap", async () => {
+      applyPlanLimitOverrides({ free: { aliasEmailsPerHour: 5 } });
+      const result = await queueWith(4);
+      expect(result).toMatchObject({ queued: true });
+    });
+
+    it("uses one plan, resolved in the transaction, for quota and hourly cap", async () => {
+      const pro = getPlanDefinition("pro");
+      const snapshot = {
+        hosted: true,
+        user: { id: 1n },
+        plan: { ...pro, limits: { ...pro.limits, aliasEmailsPerHour: 2 } },
+      };
+      // Only the first resolution gets the snapshot; a second one would see
+      // the free plan's 60 and let the mail through.
+      mockResolveInboundPlan.mockResolvedValueOnce(snapshot);
+      mockFindAlias.mockResolvedValue({ ...activeAlias, maxEmailsHour: 1000 });
+      mockIsDuplicate.mockResolvedValue(false);
+      mockCountRecentDeliveries.mockResolvedValue(2);
+      const { db, execute } = fakeDbHarness();
+
+      const result = await queueInboundEmail(db, {
+        rawEmail: simpleEmail(),
+        localPart: "alerts",
+        envelopeFrom: "sender@example.com",
+        ...PIPELINE_CONFIG,
+      });
+
+      expect(result).toMatchObject({ queued: false, result: { reason: "rate_limited" } });
+      expect(mockResolveInboundPlan).toHaveBeenCalledOnce();
+      const [resolvedWith, ownerId] = mockResolveInboundPlan.mock.calls[0] as [unknown, bigint];
+      expect(resolvedWith).toHaveProperty("execute", execute); // the transaction
+      expect(ownerId).toBe(1n);
+      expect(mockCheckInboundLimit.mock.calls[0]?.[1]).toBe(snapshot);
+    });
+
+    it("resolves the plan and the hour window only after both locks", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        vi.setSystemTime(new Date("2026-10-06T12:00:00Z"));
+        const order: string[] = [];
+        const { db, execute } = fakeDbHarness();
+        execute.mockImplementation(() => {
+          order.push("lock");
+          // The second lock waited ten minutes.
+          if (order.length === 2) vi.setSystemTime(new Date("2026-10-06T12:10:00Z"));
+          return Promise.resolve(undefined);
+        });
+        mockResolveInboundPlan.mockImplementationOnce(() => {
+          order.push("resolve");
+          return Promise.resolve({ hosted: true, user: null, plan: getPlanDefinition("free") });
+        });
+        mockFindAlias.mockResolvedValue(activeAlias);
+        mockIsDuplicate.mockResolvedValue(false);
+        mockCreateLog.mockResolvedValue({ id: "log-uuid-window" });
+        mockCountRecentDeliveries.mockResolvedValue(0);
+
+        await queueInboundEmail(db, {
+          rawEmail: simpleEmail(),
+          localPart: "alerts",
+          envelopeFrom: "sender@example.com",
+          ...PIPELINE_CONFIG,
+        });
+
+        expect(order).toEqual(["lock", "lock", "resolve"]);
+        expect(mockCountRecentDeliveries.mock.calls[0]?.[2]).toEqual(
+          new Date("2026-10-06T11:10:00Z"),
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it("persists the authoritative envelopeFrom in the delivery log", async () => {

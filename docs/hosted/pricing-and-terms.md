@@ -22,9 +22,10 @@ Hosted is a single free tier for everyone, supported by donations.
 - One inbound shared domain (operator-managed).
 - Soft daily abuse-prevention rate limit: **10 alias creation attempts per
   Telegram user per day.**
-- No automated billing, no per-plan caps. Reasonable use is welcome; bulk,
-  marketing, or shared-domain-reputation-risky use is not — see
-  [`acceptable-use.md`](./acceptable-use.md).
+- No automated billing. The free tier has limits on aliases, monthly
+  emails and storage; `/plan` in the bot shows the current ones. Reasonable
+  use is welcome; bulk, marketing, or shared-domain-reputation-risky use is
+  not — see [`acceptable-use.md`](./acceptable-use.md).
 - Self-serve account wipe (`/delete_me`) and data export (`/export_me`) are
   live — see [`privacy-and-data-requests.md`](./privacy-and-data-requests.md).
 

@@ -6,6 +6,7 @@ import {
   notifyQuotaExhausted,
 } from "../../../src/billing/quotaNotifier.js";
 import { getMessages } from "../../../src/i18n/index.js";
+import { applyPlanLimitOverrides } from "../../../src/billing/plans.js";
 
 const mockClaimQuotaNotification = vi.fn();
 const mockFindUserById = vi.fn();
@@ -89,8 +90,8 @@ describe("notifyQuotaExhausted", () => {
     expect(sendMessage).toHaveBeenCalledOnce();
     const [chatId, text, options] = sendMessage.mock.calls[0] as [string, string, object];
     expect(chatId).toBe("42");
-    // Free plan monthly limit is 100 — the notice must state the concrete number.
-    expect(text).toContain("100");
+    // Free plan monthly limit is 200 — the notice must state the concrete number.
+    expect(text).toContain("200");
     expect(options).toMatchObject({ parse_mode: "HTML" });
   });
 
@@ -140,7 +141,7 @@ describe("notifyQuotaExhausted", () => {
     const [, text] = sendMessage.mock.calls[0] as [string, string];
     const expected = getMessages("uk").quotaNotice.monthlyEmailLimit(
       "Free",
-      100,
+      200,
       getMessages("uk").quotaNotice.higherLimitsUpgrade,
     );
     expect(text).toBe(expected);
@@ -180,11 +181,26 @@ describe("notifyApproachingMonthlyLimit", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    applyPlanLimitOverrides({});
+  });
+
+  it("follows an operator override of the monthly cap", async () => {
+    applyPlanLimitOverrides({ free: { deliveredEmailsMonth: 50 } });
+    const { api, sendMessage } = makeApi();
+
+    await notifyApproachingMonthlyLimit({} as never, api, 42n, "2026-07", 39);
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    await notifyApproachingMonthlyLimit({} as never, api, 42n, "2026-07", 40);
+    const [, text] = sendMessage.mock.calls[0] as [string, string];
+    expect(text).toBe(
+      getMessages("en").quotaNotice.approachingMonthlyLimit("Free", 40, 50, UPGRADE_LINE),
+    );
   });
 
   it("warns once when usage enters the 80% band", async () => {
     const { api, sendMessage } = makeApi();
-    await notifyApproachingMonthlyLimit({} as never, api, 42n, "2026-07", 80);
+    await notifyApproachingMonthlyLimit({} as never, api, 42n, "2026-07", 160);
 
     expect(mockClaimQuotaNotification).toHaveBeenCalledWith(
       expect.anything(),
@@ -194,20 +210,20 @@ describe("notifyApproachingMonthlyLimit", () => {
     );
     const [, text] = sendMessage.mock.calls[0] as [string, string];
     expect(text).toBe(
-      getMessages("en").quotaNotice.approachingMonthlyLimit("Free", 80, 100, UPGRADE_LINE),
+      getMessages("en").quotaNotice.approachingMonthlyLimit("Free", 160, 200, UPGRADE_LINE),
     );
   });
 
   it("stays silent below the threshold (no claim burned)", async () => {
     const { api, sendMessage } = makeApi();
-    await notifyApproachingMonthlyLimit({} as never, api, 42n, "2026-07", 79);
+    await notifyApproachingMonthlyLimit({} as never, api, 42n, "2026-07", 159);
     expect(mockClaimQuotaNotification).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it("stays silent at or above the limit — the exhaustion notice owns that", async () => {
     const { api, sendMessage } = makeApi();
-    await notifyApproachingMonthlyLimit({} as never, api, 42n, "2026-07", 100);
+    await notifyApproachingMonthlyLimit({} as never, api, 42n, "2026-07", 200);
     expect(mockClaimQuotaNotification).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
   });
@@ -215,14 +231,14 @@ describe("notifyApproachingMonthlyLimit", () => {
   it("stays silent when the monthly claim was already taken", async () => {
     mockClaimQuotaNotification.mockResolvedValue(false);
     const { api, sendMessage } = makeApi();
-    await notifyApproachingMonthlyLimit({} as never, api, 42n, "2026-07", 80);
+    await notifyApproachingMonthlyLimit({} as never, api, 42n, "2026-07", 160);
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it("does nothing outside hosted mode", async () => {
     vi.stubEnv("APP_MODE", "self-hosted");
     const { api, sendMessage } = makeApi();
-    await notifyApproachingMonthlyLimit({} as never, api, 42n, "2026-07", 80);
+    await notifyApproachingMonthlyLimit({} as never, api, 42n, "2026-07", 160);
     expect(mockFindUserById).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
   });
@@ -231,7 +247,7 @@ describe("notifyApproachingMonthlyLimit", () => {
     const { api, sendMessage } = makeApi();
     sendMessage.mockRejectedValue(new Error("403 blocked by user"));
     await expect(
-      notifyApproachingMonthlyLimit({} as never, api, 42n, "2026-07", 80),
+      notifyApproachingMonthlyLimit({} as never, api, 42n, "2026-07", 160),
     ).resolves.toBeUndefined();
   });
 });

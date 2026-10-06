@@ -47,6 +47,7 @@ const OPTIONAL_ENV = [
   "METRICS_TOKEN",
   "TRUST_PROXY",
   "TELEGRAM_RICH_MESSAGES_ENABLED",
+  "PLAN_LIMITS",
 ];
 
 describe("loadConfig", () => {
@@ -356,6 +357,72 @@ describe("loadConfig", () => {
     process.env["ADMIN_SECRET"] = "a".repeat(32);
 
     expect(() => loadConfig()).toThrow(/HTTPS/);
+  });
+
+  it("has no plan limit overrides when PLAN_LIMITS is unset or blank", () => {
+    expect(loadConfig().planLimitOverrides).toEqual({});
+    process.env["PLAN_LIMITS"] = "  ";
+    expect(loadConfig().planLimitOverrides).toEqual({});
+  });
+
+  it("parses partial plan limit overrides", () => {
+    process.env["PLAN_LIMITS"] =
+      '{"free":{"deliveredEmailsMonth":200,"retentionDays":3},"pro":{"aliases":60}}';
+    expect(loadConfig().planLimitOverrides).toEqual({
+      free: { deliveredEmailsMonth: 200, retentionDays: 3 },
+      pro: { aliases: 60 },
+    });
+  });
+
+  it.each([
+    ["not JSON", "{free:", /PLAN_LIMITS: must be valid JSON/],
+    ["an unknown plan", '{"fre":{"aliases":1}}', /PLAN_LIMITS: Unrecognized key.*'fre'/],
+    [
+      "an unknown limit",
+      '{"free":{"deliveredEmailMonth":1}}',
+      /PLAN_LIMITS\.free: Unrecognized key.*'deliveredEmailMonth'/,
+    ],
+    ["a negative value", '{"free":{"aliases":-1}}', /PLAN_LIMITS\.free\.aliases/],
+    ["a fraction", '{"free":{"aliases":1.5}}', /PLAN_LIMITS\.free\.aliases/],
+    ["a numeric string", '{"free":{"aliases":"5"}}', /PLAN_LIMITS\.free\.aliases/],
+    ["zero retention days", '{"free":{"retentionDays":0}}', /PLAN_LIMITS\.free\.retentionDays/],
+    [
+      "a zero hourly cap",
+      '{"free":{"aliasEmailsPerHour":0}}',
+      /PLAN_LIMITS\.free\.aliasEmailsPerHour/,
+    ],
+    [
+      "a limit above the safe integer range",
+      '{"free":{"aliases":9007199254740992}}',
+      /PLAN_LIMITS\.free\.aliases/,
+    ],
+    [
+      "retention days above 100 years",
+      '{"free":{"retentionDays":36501}}',
+      /PLAN_LIMITS\.free\.retentionDays/,
+    ],
+    [
+      "a monthly cap above the Postgres integer range",
+      '{"free":{"deliveredEmailsMonth":2147483648}}',
+      /PLAN_LIMITS\.free\.deliveredEmailsMonth/,
+    ],
+  ])("refuses PLAN_LIMITS with %s", (_label, value, message) => {
+    process.env["PLAN_LIMITS"] = value;
+    expect(() => loadConfig()).toThrow(message);
+  });
+
+  it("accepts PLAN_LIMITS values on every boundary", () => {
+    const limits = {
+      aliases: 0,
+      storageBytes: Number.MAX_SAFE_INTEGER,
+      deliveredEmailsMonth: 2_147_483_647,
+      retentionDays: 1,
+    };
+    process.env["PLAN_LIMITS"] = JSON.stringify({ free: limits, pro: { retentionDays: 36_500 } });
+    expect(loadConfig().planLimitOverrides).toEqual({
+      free: limits,
+      pro: { retentionDays: 36_500 },
+    });
   });
 
   it("parses metrics config when enabled", () => {

@@ -13,7 +13,7 @@ import { listAllowRules } from "../../db/repos/allowRules.js";
 import { findAliasForInbound } from "../inboundRouting.js";
 import { countRecentDeliveriesByAlias, createDeliveryLog } from "../../db/repos/deliveryLogs.js";
 import { prepareDeliveryLogMetadataWrite } from "../../security/deliveryLogMetadata.js";
-import { checkInboundLimit } from "../../billing/limits.js";
+import { checkInboundLimitForPlan, resolveInboundPlan } from "../../billing/limits.js";
 import { isQuotaNotificationReason } from "../../billing/quotaNotifier.js";
 import { incrementUserUsageMonth, usageMonthForDate } from "../../db/repos/usage.js";
 import { incrementUserStorageUsage } from "../../db/repos/storageUsage.js";
@@ -66,7 +66,6 @@ async function queueAllowedInboundEmail(
 ): Promise<QueueInboundResult> {
   const { rawEmail, publicBaseUrl, attachmentDir, attachmentTtlHours, rawEmailTtlHours } = input;
 
-  const receivedSince = new Date(Date.now() - 60 * 60 * 1000);
   const reservedAttachmentBytes = parsed.attachments.reduce(
     (sum, attachment) => sum + BigInt(attachment.sizeBytes ?? 0),
     0n,
@@ -81,9 +80,12 @@ async function queueAllowedInboundEmail(
     // by concurrent requests racing between COUNT(*) and INSERT.
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${alias.id}))`);
 
-    const inboundLimit = await checkInboundLimit(
+    // One plan for the quota check and the hourly cap, read under the locks
+    // (this also covers recovery, which queues through here too).
+    const inboundPlan = await resolveInboundPlan(tx as Db, alias.createdBy);
+    const inboundLimit = await checkInboundLimitForPlan(
       tx as Db,
-      alias.createdBy,
+      inboundPlan,
       rawEmail.length,
       BigInt(rawEmail.length) + reservedAttachmentBytes,
       month,
@@ -112,8 +114,10 @@ async function queueAllowedInboundEmail(
       return { kind: "duplicate" as const };
     }
 
+    // The hour is measured after the locks, which may have waited.
+    const receivedSince = new Date(Date.now() - 60 * 60 * 1000);
     const recentDeliveries = await countRecentDeliveriesByAlias(tx as Db, alias.id, receivedSince);
-    if (recentDeliveries >= alias.maxEmailsHour) {
+    if (recentDeliveries >= inboundPlan.plan.limits.aliasEmailsPerHour) {
       return { kind: "rate_limited" as const };
     }
 
