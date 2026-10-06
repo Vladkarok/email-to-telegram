@@ -16,7 +16,6 @@ const state = {
     renderMode: "plaintext",
     privacyModeEnabled: false,
     bodyDedupEnabled: false,
-    maxEmailsHour: 60,
   },
   allow: true,
   hostedInboundBlock: null as Record<string, unknown> | null,
