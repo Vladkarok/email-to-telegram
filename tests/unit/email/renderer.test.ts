@@ -442,7 +442,7 @@ describe("renderEmail", () => {
       );
     });
 
-    it("keeps messages with source links on classic transport", () => {
+    it("renders source links on the rich transport", () => {
       const rendered = renderEmailForDelivery(
         {
           ...BASE,
@@ -454,22 +454,133 @@ describe("renderEmail", () => {
         [],
       );
 
-      expect(rendered.text).toContain("<a href=");
-      expect(rendered.richHtml).toBeUndefined();
+      expect(rendered.text).toContain('<a href="https://example.com/">report</a>');
+      expect(rendered.richHtml).toContain('<p>Open <a href="https://example.com/">report</a></p>');
     });
 
-    it("keeps plain source URLs on classic transport", () => {
+    it("linkifies bare URLs in rich output and leaves classic text to Telegram", () => {
       const rendered = renderEmailForDelivery(
-        { ...BASE, textBody: null, htmlBody: "<p>Open https://example.com/report</p>" },
+        { ...BASE, textBody: null, htmlBody: "<p>Open https://example.com/report.</p>" },
         "html",
         "alerts@example.com",
         [],
       );
 
-      expect(rendered.richHtml).toBeUndefined();
+      expect(rendered.text).toContain("Open https://example.com/report.");
+      expect(rendered.text).not.toContain("<a href");
+      expect(rendered.richHtml).toContain(
+        '<p>Open <a href="https://example.com/report">https://example.com/report</a>.</p>',
+      );
     });
 
-    it("keeps source URLs next to punctuation on classic transport", () => {
+    it("lists attachment links in a rich paragraph with the same URLs as classic", () => {
+      const links = [
+        { filename: "report.pdf", sizeBytes: 10, url: "https://example.net/dl/a" },
+        { filename: "evil\nname\u0007.txt", sizeBytes: 10, url: "https://example.net/dl/b" },
+      ];
+      const rendered = renderEmailForDelivery(
+        { ...BASE, textBody: null, htmlBody: "<p>Body</p>" },
+        "html",
+        "alerts@example.com",
+        links,
+      );
+
+      expect(rendered.text).toContain('<a href="https://example.net/dl/a">report.pdf</a>');
+      expect(rendered.richHtml).toContain(
+        '<p>Body</p><p><b>Attachments:</b><br><a href="https://example.net/dl/a">report.pdf</a>' +
+          '<br><a href="https://example.net/dl/b">evil name .txt</a></p>',
+      );
+    });
+
+    it("strips directional controls from attachment filenames", () => {
+      const rendered = renderEmailForDelivery(
+        { ...BASE, textBody: null, htmlBody: "<p>Body</p>" },
+        "html",
+        "alerts@example.com",
+        [{ filename: "invoice\u202efdp.exe", sizeBytes: 1, url: "https://example.net/dl/a" }],
+      );
+
+      expect(rendered.richHtml).toContain('<a href="https://example.net/dl/a">invoicefdp.exe</a>');
+    });
+
+    it("omits exactly the attachments that do not fit the remaining text budget", () => {
+      // "Attachments:" is 12 characters and each entry costs 1 + name length, so
+      // three 30-character names need 105 characters while two of them plus the
+      // 20-character notice need 95. A budget of 100 keeps two and omits one.
+      const headerText =
+        "From: Sender <sender@example.com>\nTo: alerts@example.com\nSubject: Test Subject";
+      const body = "x".repeat(32768 - 100 - headerText.length);
+      const links = ["a", "b", "c"].map((letter) => ({
+        filename: letter.repeat(30),
+        sizeBytes: 1,
+        url: `https://example.net/dl/${letter}`,
+      }));
+      const rendered = renderEmailForDelivery(
+        { ...BASE, textBody: null, htmlBody: `<p>${body}</p>` },
+        "html",
+        "alerts@example.com",
+        links,
+      );
+
+      expect(rendered.richHtml).toMatch(/dl\/a".*dl\/b".*<br>1 attachment omitted<\/p>$/);
+      expect(rendered.richHtml).not.toContain("dl/c");
+    });
+
+    it("goes classic when not even one attachment link fits the rich text budget", () => {
+      const headerText =
+        "From: Sender <sender@example.com>\nTo: alerts@example.com\nSubject: Test Subject";
+      const body = "x".repeat(32768 - 40 - headerText.length);
+      const rendered = renderEmailForDelivery(
+        { ...BASE, textBody: null, htmlBody: `<p>${body}</p>` },
+        "html",
+        "alerts@example.com",
+        [{ filename: "a".repeat(40), sizeBytes: 1, url: "https://example.net/dl/a" }],
+      );
+
+      expect(rendered.richHtml).toBeUndefined();
+      expect(rendered.text).toContain("/dl/a");
+    });
+
+    it("counts the attachments paragraph against the 500-block limit", () => {
+      const htmlBody = "<p>x</p>".repeat(498);
+      const link = [{ filename: "a.pdf", sizeBytes: 1, url: "https://example.net/dl/a" }];
+      const without = renderEmailForDelivery(
+        { ...BASE, textBody: null, htmlBody },
+        "html",
+        "alerts@example.com",
+        [],
+      );
+      const withLink = renderEmailForDelivery(
+        { ...BASE, textBody: null, htmlBody },
+        "html",
+        "alerts@example.com",
+        link,
+      );
+
+      expect(without.richHtml).toBeDefined();
+      expect(withLink.richHtml).toBeUndefined();
+    });
+
+    it("drops whole trailing attachments with a notice when the rich text budget is tight", () => {
+      const links = Array.from({ length: 400 }, (_, i) => ({
+        filename: `${"n".repeat(99)}${i}.bin`,
+        sizeBytes: 10,
+        url: `https://example.net/dl/${i}`,
+      }));
+      const rendered = renderEmailForDelivery(
+        { ...BASE, textBody: null, htmlBody: "<p>Body</p>" },
+        "html",
+        "alerts@example.com",
+        links,
+      );
+
+      expect(rendered.richHtml).toBeDefined();
+      expect(rendered.richHtml).toMatch(/<br>\d+ attachments omitted<\/p>$/);
+      expect(rendered.richHtml).not.toContain("/dl/399");
+      expect(rendered.richHtml).toContain('/dl/0"');
+    });
+
+    it("keeps an unbalanced closing bracket outside a linkified URL", () => {
       const rendered = renderEmailForDelivery(
         { ...BASE, textBody: null, htmlBody: "<p>Open(https://example.com/report)</p>" },
         "html",
@@ -477,10 +588,12 @@ describe("renderEmail", () => {
         [],
       );
 
-      expect(rendered.richHtml).toBeUndefined();
+      expect(rendered.richHtml).toContain(
+        '<p>Open(<a href="https://example.com/report">https://example.com/report</a>)</p>',
+      );
     });
 
-    it("keeps attachment links on classic transport", () => {
+    it("renders attachment links on both transports", () => {
       const rendered = renderEmailForDelivery(
         { ...BASE, textBody: null, htmlBody: "<p>Report</p>" },
         "html",
@@ -489,7 +602,9 @@ describe("renderEmail", () => {
       );
 
       expect(rendered.text).toContain("report.pdf");
-      expect(rendered.richHtml).toBeUndefined();
+      expect(rendered.richHtml).toContain(
+        '<p>Report</p><p><b>Attachments:</b><br><a href="https://example.com/dl/1">report.pdf</a></p>',
+      );
     });
   });
 });

@@ -324,7 +324,11 @@ describe("processInboundEmail", () => {
   });
 
   it("sends a privacy-mode alert with a one-time view link instead of the email body", async () => {
-    mockFindAlias.mockResolvedValue({ ...activeAlias, privacyModeEnabled: true });
+    mockFindAlias.mockResolvedValue({
+      ...activeAlias,
+      privacyModeEnabled: true,
+      renderMode: "markdown",
+    });
     mockIsDuplicate.mockResolvedValue(false);
     mockCreateLog.mockResolvedValue({
       id: "log-privacy",
@@ -335,7 +339,10 @@ describe("processInboundEmail", () => {
     mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 321 });
 
     await processInboundEmail(fakeDb() as Parameters<typeof processInboundEmail>[0], {} as never, {
-      rawEmail: simpleEmail(),
+      // Rich-capable body: without privacy mode this delivery would carry richHtml.
+      rawEmail: Buffer.from(
+        "From: sender@example.com\r\nTo: alerts@example.com\r\nSubject: Private\r\n\r\n# Heading\r\n\r\nCPU usage is high",
+      ),
       rawEmailPath: "/tmp/raw/privacy.eml",
       localPart: "alerts",
       envelopeFrom: "sender@example.com",
@@ -344,9 +351,10 @@ describe("processInboundEmail", () => {
 
     const [, opts] = mockSendTelegram.mock.calls[0] as [
       unknown,
-      { text: string; parseMode?: string },
+      { text: string; parseMode?: string; richHtml?: string },
     ];
     expect(opts.parseMode).toBe("HTML");
+    expect(opts.richHtml).toBeUndefined();
     expect(opts.text).toContain("Private email alert");
     expect(opts.text).toContain("/view/");
     expect(opts.text).not.toContain("CPU usage");
