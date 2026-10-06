@@ -18,12 +18,6 @@ that has been running in production.
 
 ## [Unreleased]
 
-### Added
-
-- Public open-source release in preparation.
-- Public-facing documentation: `SECURITY.md`, `CONTRIBUTING.md`,
-  `CHANGELOG.md`, issue/PR templates, CODEOWNERS.
-
 ## [1.10.0] — 2026-10-06
 
 Plan limits move out of the code, the free plan doubles its monthly mail, and
@@ -201,8 +195,160 @@ were created in.
 - New database migration `0009` adds the move-audit table and an
   alias routing-version column. It applies automatically on startup and is
   inert on the previous release, so rollback is a normal image rollback.
-- Changelog entries for `1.1.0`–`1.5.0` are not yet itemized here; those
-  releases are tagged in git history.
+
+## [1.5.0] — 2026-07-15
+
+### Added
+
+- A weekly reminder while the monthly email quota remains exhausted,
+  suppressed in the week of the initial quota notice.
+- A hosted-mode warning once per month when accepted mail reaches
+  80–99% of the monthly email quota.
+
+### Changed
+
+- Donation-mode `/upgrade` explains how to contact the operator for
+  higher limits and presents `/donate` as an optional gift. Other billing
+  providers without self-service use operator-managed wording.
+
+### Fixed
+
+- `/usage` now counts rejection events caused by monthly email limits,
+  storage limits, or inactive subscriptions across all inbound paths.
+- French and Italian Telegram language preferences are saved correctly;
+  missing preferences are repaired on the next bot interaction.
+- Ukrainian count messages use the correct plural forms.
+- Quota counters and notices use the same usage month when processing
+  crosses a UTC month boundary.
+
+## [1.4.3] — 2026-07-07
+
+The operator dashboard uses a two-column grid that collapses on narrow
+screens, with table overflow fixed and dates and usernames kept on one line.
+
+## [1.4.2] — 2026-07-07
+
+The operator console gains a dark palette, branded navigation, table row
+hover states, aligned details, focus rings, and clearer status messages.
+
+## [1.4.1] — 2026-07-07
+
+Quota notices point to `/upgrade`, which offers Stripe checkout or operator
+contact depending on the billing mode.
+
+## [1.4.0] — 2026-07-07
+
+### Added
+
+- A localized private Telegram notice to the alias owner when mail is
+  rejected for monthly email limits, storage limits, or an inactive
+  subscription, sent once per reason per month.
+
+### Fixed
+
+- Permanently failed deliveries refund the monthly email quota charged
+  when the email was accepted, including across UTC month boundaries.
+
+### Removed
+
+- Unenforced user and chat limits from plan definitions and the chat
+  limit displayed by `/plan`.
+- The misleading **Users (allowed)** dashboard panel. The metric remains
+  available for self-hosted operators.
+
+## [1.3.0] — 2026-07-06
+
+### Added
+
+- Activation metrics for users with an undeleted alias and users whose
+  mail was accepted into processing during the current month.
+- Grafana panels for inbound acceptance and rejection reasons, deferred
+  and permanently failed deliveries, activation, daily delivery volume,
+  growth trends, alias status, and staging error logs.
+
+### Changed
+
+- Both Grafana dashboards default to production. Hourly panels use event
+  increases, route latency excludes probes, and idle delivery success
+  rates show gaps instead of zero.
+- Prometheus retention increases from 15 to 90 days for monthly trends.
+
+## [1.2.1] — 2026-06-20
+
+Inbound uptime checks alert the operator when Worker signature or replay
+failures occur with no accepted mail in the last hour. Idle mailboxes and
+normal per-message rejections do not trigger the alert.
+
+## [1.2.0] — 2026-06-10
+
+### Changed
+
+- Transient Telegram failures retry until the raw email expires instead
+  of exhausting three attempts. The default outage tolerance is 24 hours;
+  retries pause while Telegram is unreachable.
+- Deleted alias names are immediately reusable by their previous owner;
+  other users must wait 24 hours. Deleted alias records are purged after
+  seven days once no delivery logs reference them.
+- `/usage` includes permanently failed deliveries in its failure count.
+
+### Fixed
+
+- Alias addresses are unique across users, including legacy aliases
+  without a domain assignment.
+- Choosing an alias name already in use returns a clear reply instead of
+  silently failing or changing the requested name.
+- Old delivery logs without raw email are purged correctly instead of
+  failing every cleanup cycle with a database syntax error.
+
+### Security
+
+- Raw inbound uploads require v2 Worker signatures; deploy the updated
+  Cloudflare Worker before upgrading the application.
+- Attachment links use hashed-token lookup only. The legacy token column
+  is removed, so older application images cannot be used after migration.
+
+## [1.1.0] — 2026-05-26
+
+### Added
+
+- A GitHub Pages landing page for hosted policies and operations docs.
+- A README demo showing the email-to-Telegram workflow.
+
+### Changed
+
+- `/help` shows billing commands only when self-service Stripe billing
+  is enabled. The Telegram command menu omits commands requiring arguments
+  and keeps a shorter list of common commands.
+- Hosted pricing describes the free, donation-supported beta and
+  operator-arranged higher limits instead of unavailable paid plans.
+- Hosted policies highlight `/export_me`, `/delete_me`, and
+  `/deleteemail` for self-service data access and deletion, and provide
+  the abuse-reporting contact.
+
+### Fixed
+
+- The Cloudflare Worker logs a missing SPF pass instead of rejecting
+  mail solely because its headers do not show one.
+
+### Security
+
+- Allow rules require a DKIM/DMARC-aligned message From address; claimed
+  and SMTP envelope senders no longer authorize delivery. The
+  `/allow add-claimed` command is removed.
+- Worker v2 signatures cover routing headers as well as the message
+  body, and replayed inbound signatures are rejected.
+- New attachment links store hashed tokens. Downloads are served as
+  binary attachments and claim the link and reserve quota before opening
+  stored files.
+- Public onboarding and data-request commands are rate-limited to five
+  requests per minute per user.
+- Secrets must be at least 32 characters and reject common weak prefixes.
+  Encrypted-storage backups require encrypted database archives unless
+  plaintext backups are explicitly enabled; production Stripe billing
+  rejects test keys.
+- Runtime dependency updates fix SQL injection, request-validation
+  bypasses, path traversal, HTML sanitization bypasses, and related
+  advisories. Vitest is upgraded to address development dependency alerts.
 
 ## [1.0.0] — Initial public release
 
