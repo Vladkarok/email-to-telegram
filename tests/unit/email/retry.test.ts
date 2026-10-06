@@ -546,7 +546,17 @@ describe("runRetryWorker", () => {
 
   it("uses a privacy-mode alert and skips Telegram photo upload when privacy mode is enabled", async () => {
     mockFindFailedLogs.mockResolvedValue([fakeLog]);
-    mockFindAliasById.mockResolvedValue({ ...fakeAlias, privacyModeEnabled: true });
+    mockFindAliasById.mockResolvedValue({
+      ...fakeAlias,
+      privacyModeEnabled: true,
+      renderMode: "markdown",
+    });
+    // Rich-capable body: without privacy mode this retry would carry richHtml.
+    mockReadRawEmail.mockResolvedValue(
+      Buffer.from(
+        "From: sender@example.com\r\nTo: alias@example.com\r\nSubject: Private\r\n\r\n# Heading\r\n\r\nHello world",
+      ),
+    );
     mockListAttachments.mockResolvedValue([
       {
         id: "att-image-1",
@@ -563,7 +573,11 @@ describe("runRetryWorker", () => {
       publicBaseUrl: "https://mail.example.com",
     });
 
-    const [, opts] = mockSendTelegramMessage.mock.calls[0] as [unknown, { text: string }];
+    const [, opts] = mockSendTelegramMessage.mock.calls[0] as [
+      unknown,
+      { text: string; richHtml?: string },
+    ];
+    expect(opts.richHtml).toBeUndefined();
     expect(opts.text).toContain("/view/");
     expect(opts.text).not.toContain("Hello world");
     expect(mockSendTelegramPhotos).not.toHaveBeenCalled();

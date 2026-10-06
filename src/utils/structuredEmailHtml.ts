@@ -78,6 +78,13 @@ interface InlineContent {
   maxDepth: number;
   containsCode: boolean;
   containsAnchor: boolean;
+  /**
+   * True when the content is escaped text with no markup of its own, so
+   * adjacent plain parts can be joined and linkified as one string (a URL
+   * split by <wbr>, <span> or a comment must not become a link to its
+   * first half).
+   */
+  plain?: boolean;
 }
 
 interface TableCell extends InlineContent {
@@ -430,8 +437,10 @@ function parseInline(
   context: ParseContext,
   depth: number,
   trimBoundary = true,
+  linkify = true,
 ): InlineContent {
-  const parts = nodes.map((node) => parseInlineNode(node, context, depth));
+  const rawParts = nodes.flatMap((node) => expandInlineNode(node, context, depth, linkify));
+  const parts = linkify ? linkifyPlainRuns(rawParts) : rawParts;
   const text = normalizeInlineText(parts.map((part) => part.text).join(""), trimBoundary);
   let classicHtml = normalizeInlineClassicHtml(
     parts.map((part) => part.classicHtml).join(""),
@@ -450,10 +459,67 @@ function parseInline(
     maxDepth: Math.max(0, ...parts.map((part) => part.maxDepth)),
     containsCode: parts.some((part) => part.containsCode),
     containsAnchor: parts.some((part) => part.containsAnchor),
+    plain: parts.every((part) => part.plain === true),
   };
 }
 
-function parseInlineNode(node: ChildNode, context: ParseContext, depth: number): InlineContent {
+/**
+ * A transparent wrapper (span, font, …) adds no markup of its own, so its
+ * children join the enclosing part list directly. That way a URL split by a
+ * wrapper boundary is one run, while formatted descendants (<b>, <a>, …)
+ * inside the wrapper are still handled by their own branch.
+ */
+function expandInlineNode(
+  node: ChildNode,
+  context: ParseContext,
+  depth: number,
+  linkify: boolean,
+): InlineContent[] {
+  if (!isTag(node)) return [parseInlineNode(node, context, depth, linkify)];
+  const name = node.name.toLowerCase();
+  if (
+    DROPPED_ELEMENTS.has(name) ||
+    name === "br" ||
+    name === "table" ||
+    name === "li" ||
+    name === "dt" ||
+    name === "dd" ||
+    name === "a" ||
+    INLINE_TAGS[name] !== undefined ||
+    isBlockElement(name)
+  ) {
+    return [parseInlineNode(node, context, depth, linkify)];
+  }
+  if (!enterNode(context, depth)) return [];
+  return node.children.flatMap((child) => expandInlineNode(child, context, depth + 1, linkify));
+}
+
+/** Join each maximal run of plain parts and linkify the joined text once. */
+function linkifyPlainRuns(parts: InlineContent[]): InlineContent[] {
+  const out: InlineContent[] = [];
+  let run: InlineContent[] = [];
+  const flush = (): void => {
+    if (run.length === 0) return;
+    out.push(inlineText(run.map((part) => part.text).join(""), true));
+    run = [];
+  };
+  for (const part of parts) {
+    if (part.plain === true) run.push(part);
+    else {
+      flush();
+      out.push(part);
+    }
+  }
+  flush();
+  return out;
+}
+
+function parseInlineNode(
+  node: ChildNode,
+  context: ParseContext,
+  depth: number,
+  linkify: boolean,
+): InlineContent {
   if (!enterNode(context, depth)) return emptyInline();
   if (isText(node)) {
     const text = node.data.replace(/\r\n?/g, "\n").replace(/[\t\f\v\u00a0]+/g, " ");
@@ -476,11 +542,17 @@ function parseInlineNode(node: ChildNode, context: ParseContext, depth: number):
   }
 
   if (name === "table") {
+    // Flattened to text: anchor and code context is gone, so a bare URL here
+    // could be a decoy label. Never linkify it.
     const text = collectText([node], context, depth + 1, false);
-    return inlineText(text);
+    return { ...inlineText(text), plain: false };
   }
 
-  const child = parseInline(node.children, context, depth + 1, false);
+  // Text under a source anchor keeps that anchor's destination, and text in
+  // inline or preformatted code stays literal: none of it gets bare URLs
+  // linkified.
+  const childLinkify = linkify && name !== "a" && name !== "pre" && INLINE_TAGS[name] !== "code";
+  const child = parseInline(node.children, context, depth + 1, false, childLinkify);
   if (!child.text) return emptyInline();
 
   if (name === "li") {
@@ -490,6 +562,7 @@ function parseInlineNode(node: ChildNode, context: ParseContext, depth: number):
       text: `\n${prefix}${child.text}\n`,
       classicHtml: `\n${prefix}${child.classicHtml}\n`,
       richHtml: `<br>${prefix}${child.richHtml}<br>`,
+      plain: false,
     };
   }
 
@@ -499,12 +572,15 @@ function parseInlineNode(node: ChildNode, context: ParseContext, depth: number):
       text: `\n${child.text}\n`,
       classicHtml: `\n${child.classicHtml}\n`,
       richHtml: `<br>${child.richHtml}<br>`,
+      plain: false,
     };
   }
 
   if (name === "a") {
     const href = safeHref(node.attribs["href"]);
-    if (!href) return child;
+    // A dropped destination leaves its label as text that must not be
+    // re-linked from the label's own words.
+    if (!href) return { ...child, plain: false };
     // Malformed email HTML can nest anchors. Keep the already-normalized
     // inner link and discard the outer destination; Telegram link entities
     // cannot contain another link entity.
@@ -543,6 +619,7 @@ function parseInlineNode(node: ChildNode, context: ParseContext, depth: number):
       classicHtml: `<${safeTag}>${child.classicHtml}</${safeTag}>`,
       richHtml: `<${safeTag}>${child.richHtml}</${safeTag}>`,
       maxDepth: child.maxDepth + 1,
+      plain: false,
     };
   }
 
@@ -552,6 +629,7 @@ function parseInlineNode(node: ChildNode, context: ParseContext, depth: number):
       text: `\n${child.text}\n`,
       classicHtml: `\n${child.classicHtml}\n`,
       richHtml: `<br>${child.richHtml}<br>`,
+      plain: false,
     };
   }
 
@@ -1187,9 +1265,15 @@ function codePointLength(value: string): number {
   return Array.from(value).length;
 }
 
-function inlineText(text: string): InlineContent {
+/**
+ * Bare `http(s)://` and `mailto:` text becomes a link in rich output only.
+ * Classic output keeps the escaped text: Telegram detects URLs there itself
+ * and the sender disables previews. Rich payloads are sent with entity
+ * detection off, so without this a bare URL would not be clickable.
+ */
+function inlineText(text: string, linkify = false): InlineContent {
   const escaped = escapeHtml(text);
-  return {
+  const plain: InlineContent = {
     text,
     classicHtml: escaped,
     richHtml: escaped,
@@ -1197,7 +1281,88 @@ function inlineText(text: string): InlineContent {
     maxDepth: 0,
     containsCode: false,
     containsAnchor: false,
+    plain: true,
   };
+  if (!linkify) return plain;
+
+  let richHtml = "";
+  let cursor = 0;
+  let linked = 0;
+  for (const match of text.matchAll(BARE_LINK_PATTERN)) {
+    const start = match.index;
+    const candidate = trimLinkCandidate(match[0]);
+    if (candidate === null) continue;
+    const href = synthesizedHref(candidate);
+    if (!href) continue;
+    richHtml +=
+      escapeHtml(text.slice(cursor, start)) +
+      `<a href="${escapeHtmlAttribute(href)}">${escapeHtml(candidate)}</a>`;
+    cursor = start + candidate.length;
+    linked += 1;
+  }
+  if (linked === 0) return plain;
+  richHtml += escapeHtml(text.slice(cursor));
+  return {
+    ...plain,
+    richHtml,
+    hasLinks: true,
+    maxDepth: 1,
+    containsAnchor: true,
+    plain: false,
+  };
+}
+
+const BARE_LINK_PATTERN =
+  /(?:https?:\/\/|mailto:)[^\s<>"'`\u00ab\u00bb\u2018\u2019\u201c\u201d]+/giu;
+const MAX_SYNTHESIZED_LINK_LENGTH = 2048;
+const CLOSER_TO_OPENER: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
+const BIDI_CONTROLS = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
+
+/**
+ * Trailing sentence punctuation and unbalanced closers belong to the prose.
+ * Linear: bracket counts are taken once and adjusted while trimming, and an
+ * over-long candidate is rejected before any work.
+ */
+function trimLinkCandidate(raw: string): string | null {
+  if (raw.length > MAX_SYNTHESIZED_LINK_LENGTH) return null;
+  const opens: Record<string, number> = { "(": 0, "[": 0, "{": 0 };
+  const closes: Record<string, number> = { ")": 0, "]": 0, "}": 0 };
+  for (const ch of raw) {
+    if (ch in opens) opens[ch] += 1;
+    else if (ch in closes) closes[ch] += 1;
+  }
+  let end = raw.length;
+  while (end > 0) {
+    const last = raw[end - 1] ?? "";
+    if (".,;:!?\u3002\u3001\uff0c\uff01\uff1f".includes(last)) {
+      end -= 1;
+      continue;
+    }
+    const opener = CLOSER_TO_OPENER[last];
+    if (opener && (closes[last] ?? 0) > (opens[opener] ?? 0)) {
+      closes[last] -= 1;
+      end -= 1;
+      continue;
+    }
+    break;
+  }
+  return end > 0 ? raw.slice(0, end) : null;
+}
+
+function synthesizedHref(candidate: string): string | null {
+  if (BIDI_CONTROLS.test(candidate)) return null;
+  const href = safeHref(candidate);
+  if (!href) return null;
+  const parsed = new URL(href);
+  if (parsed.username || parsed.password) return null;
+  if (parsed.protocol === "mailto:") {
+    // Address only: a query (?cc=, ?body=) in prose is not something we
+    // should turn into a prefilled draft.
+    return /^[^\s@/?]+@[^\s@/?]+\.[^\s@/?]+$/u.test(parsed.pathname)
+      ? `mailto:${parsed.pathname}`
+      : null;
+  }
+  return href;
 }
 
 function emptyInline(): InlineContent {

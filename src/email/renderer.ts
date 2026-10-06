@@ -33,7 +33,7 @@ type SelectedBody =
 export interface RenderedEmailForDelivery {
   text: string;
   parseMode: HtmlParseMode | undefined;
-  /** Safe Telegram Rich HTML. Omitted for plaintext, linked, or over-budget content. */
+  /** Safe Telegram Rich HTML. Omitted for plaintext mode and over-budget content. */
   richHtml?: string;
 }
 
@@ -88,7 +88,7 @@ export function renderEmailForDelivery(
     to: aliasFullAddress,
     subject,
     renderedBody,
-    hasAttachmentLinks: attachmentLinks.length > 0,
+    attachmentLinks,
   });
 
   return {
@@ -269,35 +269,84 @@ function buildRichDeliveryHtml(input: {
   to: string;
   subject: string;
   renderedBody: { classic: string; structured: StructuredHtmlResult | null };
-  hasAttachmentLinks: boolean;
+  attachmentLinks: AttachmentLink[];
 }): string | undefined {
   const structured = input.renderedBody.structured;
-  if (
-    input.mode === "plaintext" ||
-    input.hasAttachmentLinks ||
-    !structured?.richHtml ||
-    structured.hasLinks
-  ) {
-    return undefined;
-  }
+  if (input.mode === "plaintext" || !structured?.richHtml) return undefined;
 
   const from = sanitizeHeaderField(input.from);
   const to = sanitizeHeaderField(input.to);
   const subject = sanitizeHeaderField(input.subject);
   const headerText = `From: ${from}\nTo: ${to}\nSubject: ${subject}`;
-  if (
-    structured.stats.textCharacters + Array.from(headerText).length > MAX_RICH_TEXT_CHARACTERS ||
-    structured.stats.blocks + RICH_HEADER_BLOCKS > MAX_RICH_BLOCKS
-  ) {
-    return undefined;
-  }
+  const textBudget =
+    MAX_RICH_TEXT_CHARACTERS - structured.stats.textCharacters - Array.from(headerText).length;
+  const blocksUsed = structured.stats.blocks + RICH_HEADER_BLOCKS;
+  if (textBudget < 0 || blocksUsed > MAX_RICH_BLOCKS) return undefined;
+
+  const attachments = buildRichAttachmentsSection(input.attachmentLinks, textBudget);
+  if (attachments === undefined) return undefined;
+  if (attachments && blocksUsed + 1 > MAX_RICH_BLOCKS) return undefined;
 
   // Header is bot-generated and identical for every sender: a quote block
   // with bold labels, then a divider so the body starts on a visible boundary.
   const header =
     `<blockquote><b>From:</b> ${escapeHtml(from)}<br><b>To:</b> ${escapeHtml(to)}` +
     `<br><b>Subject:</b> ${escapeHtml(subject)}</blockquote><hr>`;
-  return `${header}${structured.richHtml}`;
+  return `${header}${structured.richHtml}${attachments ?? ""}`;
+}
+
+const RICH_ATTACHMENTS_LABEL = "Attachments:";
+
+/**
+ * One paragraph (one rich block) listing the same TTL-bearing links the
+ * classic message carries. Returns null when there are no attachments and
+ * undefined when not a single entry fits the remaining text budget, which
+ * sends the message classic. Over budget, whole trailing entries are dropped
+ * and the omission is stated; links are never cut.
+ */
+function buildRichAttachmentsSection(
+  links: AttachmentLink[],
+  textBudget: number,
+): string | null | undefined {
+  if (links.length === 0) return null;
+  const names = links.map((link) => sanitizeFilename(link.filename));
+  const cost = (count: number, omitted: number): number =>
+    codePoints(RICH_ATTACHMENTS_LABEL) +
+    names.slice(0, count).reduce((sum, name) => sum + 1 + codePoints(name), 0) +
+    (omitted > 0 ? 1 + codePoints(omissionNotice(omitted)) : 0);
+
+  let keep = links.length;
+  while (keep > 0 && cost(keep, links.length - keep) > textBudget) keep -= 1;
+  // No download link fitting at all: classic keeps the links and trims the
+  // body instead, which serves the reader better than a notice alone.
+  if (keep === 0) return undefined;
+
+  const lines = links
+    .slice(0, keep)
+    .map(
+      (link, i) => `<a href="${escapeHtmlAttribute(link.url)}">${escapeHtml(names[i] ?? "")}</a>`,
+    );
+  if (keep < links.length) lines.push(escapeHtml(omissionNotice(links.length - keep)));
+  return `<p><b>${RICH_ATTACHMENTS_LABEL}</b><br>${lines.join("<br>")}</p>`;
+}
+
+function omissionNotice(count: number): string {
+  return `${count} attachment${count === 1 ? "" : "s"} omitted`;
+}
+
+function sanitizeFilename(value: string): string {
+  // Control characters break the line structure; directional controls can
+  // disguise an extension ("invoice\u202Efdp.exe" reads as "invoiceexe.pdf").
+  const cleaned = value
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x1f\x7f]+/g, " ")
+    .replace(/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu, "")
+    .trim();
+  return cleaned || "attachment";
+}
+
+function codePoints(value: string): number {
+  return Array.from(value).length;
 }
 
 function truncateToBudget(text: string, budget: number, mode: RenderMode): string {

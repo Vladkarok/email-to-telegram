@@ -32,6 +32,160 @@ describe("renderStructuredEmailHtml", () => {
     expect(result.richHtml).toContain("<th>Name</th>");
   });
 
+  it("linkifies bare http and mailto text in rich output only", () => {
+    const result = renderStructuredEmailHtml(
+      "<p>See https://example.com/a/b?x=1 (docs: https://example.com/d). Write mailto:ops@example.com!</p>",
+    );
+
+    expect(result.classicHtml).toBe(
+      "See https://example.com/a/b?x=1 (docs: https://example.com/d). Write mailto:ops@example.com!",
+    );
+    expect(result.richHtml).toBe(
+      '<p>See <a href="https://example.com/a/b?x=1">https://example.com/a/b?x=1</a> (docs: ' +
+        '<a href="https://example.com/d">https://example.com/d</a>). Write ' +
+        '<a href="mailto:ops@example.com">mailto:ops@example.com</a>!</p>',
+    );
+    expect(result.hasLinks).toBe(true);
+  });
+
+  it("does not linkify inside source anchors or inline code, and skips unsafe candidates", () => {
+    const result = renderStructuredEmailHtml(
+      '<p><a href="https://real.example">https://decoy.example</a> <code>https://code.example</code> ' +
+        "https://user:pw@example.com/x mailto:not-an-address</p>",
+    );
+
+    expect(result.richHtml).toBe(
+      '<p><a href="https://real.example/">https://decoy.example</a> <code>https://code.example</code> ' +
+        "https://user:pw@example.com/x mailto:not-an-address</p>",
+    );
+  });
+
+  it("ends a bare URL at typographic quotes and trims unbalanced closers in linear time", () => {
+    const quoted = renderStructuredEmailHtml(
+      "<p>\u201chttps://example.com/report\u201d and \u00abhttps://example.com/x\u00bb</p>",
+    );
+    expect(quoted.richHtml).toBe(
+      '<p>\u201c<a href="https://example.com/report">https://example.com/report</a>\u201d and ' +
+        '\u00ab<a href="https://example.com/x">https://example.com/x</a>\u00bb</p>',
+    );
+
+    const started = performance.now();
+    const flood = renderStructuredEmailHtml(`<p>https://example.com/${")".repeat(30000)}</p>`);
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(flood.richHtml).not.toContain("<a ");
+
+    const trailing = renderStructuredEmailHtml(`<p>https://example.com/a${")".repeat(1000)}</p>`);
+    expect(trailing.richHtml).toContain(
+      '<a href="https://example.com/a">https://example.com/a</a>)',
+    );
+  });
+
+  it("never linkifies flattened inline tables or preformatted text", () => {
+    const result = renderStructuredEmailHtml(
+      '<blockquote><table><tr><td><a href="https://real.example">https://decoy.example</a></td></tr></table>' +
+        "<pre>https://code.example/x</pre></blockquote>",
+    );
+
+    expect(result.richHtml).not.toContain('decoy.example"');
+    expect(result.richHtml).not.toContain('href="https://decoy.example');
+    expect(result.richHtml).not.toContain('href="https://code.example');
+  });
+
+  it("skips a rejected candidate and still links the next valid one", () => {
+    const result = renderStructuredEmailHtml(
+      "<p>https://user:pw@example.com/x then https://example.com/ok and https://a.example/\u202e</p>",
+    );
+
+    expect(result.richHtml).toBe(
+      '<p>https://user:pw@example.com/x then <a href="https://example.com/ok">https://example.com/ok</a> and https://a.example/\u202e</p>',
+    );
+  });
+
+  it("links a URL split across text nodes as one link", () => {
+    const result = renderStructuredEmailHtml(
+      "<p>https://example.com/very/<wbr>long/path and <span>https://exam</span>ple.com/x <!-- c -->" +
+        "and https://example.com/<!-- split -->tail</p>",
+    );
+
+    expect(result.richHtml).toBe(
+      '<p><a href="https://example.com/very/long/path">https://example.com/very/long/path</a> and ' +
+        '<a href="https://example.com/x">https://example.com/x</a> and ' +
+        '<a href="https://example.com/tail">https://example.com/tail</a></p>',
+    );
+  });
+
+  it("stops a plain run at formatting boundaries", () => {
+    const result = renderStructuredEmailHtml(
+      "<p><b>https://example.com/b</b>old and <i>x</i>https://example.com/i</p>",
+    );
+
+    expect(result.richHtml).toBe(
+      '<p><b><a href="https://example.com/b">https://example.com/b</a></b>old and <i>x</i>' +
+        '<a href="https://example.com/i">https://example.com/i</a></p>',
+    );
+  });
+
+  it("linkifies formatted text inside transparent wrappers", () => {
+    const result = renderStructuredEmailHtml(
+      '<p><span><b>https://example.com/path</b></span> <span>https://example.com/a<br>next</span> <font color="red">see https://exam</font>ple.com/f</p>',
+    );
+
+    expect(result.richHtml).toBe(
+      '<p><b><a href="https://example.com/path">https://example.com/path</a></b> ' +
+        '<a href="https://example.com/a">https://example.com/a</a><br>next ' +
+        'see <a href="https://example.com/f">https://example.com/f</a></p>',
+    );
+  });
+
+  it("handles a flood of closing brackets in linear time", () => {
+    const started = performance.now();
+    const result = renderStructuredEmailHtml(`<p>https://example.com/${")".repeat(200000)}</p>`);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(result.richHtml ?? result.classicHtml).not.toContain("<a ");
+  });
+
+  it("normalizes the scheme, keeps query ampersands escaped once, and strips mailto queries", () => {
+    const result = renderStructuredEmailHtml(
+      "<p>HTTPS://EXAMPLE.COM/a?x=1&y=2 mailto:ops@example.com?subject=hi&cc=x@evil.example</p>",
+    );
+
+    expect(result.richHtml).toBe(
+      '<p><a href="https://example.com/a?x=1&amp;y=2">HTTPS://EXAMPLE.COM/a?x=1&amp;y=2</a> ' +
+        '<a href="mailto:ops@example.com">mailto:ops@example.com?subject=hi&amp;cc=x@evil.example</a></p>',
+    );
+  });
+
+  it("linkifies inside table cells, list items and headings but leaves a dropped anchor label plain", () => {
+    const result = renderStructuredEmailHtml(
+      "<h2>See https://example.com/h</h2><ul><li>https://example.com/li</li></ul>" +
+        "<table><tr><th>https://example.com/th</th><td>v</td></tr><tr><td>a</td><td>b</td></tr></table>" +
+        '<p><a href="javascript:alert(1)">https://example.com/label</a> https://example.com/x\u3002</p>',
+    );
+
+    expect(result.richHtml).toContain(
+      '<h2>See <a href="https://example.com/h">https://example.com/h</a></h2>',
+    );
+    expect(result.richHtml).toContain(
+      '<li><a href="https://example.com/li">https://example.com/li</a></li>',
+    );
+    expect(result.richHtml).toContain(
+      '<th><a href="https://example.com/th">https://example.com/th</a></th>',
+    );
+    expect(result.richHtml).toContain(
+      '<p>https://example.com/label <a href="https://example.com/x">https://example.com/x</a>\u3002</p>',
+    );
+  });
+
+  it("keeps balanced parentheses inside a bare URL", () => {
+    const result = renderStructuredEmailHtml(
+      "<p>https://en.wikipedia.org/wiki/Telegram_(software)</p>",
+    );
+
+    expect(result.richHtml).toBe(
+      '<p><a href="https://en.wikipedia.org/wiki/Telegram_(software)">https://en.wikipedia.org/wiki/Telegram_(software)</a></p>',
+    );
+  });
+
   it("turns alternating label/value cells into labeled classic lines", () => {
     const result = renderStructuredEmailHtml(`
       <table>
