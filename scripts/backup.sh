@@ -8,7 +8,8 @@
 #
 # Backup files: <backup_dir>/backup-YYYY-MM-DD.sql.gz
 # Metadata:      <backup_dir>/backup-YYYY-MM-DD.meta
-# Retention:    keep_days (default 7) — older files are deleted
+# Retention:    keep_days (default 7) — older files are deleted, including
+#               temp files left behind by runs that were killed
 
 set -eu
 umask 077
@@ -48,7 +49,11 @@ TMP_ARCHIVE_META="${BACKUP_DIR}/.backup-${DATE}-$$.archive-meta"
 cleanup_tmp() {
   rm -f "$TMP_SQL" "$TMP_GZ" "$TMP_ENC" "$TMP_CONN" "$TMP_META" "$TMP_ARCHIVE_META"
 }
-trap cleanup_tmp EXIT INT TERM
+trap cleanup_tmp EXIT
+# Exit on INT/TERM so the EXIT trap cleans up and the run stops there, instead
+# of continuing past a cleanup and committing incomplete metadata.
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 if [ "$STORAGE_ENCRYPTION_MODE" = "local-v1" ] && [ -z "$MASTER_ENCRYPTION_KEY" ]; then
   echo "backup.sh: MASTER_ENCRYPTION_KEY is required when STORAGE_ENCRYPTION_MODE=local-v1" >&2
@@ -133,7 +138,7 @@ if [ "$BACKUP_ARCHIVE_ENCRYPTION" = "storage-key" ]; then
   mv "$TMP_ENC" "$BACKUP_FILE"
 fi
 
-rm -f "$TMP_SQL" "$TMP_CONN"
+cleanup_tmp
 trap - EXIT INT TERM
 
 echo "Backup written: $BACKUP_FILE ($(du -sh "$BACKUP_FILE" | cut -f1))"
@@ -143,4 +148,9 @@ echo "Backup metadata: $META_FILE"
 find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.sql.gz' -mtime "+${KEEP_DAYS}" -delete
 find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.sql.gz.etg' -mtime "+${KEEP_DAYS}" -delete
 find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.meta' -mtime "+${KEEP_DAYS}" -delete
+# Temp files from runs killed before their EXIT trap could run (SIGKILL, OOM).
+# They can hold a plaintext dump or DB credentials, and the patterns above
+# never match them.
+find "$BACKUP_DIR" -maxdepth 1 -type f -name '.backup-*' -mtime "+${KEEP_DAYS}" -delete
+find "$BACKUP_DIR" -maxdepth 1 -type f -name 'backup-*.tmp' -mtime "+${KEEP_DAYS}" -delete
 echo "Retention: kept last ${KEEP_DAYS} days of backups"
