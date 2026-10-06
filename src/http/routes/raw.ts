@@ -55,6 +55,9 @@ function statusForQueueRejection(reason: string | undefined): number | null {
       return 413;
     case "sender_auth_temperror":
       return 503;
+    // Both sender rejections answer alike: a 202 here silently dropped the
+    // mail, and a 202/403 split told a prober which From domains are allowed.
+    case "sender_not_allowed":
     case "sender_auth_failed":
     case "subscription_inactive":
     case "monthly_email_limit":
