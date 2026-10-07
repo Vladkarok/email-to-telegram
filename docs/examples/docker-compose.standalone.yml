@@ -26,6 +26,10 @@ services:
       - ALL
     # The app's shutdown deadline is 25 s; Docker kills 5 s after it.
     stop_grace_period: 30s
+    # Node is not PID 1 behind Docker's init: a stop signal that arrives
+    # before the app installs its handlers (migrations, startup) ends it at
+    # once instead of being ignored until the grace period runs out.
+    init: true
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
       interval: 30s
