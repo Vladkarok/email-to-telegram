@@ -106,9 +106,9 @@ further back than the previous image, is outside the rule.
 CI runs a compatibility lint (`.github/scripts/migration-compat-lint.ts`) on
 the migrations a pull request adds. It flags `DROP TABLE`, `DROP COLUMN`,
 `RENAME`, `ALTER COLUMN ... TYPE`, `SET NOT NULL`, `ADD COLUMN ... NOT NULL`
-without `DEFAULT`, `ADD CONSTRAINT`, `CREATE UNIQUE INDEX`, `UPDATE` and
-`DELETE`. Each flagged statement needs a marker on the line directly before
-it:
+without `DEFAULT`, `ADD CONSTRAINT`, `CREATE UNIQUE INDEX`, `UPDATE`,
+`DELETE`, and every `DO` block (the lint cannot read its body). Each flagged
+statement needs a marker on the line directly before it:
 
 ```sql
 -- compat: v1.11.0 no longer uses email_addresses.max_emails_hour

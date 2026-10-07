@@ -482,37 +482,63 @@ not need GHCR and can be done entirely with the standalone example compose file.
 ### What a deploy does
 
 Every app deploy (tag push, dispatch, and the staging deploy on each push to
-`main`) runs `deploy-app.sh` on the host, under the host deploy lock. Each stage
-has its own time limit:
+`main`) first uploads `docker-compose.yml` and `deploy-app.sh` to a fresh
+directory on the host, without the lock. It then takes the host deploy lock
+once and, under it, creates the `monitoring_scrape` network if it is missing,
+keeps the current `docker-compose.yml` as `docker-compose.previous.yml`,
+installs the new files and runs `deploy-app.sh`. The script needs Compose 2.32
+or later (`docker compose run --pull never`). Each stage has its own time
+limit, and every other Docker call (`ps`, `inspect`, `tag`, `logs`, `rm`) gets
+20 s:
 
-1. Prints the tooling commit, the target tag, and the running app container's
+1. Checks that Compose can read `docker-compose.yml` with `.env`, with all
+   output hidden, so a line of `.env` never reaches the job log.
+2. Prints the tooling commit, the target tag, and the running app container's
    image, image ID, state and restart count.
-2. Pulls the target image (600 s).
-3. Tags the running container's image ID locally as
+3. Pulls the target image (600 s) and reads its image ID.
+4. Tags the running container's image ID locally as
    `ghcr.io/vladkarok/email-to-telegram:deploy-previous`. This is the rollback
    target.
-4. Starts an availability probe: `curl` to `http://$HOST_BIND_IP:3000/readyz`
+5. Starts an availability probe: `curl` to `http://$HOST_BIND_IP:3000/readyz`
    every 2 s with a 1-s timeout, until the end of the run. The script reads
-   `HOST_BIND_IP` from `.env` without sourcing the file.
-5. Runs the migrations in a one-off container while the old app keeps serving
-   (300 s):
-   `docker compose run --rm --no-deps -T --name etg-migrate app node dist/index.js --migrate-only`.
-   If they fail, the run stops here with nothing replaced.
-6. Replaces the app container with `docker compose up -d --remove-orphans --no-build`
-   (120 s).
-7. Waits up to 90 s for Docker to report `healthy` and for the probe to get a 200.
-8. Prints the availability report and exits 0.
+   `HOST_BIND_IP` from `.env` without sourcing the file and exports it for
+   every Compose call, so Compose binds the address the probe requests. It
+   stops if the environment already has a different `HOST_BIND_IP`.
+6. Checks that the target tag still names the pulled image ID, starts
+   Postgres if it is not running and waits for it to be healthy
+   (`docker compose up -d --wait --no-recreate postgres`), then runs the
+   migrations in a one-off container while the old app keeps serving:
+   `docker compose run --rm --no-deps --pull never -T --name etg-migrate app node dist/index.js --migrate-only`.
+   The database wait and the migration share the 300-s limit. The job log
+   gets only the exit status and the duration; on a failure, also the level,
+   `msg` and error code of the migration's error lines. If the migration
+   fails, the run stops here with nothing replaced.
+7. Replaces the app container with
+   `docker compose up -d --remove-orphans --no-build --pull never` (120 s).
+8. Waits up to 90 s for the container to run the pulled image ID, for Docker
+   to report `healthy` and for the probe to get a 200.
+9. Prints the availability report and exits 0.
 
-All stages together take at most 22 minutes, and the job may also wait up to
-15 minutes for the host lock. The deploy jobs time out after 45 minutes.
+The Compose calls after the pull never pull, so a moving tag such as `:main`
+cannot give the migration one image and the app another; a container that
+runs another image ID than the one pulled fails the deploy.
+
+All stages together take at most 22 minutes, the other Docker calls a few
+minutes more at worst, and the job may also wait up to 15 minutes for the host
+lock. The deploy jobs time out after 50 minutes.
+
+Everything the script prints also goes to `~/email-to-telegram/deploy-logs/`
+on the host (the newest 30 files are kept), so the report survives a lost SSH
+session. The full output of a failed migration and of a failed app container
+is kept there too; the job log, which is public, gets only their error lines.
 
 ### The gap
 
 The old container stops before the new one starts, so the app does not answer
 for a few seconds on every deploy. The report at the end of each deploy log
 lists every interval in which `/readyz` did not answer 200, with start, end
-and length, then the total, the migration time, and the time from replacement
-to Docker's `healthy`. A run that ends while the app is down prints
+and length, then the total, the migration time, and the time from the start
+of the replacement until the script saw Docker's `healthy`. A run that ends while the app is down prints
 `not recovered`. A 429 from `/readyz` means another client shares the probe's
 rate limit, and the report says it is unreliable. The probe runs on the host,
 at 2-s resolution: it does not see the Worker and the reverse proxy, and
@@ -522,8 +548,12 @@ Mail sent during the gap is not lost. The Worker turns the failed request into
 a temporary SMTP failure and the sending server retries later (Gmail after
 about 5 minutes), so the mail arrives late. Mail the app accepted before the
 stop is already in the delivery log; if the old process could not finish it
-within the 25-s shutdown deadline, the retry worker delivers it within about
-15 minutes, possibly as a second Telegram message.
+within the 25-s shutdown deadline, the retry worker delivers it later,
+possibly as a second Telegram message. A delivery becomes eligible for a retry
+2 minutes after it was received, or 10 minutes after its send started if it
+was cut off mid-send. The retry worker runs every 5 minutes and works through
+eligible deliveries one at a time, so a backlog or Telegram being unavailable
+delays it further.
 
 Telegram updates sent during the gap wait at Telegram and the new process
 handles them after it starts. Telegram keeps an update for at most 24 hours. A
@@ -536,20 +566,36 @@ user starts it again.
 
 The compose healthcheck runs every 30 s with a 60-s start period. When Docker
 probes for the first time depends on the engine: some probe every 5 s during
-the start period, others wait the full 30 s. The report's "time to healthy"
-shows which one a host has. A release that needs more than about 60 s to
-become ready can miss the 90-s wait on a 30-s engine and is rolled back.
+the start period, others wait the full 30 s. The report's "time to healthy" is
+measured by the script, from the start of `compose up` until an inspect at
+2-s intervals sees `healthy`; it includes the container start and the
+engine's probe schedule and does not separate them. A release that needs more
+than about 60 s to become ready can miss the 90-s wait on a 30-s engine and is
+rolled back.
 
 ### Automatic rollback
 
 From the replacement on, any failure rolls back: a compose error or timeout, no
-app container ID, a `docker inspect` error, the container `unhealthy`,
-`exited`, `dead` or `restarting`, a restart count above zero, or no `healthy`
-plus a 200 within 90 s. The script prints the last 200 log lines of the failed
-container, starts the `deploy-previous` image with
-`IMAGE_TAG=deploy-previous docker compose up -d --no-build`, waits for it the
-same way, prints the report and exits 1 with `Rolled back to <image id>.` on
-the last line. The run is red either way.
+app container ID, a `docker compose ps` or `docker inspect` error or timeout,
+the container running another image ID than the one pulled, `unhealthy`,
+`exited`, `dead` or `restarting`, a restart count above zero, no `healthy`
+plus a 200 within 90 s, or an unexpected exit of the script. The script prints
+the error lines of the failed container's last 200 log lines (the full lines
+stay in `deploy-logs/`), starts the `deploy-previous` image with
+`IMAGE_TAG=deploy-previous docker compose up -d --no-build --pull never`,
+waits for it the same way (it must run the previous image ID), prints the
+report and exits 1 with `Rolled back to <image id>.` on the last line. The run
+is red either way.
+
+The rollback restores the previous image and, when the deploy job kept it, the
+previous compose file: it runs Compose with `docker-compose.previous.yml` (plus
+`docker-compose.override.yml` if there is one) and, once the previous image is
+healthy and ready, copies that file back to `docker-compose.yml`. Without a
+readable `docker-compose.previous.yml` it uses the new `docker-compose.yml`
+with the previous image; the report's `rollback:` line says which. It does not
+restore `.env`, the database schema or data, or the deploy script. Before
+running the script by hand after changing `docker-compose.yml`, copy the old
+file to `docker-compose.previous.yml` or delete a stale one.
 
 There is no rollback on a first deploy (no previous image) or when the
 previous image is the target image. If the rollback fails too, the run exits 1
@@ -563,11 +609,13 @@ the previous tag.
 
 ### Migrations
 
-A migration that fails rolls back as a whole: the old app keeps serving and
-nothing is replaced. A migration that hits the 300-s limit ends the run with
-`migration outcome unknown: it may have committed`. The script removes the
-migrate container and replaces nothing, but the migration may have committed
-just before the limit. The old app works with either schema under the
+A migration that fails with an SQL error before it commits rolls back as a
+whole: the old app keeps serving and nothing is replaced. When the migration
+process is killed or loses its database connection, the outcome is unknown:
+the commit may have happened before. A migration that hits the 300-s limit
+ends the run with `migration outcome unknown: it may have committed`, and a
+run interrupted during the migration says the same. The script removes the
+migrate container and replaces nothing. The old app works with either schema under the
 compatibility rule below, and the next deploy applies whatever is still
 pending. To find out, read `drizzle.__drizzle_migrations` in the database.
 
