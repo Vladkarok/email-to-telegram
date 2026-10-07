@@ -529,7 +529,8 @@ lock. The deploy jobs time out after 50 minutes.
 
 Everything the script prints also goes to `~/email-to-telegram/deploy-logs/`
 on the host (the newest 30 files are kept), so the report survives a lost SSH
-session. The full output of a failed migration and of a failed app container
+session. The directory is private to the deploy user (mode 700, files 600).
+The full output of a failed migration and of a failed app container
 is kept there too; the job log, which is public, gets only their error lines.
 
 ### The gap

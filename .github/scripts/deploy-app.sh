@@ -20,10 +20,10 @@
 # http://$HOST_BIND_IP:3000/readyz every 2 s from before the migration until
 # the end, and every run that gets that far prints its report.
 #
-# All output also goes to deploy-logs/ next to this script (the newest 30
-# files are kept), so the report survives a lost SSH session. The job log
-# gets no line of .env and no raw app or migration output: those stay in
-# deploy-logs/.
+# All output also goes to deploy-logs/ next to this script (mode 700; the
+# newest 30 files are kept), so the report survives a lost SSH session. The
+# job log gets no line of .env and no raw app or migration output: those stay
+# in deploy-logs/.
 #
 # Exit status: 0 deployed; 1 for everything else (nothing replaced, rolled
 # back, or rollback failed: the last line says which); 128+n on a signal. A
@@ -33,6 +33,8 @@
 # it reads only the HOST_BIND_IP line.
 
 set -euo pipefail
+# Every file this script creates (logs, work files) is private to this user.
+umask 077
 
 readonly IMAGE_REPO=ghcr.io/vladkarok/email-to-telegram
 readonly PREVIOUS_TAG=deploy-previous
@@ -585,17 +587,19 @@ trap 'say "failed at line $LINENO: $BASH_COMMAND"' ERR
 MAIN_PID=$$
 cd "$(dirname "${BASH_SOURCE[0]}")" || fail "cannot enter the script's directory"
 
-# A host-local copy of all output, private to this user; the newest
-# LOG_KEEP files are kept. tee -p goes on writing the file after the job's
-# side of the pipe is gone, and it ignores the signals this script traps
-# (a Ctrl-C reaches the whole process group), so it ends only when the
-# script's output does. (`trap ''` in the subshell does not hold for SIGINT
-# across the exec; GNU env's --ignore-signal does.)
+# A host-local copy of all output, private to this user (umask 077; the
+# chmods fix a directory and files from before that); the newest LOG_KEEP
+# files are kept. tee -p goes on writing the file after the job's side of the
+# pipe is gone, and it ignores the signals this script traps (a Ctrl-C
+# reaches the whole process group), so it ends only when the script's output
+# does. (`trap ''` in the subshell does not hold for SIGINT across the exec;
+# GNU env's --ignore-signal does.)
 printf -v RUN_ID '%(%Y%m%dT%H%M%SZ)T-%s' -1 "$$"
-if (umask 077 && mkdir -p deploy-logs) && : >>"deploy-logs/$RUN_ID.log"; then
+if mkdir -p deploy-logs && chmod 700 deploy-logs && : >>"deploy-logs/$RUN_ID.log"; then
   LOG_DIR=$PWD/deploy-logs
   exec > >(exec env --ignore-signal=HUP,INT,TERM tee -p -a "$LOG_DIR/$RUN_ID.log") 2>&1
   logs=("$LOG_DIR"/*.log)
+  chmod 600 -- "${logs[@]}" 2>/dev/null || say "WARNING: cannot make every file in $LOG_DIR private"
   if ((${#logs[@]} > LOG_KEEP)); then
     rm -f -- "${logs[@]:0:${#logs[@]}-LOG_KEEP}"
   fi

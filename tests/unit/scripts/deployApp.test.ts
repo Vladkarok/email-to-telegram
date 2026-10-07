@@ -9,6 +9,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -251,8 +252,11 @@ function calls(): string[] {
   return existsSync(file) ? readFileSync(file, "utf-8").trim().split("\n") : [];
 }
 
-function deploy(extra: Record<string, string> = {}): Run {
-  const result = spawnSync("bash", [join(appDir, "deploy-app.sh")], {
+// umask: run the script from a shell with this umask instead of the test's.
+function deploy(extra: Record<string, string> = {}, { umask }: { umask?: string } = {}): Run {
+  const script = join(appDir, "deploy-app.sh");
+  const args = umask ? ["-c", `umask ${umask} && exec bash "$0"`, script] : [script];
+  const result = spawnSync("bash", args, {
     env: scriptEnv(extra),
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -309,6 +313,19 @@ const SECRETS = [
 
 function expectNoSecrets(text: string): void {
   for (const secret of SECRETS) expect(text).not.toContain(secret);
+}
+
+// Every file under DIR, recursively.
+function filesUnder(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return filesUnder(path);
+    return entry.isFile() ? [path] : [];
+  });
+}
+
+function mode(path: string): number {
+  return statSync(path).mode & 0o777;
 }
 
 // The host-local copies in deploy-logs/: the run log and kept outputs.
@@ -1043,6 +1060,29 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
         expect(run.out).toContain("(docker-compose.previous.yml does not parse)");
         expectNoSecrets(run.out);
         expect(readFileSync(join(appDir, "docker-compose.yml"), "utf-8")).toBe("services: {}\n");
+      },
+      TEST_TIMEOUT_MS,
+    );
+  });
+
+  describe("private output", () => {
+    it(
+      "makes deploy-logs private, an older directory and its files included",
+      () => {
+        const dir = join(appDir, "deploy-logs");
+        mkdirSync(dir, { mode: 0o755 });
+        chmodSync(dir, 0o755);
+        const old = join(dir, "20200101T000000Z-1.log");
+        writeFileSync(old, "old\n", { mode: 0o644 });
+        chmodSync(old, 0o644);
+        const run = deploy({ STUB_MIGRATE: "fail" }, { umask: "022" });
+
+        expect(run.status).toBe(1);
+        expect(mode(dir)).toBe(0o700);
+        const files = filesUnder(dir);
+        // The old file, this run's log and the kept migration output at least.
+        expect(files.length).toBeGreaterThanOrEqual(3);
+        for (const file of files) expect([file, mode(file)]).toEqual([file, 0o600]);
       },
       TEST_TIMEOUT_MS,
     );
