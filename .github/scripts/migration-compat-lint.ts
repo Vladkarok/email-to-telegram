@@ -29,7 +29,8 @@ export type Shape =
   | "ADD CONSTRAINT"
   | "CREATE UNIQUE INDEX"
   | "UPDATE"
-  | "DELETE";
+  | "DELETE"
+  | "DO block";
 
 export interface Finding {
   /** 1-based line of the statement's first token. */
@@ -55,8 +56,9 @@ const MARKER_FORMS =
 const IDENT = String.raw`(?:"I"|[A-Z_][A-Z0-9_$]*)`;
 const QUALIFIED = String.raw`${IDENT}(?:\.${IDENT})*`;
 const ALTER_TYPE = new RegExp(String.raw`\bALTER (?:COLUMN )?${IDENT} (?:SET DATA )?TYPE\b`);
+// `UPDATE t * SET`: the * (descendant tables, the default) is legal.
 const UPDATE_DML = new RegExp(
-  String.raw`\bUPDATE (?:ONLY )?(?!SET\b)${QUALIFIED}(?: (?:AS )?(?!SET\b)${IDENT})? SET\b`,
+  String.raw`\bUPDATE (?:ONLY )?(?!SET\b)${QUALIFIED}(?: ?\*)?(?: (?:AS )?(?!SET\b)${IDENT})? SET\b`,
 );
 const ALTER_TABLE = /^ALTER TABLE (?:IF EXISTS )?(?:ONLY )?\S+(?: \*)? (.*)$/;
 
@@ -195,6 +197,9 @@ export function shapesOf(code: string): Shape[] {
   if (/\bCREATE UNIQUE INDEX\b/.test(s)) shapes.add("CREATE UNIQUE INDEX");
   if (UPDATE_DML.test(s)) shapes.add("UPDATE");
   if (/\bDELETE FROM\b/.test(s)) shapes.add("DELETE");
+  // The body of a DO block is dollar-quoted, so nothing in it is matched:
+  // any DO block needs a marker.
+  if (/^DO\b/.test(s)) shapes.add("DO block");
 
   const alter = ALTER_TABLE.exec(s);
   if (alter) {

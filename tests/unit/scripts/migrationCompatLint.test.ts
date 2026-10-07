@@ -24,6 +24,10 @@ const FLAGGED: [Shape, string][] = [
   ["UPDATE", 'UPDATE "t" SET "c" = 0 WHERE "c" IS NULL;'],
   ["UPDATE", "WITH x AS (SELECT id FROM t) UPDATE t AS a SET c = 1 FROM x WHERE a.id = x.id;"],
   ["DELETE", 'DELETE FROM "t" WHERE "c" IS NULL;'],
+  ["UPDATE", "UPDATE users * SET c = 1;"],
+  ["UPDATE", 'UPDATE "users"* AS u SET c = 1;'],
+  ["DO block", "DO $$ BEGIN DELETE FROM users; END $$;"],
+  ["DO block", "DO LANGUAGE plpgsql $body$ BEGIN PERFORM 1; END $body$;"],
 ];
 
 const NOT_FLAGGED = [
