@@ -455,6 +455,20 @@ describe("sendTelegramMessage", () => {
       expect(await ineligibleTotal()).toBe(0);
     });
 
+    it("does not count an over-limit body while the rich switch is off", async () => {
+      const api = makeApi(() => Promise.resolve({ message_id: 5 }));
+
+      await sendTelegramMessage(api, {
+        chatId: 123n,
+        threadId: null,
+        text: "Classic",
+        richIneligibleReason: "block_limit",
+        richMessagesEnabled: false,
+      });
+
+      expect(await ineligibleTotal()).toBe(0);
+    });
+
     it("does not count a failed classic attempt", async () => {
       const api = makeApi(() => Promise.reject(botApiError(403, "Forbidden: bot was blocked")));
 

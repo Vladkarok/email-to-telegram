@@ -101,9 +101,10 @@ export async function sendTelegramMessage(api: Api, opts: SendOptions): Promise<
   }
 
   const classicResult = await sendClassicTelegramMessage(api, opts);
-  // Only a classic send that never had a rich payload; a fallback or the
-  // disabled switch has richHtml and is counted as a rich outcome instead.
-  if (classicResult.ok && !opts.richHtml && opts.richIneligibleReason) {
+  // Only a classic send that never had a rich payload while rich sending was
+  // on; a fallback has richHtml and is counted as a rich outcome instead.
+  const richAvailable = opts.richMessagesEnabled !== false && !richMessageMethodUnavailable;
+  if (classicResult.ok && richAvailable && !opts.richHtml && opts.richIneligibleReason) {
     recordRichIneligible(opts.richIneligibleReason);
   }
   return classicResult;
