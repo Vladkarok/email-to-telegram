@@ -29,8 +29,9 @@
 # back, or rollback failed: the last line says which); 128+n on a signal. A
 # run interrupted by a signal does not roll back.
 #
-# Needs Compose 2.32 or later (`run --pull never`). Reads no secret: from .env
-# it reads only the HOST_BIND_IP line.
+# Needs Compose 2.32 or later (`run --pull never`) and GNU coreutils 8.31 or
+# later (`env --ignore-signal`). Reads no secret: from .env it reads only the
+# HOST_BIND_IP line.
 
 set -euo pipefail
 # Every file this script creates (logs, work files) is private to this user.
@@ -586,6 +587,11 @@ trap 'say "failed at line $LINENO: $BASH_COMMAND"' ERR
 ((BASH_VERSINFO[0] >= 5)) || fail "bash 5 or newer is required"
 MAIN_PID=$$
 cd "$(dirname "${BASH_SOURCE[0]}")" || fail "cannot enter the script's directory"
+
+# Without env --ignore-signal, env would exit before tee starts below and the
+# run's output would go nowhere.
+env --ignore-signal=INT true </dev/null >/dev/null 2>&1 ||
+  fail "GNU coreutils 8.31 or later is required (env --ignore-signal). Nothing changed."
 
 # A host-local copy of all output, private to this user (umask 077; the
 # chmods fix a directory and files from before that); the newest LOG_KEEP

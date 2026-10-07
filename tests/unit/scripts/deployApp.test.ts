@@ -1086,6 +1086,31 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
       },
       TEST_TIMEOUT_MS,
     );
+
+    it(
+      "stops before any output is redirected when env has no --ignore-signal",
+      () => {
+        writeFileSync(
+          join(binDir, "env"),
+          [
+            "#!/bin/bash",
+            'for a; do [[ $a != --ignore-signal* ]] || { echo "env: unrecognized option $a" >&2; exit 125; }; done',
+            'exec /usr/bin/env "$@"',
+            "",
+          ].join("\n"),
+        );
+        chmodSync(join(binDir, "env"), 0o755);
+        const run = deploy();
+
+        expect(run.status).toBe(1);
+        expect(lastLine(run)).toBe(
+          "ERROR: GNU coreutils 8.31 or later is required (env --ignore-signal). Nothing changed.",
+        );
+        expect(run.calls).toEqual([]);
+        expect(existsSync(join(appDir, "deploy-logs"))).toBe(false);
+      },
+      TEST_TIMEOUT_MS,
+    );
   });
 
   it(

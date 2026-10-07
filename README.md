@@ -486,10 +486,13 @@ Every app deploy (tag push, dispatch, and the staging deploy on each push to
 directory on the host, without the lock. It then takes the host deploy lock
 once and, under it, creates the `monitoring_scrape` network if it is missing,
 keeps the current `docker-compose.yml` as `docker-compose.previous.yml`,
-installs the new files and runs `deploy-app.sh`. The script needs Compose 2.32
-or later (`docker compose run --pull never`). Each stage has its own time
-limit, and every other Docker call (`ps`, `inspect`, `tag`, `logs`, `rm`) gets
-20 s:
+installs the new files and runs `deploy-app.sh`.
+
+The script needs Compose 2.32 or later (`docker compose run --pull never`)
+and GNU coreutils 8.31 or later (`env --ignore-signal`, which keeps the host
+log's `tee` alive through a Ctrl-C); without the latter it stops before
+anything else. Each stage has its own time limit, and every other Docker call
+(`ps`, `inspect`, `tag`, `logs`, `rm`) gets 20 s:
 
 1. Checks that Compose can read `docker-compose.yml` with `.env`, with all
    output hidden, so a line of `.env` never reaches the job log.
