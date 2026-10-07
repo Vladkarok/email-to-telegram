@@ -199,6 +199,9 @@ Check the containers:
 docker compose -f docs/examples/docker-compose.standalone.yml ps
 ```
 
+To update later, follow the steps at the top of the standalone compose file:
+build, run the migrations while the old app keeps serving, then `up -d`.
+
 ### 8. Verify the VPS services
 
 From the VPS or another machine:
@@ -456,20 +459,150 @@ If you use the included GitHub Actions workflows:
    through a normal PR; the release workflow refuses a tag that does not match
    it
 4. Pushing a release tag like `v1.2.3` builds `:latest` plus `:v1.2.3`
-5. The release deploy job checks out the exact tagged commit on the VPS,
-   pulls the matching image tag, and restarts the stack
+5. The release deploy job copies the tagged commit's `docker-compose.yml` and
+   `.github/scripts/deploy-app.sh` to the VPS and runs the script there (see
+   below)
 6. The same release workflow also has a manual `workflow_dispatch` path, so you
    can redeploy an existing release tag from the GitHub Actions UI without
-   creating a new tag
+   creating a new tag. That path copies the release's compose file but takes
+   `deploy-app.sh` from the workflow's own commit on `main`, so it also works
+   for releases older than the script. This is also how you roll back by hand:
+   dispatch `main`'s workflow with the older tag.
 
 The important operational detail is that the checked-out VPS repo and the
 running app image are related but not identical concerns. `git pull` updates the
 compose/config files on disk; the running bot version changes only after Docker
 pulls the matching GHCR image and recreates the container with the desired
-`IMAGE_TAG`.
+`IMAGE_TAG`. `IMAGE_TAG` is passed on the command line; a pin in `.env` is not
+updated by a deploy.
 
 That workflow is for this repository's existing VPS layout. A fresh install does
 not need GHCR and can be done entirely with the standalone example compose file.
+
+### What a deploy does
+
+Every app deploy (tag push, dispatch, and the staging deploy on each push to
+`main`) runs `deploy-app.sh` on the host, under the host deploy lock. Each stage
+has its own time limit:
+
+1. Prints the tooling commit, the target tag, and the running app container's
+   image, image ID, state and restart count.
+2. Pulls the target image (600 s).
+3. Tags the running container's image ID locally as
+   `ghcr.io/vladkarok/email-to-telegram:deploy-previous`. This is the rollback
+   target.
+4. Starts an availability probe: `curl` to `http://$HOST_BIND_IP:3000/readyz`
+   every 2 s with a 1-s timeout, until the end of the run. The script reads
+   `HOST_BIND_IP` from `.env` without sourcing the file.
+5. Runs the migrations in a one-off container while the old app keeps serving
+   (300 s):
+   `docker compose run --rm --no-deps -T --name etg-migrate app node dist/index.js --migrate-only`.
+   If they fail, the run stops here with nothing replaced.
+6. Replaces the app container with `docker compose up -d --remove-orphans --no-build`
+   (120 s).
+7. Waits up to 90 s for Docker to report `healthy` and for the probe to get a 200.
+8. Prints the availability report and exits 0.
+
+All stages together take at most 22 minutes, and the job may also wait up to
+15 minutes for the host lock. The deploy jobs time out after 45 minutes.
+
+### The gap
+
+The old container stops before the new one starts, so the app does not answer
+for a few seconds on every deploy. The report at the end of each deploy log
+lists every interval in which `/readyz` did not answer 200, with start, end
+and length, then the total, the migration time, and the time from replacement
+to Docker's `healthy`. A run that ends while the app is down prints
+`not recovered`. A 429 from `/readyz` means another client shares the probe's
+rate limit, and the report says it is unreliable. The probe runs on the host,
+at 2-s resolution: it does not see the Worker and the reverse proxy, and
+`SELECT 1` does not notice a table locked by a migration.
+
+Mail sent during the gap is not lost. The Worker turns the failed request into
+a temporary SMTP failure and the sending server retries later (Gmail after
+about 5 minutes), so the mail arrives late. Mail the app accepted before the
+stop is already in the delivery log; if the old process could not finish it
+within the 25-s shutdown deadline, the retry worker delivers it within about
+15 minutes, possibly as a second Telegram message.
+
+Telegram updates sent during the gap wait at Telegram and the new process
+handles them after it starts. Telegram keeps an update for at most 24 hours. A
+queued backlog meets the same rate limits as live traffic, and text messages
+older than 10 minutes are skipped (`STALE_TEXT_UPDATE_MAX_AGE_S`). A pending
+multi-step prompt, such as `/newemail` waiting for a name, is forgotten; the
+user starts it again.
+
+### Health timing
+
+The compose healthcheck runs every 30 s with a 60-s start period. When Docker
+probes for the first time depends on the engine: some probe every 5 s during
+the start period, others wait the full 30 s. The report's "time to healthy"
+shows which one a host has. A release that needs more than about 60 s to
+become ready can miss the 90-s wait on a 30-s engine and is rolled back.
+
+### Automatic rollback
+
+From the replacement on, any failure rolls back: a compose error or timeout, no
+app container ID, a `docker inspect` error, the container `unhealthy`,
+`exited`, `dead` or `restarting`, a restart count above zero, or no `healthy`
+plus a 200 within 90 s. The script prints the last 200 log lines of the failed
+container, starts the `deploy-previous` image with
+`IMAGE_TAG=deploy-previous docker compose up -d --no-build`, waits for it the
+same way, prints the report and exits 1 with `Rolled back to <image id>.` on
+the last line. The run is red either way.
+
+There is no rollback on a first deploy (no previous image) or when the
+previous image is the target image. If the rollback fails too, the run exits 1
+with `rollback failed` and leaves the host as it is; recover by dispatching the
+previous release.
+
+The rollback does not cover a release that fails after it was healthy and
+ready, a database outage, a run cancelled by hand, or a lost runner. A run
+stopped by a signal does not roll back. Recovery in those cases is a dispatch of
+the previous tag.
+
+### Migrations
+
+A migration that fails rolls back as a whole: the old app keeps serving and
+nothing is replaced. A migration that hits the 300-s limit ends the run with
+`migration outcome unknown: it may have committed`. The script removes the
+migrate container and replaces nothing, but the migration may have committed
+just before the limit. The old app works with either schema under the
+compatibility rule below, and the next deploy applies whatever is still
+pending. To find out, read `drizzle.__drizzle_migrations` in the database.
+
+The migration connection uses `lock_timeout=5s` and `statement_timeout=120s`.
+While a migration runs, the old app's queries on a table it locks wait for it, so a migration
+that locks a large table for long needs planned downtime; say so in its PR.
+
+Every migration must work with the release that is running when it is
+applied, and the automatic rollback runs the previous image on the new schema.
+So expand first and contract one release later: add a column in one release,
+stop using the old one, and drop it in a later release. See
+[CONTRIBUTING.md](./CONTRIBUTING.md#database-migrations). Deploying across a
+skipped release that a contract migration depends on, or rolling back further
+than the previous image, is outside that rule.
+
+### Before deploying over a crash-looping app
+
+Every app start also runs pending migrations, outside the deploy lock. If an
+app container started outside the script (a manual `docker compose up` with a
+newer tag, or a crash loop left by an older deploy) is restarting with pending
+migrations, stop it first, then deploy:
+
+```bash
+docker compose --env-file .env stop app
+```
+
+The first line of every deploy log shows the container's state and restart
+count, and the script warns when it is restarting.
+
+To run the script by hand, take the host lock first:
+
+```bash
+flock -w 900 ~/.etg-deploy.lock env IMAGE_TAG=v1.2.3 \
+  bash ~/email-to-telegram/deploy-app.sh </dev/null
+```
 
 ## Other docs
 

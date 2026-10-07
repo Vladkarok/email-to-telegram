@@ -1,3 +1,18 @@
+# Updating an install made from this file, from the repository root after
+# `git pull`: build the new image, apply its migrations while the old app
+# keeps serving, then replace the app container.
+#
+#   docker compose -f docs/examples/docker-compose.standalone.yml build app
+#   docker compose -f docs/examples/docker-compose.standalone.yml run --rm --no-deps -T app node dist/index.js --migrate-only
+#   docker compose -f docs/examples/docker-compose.standalone.yml up -d
+#
+# If the migration fails, stop there: the old app is unchanged. The app does
+# not answer for a few seconds during `up -d`. Senders retry mail they could
+# not deliver, and Telegram keeps updates until the bot is back. The hosted
+# deploy script (.github/scripts/deploy-app.sh, README "Release workflow")
+# does the same for registry images and adds a probe and automatic rollback.
+# Migrations must work with the release that runs while they are applied:
+# see CONTRIBUTING.md, "Database migrations".
 services:
   app:
     image: email-to-telegram:local
