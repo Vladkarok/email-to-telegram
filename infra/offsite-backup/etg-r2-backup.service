@@ -27,6 +27,9 @@ ProtectKernelTunables=true
 ProtectSystem=strict
 CacheDirectory=restic-etg
 CacheDirectoryMode=0700
+# Backup freshness metric for node_exporter (created by install.sh). The "-"
+# keeps a missing directory from failing the backup itself.
+ReadWritePaths=-/var/lib/node_exporter/textfile
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=true
 RestrictRealtime=true

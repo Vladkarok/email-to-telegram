@@ -18,6 +18,9 @@ readonly config_file=/etc/etg-r2/restic.env
 readonly credentials_file=/etc/etg-r2/credentials.env
 readonly cache_dir=/var/cache/restic-etg
 readonly max_dump_age_seconds=93600 # 26 h: one missed nightly dump fails loudly
+# node_exporter's textfile collector reads *.prom files here (install.sh
+# creates it; the unit's ReadWritePaths allows the write).
+readonly textfile_dir=/var/lib/node_exporter/textfile
 
 healthchecks_url=""
 
@@ -40,6 +43,20 @@ trap on_error ERR
 fail() {
     printf '%s\n' "$1" >&2
     false
+}
+
+# Backup freshness for the dashboard: temp file, mode 0644, rename. Only ever
+# called as a condition, so a failure in here neither trips errexit nor the
+# ERR trap; the caller logs it and the backup carries on.
+write_freshness_metric() {
+    local tmp="$textfile_dir/etg_offsite_backup.prom.tmp"
+    {
+        printf '# HELP etg_offsite_backup_last_success_timestamp_seconds Unix time of the last successful off-site upload.\n'
+        printf '# TYPE etg_offsite_backup_last_success_timestamp_seconds gauge\n'
+        printf 'etg_offsite_backup_last_success_timestamp_seconds %s\n' "$(date +%s)"
+    } >"$tmp" &&
+        chmod 0644 "$tmp" &&
+        mv -f "$tmp" "$textfile_dir/etg_offsite_backup.prom"
 }
 
 for required_file in "$config_file" "$credentials_file"; do
@@ -100,6 +117,10 @@ restic backup \
     --host "etg-$ETG_ENVIRONMENT" \
     --tag etg-db \
     "$latest_dump" "$latest_meta"
+
+if ! write_freshness_metric; then
+    printf 'Could not write the backup freshness metric in %s; ignored.\n' "$textfile_dir" >&2
+fi
 
 restic forget \
     --cache-dir "$cache_dir" \
