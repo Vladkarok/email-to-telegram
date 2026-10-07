@@ -48,20 +48,39 @@ find "$BACKUP_DIR" -maxdepth 1 -type f -name 'backup-*.tmp' -mtime "+${KEEP_DAYS
 old_ifs=$IFS
 IFS='
 '
-TMP_CONN="${BACKUP_DIR}/.backup-conn-${DATE}-$$.txt"
-TMP_SQL="${BACKUP_DIR}/.backup-${DATE}-$$.sql"
-TMP_GZ="${PLAIN_BACKUP_FILE}.tmp"
-TMP_ENC="${ENCRYPTED_BACKUP_FILE}.tmp"
-TMP_META="${META_FILE}.tmp"
-TMP_ARCHIVE_META="${BACKUP_DIR}/.backup-${DATE}-$$.archive-meta"
+TMP_CONN=
+TMP_SQL=
+TMP_GZ=
+TMP_ENC=
+TMP_META=
+TMP_ARCHIVE_META=
 cleanup_tmp() {
-  rm -f "$TMP_SQL" "$TMP_GZ" "$TMP_ENC" "$TMP_CONN" "$TMP_META" "$TMP_ARCHIVE_META"
+  for tmp_file in "$TMP_CONN" "$TMP_SQL" "$TMP_GZ" "$TMP_ENC" "$TMP_META" "$TMP_ARCHIVE_META"; do
+    if [ -n "$tmp_file" ]; then
+      rm -f "$tmp_file"
+    fi
+  done
 }
 trap cleanup_tmp EXIT
-# Exit on INT/TERM so the EXIT trap cleans up and the run stops there, instead
-# of continuing past a cleanup and committing incomplete metadata.
+# Exit on HUP/INT/TERM so the EXIT trap cleans up and the run stops there.
+# Untrapped, these signals kill the shell without running the EXIT trap; a
+# trap that only cleaned up would let the run continue and commit incomplete
+# metadata.
+trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+# Every temp file name carries this run's PID and a token mktemp reserved in
+# BACKUP_DIR, so no two runs share one, not even runs in separate containers
+# that share the volume and the PID. Cleanup then only ever removes this run's
+# own files. The dump and .meta keep their date-only names.
+TMP_CONN=$(mktemp "${BACKUP_DIR}/.backup-conn-${DATE}-$$-XXXXXX")
+RUN_ID="$$-${TMP_CONN##*-}"
+TMP_SQL="${BACKUP_DIR}/.backup-${DATE}-${RUN_ID}.sql"
+TMP_GZ="${PLAIN_BACKUP_FILE}.${RUN_ID}.tmp"
+TMP_ENC="${ENCRYPTED_BACKUP_FILE}.${RUN_ID}.tmp"
+TMP_META="${META_FILE}.${RUN_ID}.tmp"
+TMP_ARCHIVE_META="${BACKUP_DIR}/.backup-${DATE}-${RUN_ID}.archive-meta"
 
 if [ "$STORAGE_ENCRYPTION_MODE" = "local-v1" ] && [ -z "$MASTER_ENCRYPTION_KEY" ]; then
   echo "backup.sh: MASTER_ENCRYPTION_KEY is required when STORAGE_ENCRYPTION_MODE=local-v1" >&2
@@ -147,7 +166,7 @@ if [ "$BACKUP_ARCHIVE_ENCRYPTION" = "storage-key" ]; then
 fi
 
 cleanup_tmp
-trap - EXIT INT TERM
+trap - EXIT HUP INT TERM
 
 echo "Backup written: $BACKUP_FILE ($(du -sh "$BACKUP_FILE" | cut -f1))"
 echo "Backup metadata: $META_FILE"
