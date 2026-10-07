@@ -1,6 +1,9 @@
 import { simpleParser } from "mailparser";
 import { describe, expect, it } from "vitest";
-import { formatAddressDisplay } from "../../../src/email/addressDisplay.js";
+import {
+  formatAddressDisplay,
+  mailboxDomainForDisplay,
+} from "../../../src/email/addressDisplay.js";
 
 const encodedWord = (text: string): string =>
   `=?UTF-8?B?${Buffer.from(text, "utf8").toString("base64")}?=`;
@@ -157,5 +160,39 @@ describe("formatAddressDisplay over hand-built values", () => {
         { name: "Ops; Infra", group: [{ name: "", address: "o@example.com" }] },
       ]),
     ).toBe('"Ops; Infra": o@example.com;');
+  });
+});
+
+describe("mailboxDomainForDisplay", () => {
+  const longLabel = "a".repeat(63);
+  const tooLong = `x@${[longLabel, longLabel, longLabel, longLabel].join(".")}.com`;
+
+  it.each<[string, string, string | null]>([
+    ["a plain address", "help@bank.com", "bank.com"],
+    ["an empty quoted local part", '""@bank.com', "bank.com"],
+    ["a punycode domain", "a@xn--bcher-kva.example", "xn--bcher-kva.example"],
+    ["a Unicode IDN domain", "a@b\u00fccher.example", "b\u00fccher.example"],
+    ["a hyphen inside a label", "a@my-bank.com", "my-bank.com"],
+    ["a 63-character label", `a@${longLabel}.com`, `${longLabel}.com`],
+    ["no at sign", "bank.com", null],
+    ["an empty local part", "@bank.com", null],
+    ["an empty domain", "a@", null],
+    ["a second at sign", "a@evil.com@bank.com", null],
+    ["text after a quoted local part", '"a@b"x@bank.com', null],
+    ["a trailing dot", "a@bank.com.", null],
+    ["an empty label", "a@bank..com", null],
+    ["a leading hyphen", "a@-bank.com", null],
+    ["a trailing hyphen", "a@bank-.com", null],
+    ["an underscore", "a@bank_x.com", null],
+    ["a space", "a@bank .com", null],
+    ["a numeric last label", "a@192.0.2.1", null],
+    ["an IPv4 shorthand", "a@0x7f.1", null],
+    ["invalid punycode", "a@xn--zz.com", null],
+    ["a soft hyphen", "a@ba\u00adnk.com", null],
+    ["a right-to-left mark", "a@bank.com\u200f", null],
+    ["a 64-character label", `a@${longLabel}a.com`, null],
+    ["a domain over 253 characters", tooLong, null],
+  ])("handles %s", (_label, address, expected) => {
+    expect(mailboxDomainForDisplay(address)).toBe(expected);
   });
 });

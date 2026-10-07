@@ -33,7 +33,9 @@ that has been running in production.
   `bank.com` for mail from another domain. The Sender line now shows the
   domain of the parsed From address, the one the From line shows. A From
   with no `user@domain` address, such as a bare `bank.com`, shows
-  `unknown sender`. The domain is what the From header claims; it does not
+  `unknown sender`, as does a malformed address such as
+  `a@evil.com@bank.com` or `<a@bank.com;evil.com>`, and a domain with
+  zero-width or direction-changing characters. The domain is what the From header claims; it does not
   prove who sent the message. A line break in a name-only From could also
   add a fake line to the alert; the line now goes through the same
   sanitizer as the message header.

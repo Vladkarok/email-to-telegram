@@ -6,6 +6,7 @@ import {
   type StructuredHtmlResult,
 } from "../utils/telegramHtml.js";
 import { escapeHtml, escapeHtmlAttribute } from "../utils/html.js";
+import { mailboxDomainForDisplay } from "./addressDisplay.js";
 
 const MAX_LEN = 4096;
 const TRUNCATION_NOTICE = "\n[... truncated]";
@@ -14,6 +15,8 @@ const MAX_RICH_TEXT_CHARACTERS = 32_768;
 const MAX_RICH_BLOCKS = 500;
 /** Blocks the rich header costs against MAX_RICH_BLOCKS: blockquote + hr. */
 const RICH_HEADER_BLOCKS = 2;
+/** The privacy alert's Sender line when the From has no valid domain. */
+const UNKNOWN_SENDER = "unknown sender";
 
 export interface AttachmentLink {
   filename: string;
@@ -125,7 +128,7 @@ export function renderPrivacyAlert(
   viewUrl: string,
   hasAttachments: boolean,
 ): string {
-  const sender = escapeHtml(sanitizeHeaderField(extractSenderHint(email)));
+  const sender = escapeHtml(sanitizeHeaderField(extractSenderHint(email)) || UNKNOWN_SENDER);
   const alias = escapeHtml(aliasFullAddress);
   const attachmentLine = hasAttachments ? "\nAttachments: hidden by privacy mode" : "";
 
@@ -157,15 +160,14 @@ function buildAttachmentsSection(links: AttachmentLink[], mode: RenderMode): str
  * The privacy alert names only the domain of the first parsed From address,
  * the address the From line shows. Nothing else from the From text reaches
  * the Sender line: a display name such as "Support <help@bank.com>", a
- * name-only From such as "bank.com" or an address with no `@` such as
- * "Support <bank.com>" would otherwise look like a real sender domain. These
- * show as "unknown sender". The domain is what the header claims, not a
- * verified sender.
+ * name-only From such as "bank.com", an address with no `@` such as
+ * "Support <bank.com>" or a malformed one such as "a@evil.com@bank.com"
+ * would otherwise look like a real sender domain. These show as "unknown
+ * sender". The domain is what the header claims, not a verified sender.
  */
 function extractSenderHint(email: ParsedEmail): string {
-  const address = email.headerFromEmail || email.envelopeFrom?.toLowerCase() || "";
-  const at = address.lastIndexOf("@");
-  return at > 0 && at < address.length - 1 ? address.slice(at + 1) : "unknown sender";
+  const address = email.headerFromEmail || email.envelopeFrom || "";
+  return mailboxDomainForDisplay(address) ?? UNKNOWN_SENDER;
 }
 
 function clampToMaxLen(parts: string[], mode: RenderMode): string {

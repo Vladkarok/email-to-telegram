@@ -680,10 +680,46 @@ describe("renderPrivacyAlert", () => {
     ]);
   });
 
-  it("strips directional overrides from the Sender line", async () => {
-    expect(await alertLines("<alice@ali\u202eecilce.example>")).toContain(
-      "Sender: aliecilce.example",
-    );
+  it.each([
+    ["a second at sign", "attacker@evil.com@bank.com"],
+    ["a bracketed second at sign", "<attacker@evil.com@bank.com>"],
+    ["a semicolon in the bracketed domain", "<x@bank.com;evil.com>"],
+    ["a comma in the domain", "<x@bank,com>"],
+    ["a domain that is only U+202E", "<a@\u202e>"],
+    ["an encoded domain that is only U+202E", `${encodedWord("x <a@\u202e>")}`],
+    ["a directional override inside the domain", "<alice@ali\u202eecilce.example>"],
+    ["a zero-width space in the domain", "<a@bank\u200b.com>"],
+    ["an encoded zero-width space in the domain", `${encodedWord("x <a@bank\u200b.com>")}`],
+    ["a zero-width joiner in the domain", "<a@ba\u200dnk.com>"],
+    ["a byte-order mark in the domain", "<a@ba\ufeffnk.com>"],
+    ["full-width letters in the domain", "<a@\uff42\uff41\uff4e\uff4b.com>"],
+    ["an address literal", "<a@[192.0.2.1]>"],
+    ["a single-label domain", "<a@bank>"],
+    ["an unterminated quoted local part", '<"a@bank.com>'],
+  ])("shows unknown sender for an address with %s", async (_label, fromHeader) => {
+    const lines = await alertLines(fromHeader);
+
+    expect(lines).toContain("Sender: unknown sender");
+    expect(lines.join("\n")).not.toMatch(/bank|evil|ecilce|\u202e|\u200b|\u200d|\ufeff/);
+  });
+
+  it("names the first address's domain when a semicolon splits an unbracketed From", async () => {
+    // mailparser reads `x@bank.com;evil.com` as the address x@bank.com and a
+    // second, name-only entry "evil.com".
+    const lines = await alertLines("x@bank.com;evil.com");
+
+    expect(lines).toContain("Sender: bank.com");
+    expect(lines.join("\n")).not.toContain("evil.com");
+  });
+
+  it.each([
+    ["a quoted local part holding an at sign", '"a@b"@bank.com', "bank.com"],
+    ["a named quoted local part holding an at sign", '"Bank" <"a@b"@bank.com>', "bank.com"],
+    ["an escaped quote in the quoted local part", '<"a\\"@"@bank.com>', "bank.com"],
+    ["an IDN domain", "<a@b\u00fccher.example>", "b\u00fccher.example"],
+    ["an uppercase domain", "<A@BANK.COM>", "bank.com"],
+  ])("names the domain of %s", async (_label, fromHeader, domain) => {
+    expect(await alertLines(fromHeader)).toContain(`Sender: ${domain}`);
   });
 
   it.each([
