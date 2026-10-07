@@ -1082,6 +1082,18 @@ describe("retry runs at shutdown", () => {
     return { promise, resolve };
   }
 
+  const pending = (path: string) => ({
+    rawEmailPath: path,
+    localPart: "alerts",
+    recipientDomain: "mail.example.com",
+    envelopeFrom: "sender@example.com",
+    rawEmailEncryptionMode: "none",
+    rawEmailWrappedDek: null,
+    rawEmailKekKeyId: null,
+    correlationId: "req-1",
+    createdAt: "2026-01-01T00:00:00.000Z",
+  });
+
   /** The shutdown wired as src/index.ts wires it, around a retry runner. */
   function processWith(runner: ReturnType<typeof createRetryRunner>, events: string[]) {
     return createShutdown(
@@ -1150,17 +1162,6 @@ describe("retry runs at shutdown", () => {
 
   it("stops pending raw email recovery before the next file", async () => {
     let stop = false;
-    const pending = (path: string) => ({
-      rawEmailPath: path,
-      localPart: "alerts",
-      recipientDomain: "mail.example.com",
-      envelopeFrom: "sender@example.com",
-      rawEmailEncryptionMode: "none",
-      rawEmailWrappedDek: null,
-      rawEmailKekKeyId: null,
-      correlationId: "req-1",
-      createdAt: "2026-01-01T00:00:00.000Z",
-    });
     mockListPendingRawEmails.mockResolvedValue([pending("/raw/a.eml"), pending("/raw/b.eml")]);
     mockQueueInboundEmail.mockImplementation(() => {
       stop = true;
@@ -1175,6 +1176,38 @@ describe("retry runs at shutdown", () => {
 
     expect(mockQueueInboundEmail).toHaveBeenCalledOnce();
     expect(mockDeliverQueuedEmail).toHaveBeenCalledOnce();
+    expect(mockClaimLog).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the delivery-log lookup", () => mockFindDeliveryLogByRawEmailPath],
+    ["the raw email read", () => mockReadRawEmail],
+  ])("queues nothing when shutdown begins during %s", async (_step, stalledMock) => {
+    let stop = false;
+    const gate = deferred();
+    mockListPendingRawEmails.mockResolvedValue([pending("/raw/a.eml")]);
+    mockFindDeliveryLogByRawEmailPath.mockResolvedValue(null);
+    stalledMock().mockImplementation(async () => {
+      await gate.promise;
+      return stalledMock() === mockReadRawEmail ? RAW_EMAIL : null;
+    });
+    mockQueueInboundEmail.mockResolvedValue({
+      queued: true,
+      job: { deliveryLog: { id: "recovered-log" } },
+    });
+
+    const run = runRetryWorker(fakeDb, fakeApi, {
+      rawEmailDir: "/data/rawemails",
+      shouldStop: () => stop,
+    });
+    await vi.waitFor(() => expect(stalledMock()).toHaveBeenCalledOnce());
+    stop = true;
+    gate.resolve();
+    await run;
+
+    expect(mockQueueInboundEmail).not.toHaveBeenCalled();
+    expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
+    expect(mockDeletePendingRawEmailMeta).not.toHaveBeenCalled();
     expect(mockClaimLog).not.toHaveBeenCalled();
   });
 

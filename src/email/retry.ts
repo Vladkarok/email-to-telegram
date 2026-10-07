@@ -102,7 +102,7 @@ export async function runRetryWorker(
     attachmentDir?: string;
     rawEmailDir?: string;
     telegramRichMessagesEnabled?: boolean;
-    /** Checked before each claim and each pending file; true ends the run there. */
+    /** Checked before each claim, each pending file and each queueing; true ends the run there. */
     shouldStop?: () => boolean;
   } = {},
 ): Promise<void> {
@@ -261,6 +261,12 @@ async function recoverPendingRawEmails(
         throw err;
       }
 
+      // The lookup and the read awaited; a shutdown that began meanwhile
+      // must not queue (and charge) new work.
+      if (opts.shouldStop()) {
+        log.info("retry worker: stopping before queueing a pending raw email");
+        return;
+      }
       const queued = await queueInboundEmail(db, {
         rawEmail,
         rawEmailPath: pendingEmail.rawEmailPath,
