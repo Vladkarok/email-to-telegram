@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# on_exit, the probe and their helpers run from traps, which shellcheck does
+# not follow (SC2317).
+# shellcheck disable=SC2317
 # Deploy the app container on this host: pull, migrate first, replace, verify,
 # and roll back to the previous image when the new one is not healthy and
 # ready in time.
@@ -500,12 +503,12 @@ rollback() {
   print_failed_logs
   if [[ -z $previous_image_id ]]; then
     final_message="deploy failed: $first_reason. No previous image (first deploy): not rolled back; the host is left as is."
-    phase=done
+    phase="done"
     return 0
   fi
   if [[ $previous_image_id == "$target_image_id" ]]; then
     final_message="deploy failed: $first_reason. The previous image is the same image ($previous_image_id): not rolled back; the host is left as is."
-    phase=done
+    phase="done"
     return 0
   fi
   # docker-compose.yml is still the one the previous release ran with.
@@ -520,7 +523,7 @@ rollback() {
     print_failed_logs
     final_message="rollback failed: $fail_reason. The deploy failed first: $first_reason. The host is left as is."
   fi
-  phase=done
+  phase="done"
 }
 
 # --------------------------------------------------------------- lifecycle
@@ -838,7 +841,7 @@ trap - ERR
 set +e
 if replace_and_verify "$IMAGE_TAG" deploy "$target_image_id" --remove-orphans; then
   deploy_healthy=$(secs "$healthy_ms")
-  phase=done
+  phase="done"
   final_message="deployed $IMAGE_REPO:$IMAGE_TAG ($target_image_id)"
   if [[ -n $candidate ]]; then
     # Verified: the candidate now describes what runs.
