@@ -6,6 +6,14 @@
 # METRICS_BEARER_TOKEN_STAGING / METRICS_BEARER_TOKEN_PROD env vars.
 #
 # Each file must contain only the raw bearer token, no trailing newline.
+#
+# The node and postgres jobs scrape the host agent on both VMs
+# (monitoring/agent/) over TLS with basic auth. The CA is the repo's
+# monitoring/tls/ca.crt. The deploy renders `prometheus-a` below into the
+# active EXPORTER_BASIC_AUTH_USER and writes that user's password to
+# ./secrets/prometheus/<user> on the host (uid 65534, 0400). Username and
+# password file change together on the config reload, so a credential
+# rotation never pairs one user with the other's password.
 
 global:
   scrape_interval: 30s
@@ -40,3 +48,35 @@ scrape_configs:
       - targets: ["10.0.88.2:3000"]
         labels:
           env: prod
+
+  - job_name: node
+    scheme: https
+    scrape_interval: 30s
+    tls_config:
+      ca_file: /etc/monitoring-tls/ca.crt
+    basic_auth:
+      username: prometheus-a
+      password_file: /etc/prometheus-secrets/prometheus-a
+    static_configs:
+      - targets: ["10.0.88.2:9100"]
+        labels:
+          env: prod
+      - targets: ["10.0.88.3:9100"]
+        labels:
+          env: staging
+
+  - job_name: postgres
+    scheme: https
+    scrape_interval: 30s
+    tls_config:
+      ca_file: /etc/monitoring-tls/ca.crt
+    basic_auth:
+      username: prometheus-a
+      password_file: /etc/prometheus-secrets/prometheus-a
+    static_configs:
+      - targets: ["10.0.88.2:9187"]
+        labels:
+          env: prod
+      - targets: ["10.0.88.3:9187"]
+        labels:
+          env: staging

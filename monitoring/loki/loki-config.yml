@@ -5,7 +5,11 @@ auth_enabled: false
 server:
   http_listen_port: 3100
   grpc_listen_port: 9096
-  log_level: info
+  # warn, not info: at info Loki logs every query's LogQL text, so a search or
+  # an erasure delete request for an identifier would leave that identifier in
+  # Loki's own container log. Errors and warnings still show; compactor and
+  # retention progress is read from the metrics (docs/operations/monitoring.md).
+  log_level: warn
 
 common:
   path_prefix: /loki

@@ -61,6 +61,10 @@ if [[ ! -s "$config_dir/restic-password" ]]; then
     new_password=true
 fi
 
+# node_exporter's textfile collector (monitoring host agent) reads the backup
+# freshness metric from here.
+install -d -o root -g root -m 0755 /var/lib/node_exporter /var/lib/node_exporter/textfile
+
 install -m 0755 "$here/etg-r2-backup" /usr/local/sbin/etg-r2-backup
 install -m 0644 "$here/etg-r2-backup.service" /etc/systemd/system/etg-r2-backup.service
 install -m 0644 "$here/etg-r2-backup.timer" /etc/systemd/system/etg-r2-backup.timer

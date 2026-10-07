@@ -5,7 +5,7 @@
   "tags": ["email-to-telegram", "operations"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 4,
+  "version": 5,
   "graphTooltip": 1,
   "refresh": "1m",
   "time": {
@@ -2320,7 +2320,7 @@
     {
       "type": "row",
       "id": 28,
-      "title": "Logs (prod logs not shipped to Loki yet)",
+      "title": "Logs",
       "collapsed": true,
       "gridPos": {
         "h": 1,
@@ -2330,10 +2330,74 @@
       },
       "panels": [
         {
+          "id": 44,
+          "type": "stat",
+          "title": "Prod app lines (15 min)",
+          "description": "Lines from the prod app container that reached Loki in the last 15 minutes, whatever Env is set to. 0 while prod is handling mail means prod logs are not arriving: the prod log collector is down, the push gateway refuses it, or prod runs a release from before the app's logging labels. A quiet app can also log nothing for 15 minutes.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 1
+                  }
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": ["lastNotNull"],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "auto",
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "sum(count_over_time({env=\"prod\", compose_project=\"email-to-telegram\", service=\"app\"}[15m])) or vector(0)",
+              "queryType": "instant",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "gridPos": {
+            "h": 8,
+            "w": 4,
+            "x": 0,
+            "y": 63
+          }
+        },
+        {
           "id": 29,
           "type": "logs",
           "title": "App error logs",
-          "description": "Pino error and fatal lines from the app container of the selected env (Loki). Only staging ships logs today; prod stays empty until promtail runs there. Bad: anything here.",
+          "description": "Pino error and fatal lines from the app container of the selected env (Loki). Both environments ship the app container only: staging through its local collector, prod through the push gateway. Bad: anything here.",
           "datasource": {
             "type": "loki",
             "uid": "loki"
@@ -2360,8 +2424,8 @@
           ],
           "gridPos": {
             "h": 8,
-            "w": 24,
-            "x": 0,
+            "w": 20,
+            "x": 4,
             "y": 63
           }
         }
@@ -2370,7 +2434,7 @@
     {
       "type": "row",
       "id": 30,
-      "title": "Host & database (needs node_exporter and postgres_exporter)",
+      "title": "Host & database",
       "collapsed": true,
       "gridPos": {
         "h": 1,

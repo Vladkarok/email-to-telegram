@@ -1,15 +1,21 @@
 # Monitoring stack for the email-to-telegram staging VM.
-# Grafana is the only service published to the host, and only on the private
-# bind IP. All other services live on the internal docker network.
+# Two services are published to the host, each on a private bind IP only:
+# Grafana (VPN access) and loki-gateway (the TLS + basic auth push endpoint
+# for the prod log collector). Everything else stays on the docker networks.
 #
 # Required environment variables (see .env.example):
-#   MONITORING_BIND_IP          - private interface IP for Grafana publish
-#   GRAFANA_ADMIN_PASSWORD      - initial Grafana admin password
-#   METRICS_BEARER_TOKEN_STAGING - token to scrape the staging app /metrics
-#   METRICS_BEARER_TOKEN_PROD    - token to scrape the prod app /metrics
+#   MONITORING_BIND_IP     - private interface IP for Grafana publish
+#   LOKI_PUSH_BIND_IP      - this VM's 10.0.88.x address, for the push gateway
+#   GRAFANA_ADMIN_PASSWORD - initial Grafana admin password
+#   GRAFANA_ROOT_URL       - URL operators use to reach Grafana
 #
-# Secret files for Prometheus bearer auth are written by the deploy workflow
-# into ./prometheus/secrets/{staging_token,prod_token} on the host.
+# Files the deploy workflow writes on the host (never in the repo):
+#   ./prometheus/secrets/{staging_token,prod_token} - app /metrics bearer tokens
+#   ./secrets/prometheus/   - exporter basic-auth password, file named after the user (uid 65534)
+#   ./secrets/loki-gateway/ - gateway TLS key and certificate, htpasswd (uid 101)
+#
+# Config is mounted as directories, not single files, so a file the deploy
+# replaces is visible inside the running container.
 
 services:
   prometheus:
@@ -22,8 +28,9 @@ services:
       - --web.listen-address=0.0.0.0:9090
       - --web.enable-lifecycle
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./prometheus/secrets:/etc/prometheus/secrets:ro
+      - ./prometheus:/etc/prometheus:ro
+      - ./tls:/etc/monitoring-tls:ro
+      - ./secrets/prometheus:/etc/prometheus-secrets:ro
       - prometheus_data:/prometheus
     networks:
       - monitoring_internal
@@ -105,7 +112,7 @@ services:
       loki_init:
         condition: service_completed_successfully
     volumes:
-      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - ./loki:/etc/loki:ro
       - loki_data:/loki
     networks:
       - monitoring_internal
@@ -125,6 +132,46 @@ services:
       driver: json-file
       options:
         max-size: "50m"
+        max-file: "3"
+
+  # TLS push endpoint for the prod log collector (prod Promtail): POST to
+  # /loki/api/v1/push with basic auth, nothing else. Request bodies are
+  # streamed to Loki, not buffered to disk.
+  loki-gateway:
+    image: nginx:1.30.5-alpine
+    restart: unless-stopped
+    user: "101:101"
+    entrypoint: ["nginx", "-c", "/etc/loki-gateway/nginx.conf", "-g", "daemon off;"]
+    depends_on:
+      loki:
+        condition: service_healthy
+    volumes:
+      - ./loki-gateway:/etc/loki-gateway:ro
+      - ./secrets/loki-gateway:/etc/loki-gateway-secrets:ro
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    networks:
+      - monitoring_internal
+    ports:
+      - "${LOKI_PUSH_BIND_IP:?LOKI_PUSH_BIND_IP must be set to this VM's 10.0.88.x address}:3101:3101"
+    mem_limit: 32m
+    cpus: 0.25
+    pids_limit: 32
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
         max-file: "3"
 
   # Restricted Docker API proxy. Promtail needs container metadata for
@@ -196,7 +243,7 @@ services:
         condition: service_healthy
     command: -config.file=/etc/promtail/promtail-config.yml
     volumes:
-      - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - ./promtail:/etc/promtail:ro
       # Read-only container log directory for filesystem tailing of JSON logs.
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       # Persistent positions file so Promtail resumes tailing from the
