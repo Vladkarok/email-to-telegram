@@ -47,15 +47,35 @@ name_of() {
     cccccccccccc*) echo prev ;;
   esac
 }
+# What the app prints: configuration from .env, a raw fatal error, JSON errors.
+app_output() {
+  echo '{"level":30,"msg":"plan limits","PLAN_LIMIT_OVERRIDES":"plan-secret-value"}'
+  echo 'Fatal error during startup: TELEGRAM_BOT_TOKEN=raw-secret-value'
+  echo '{"level":50,"time":1,"msg":"'"$1"'","err":{"type":"Error","message":"pw=err-secret-value","code":"42P01"}}'
+}
 current=$(cat "$d/current" 2>/dev/null)
 
 if [[ $1 == compose ]]; then
   shift
-  while [[ $1 == --env-file ]]; do shift 2; done
+  files=""
+  while [[ $1 == --env-file || $1 == -f ]]; do
+    [[ $1 != -f ]] || files+=" $2"
+    shift 2
+  done
   sub=$1
   shift
   case $sub in
+    config)
+      if [[ $files == *docker-compose.previous.yml* ]]; then mode=${"$"}{STUB_PREV_CONFIG:-ok}; else mode=${"$"}{STUB_CONFIG:-ok}; fi
+      [[ $mode == ok ]] || { echo "failed to read .env: line 2: TELEGRAM_BOT_TOKEN=123456:do-not-print-me" >&2; exit 15; }
+      exit 0
+      ;;
     ps)
+      [[ -z ${"$"}{STUB_PS_WARN:-} ]] || echo 'WARN[0000] The "FOO" variable is not set. Defaulting to a blank string.' >&2
+      case ${"$"}{STUB_PS_HANG:-} in
+        all) exec sleep 30 ;;
+        after-up) [[ $current != new ]] || exec sleep 30 ;;
+      esac
       if [[ " $* " != *" -a "* && $current == new && -n ${"$"}{STUB_PS_EMPTY:-} ]]; then exit 0; fi
       [[ -z $current ]] || cid_of "$current"
       exit 0
@@ -67,13 +87,22 @@ if [[ $1 == compose ]]; then
     run)
       [[ -z ${"$"}{STUB_MIGRATE_SLEEP:-} ]] || sleep "$STUB_MIGRATE_SLEEP"
       case ${"$"}{STUB_MIGRATE:-ok} in
-        fail) echo "migration error" >&2; exit 3 ;;
+        fail) app_output "migration failed"; exit 3 ;;
         hang) exec sleep 30 ;;
       esac
-      echo "migrations applied"
+      echo '{"level":30,"msg":"plan limits","PLAN_LIMIT_OVERRIDES":"plan-secret-value"}'
+      echo '{"level":30,"msg":"Migrations complete."}'
       exit 0
       ;;
     up)
+      if [[ ${"$"}{!#} == postgres ]]; then
+        case ${"$"}{STUB_DB_UP:-ok} in
+          fail) echo "dependency failed to start" >&2; exit 1 ;;
+          hang) exec sleep 30 ;;
+        esac
+        exit 0
+      fi
+      echo "${"$"}{HOST_BIND_IP:-}" >"$d/up-bind-ip"
       if [[ $IMAGE_TAG == deploy-previous ]]; then
         mode=${"$"}{STUB_ROLLBACK_UP:-ok}; target=prev
       else
@@ -107,9 +136,18 @@ case $1 in
       exit 0
     fi
     case $name in
-      new) seq=${"$"}{STUB_NEW_HEALTH:-starting:running:0,healthy:running:0}; probe=${"$"}{STUB_NEW_PROBE:-up} ;;
-      prev) seq=${"$"}{STUB_PREV_HEALTH:-healthy:running:0}; probe=up ;;
-      old) seq=healthy:${"$"}{STUB_OLD_STATE:-running}:${"$"}{STUB_OLD_RESTARTS:-0}; probe=up ;;
+      new)
+        seq=${"$"}{STUB_NEW_HEALTH:-starting:running:0,healthy:running:0}; probe=${"$"}{STUB_NEW_PROBE:-up}
+        image=${"$"}{STUB_NEW_CONTAINER_IMAGE:-${"$"}{STUB_TARGET_IMAGE:-$NEW_IMAGE}}
+        ;;
+      prev)
+        seq=${"$"}{STUB_PREV_HEALTH:-healthy:running:0}; probe=up
+        image=${"$"}{STUB_PREV_CONTAINER_IMAGE:-$STUB_OLD_IMAGE}
+        ;;
+      old)
+        seq=healthy:${"$"}{STUB_OLD_STATE:-running}:${"$"}{STUB_OLD_RESTARTS:-0}; probe=up
+        image=$STUB_OLD_IMAGE
+        ;;
       *) echo "Error: No such object: $4" >&2; exit 1 ;;
     esac
     n=$(cat "$d/inspect-$name" 2>/dev/null || echo 0)
@@ -118,20 +156,34 @@ case $1 in
     ((n < ${"$"}{#tokens[@]})) || n=$((${"$"}{#tokens[@]} - 1))
     token=${"$"}{tokens[$n]}
     if [[ $token == error ]]; then echo "Error: No such object: $4" >&2; exit 1; fi
+    [[ $token != hang ]] || exec sleep 30
+    # health:state:restarts[@seconds to wait before answering]
+    delay=""
+    if [[ $token == *@* ]]; then delay=${"$"}{token#*@}; token=${"$"}{token%@*}; fi
     IFS=: read -r health state restarts <<<"$token"
     if [[ $health == healthy && $probe == up ]]; then echo 200 >"$d/http"; fi
-    echo "$health $state $restarts"
+    [[ -z $delay ]] || sleep "$delay"
+    echo "$health $state $restarts $image"
     ;;
   image)
-    if [[ $5 == *:deploy-previous ]]; then echo "$STUB_OLD_IMAGE"; else echo "${"$"}{STUB_TARGET_IMAGE:-$NEW_IMAGE}"; fi
+    if [[ $5 == *:deploy-previous ]]; then echo "$STUB_OLD_IMAGE"; exit 0; fi
+    n=$(cat "$d/image-inspect" 2>/dev/null || echo 0)
+    echo $((n + 1)) >"$d/image-inspect"
+    # STUB_TAG_MOVES: another pull moved the tag after the deploy's own.
+    if [[ -n ${"$"}{STUB_TAG_MOVES:-} ]] && ((n >= 1)); then echo "$STUB_TAG_MOVES"; exit 0; fi
+    echo "${"$"}{STUB_TARGET_IMAGE:-$NEW_IMAGE}"
     ;;
   container)
     if [[ -n ${"$"}{STUB_MIGRATE_LEFTOVER:-} ]]; then echo "[{}]"; exit 0; fi
     echo "Error: No such container: $3" >&2
     exit 1
     ;;
-  tag | rm) ;;
-  logs) echo "app log line from $(name_of "$4")" ;;
+  tag) ;;
+  rm) [[ ${"$"}{STUB_RM:-ok} != hang ]] || exec sleep 30 ;;
+  logs)
+    [[ ${"$"}{STUB_LOGS:-ok} != hang ]] || exec sleep 30
+    app_output "app error from $(name_of "$4")"
+    ;;
   *) echo "unexpected docker call: $1" >&2; exit 99 ;;
 esac
 `;
@@ -232,13 +284,49 @@ function survivors(): string[] {
   return found;
 }
 
+// App replacements and rollbacks: compose up calls other than the database's.
 function upCalls(run: Run): string[] {
-  return run.calls.filter((call) => / docker compose --env-file \.env up /.test(call));
+  return run.calls.filter(
+    (call) =>
+      / docker compose (-f \S+ )*--env-file \.env up /.test(call) && !call.endsWith(" postgres"),
+  );
 }
 
-const ROLLBACK_UP = "IMAGE_TAG=deploy-previous docker compose --env-file .env up -d --no-build";
+const DEPLOY_UP =
+  "IMAGE_TAG=v1.1.0 docker compose --env-file .env up -d --remove-orphans --no-build --pull never";
+const ROLLBACK_UP =
+  "IMAGE_TAG=deploy-previous docker compose --env-file .env up -d --no-build --pull never";
+const DB_UP = "IMAGE_TAG=v1.1.0 docker compose --env-file .env up -d --wait --no-recreate postgres";
 const MIGRATE_RUN =
-  "docker compose --env-file .env run --rm --no-deps -T --name etg-migrate app node dist/index.js --migrate-only";
+  "docker compose --env-file .env run --rm --no-deps --pull never -T --name etg-migrate app node dist/index.js --migrate-only";
+const SECRETS = [
+  "do-not-print-me",
+  "also-secret",
+  "plan-secret-value",
+  "raw-secret-value",
+  "err-secret-value",
+];
+
+function expectNoSecrets(text: string): void {
+  for (const secret of SECRETS) expect(text).not.toContain(secret);
+}
+
+// The host-local copies in deploy-logs/: the run log and kept outputs.
+function hostLogs(): Record<string, string> {
+  const dir = join(appDir, "deploy-logs");
+  if (!existsSync(dir)) return {};
+  return Object.fromEntries(
+    readdirSync(dir).map((name) => [name, readFileSync(join(dir, name), "utf-8")]),
+  );
+}
+
+function runLog(): string {
+  const entries = Object.entries(hostLogs()).filter(([name]) =>
+    /^\d{8}T\d{6}Z-\d+\.log$/.test(name),
+  );
+  expect(entries).toHaveLength(1);
+  return entries[0][1];
+}
 
 function expectRolledBack(run: Run): void {
   expect(run.status).toBe(1);
@@ -298,26 +386,31 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
       expect(run.out).toContain("tooling commit abc1234, target " + `${REPO}:v1.1.0`);
       expect(run.out).toContain(`image ${OLD_IMAGE}, state running, restarts 0`);
       const migrate = run.calls.findIndex((call) => call.endsWith(MIGRATE_RUN));
-      const up = run.calls.indexOf(
-        "IMAGE_TAG=v1.1.0 docker compose --env-file .env up -d --remove-orphans --no-build",
-      );
-      expect(migrate).toBeGreaterThan(-1);
+      const db = run.calls.indexOf(DB_UP);
+      const up = run.calls.indexOf(DEPLOY_UP);
+      expect(db).toBeGreaterThan(-1);
+      expect(migrate).toBeGreaterThan(db);
       expect(up).toBeGreaterThan(migrate);
+      expect(run.calls).toContain("IMAGE_TAG=v1.1.0 docker compose --env-file .env config -q");
       expect(run.calls).not.toContain(ROLLBACK_UP);
       expect(readFileSync(join(stubDir, "curl-url"), "utf-8").trim()).toBe(
         "http://10.0.88.2:3000/readyz",
       );
-      expect(run.out).toMatch(/migration done in \d+\.\d s/);
+      expect(run.out).toMatch(/migration exited 0 after \d+\.\d s/);
       expect(run.out).toMatch(/migration: done in \d+\.\d s/);
       expect(run.out).toMatch(/time to healthy: \d+\.\d s after replacement started/);
       expect(downLines(run)).toHaveLength(1);
       expect(run.out).toMatch(/total down: \d+\.\d s in 1 interval/);
       expect(run.out).not.toContain("not recovered");
       expect(lastLine(run)).toBe(`deployed ${REPO}:v1.1.0 (${NEW_IMAGE})`);
-      // Nothing from .env but HOST_BIND_IP, and the work directory is gone.
-      expect(run.out).not.toContain("do-not-print-me");
-      expect(run.out).not.toContain("also-secret");
+      // Nothing from .env but HOST_BIND_IP, no app output, and the work
+      // directory is gone.
+      expectNoSecrets(run.out);
+      expect(run.out).not.toContain("Migrations complete.");
       expect(readdirSync(root).filter((name) => name.startsWith("etg-deploy."))).toEqual([]);
+      // The host keeps the same output.
+      expect(runLog()).toContain(`deployed ${REPO}:v1.1.0 (${NEW_IMAGE})`);
+      expect(run.out).toContain(`full log on the host: ${join(appDir, "deploy-logs")}/`);
     },
     TEST_TIMEOUT_MS,
   );
@@ -334,6 +427,16 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
       expect(run.out).toContain("---- availability report");
       expect(lastLine(run)).toBe(
         "migration failed (exit 3). Nothing was replaced; the running app keeps serving.",
+      );
+      // Only the error line's msg and code reach the job log; the full
+      // output stays on the host.
+      expect(run.out).toContain("level 50: migration failed (code 42P01)");
+      expectNoSecrets(run.out);
+      expectNoSecrets(runLog());
+      const kept = Object.entries(hostLogs()).find(([name]) => name.endsWith(".migrate.log"));
+      expect(kept?.[1]).toContain("raw-secret-value");
+      expect(run.out).toContain(
+        `full output on the host: ${join(appDir, "deploy-logs", kept?.[0] ?? "")}`,
       );
     },
     TEST_TIMEOUT_MS,
@@ -428,7 +531,9 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
       expect(run.out).toContain(`deploy failed: ${reason}`);
       // The stub's failed compose up leaves no container to read logs from.
       if (!("STUB_UP" in extra)) {
-        expect(run.out).toContain("---- last 200 log lines of the app container bbbbbbbbbbbb");
+        expect(run.out).toContain("---- app container bbbbbbbbbbbb");
+        expect(run.out).toContain("level 50: app error from new (code 42P01)");
+        expectNoSecrets(run.out);
       }
       expect(run.out).not.toContain("not recovered");
     },
@@ -569,6 +674,450 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
       expect(run.status).toBe(1);
       expect(run.out).toContain("ERROR: HOST_BIND_IP in .env is missing or not an IP address");
       expect(run.calls).toEqual([]);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  describe("bounded Docker calls", () => {
+    it(
+      "fails before changing anything when compose ps hangs",
+      () => {
+        const run = deploy({ STUB_PS_HANG: "all", ETG_DEPLOY_CALL_TIMEOUT: "1" });
+
+        expect(run.status).toBe(1);
+        expect(lastLine(run)).toBe("ERROR: docker compose ps failed or timed out; nothing changed");
+        expect(run.calls.some((call) => / docker compose --env-file \.env pull /.test(call))).toBe(
+          false,
+        );
+      },
+      TEST_TIMEOUT_MS,
+    );
+
+    it(
+      "rolls back when compose ps hangs after compose up",
+      () => {
+        const run = deploy({ STUB_PS_HANG: "after-up", ETG_DEPLOY_CALL_TIMEOUT: "1" });
+
+        expectRolledBack(run);
+        expect(run.out).toContain("deploy failed: compose ps timed out after 1s");
+      },
+      TEST_TIMEOUT_MS,
+    );
+
+    it(
+      "rolls back when docker inspect hangs, bounded by the health stage",
+      () => {
+        const run = deploy({ STUB_NEW_HEALTH: "starting:running:0,hang" });
+
+        expectRolledBack(run);
+        expect(run.out).toMatch(/deploy failed: docker inspect timed out after [12]s/);
+      },
+      TEST_TIMEOUT_MS,
+    );
+
+    it(
+      "does not count a healthy answer that arrives after the health deadline",
+      () => {
+        const run = deploy({
+          ETG_DEPLOY_HEALTH_TIMEOUT: "1",
+          STUB_NEW_HEALTH: "starting:running:0@0.5,healthy:running:0@0.9",
+        });
+
+        expect(run.status).toBe(1);
+        expect(run.out).toContain(
+          "deploy failed: not healthy and ready within 1s (Docker: healthy",
+        );
+        expect(run.out).toContain("time to healthy: never healthy");
+      },
+      TEST_TIMEOUT_MS,
+    );
+
+    it(
+      "rolls back even when docker logs hangs",
+      () => {
+        const run = deploy({
+          STUB_NEW_HEALTH: "unhealthy:running:0",
+          STUB_LOGS: "hang",
+          ETG_DEPLOY_CALL_TIMEOUT: "1",
+        });
+
+        expectRolledBack(run);
+        expect(run.out).toContain("did not answer within 1s; skipped");
+      },
+      TEST_TIMEOUT_MS,
+    );
+
+    it(
+      "finishes when removing a timed-out migrate container hangs",
+      () => {
+        const run = deploy({
+          STUB_MIGRATE: "hang",
+          STUB_RM: "hang",
+          ETG_DEPLOY_CALL_TIMEOUT: "1",
+        });
+
+        expect(run.status).toBe(1);
+        expect(run.calls).toContain("IMAGE_TAG=v1.1.0 docker rm -f etg-migrate");
+        expect(lastLine(run)).toBe(
+          "migration outcome unknown: it may have committed. Nothing was replaced; the running app keeps serving.",
+        );
+      },
+      TEST_TIMEOUT_MS,
+    );
+  });
+
+  describe("unexpected exit and a lost session", () => {
+    it(
+      "rolls back after an unexpected exit during the replace stage",
+      () => {
+        // The first health-loop sleep of the replace stage exits the script.
+        const hook = join(root, "bash-env");
+        writeFileSync(
+          hook,
+          'sleep() { if [[ ${phase:-} == replace ]]; then exit 7; fi; command sleep "$@"; }\n',
+        );
+        const run = deploy({ BASH_ENV: hook });
+
+        expectRolledBack(run);
+        expect(run.out).toContain(
+          "deploy failed: unexpected exit (status 7) during the replace stage",
+        );
+        expect(run.out).toMatch(/time to healthy \(rollback\): \d+\.\d s/);
+      },
+      TEST_TIMEOUT_MS,
+    );
+
+    it(
+      "deploys and keeps the report on the host when the job's stdout is closed",
+      async () => {
+        const child = spawn("bash", [join(appDir, "deploy-app.sh")], {
+          env: scriptEnv({}),
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        child.stdout.destroy();
+        let err = "";
+        child.stderr.setEncoding("utf-8").on("data", (chunk: string) => (err += chunk));
+        const code = await new Promise<number | null>((resolveExit) => {
+          child.on("close", (status) => resolveExit(status));
+        });
+
+        expect(code).toBe(0);
+        expect(err).toBe("");
+        const log = runLog();
+        expect(log).toContain("---- availability report");
+        expect(log.trim().split("\n").at(-1)).toBe(`deployed ${REPO}:v1.1.0 (${NEW_IMAGE})`);
+      },
+      TEST_TIMEOUT_MS,
+    );
+
+    it(
+      "keeps only the newest host logs",
+      () => {
+        const dir = join(appDir, "deploy-logs");
+        mkdirSync(dir);
+        for (let i = 0; i < 40; i++) {
+          writeFileSync(join(dir, `20200101T0000${String(i).padStart(2, "0")}Z-1.log`), "old\n");
+        }
+        const run = deploy();
+
+        expect(run.status).toBe(0);
+        const names = Object.keys(hostLogs()).sort();
+        expect(names).toHaveLength(30);
+        expect(names.at(-1)).toMatch(/^\d{8}T\d{6}Z-\d+\.log$/);
+        expect(names[0]).toBe("20200101T000011Z-1.log");
+      },
+      TEST_TIMEOUT_MS,
+    );
+  });
+
+  describe("the image that runs", () => {
+    it(
+      "never lets compose run or up pull",
+      () => {
+        const run = deploy();
+
+        expect(run.calls.some((call) => call.endsWith(MIGRATE_RUN))).toBe(true);
+        expect(run.calls).toContain(DEPLOY_UP);
+      },
+      TEST_TIMEOUT_MS,
+    );
+
+    it(
+      "replaces nothing when the tag moved after the pull",
+      () => {
+        const moved = "sha256:c0ffee0000000000000000000000000000000000000000000000000000000000";
+        const run = deploy({ STUB_TAG_MOVES: moved });
+
+        expect(run.status).toBe(1);
+        expect(run.calls.some((call) => call.endsWith(MIGRATE_RUN))).toBe(false);
+        expect(upCalls(run)).toEqual([]);
+        expect(lastLine(run)).toBe(
+          `ERROR: ${REPO}:v1.1.0 now names ${moved}, not the pulled ${NEW_IMAGE}; nothing was replaced`,
+        );
+      },
+      TEST_TIMEOUT_MS,
+    );
+
+    it(
+      "rolls back when the new container runs another image than the one pulled",
+      () => {
+        const other = "sha256:0e1e000000000000000000000000000000000000000000000000000000000000";
+        const run = deploy({ STUB_NEW_CONTAINER_IMAGE: other });
+
+        expectRolledBack(run);
+        expect(run.out).toContain(
+          `deploy failed: the app container runs image ${other}, not ${NEW_IMAGE}`,
+        );
+      },
+      TEST_TIMEOUT_MS,
+    );
+
+    it(
+      "fails the rollback when the rolled-back container runs another image",
+      () => {
+        const other = "sha256:0e1e000000000000000000000000000000000000000000000000000000000000";
+        const run = deploy({ STUB_UP: "fail", STUB_PREV_CONTAINER_IMAGE: other });
+
+        expect(run.status).toBe(1);
+        expect(run.out).toContain(
+          `rollback failed: the app container runs image ${other}, not ${OLD_IMAGE}`,
+        );
+      },
+      TEST_TIMEOUT_MS,
+    );
+  });
+
+  describe("HOST_BIND_IP", () => {
+    it(
+      "refuses a shell value that differs from .env",
+      () => {
+        const run = deploy({ HOST_BIND_IP: "10.0.99.9" });
+
+        expect(run.status).toBe(1);
+        expect(lastLine(run)).toBe(
+          "ERROR: HOST_BIND_IP in the environment differs from the one in .env; unset it or make them agree",
+        );
+        expect(run.calls).toEqual([]);
+      },
+      TEST_TIMEOUT_MS,
+    );
+
+    it(
+      "gives Compose the value the probe uses",
+      () => {
+        const run = deploy({ HOST_BIND_IP: "10.0.88.2" });
+
+        expect(run.status).toBe(0);
+        expect(readFileSync(join(stubDir, "up-bind-ip"), "utf-8").trim()).toBe("10.0.88.2");
+      },
+      TEST_TIMEOUT_MS,
+    );
+
+    it(
+      "exports the .env value when the shell has none",
+      () => {
+        const run = deploy();
+
+        expect(run.status).toBe(0);
+        expect(readFileSync(join(stubDir, "up-bind-ip"), "utf-8").trim()).toBe("10.0.88.2");
+      },
+      TEST_TIMEOUT_MS,
+    );
+  });
+
+  it(
+    "hides compose output when it cannot read .env, before any other compose call",
+    () => {
+      const run = deploy({ STUB_CONFIG: "fail" });
+
+      expect(run.status).toBe(1);
+      expect(run.calls).toEqual(["IMAGE_TAG=v1.1.0 docker compose --env-file .env config -q"]);
+      expect(lastLine(run)).toContain(
+        "ERROR: docker compose cannot read docker-compose.yml with .env",
+      );
+      expectNoSecrets(run.out);
+      expectNoSecrets(runLog());
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "ignores a Compose warning in the ps output",
+    () => {
+      const run = deploy({ STUB_PS_WARN: "1" });
+
+      expect(run.status).toBe(0);
+      expect(run.out).toContain("running app container aaaaaaaaaaaa");
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  describe("the database before the migration", () => {
+    it(
+      "replaces nothing when the database does not start",
+      () => {
+        const run = deploy({ STUB_DB_UP: "fail" });
+
+        expect(run.status).toBe(1);
+        expect(run.calls.some((call) => call.endsWith(MIGRATE_RUN))).toBe(false);
+        expect(upCalls(run)).toEqual([]);
+        expect(run.out).toContain("migration: not run: the database did not start");
+        expect(lastLine(run)).toBe(
+          "the database did not start (exit 1). Nothing was replaced; the running app keeps serving.",
+        );
+      },
+      TEST_TIMEOUT_MS,
+    );
+
+    it(
+      "counts the database wait in the migrate bound",
+      () => {
+        const run = deploy({ STUB_DB_UP: "hang" });
+
+        expect(run.status).toBe(1);
+        expect(run.calls.some((call) => call.endsWith(MIGRATE_RUN))).toBe(false);
+        expect(lastLine(run)).toBe(
+          "the database was not healthy within 1s. Nothing was replaced; the running app keeps serving.",
+        );
+      },
+      TEST_TIMEOUT_MS,
+    );
+
+    it(
+      "does not claim a running app when there is none",
+      () => {
+        setState({ oldApp: false });
+        const run = deploy({ STUB_MIGRATE: "fail" });
+
+        expect(lastLine(run)).toBe(
+          "migration failed (exit 3). Nothing was replaced; no app was running before this deploy.",
+        );
+      },
+      TEST_TIMEOUT_MS,
+    );
+  });
+
+  describe("the previous compose file", () => {
+    const PREVIOUS = "services: {} # previous\n";
+
+    it(
+      "rolls back with docker-compose.previous.yml and restores it",
+      () => {
+        writeFileSync(join(appDir, "docker-compose.previous.yml"), PREVIOUS);
+        const run = deploy({ STUB_UP: "fail" });
+
+        expect(run.status).toBe(1);
+        expect(run.calls).toContain(
+          "IMAGE_TAG=deploy-previous docker compose -f docker-compose.previous.yml --env-file .env up -d --no-build --pull never",
+        );
+        expect(run.out).toContain(`rollback: image ${OLD_IMAGE} with docker-compose.previous.yml`);
+        expect(lastLine(run)).toBe(
+          `deploy failed: compose up failed (exit 1). Rolled back to ${OLD_IMAGE}. docker-compose.yml restored from docker-compose.previous.yml.`,
+        );
+        expect(readFileSync(join(appDir, "docker-compose.yml"), "utf-8")).toBe(PREVIOUS);
+      },
+      TEST_TIMEOUT_MS,
+    );
+
+    it(
+      "rolls back with the new compose file when there is no previous one",
+      () => {
+        const run = deploy({ STUB_UP: "fail" });
+
+        expectRolledBack(run);
+        expect(run.out).toContain(
+          `rollback: image ${OLD_IMAGE} with the new docker-compose.yml (no docker-compose.previous.yml)`,
+        );
+        expect(readFileSync(join(appDir, "docker-compose.yml"), "utf-8")).toBe("services: {}\n");
+      },
+      TEST_TIMEOUT_MS,
+    );
+
+    it(
+      "does not use a previous compose file that does not parse",
+      () => {
+        writeFileSync(join(appDir, "docker-compose.previous.yml"), PREVIOUS);
+        const run = deploy({ STUB_UP: "fail", STUB_PREV_CONFIG: "fail" });
+
+        expectRolledBack(run);
+        expect(run.out).toContain("(docker-compose.previous.yml does not parse)");
+        expectNoSecrets(run.out);
+        expect(readFileSync(join(appDir, "docker-compose.yml"), "utf-8")).toBe("services: {}\n");
+      },
+      TEST_TIMEOUT_MS,
+    );
+  });
+
+  it(
+    "prints the report after a Ctrl-C that reaches the whole process group",
+    async () => {
+      const child = spawn("bash", [join(appDir, "deploy-app.sh")], {
+        env: scriptEnv({ STUB_NEW_HEALTH: "starting:running:0", ETG_DEPLOY_HEALTH_TIMEOUT: "20" }),
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: true,
+      });
+      const pid = child.pid ?? 0;
+      let out = "";
+      child.stdout.setEncoding("utf-8").on("data", (chunk: string) => (out += chunk));
+      child.stderr.setEncoding("utf-8").on("data", (chunk: string) => (out += chunk));
+      const exit = new Promise<number | null>((resolveExit) => {
+        child.on("close", (code) => resolveExit(code));
+      });
+      try {
+        const deadline = Date.now() + 10_000;
+        while (!calls().some((call) => call.includes("docker inspect --format {{if"))) {
+          if (Date.now() > deadline) throw new Error(`the health wait never started: ${out}`);
+          await new Promise((resolveSleep) => setTimeout(resolveSleep, 20));
+        }
+        process.kill(-pid, "SIGINT");
+        expect(await exit).toBe(130);
+        expect(out).toContain("---- availability report");
+        expect(out).toContain("interrupted by SIGINT during the replace stage");
+        expect(runLog()).toContain("interrupted by SIGINT during the replace stage");
+      } finally {
+        if (child.exitCode === null) {
+          process.kill(-pid, "SIGKILL");
+          await exit;
+        }
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "says the migration outcome is unknown after a signal during the migration",
+    async () => {
+      const child = spawn("bash", [join(appDir, "deploy-app.sh")], {
+        env: scriptEnv({ STUB_MIGRATE_SLEEP: "1", ETG_DEPLOY_MIGRATE_TIMEOUT: "10" }),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let out = "";
+      child.stdout.setEncoding("utf-8").on("data", (chunk: string) => (out += chunk));
+      child.stderr.setEncoding("utf-8").on("data", (chunk: string) => (out += chunk));
+      const exit = new Promise<number | null>((resolveExit) => {
+        child.on("close", (code) => resolveExit(code));
+      });
+      try {
+        const deadline = Date.now() + 10_000;
+        while (!calls().some((call) => call.endsWith(MIGRATE_RUN))) {
+          if (Date.now() > deadline) throw new Error(`the migration never started: ${out}`);
+          await new Promise((resolveSleep) => setTimeout(resolveSleep, 20));
+        }
+        child.kill("SIGTERM");
+        expect(await exit).toBe(143);
+        expect(upCalls({ status: null, signal: null, out, stdout: out, calls: calls() })).toEqual(
+          [],
+        );
+        expect(out).toContain("migration: interrupted; outcome unknown");
+        expect(out).toContain(
+          "interrupted by SIGTERM during the migration: nothing was replaced; the migration outcome is unknown (it may have committed).",
+        );
+      } finally {
+        if (child.exitCode === null) {
+          child.kill("SIGKILL");
+          await exit;
+        }
+      }
     },
     TEST_TIMEOUT_MS,
   );
