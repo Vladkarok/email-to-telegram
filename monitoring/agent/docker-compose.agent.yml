@@ -1,0 +1,123 @@
+# Host agent: node_exporter and postgres_exporter on both VMs, and on prod a
+# Promtail that ships the app container's log lines to the staging Loki.
+#
+# Installed at ~/monitoring-agent/ by the Deploy Monitoring Agent workflow,
+# which also writes .env and secrets/. Always address it as:
+#
+#   docker compose -p etg-agent -f ~/monitoring-agent/docker-compose.agent.yml \
+#     --env-file ~/monitoring-agent/.env [--profile prod] <command>
+#
+# It is a separate compose project: it never starts, stops or depends on the
+# app, and it only joins the app network as an external network.
+#
+# Listeners bind to AGENT_BIND_IP (this VM's 10.0.88.x address), serve TLS and
+# require basic auth (secrets/exporter/web-config.yml).
+name: etg-agent
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  node-exporter:
+    image: prom/node-exporter:v1.12.1
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    user: "65534:65534"
+    command:
+      - --path.rootfs=/host
+      - --web.listen-address=${AGENT_BIND_IP:?AGENT_BIND_IP must be set to this VM's private address}:9100
+      - --web.config.file=/etc/exporter/web-config.yml
+      - --collector.textfile.directory=/host/var/lib/node_exporter/textfile
+    volumes:
+      - /:/host:ro,rslave
+      - ./secrets/exporter:/etc/exporter:ro
+    mem_limit: 48m
+    cpus: 0.25
+    pids_limit: 64
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *logging
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.20.1
+    restart: unless-stopped
+    user: "65534:65534"
+    command:
+      - --web.listen-address=:9187
+      - --web.config.file=/etc/exporter/web-config.yml
+      - --no-collector.stat_statements
+    environment:
+      DATA_SOURCE_URI: postgres:5432/emailtelegram?sslmode=disable
+      DATA_SOURCE_USER: etg_monitor
+      DATA_SOURCE_PASS_FILE: /run/etg-monitor/password
+    volumes:
+      - ./secrets/exporter:/etc/exporter:ro
+      - ./secrets/postgres-exporter:/run/etg-monitor:ro
+    networks:
+      - app_internal
+    ports:
+      - "${AGENT_BIND_IP:?AGENT_BIND_IP must be set to this VM's private address}:9187:9187"
+    mem_limit: 48m
+    cpus: 0.25
+    pids_limit: 64
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *logging
+
+  # Prod only. Reads the json-file logs of every container read-only, keeps
+  # only the lines whose attrs name the app container (project
+  # email-to-telegram, service app) and drops everything else on this VM.
+  # No Docker API access. Runs as root without capabilities: the log files
+  # are root-owned and mode 0640.
+  promtail:
+    image: grafana/promtail:2.9.10
+    profiles: [prod]
+    restart: unless-stopped
+    user: "0:0"
+    command:
+      - -config.file=/etc/promtail/promtail-config.yml
+      - -config.expand-env=true
+    environment:
+      LOKI_PUSH_ADDR: ${LOKI_PUSH_ADDR:-}
+      LOKI_PUSH_USER: ${LOKI_PUSH_USER:-}
+    volumes:
+      - ./promtail:/etc/promtail:ro
+      - ./tls:/etc/etg-tls:ro
+      - ./secrets/promtail:/run/etg-promtail:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - promtail-positions:/positions
+    networks:
+      - egress
+    mem_limit: 96m
+    cpus: 0.25
+    pids_limit: 64
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *logging
+
+volumes:
+  promtail-positions:
+
+networks:
+  # The app's network, owned by the app project. Never created or removed here.
+  app_internal:
+    name: email-to-telegram_internal
+    external: true
+  # Promtail's own outbound network.
+  egress:
+    driver: bridge

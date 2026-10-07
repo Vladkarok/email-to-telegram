@@ -1,0 +1,71 @@
+# Prod log collector. Tails Docker's json-file logs from the host (mounted
+# read-only), keeps only the app container's lines and pushes them to the
+# staging Loki through its TLS gateway with basic auth. No Docker API.
+#
+# The app service's logging options add `attrs` to every json line
+# (labels: com.docker.compose.project,com.docker.compose.service). A line is
+# kept only when attrs names project email-to-telegram and service app; every
+# other line (Postgres, the agent itself, other projects, a release without the
+# logging labels) is dropped here and never leaves the VM.
+#
+# ${LOKI_PUSH_ADDR} and ${LOKI_PUSH_USER} come from ~/monitoring-agent/.env
+# (-config.expand-env=true).
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: info
+
+positions:
+  filename: /positions/positions.yaml
+
+clients:
+  - url: https://${LOKI_PUSH_ADDR}/loki/api/v1/push
+    basic_auth:
+      username: ${LOKI_PUSH_USER}
+      password_file: /run/etg-promtail/push_password
+    tls_config:
+      ca_file: /etc/etg-tls/ca.crt
+    backoff_config:
+      min_period: 500ms
+      max_period: 5m
+      max_retries: 10
+
+scrape_configs:
+  - job_name: app-json-file
+    static_configs:
+      - targets: [localhost]
+        labels:
+          env: prod
+          __path__: /var/lib/docker/containers/*/*-json.log
+    pipeline_stages:
+      # The json-file envelope: {"log": "...", "stream": "...", "attrs": {...}, "time": "..."}
+      - json:
+          expressions:
+            output: log
+            stream: stream
+            time: time
+            compose_project: 'attrs."com.docker.compose.project"'
+            service: 'attrs."com.docker.compose.service"'
+      - labels:
+          stream:
+          compose_project:
+          service:
+      # App-only allowlist. A line without attrs has neither label and is
+      # dropped by the first rule.
+      - match:
+          selector: '{compose_project!="email-to-telegram"}'
+          action: drop
+          drop_counter_reason: not_app_container
+      - match:
+          selector: '{service!="app"}'
+          action: drop
+          drop_counter_reason: not_app_container
+      - timestamp:
+          source: time
+          format: RFC3339Nano
+      - output:
+          source: output
+      # The file path carries the container ID; keep the stream set small.
+      - labeldrop:
+          - filename

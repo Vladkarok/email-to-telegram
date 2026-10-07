@@ -1,0 +1,186 @@
+# Deploy the monitoring host agent (monitoring/agent/): node_exporter and
+# postgres_exporter on a VM, plus on prod the Promtail that ships the app
+# container's log lines to the staging Loki.
+#
+# push to main (agent files, this workflow) -> staging.
+# workflow_dispatch from main               -> staging or production.
+#
+# Each deploy job is bound to a GitHub environment (production has the owner
+# as required reviewer) and reads that environment's secrets and variables:
+#
+#   secret   HOST_TLS_CERT, HOST_TLS_KEY   server certificate for the VM's 10.0.88.x address
+#   secret   PG_MONITOR_PASSWORD           etg_monitor password, own value per environment
+#   secret   EXPORTER_BASIC_AUTH_PASSWORD  same value in staging and production
+#   secret   EXPORTER_BASIC_AUTH_PASSWORD_SECONDARY  only during a rotation
+#   secret   LOKI_PUSH_PASSWORD            production; same value as in staging
+#   variable EXPORTER_BASIC_AUTH_USER      prometheus-a (default) or prometheus-b
+#   variable LOKI_PUSH_USER                production; promtail-a (default) or promtail-b
+#
+# The remote side (monitoring/agent/deploy/agent-deploy.sh) holds the host
+# lock, snapshots the previous deployment and restores it on any failure.
+# See docs/operations/monitoring.md.
+name: Deploy Monitoring Agent
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "monitoring/agent/**"
+      - ".github/workflows/deploy-monitoring-agent.yml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Where to deploy the agent
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate agent
+    if: github.repository == 'Vladkarok/email-to-telegram'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Only main is a supported entry point
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Deploy Monitoring Agent runs only from main, not ${GITHUB_REF}."
+          exit 1
+
+      - uses: actions/checkout@v7
+
+      - name: Install yamllint
+        run: pip install --user yamllint
+
+      - name: yamllint monitoring/agent/
+        run: |
+          yamllint -d "{extends: relaxed, rules: {line-length: disable}}" monitoring/agent/
+
+      - name: shellcheck
+        run: |
+          shellcheck -x monitoring/agent/deploy/*.sh monitoring/agent/tests/*.sh
+
+      - name: Validate agent compose (default and prod profile)
+        env:
+          AGENT_BIND_IP: 10.0.88.2
+          LOKI_PUSH_ADDR: 10.0.88.3:3101
+          LOKI_PUSH_USER: promtail-a
+        run: |
+          docker compose -f monitoring/agent/docker-compose.agent.yml config -q
+          docker compose -f monitoring/agent/docker-compose.agent.yml --profile prod config -q
+
+      - name: Promtail pipeline keeps only the app container's lines
+        run: bash monitoring/agent/tests/promtail-pipeline-test.sh
+
+      - name: Deploy, restore, role and log-redaction test
+        run: bash monitoring/agent/tests/agent-deploy-test.sh
+
+  deploy-staging:
+    name: Deploy agent to staging
+    needs: validate
+    if: github.repository == 'Vladkarok/email-to-telegram' && (github.event_name == 'push' || inputs.environment == 'staging')
+    runs-on: [self-hosted, linux, x64, email-tg-staging]
+    environment: staging
+    concurrency:
+      group: host-staging
+      cancel-in-progress: false
+      queue: max
+    env:
+      SSH_HOST: staging
+      ETG_ENV: staging
+      AGENT_BIND_IP: 10.0.88.3
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate secrets and render the payload
+        env:
+          HOST_TLS_CERT: ${{ secrets.HOST_TLS_CERT }}
+          HOST_TLS_KEY: ${{ secrets.HOST_TLS_KEY }}
+          PG_MONITOR_PASSWORD: ${{ secrets.PG_MONITOR_PASSWORD }}
+          EXPORTER_BASIC_AUTH_USER: ${{ vars.EXPORTER_BASIC_AUTH_USER }}
+          EXPORTER_BASIC_AUTH_PASSWORD: ${{ secrets.EXPORTER_BASIC_AUTH_PASSWORD }}
+          EXPORTER_BASIC_AUTH_PASSWORD_SECONDARY: ${{ secrets.EXPORTER_BASIC_AUTH_PASSWORD_SECONDARY }}
+          # bcrypt runs in the pinned httpd image on the target host.
+          HTPASSWD_VIA: ssh staging
+        run: bash monitoring/agent/deploy/render-payload.sh "$RUNNER_TEMP/etg-agent"
+
+      - name: Upload the payload
+        run: |
+          set -euo pipefail
+          incoming=$(tar -C "$RUNNER_TEMP/etg-agent/payload" -cf - . |
+            ssh "$SSH_HOST" 'umask 077 && d=$(mktemp -d "$HOME/.etg-incoming.XXXXXXXX") && tar -xf - -C "$d" && echo "$d"')
+          echo "ETG_INCOMING=$incoming" >> "$GITHUB_ENV"
+
+      - name: Deploy the agent (host lock, snapshot, restore on failure)
+        run: |
+          ssh "$SSH_HOST" "bash '$ETG_INCOMING/agent-deploy.sh' '$ETG_INCOMING'" < "$RUNNER_TEMP/etg-agent/stdin"
+
+      - name: Remove the payload
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP/etg-agent"
+          if [ -n "${ETG_INCOMING:-}" ]; then
+            ssh "$SSH_HOST" "rm -rf '$ETG_INCOMING'"
+          fi
+
+  deploy-production:
+    name: Deploy agent to production
+    needs: validate
+    if: github.repository == 'Vladkarok/email-to-telegram' && github.event_name == 'workflow_dispatch' && inputs.environment == 'production'
+    runs-on: [self-hosted, linux, x64, email-tg-prod]
+    environment: production
+    concurrency:
+      group: host-prod
+      cancel-in-progress: false
+      queue: max
+    env:
+      SSH_HOST: prod
+      ETG_ENV: prod
+      AGENT_BIND_IP: 10.0.88.2
+      LOKI_PUSH_ADDR: 10.0.88.3:3101
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate secrets and render the payload
+        env:
+          HOST_TLS_CERT: ${{ secrets.HOST_TLS_CERT }}
+          HOST_TLS_KEY: ${{ secrets.HOST_TLS_KEY }}
+          PG_MONITOR_PASSWORD: ${{ secrets.PG_MONITOR_PASSWORD }}
+          EXPORTER_BASIC_AUTH_USER: ${{ vars.EXPORTER_BASIC_AUTH_USER }}
+          EXPORTER_BASIC_AUTH_PASSWORD: ${{ secrets.EXPORTER_BASIC_AUTH_PASSWORD }}
+          EXPORTER_BASIC_AUTH_PASSWORD_SECONDARY: ${{ secrets.EXPORTER_BASIC_AUTH_PASSWORD_SECONDARY }}
+          LOKI_PUSH_USER: ${{ vars.LOKI_PUSH_USER }}
+          LOKI_PUSH_PASSWORD: ${{ secrets.LOKI_PUSH_PASSWORD }}
+          # bcrypt runs in the pinned httpd image on the target host.
+          HTPASSWD_VIA: ssh prod
+        run: bash monitoring/agent/deploy/render-payload.sh "$RUNNER_TEMP/etg-agent"
+
+      - name: Upload the payload
+        run: |
+          set -euo pipefail
+          incoming=$(tar -C "$RUNNER_TEMP/etg-agent/payload" -cf - . |
+            ssh "$SSH_HOST" 'umask 077 && d=$(mktemp -d "$HOME/.etg-incoming.XXXXXXXX") && tar -xf - -C "$d" && echo "$d"')
+          echo "ETG_INCOMING=$incoming" >> "$GITHUB_ENV"
+
+      - name: Deploy the agent (host lock, snapshot, restore on failure)
+        run: |
+          ssh "$SSH_HOST" "bash '$ETG_INCOMING/agent-deploy.sh' '$ETG_INCOMING'" < "$RUNNER_TEMP/etg-agent/stdin"
+
+      - name: Remove the payload
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP/etg-agent"
+          if [ -n "${ETG_INCOMING:-}" ]; then
+            ssh "$SSH_HOST" "rm -rf '$ETG_INCOMING'"
+          fi
