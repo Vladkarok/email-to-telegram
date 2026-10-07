@@ -18,19 +18,23 @@ on:
       - "docs/operations/**"
       - "docs/examples/**"
       - "docs/hosted/**"
+      # Monitoring stack, host agent and dashboards deploy on their own.
+      - "monitoring/**"
+      - ".github/workflows/deploy-monitoring.yml"
+      - ".github/workflows/deploy-monitoring-agent.yml"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
-concurrency:
-  group: deploy-staging
-  cancel-in-progress: true
 
 jobs:
   build-and-push:
     name: Build and push :main image
     if: github.repository == 'Vladkarok/email-to-telegram'
     runs-on: ubuntu-latest
+    # A newer push supersedes an image build still in progress.
+    concurrency:
+      group: build-staging
+      cancel-in-progress: true
     permissions:
       contents: read
       packages: write
@@ -57,10 +61,18 @@ jobs:
     if: github.repository == 'Vladkarok/email-to-telegram'
     runs-on: [self-hosted, linux, x64, email-tg-staging]
     needs: build-and-push
+    # One host-mutating job per VM at a time, shared with the monitoring
+    # workflows; a pending run waits in the queue instead of replacing another.
+    concurrency:
+      group: host-staging
+      cancel-in-progress: false
+      queue: max
 
     steps:
       - uses: actions/checkout@v7
 
+      # Every remote mutation takes ~/.etg-deploy.lock (flock, 15 minutes at
+      # most), shared with the monitoring deploys on this host.
       - name: Ensure monitoring_scrape network exists
         # docker-compose.yml declares monitoring_scrape as external so
         # Prometheus (running in the sibling monitoring compose) can
@@ -68,10 +80,13 @@ jobs:
         # it idempotently here in case this workflow races ahead of the
         # monitoring deploy workflow on a fresh host.
         run: |
-          ssh staging "docker network inspect monitoring_scrape >/dev/null 2>&1 || docker network create monitoring_scrape"
+          ssh staging 'exec 9>>~/.etg-deploy.lock && flock -w 900 9 || { echo "Another deploy has held ~/.etg-deploy.lock for 15 minutes; giving up." >&2; exit 1; }
+          docker network inspect monitoring_scrape >/dev/null 2>&1 || docker network create monitoring_scrape'
 
       - name: Copy compose file to staging
-        run: scp docker-compose.yml staging:~/email-to-telegram/docker-compose.yml
+        run: |
+          ssh staging 'exec 9>>~/.etg-deploy.lock && flock -w 900 9 || { echo "Another deploy has held ~/.etg-deploy.lock for 15 minutes; giving up." >&2; exit 1; }
+          cat > ~/email-to-telegram/docker-compose.yml' < docker-compose.yml
 
       - name: Deploy
         env:
@@ -79,6 +94,8 @@ jobs:
         run: |
           ssh staging bash << EOF
           set -e
+          exec 9>>~/.etg-deploy.lock
+          flock -w 900 9 || { echo "Another deploy has held ~/.etg-deploy.lock for 15 minutes; giving up." >&2; exit 1; }
           cd ~/email-to-telegram
 
           echo "${GHCR_TOKEN}" | docker login ghcr.io -u vladkarok --password-stdin
