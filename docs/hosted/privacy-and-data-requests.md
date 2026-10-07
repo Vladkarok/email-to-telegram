@@ -122,12 +122,31 @@ operator does not control where Cloudflare or Telegram route or store data.
 
 ## Logging
 
-The hosted backend writes structured application logs to local files on the
-operator-controlled hardware in Ukraine. Logs include request timing, error
-context, abuse-control events, delivery outcomes, and Telegram chat / user
-identifiers as needed for debugging. Log files are rotated and pruned on
-the same retention schedule as the corresponding plan's email retention
-where practical.
+The hosted backend writes structured application logs on the
+operator-controlled hardware in Ukraine. They contain identifiers and error
+context: Telegram user and chat IDs, IP addresses, alias names, delivery and
+error codes. They do not contain message content. The legal basis is the
+operator's legitimate interest in security and operations.
+
+Logs are kept in two places, both on that hardware:
+
+- The operator's log store (Loki), on the same hardware, collects the
+  application logs. Its retention is set to 7 days; older entries are deleted
+  in the background after that.
+- The container log files on the server rotate by size (three files of
+  10 MB each) and are removed when the application container is recreated,
+  which happens on every release deploy. They have no age limit: on a quiet
+  service they can hold lines older than 7 days until the next rotation or
+  recreate.
+
+`/delete_me` does not remove identifiers from logs one by one. They expire
+with the log store's retention and, in the local files, with rotation or the
+next recreate. A formal erasure request that cannot wait is handled by the
+operator in both places: the matching entries are deleted from the log store,
+and the application container is recreated on its current version, which
+removes its old log files. Redeploying an unchanged version does not recreate
+the container, so the operator forces the recreate and checks that the old
+container and its log files are gone.
 
 Logs are not shipped to any third-party log aggregation, error tracking, or
 analytics service. Internal log aggregation (Prometheus / Grafana / Loki)
@@ -187,6 +206,7 @@ requests, and any case where ownership requires manual verification.
 
 Some records may be retained when required for security, fraud prevention,
 accounting, dispute handling, legal compliance, or abuse investigation.
+Identifiers in application logs expire as described under **Logging**.
 
 Target handling time for the email fallback:
 
