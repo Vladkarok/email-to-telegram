@@ -7,6 +7,7 @@ import {
 } from "../../../src/telegram/sender.js";
 import { GrammyError } from "grammy";
 import type { Api } from "grammy";
+import { metricsRegistry, resetMetricsForTests } from "../../../src/observability/metrics.js";
 
 const loggerMocks = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn() }));
 vi.mock("../../../src/utils/logger.js", () => ({
@@ -79,9 +80,32 @@ function makeApi(
   } as unknown as MockApi;
 }
 
+async function ineligibleCount(reason: string): Promise<number> {
+  const text = await metricsRegistry.getSingleMetricAsString(
+    "email_to_telegram_rich_ineligible_total",
+  );
+  const line = text.split("\n").find((l) => l.includes(`reason="${reason}"`));
+  return Number(line?.split(" ").pop() ?? NaN);
+}
+
+async function ineligibleTotal(): Promise<number> {
+  const reasons = [
+    "input_limit",
+    "text_limit",
+    "block_limit",
+    "column_limit",
+    "depth_limit",
+    "delivery_budget",
+  ];
+  let total = 0;
+  for (const reason of reasons) total += await ineligibleCount(reason);
+  return total;
+}
+
 describe("sendTelegramMessage", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    resetMetricsForTests();
     resetRichMessageAvailabilityForTests();
     loggerMocks.warn.mockReset();
     loggerMocks.error.mockReset();
@@ -342,6 +366,108 @@ describe("sendTelegramMessage", () => {
 
     expect(api.sendRichMessage).toHaveBeenCalledOnce();
     expect(api.sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  describe("rich ineligibility counter", () => {
+    it("counts one classic success that had no rich payload because of a limit", async () => {
+      const api = makeApi(() => Promise.resolve({ message_id: 5 }));
+
+      const result = await sendTelegramMessage(api, {
+        chatId: 123n,
+        threadId: null,
+        text: "Classic",
+        parseMode: "HTML",
+        richIneligibleReason: "block_limit",
+      });
+
+      expect(result.ok).toBe(true);
+      expect(api.sendRichMessage).not.toHaveBeenCalled();
+      expect(await ineligibleCount("block_limit")).toBe(1);
+      expect(await ineligibleTotal()).toBe(1);
+    });
+
+    it("counts each acknowledged send, resends included", async () => {
+      const api = makeApi(() => Promise.resolve({ message_id: 5 }));
+      const options = {
+        chatId: 123n,
+        threadId: null,
+        text: "Classic",
+        richIneligibleReason: "delivery_budget",
+      } as const;
+
+      await sendTelegramMessage(api, options);
+      await sendTelegramMessage(api, options);
+
+      expect(await ineligibleCount("delivery_budget")).toBe(2);
+    });
+
+    it("does not count a classic send without a reason", async () => {
+      const api = makeApi(() => Promise.resolve({ message_id: 5 }));
+
+      await sendTelegramMessage(api, { chatId: 123n, threadId: null, text: "Classic" });
+
+      expect(await ineligibleTotal()).toBe(0);
+    });
+
+    it("does not count a rich success", async () => {
+      const api = makeApi(() => Promise.resolve({ message_id: 5 }));
+
+      await sendTelegramMessage(api, {
+        chatId: 123n,
+        threadId: null,
+        text: "Classic",
+        richHtml: "<p>Rich</p>",
+      });
+
+      expect(api.sendRichMessage).toHaveBeenCalledOnce();
+      expect(await ineligibleTotal()).toBe(0);
+    });
+
+    it("does not count a rich payload Telegram rejected, even though classic then succeeds", async () => {
+      const api = makeApi(
+        () => Promise.resolve({ message_id: 5 }),
+        () => Promise.reject(botApiError(400, "Bad Request: can't parse rich message HTML")),
+      );
+
+      const result = await sendTelegramMessage(api, {
+        chatId: 123n,
+        threadId: null,
+        text: "Classic",
+        richHtml: "<p>Rich</p>",
+      });
+
+      expect(result.ok).toBe(true);
+      expect(api.sendMessage).toHaveBeenCalledOnce();
+      expect(await ineligibleTotal()).toBe(0);
+    });
+
+    it("does not count the disabled rich switch", async () => {
+      const api = makeApi(() => Promise.resolve({ message_id: 5 }));
+
+      await sendTelegramMessage(api, {
+        chatId: 123n,
+        threadId: null,
+        text: "Classic",
+        richHtml: "<p>Rich</p>",
+        richMessagesEnabled: false,
+      });
+
+      expect(await ineligibleTotal()).toBe(0);
+    });
+
+    it("does not count a failed classic attempt", async () => {
+      const api = makeApi(() => Promise.reject(botApiError(403, "Forbidden: bot was blocked")));
+
+      const result = await sendTelegramMessage(api, {
+        chatId: 123n,
+        threadId: null,
+        text: "Classic",
+        richIneligibleReason: "text_limit",
+      });
+
+      expect(result.ok).toBe(false);
+      expect(await ineligibleTotal()).toBe(0);
+    });
   });
 
   it("honors the runtime rich-message kill switch", async () => {

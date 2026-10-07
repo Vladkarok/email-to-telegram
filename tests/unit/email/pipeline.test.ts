@@ -490,6 +490,7 @@ describe("processInboundEmail", () => {
     ];
     expect(opts.parseMode).toBe("HTML");
     expect(opts.richHtml).toBeUndefined();
+    expect((opts as { richIneligibleReason?: string }).richIneligibleReason).toBeUndefined();
     expect(opts.text).toContain("Private email alert");
     expect(opts.text).toContain("/view/");
     expect(opts.text).not.toContain("CPU usage");
@@ -957,6 +958,42 @@ describe("deliverQueuedEmail", () => {
     expect(opts.text).toContain("<b>Bold</b>");
     expect(opts.richHtml).toContain("<h1>Heading</h1>");
     expect(opts.richMessagesEnabled).toBe(true);
+  });
+
+  it("passes the rich ineligibility reason of an over-limit body to the send", async () => {
+    mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 98 });
+
+    await deliverQueuedEmail(
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
+      {} as Parameters<typeof processInboundEmail>[1],
+      {
+        alias: { ...activeAlias, renderMode: "html" },
+        parsed: {
+          messageId: "<id@test>",
+          subject: "Big",
+          envelopeFrom: "sender@example.com",
+          headerFrom: "Sender <sender@example.com>",
+          headerFromDisplay: "Sender <sender@example.com>",
+          headerFromEmail: "sender@example.com",
+          headerFromDomain: "example.com",
+          textBody: null,
+          htmlBody: "<p>x</p>".repeat(501),
+          bodySha256: "hash",
+          attachments: [],
+          rawSizeBytes: 5,
+        },
+        deliveryLog: { id: "log-over-limit" } as never,
+        envelopeFrom: "sender@example.com",
+        ...PIPELINE_CONFIG,
+      },
+    );
+
+    const [, opts] = mockSendTelegram.mock.calls[0] as [
+      unknown,
+      { richHtml?: string; richIneligibleReason?: string },
+    ];
+    expect(opts.richHtml).toBeUndefined();
+    expect(opts.richIneligibleReason).toBe("block_limit");
   });
 
   it("omits image download links when the image is sent as a Telegram photo", async () => {

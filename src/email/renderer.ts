@@ -7,6 +7,7 @@ import {
 } from "../utils/telegramHtml.js";
 import { escapeHtml, escapeHtmlAttribute } from "../utils/html.js";
 import { mailboxDomainForDisplay } from "./addressDisplay.js";
+import type { RichIneligibleReason } from "../observability/metrics.js";
 
 const MAX_LEN = 4096;
 const TRUNCATION_NOTICE = "\n[... truncated]";
@@ -45,6 +46,8 @@ export interface RenderedEmailForDelivery {
   parseMode: HtmlParseMode | undefined;
   /** Safe Telegram Rich HTML. Omitted for plaintext mode and over-budget content. */
   richHtml?: string;
+  /** Why a non-empty body has no `richHtml`: a limit, not privacy mode or an empty body. */
+  richIneligibleReason?: RichIneligibleReason;
 }
 
 export function renderEmail(
@@ -103,10 +106,18 @@ export function renderEmailForDelivery(
     attachmentLinks,
   });
 
+  const structured = renderedBody.structured;
+  // The structured render's own reason (first limit hit), or the delivery
+  // header or attachments tipping an eligible body over a budget.
+  const richIneligibleReason = richHtml
+    ? undefined
+    : (structured?.richIneligibleReason ?? (structured?.richHtml ? "delivery_budget" : undefined));
+
   return {
     text,
     parseMode: parseModeForRenderMode(mode),
     ...(richHtml ? { richHtml } : {}),
+    ...(richIneligibleReason ? { richIneligibleReason } : {}),
   };
 }
 
@@ -267,7 +278,8 @@ function renderSelectedBody(
  * paragraphs, single newlines become line breaks, everything is escaped
  * before the structured parser sees it (so markup in a text email stays
  * literal) and bare URLs get the same rich-only linkification as HTML mail.
- * Classic output is never derived from this.
+ * Classic output is never derived from this. An over-limit body is returned
+ * with its `richIneligibleReason` and no `richHtml`; only an empty one is null.
  */
 function structuredFromText(text: string): StructuredHtmlResult | null {
   const normalized = text.replace(/\r\n?/g, "\n").trim();
@@ -277,8 +289,7 @@ function structuredFromText(text: string): StructuredHtmlResult | null {
     .split(/\n[ \t\u00a0]*\n(?:[ \t\u00a0]*\n)*/)
     .map((paragraph) => `<p>${escapeHtml(paragraph).replace(/\n/g, "<br>")}</p>`)
     .join("");
-  const structured = renderStructuredEmailHtml(html);
-  return structured.richHtml ? structured : null;
+  return renderStructuredEmailHtml(html);
 }
 
 function buildRichDeliveryHtml(input: {

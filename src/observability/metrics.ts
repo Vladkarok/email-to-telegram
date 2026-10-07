@@ -155,6 +155,13 @@ const richMessagesTotal = new Counter({
   registers: [metricsRegistry],
 });
 
+const richIneligibleTotal = new Counter({
+  name: "email_to_telegram_rich_ineligible_total",
+  help: "Classic sends whose body had no rich payload because of a limit, by first limit hit.",
+  labelNames: ["reason"] as const,
+  registers: [metricsRegistry],
+});
+
 const manualPlanGrantsTotal = new Counter({
   name: "email_to_telegram_manual_plan_grants_total",
   help: "Manual plan grant events by plan.",
@@ -269,6 +276,17 @@ const INBOUND_LIMIT_REASONS = [
   "monthly_email_limit",
 ] as const;
 
+/** Why a non-empty body had no rich payload: the renderer's first limit hit, or the delivery frame. */
+export const RICH_INELIGIBLE_REASONS = [
+  "input_limit",
+  "text_limit",
+  "block_limit",
+  "column_limit",
+  "depth_limit",
+  "delivery_budget",
+] as const;
+export type RichIneligibleReason = (typeof RICH_INELIGIBLE_REASONS)[number];
+
 const PREFLIGHT_REASONS: Record<InboundPreflightResult, readonly string[]> = {
   accepted: ["accepted"],
   rejected: [
@@ -351,6 +369,7 @@ function initializeSeries(): void {
     telegramSendFailuresTotal.inc({ error_class: errorClass }, 0);
   }
   for (const result of ["success", "fallback", "disabled"]) richMessagesTotal.inc({ result }, 0);
+  for (const reason of RICH_INELIGIBLE_REASONS) richIneligibleTotal.inc({ reason }, 0);
   for (const reason of INBOUND_LIMIT_REASONS) quotaRejectionsTotal.inc({ reason }, 0);
   for (const path of DELIVERY_PATHS) deliveryLatencySeconds.zero({ path });
   for (const stage of DELIVERY_LOST_STAGES) deliveriesLostTotal.inc({ stage }, 0);
@@ -429,6 +448,10 @@ export function recordTelegramSendFailure(error: string | null | undefined): voi
 
 export function recordRichMessage(result: "success" | "fallback" | "disabled"): void {
   richMessagesTotal.inc({ result });
+}
+
+export function recordRichIneligible(reason: RichIneligibleReason): void {
+  richIneligibleTotal.inc({ reason });
 }
 
 export function recordManualPlanGrant(plan: string): void {

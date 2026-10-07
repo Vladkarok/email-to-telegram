@@ -407,6 +407,7 @@ async function retryDelivery(
     text: rendered.text,
     parseMode: rendered.parseMode,
     richHtml: rendered.richHtml,
+    richIneligibleReason: rendered.richIneligibleReason,
     richMessagesEnabled: opts.telegramRichMessagesEnabled,
   });
   // When Telegram accepted the first message: the delivery latency end.
