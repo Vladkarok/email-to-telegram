@@ -2,7 +2,6 @@ import type { Logger } from "pino";
 
 /** Docker's stop_grace_period (30 s) kills 5 s after this. */
 export const SHUTDOWN_DEADLINE_MS = 25_000;
-const PIPELINE_DRAIN_MS = 15_000;
 
 export interface ShutdownSteps {
   /** Synchronous: shutdown flag, bot health, polling restart, cron schedulers, retry stop flag. */
@@ -24,7 +23,9 @@ export interface ShutdownSteps {
 /**
  * Builds the signal handler. One deadline bounds the whole sequence: after
  * `deadlineMs` the process logs what is still pending and exits 1. Work cut
- * there stays retryable in the DB. A second signal does not restart it.
+ * there stays retryable in the DB. The pipeline drain gets the time left
+ * until the deadline, so the DB never closes under a live delivery and a cut
+ * is never reported as clean. A second signal does not restart it.
  */
 export function createShutdown(
   steps: ShutdownSteps,
@@ -54,18 +55,23 @@ export function createShutdown(
     started = true;
     logger.info({ signal }, "Shutting down...");
 
+    const deadlineAt = Date.now() + deadlineMs;
     const pending = new Set<string>();
     const track = <T>(name: string, promise: Promise<T>): Promise<T> => {
       pending.add(name);
       return promise.finally(() => pending.delete(name));
     };
-    const watchdog = setTimeout(() => {
+    // The watchdog and a drain that runs out of time end here together; the
+    // first one logs and exits, the other finds the process already ending.
+    const deadlineExceeded = (): void => {
+      if (exited) return;
       logger.error(
         { deadlineMs, pending: [...pending], pipelinesInFlight: steps.pipelines.inFlight },
         "shutdown.deadline_exceeded",
       );
       finish(1);
-    }, deadlineMs);
+    };
+    const watchdog = setTimeout(deadlineExceeded, deadlineMs);
 
     try {
       // Crons stop, so no new background work starts; the active retry run
@@ -95,27 +101,39 @@ export function createShutdown(
           }),
         ),
       ]);
+      if (exited) return;
 
       // Everything a handler or a run uses stays open until they are done.
+      // The drain may use all the time left: running out of it is the
+      // deadline, not a reason to close the DB under a live delivery.
       const inFlight = steps.pipelines.inFlight;
       if (inFlight > 0) logger.info({ inFlight }, "Draining in-flight pipelines...");
+      let drained = true;
       await Promise.all([
         pollingRun,
         track(
           "pipeline_drain",
-          steps.pipelines.drain(PIPELINE_DRAIN_MS).catch((err: unknown) => {
-            logger.warn({ err }, "Pipeline drain timed out; proceeding with shutdown");
+          steps.pipelines.drain(Math.max(0, deadlineAt - Date.now())).catch(() => {
+            drained = false;
           }),
         ),
         retryRun,
       ]);
+      if (!drained) {
+        deadlineExceeded();
+        return;
+      }
+      if (exited) return;
       await noticesStopped;
+      if (exited) return;
       steps.destroySessionStore();
       await track("db_close", steps.closeDb());
+      if (exited) return;
       clearTimeout(watchdog);
       logger.info("Shutdown complete.");
       finish(0);
     } catch (err: unknown) {
+      if (exited) return;
       clearTimeout(watchdog);
       logger.error({ err }, "Error during shutdown");
       finish(1);

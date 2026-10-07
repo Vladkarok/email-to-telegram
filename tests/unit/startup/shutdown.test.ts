@@ -57,7 +57,9 @@ describe("createShutdown", () => {
   it.each([
     ["a request that never ends", { closeHttp: never }, "http_close", 1],
     ["a Telegram call that never returns", { stopBot: never }, "bot_stop", 1],
-    ["a pool.end() that never resolves", { closeDb: never }, "db_close", 1],
+    ["a delivery that never ends", {}, "pipeline_drain", 1],
+    // A live delivery keeps the DB open, so this case has none.
+    ["a pool.end() that never resolves", { closeDb: never }, "db_close", 0],
   ] as const)(
     "exits 1 at 25 s with %s and logs what is pending",
     async (_name, overrides, pendingStep, deliveries) => {
@@ -174,6 +176,72 @@ describe("createShutdown", () => {
 
     expect(order).toEqual(["polling_run_taken", "http_closed"]);
     expect(events).toEqual(["begin", "session_store", "db_closed", "exit:0"]);
+  });
+
+  function deliveryTaking(ms: number, events: string[]) {
+    const pipelines = new InFlightTracker();
+    void pipelines.run(async () => {
+      await new Promise((resolve) => setTimeout(resolve, ms));
+      events.push("delivered");
+    });
+    return pipelines;
+  }
+
+  it("lets an 18-s delivery finish and closes the DB after it", async () => {
+    const events: string[] = [];
+    const {
+      shutdown,
+      events: steps,
+      logger,
+    } = setup({ pipelines: deliveryTaking(18_000, events) });
+
+    const done = shutdown("SIGTERM");
+    await vi.advanceTimersByTimeAsync(18_000);
+    await done;
+
+    expect(events).toEqual(["delivered"]);
+    expect(steps).toEqual(["begin", "session_store", "db_closed", "exit:0"]);
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it("ends a 30-s delivery at the deadline with exit 1 and never closes the DB under it", async () => {
+    const events: string[] = [];
+    const {
+      shutdown,
+      events: steps,
+      logger,
+      exit,
+    } = setup({
+      pipelines: deliveryTaking(30_000, events),
+    });
+
+    void shutdown("SIGTERM");
+    await vi.advanceTimersByTimeAsync(SHUTDOWN_DEADLINE_MS - 1);
+    expect(exit).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+    expect(steps).toEqual(["begin", "exit:1"]);
+    expect(logger.error).toHaveBeenCalledOnce();
+    expect(logger.error.mock.calls[0]?.[1]).toBe("shutdown.deadline_exceeded");
+    expect(logger.info).not.toHaveBeenCalledWith("Shutdown complete.");
+  });
+
+  it("logs and exits once when the drain runs out before the watchdog fires", async () => {
+    const { shutdown, events, logger, exit } = setup({
+      pipelines: {
+        inFlight: 1,
+        drain: () => Promise.reject(new Error("drain timed out")),
+      },
+    });
+
+    await shutdown("SIGTERM");
+    await vi.advanceTimersByTimeAsync(SHUTDOWN_DEADLINE_MS);
+
+    expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+    expect(events).toEqual(["begin", "exit:1"]);
+    expect(logger.error).toHaveBeenCalledOnce();
+    expect(logger.error.mock.calls[0]?.[1]).toBe("shutdown.deadline_exceeded");
   });
 
   it("goes on with the drain when bot.stop() fails", async () => {
