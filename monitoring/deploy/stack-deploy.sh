@@ -34,7 +34,11 @@ compose() {
   (cd "$STACK_DIR" && docker compose -f "$COMPOSE_FILE" --env-file .env "$@")
 }
 
-container_id() { compose ps -aq "$1" 2>/dev/null | head -n 1; }
+container_id() {
+  local ids
+  ids=$(compose ps -aq "$1" 2>/dev/null) || true
+  printf '%s\n' "${ids%%$'\n'*}"
+}
 
 services=(prometheus grafana loki loki-gateway promtail)
 
@@ -59,8 +63,17 @@ ensure_image "$ETG_HELPER_IMAGE"
 mkdir -p "$STACK_DIR/prometheus/secrets" "$STACK_DIR/.state"
 # Prometheus (uid 65534) reads the token files through this directory, and
 # rsync never touches it (excluded below); umask 077 would make it 0700.
-chmod 0755 "$STACK_DIR/prometheus/secrets"
+chmod 0755 "$STACK_DIR" "$STACK_DIR/prometheus" "$STACK_DIR/prometheus/secrets"
 chmod 0700 "$STACK_DIR/.state"
+
+# Secrets first: the synced prometheus.yml may already name the next user's
+# password file. Files the manifest drops stay until the end of the deploy.
+secret_manifest=$(cat "$payload/secrets/manifest")
+install_secrets "$payload/secrets" "$STACK_DIR/secrets"
+rm -rf "$payload/secrets"
+check_readable "$STACK_DIR/secrets/prometheus" 65534
+check_readable "$STACK_DIR/secrets/loki-gateway" 101
+
 # --exclude keeps the operator's .env, the token files, the secrets and the
 # deploy state out of --delete. Files are written as temp + rename, so the
 # directory mounts in running containers see them.
@@ -76,18 +89,14 @@ for file in "$payload"/bearer/*; do
   install -m 0644 "$file" "$STACK_DIR/prometheus/secrets/.$token.new"
   mv -f "$STACK_DIR/prometheus/secrets/.$token.new" "$STACK_DIR/prometheus/secrets/$token"
 done
-
-install_secrets "$payload/secrets" "$STACK_DIR/secrets"
-rm -rf "$payload/secrets" "$payload/bearer"
-check_readable "$STACK_DIR/secrets/prometheus" 65534
-check_readable "$STACK_DIR/secrets/loki-gateway" 101
+rm -rf "$payload/bearer"
 
 declare -A before=()
 for svc in "${services[@]}"; do
   before[$svc]=$(container_id "$svc")
 done
 
-compose pull --quiet
+(cd "$STACK_DIR" && timeout 600 docker compose -f "$COMPOSE_FILE" --env-file .env pull --quiet)
 compose up -d --remove-orphans
 
 # Scrape-job edits take effect on the next scrape. A failed reload is a
@@ -160,6 +169,10 @@ got=$(http_status_auth "$push_user" "$push_password" --cacert "$ca" "${empty[@]}
 got=$(http_status "http://$bind_ip:3101/loki/api/v1/push")
 [[ "$got" != 2* ]] || die "verify: plain HTTP on 3101 returned HTTP $got"
 log "push gateway verified on $bind_ip:3101"
+
+# Prometheus runs on the reloaded config now: drop secret files the manifest
+# no longer lists (e.g. the previous exporter user's password).
+printf '%s\n' "$secret_manifest" | prune_secrets "$STACK_DIR/secrets"
 
 install -m 0600 "$payload/config-hashes" "$STACK_DIR/.state/config-hashes"
 echo "Monitoring stack healthy at $(date)"

@@ -10,9 +10,12 @@
 # pull images; snapshot the previous deployment (files, image IDs, the role's
 # SCRAM verifier); arm the restore; install files, .env and secrets; reconcile
 # the etg_monitor role; compose up; recreate services whose start-time inputs
-# changed; verify. Any failure after the restore is armed, including an
-# interruption, restores the snapshot. A run that cannot restore leaves
+# changed; verify; drop credentials nothing uses any more. Any exit after the
+# restore is armed, including an interruption or a dropped SSH session,
+# restores the snapshot. A run that cannot restore leaves
 # ~/.etg-agent-restore-pending and the next run restores before anything else.
+# Everything the restore needs is in memory or in the snapshot, never in the
+# payload directory.
 set -Eeuo pipefail
 set +x
 umask 077
@@ -20,6 +23,9 @@ umask 077
 payload=$(cd "${1:?usage: agent-deploy.sh PAYLOAD_DIR}" && pwd)
 # shellcheck source=monitoring/agent/deploy/lib.sh
 . "$payload/lib.sh"
+reconcile_sql=$(cat "$payload/sql/reconcile-role.sql")
+[[ "$reconcile_sql" == *"ALTER ROLE etg_monitor PASSWORD :'verifier';"* ]] ||
+  die "reconcile-role.sql in the payload is incomplete"
 
 readonly AGENT_DIR="$HOME/monitoring-agent"
 readonly SNAPSHOT_DIR="$HOME/.etg-agent-snapshot"
@@ -73,17 +79,20 @@ compose() {
 
 # container_of PROJECT SERVICE [-a] : ID of the compose service's container.
 container_of() {
-  docker ps ${3:+-a} -q --no-trunc \
+  local ids
+  ids=$(docker ps ${3:+-a} -q --no-trunc \
     --filter "label=com.docker.compose.project=$1" \
-    --filter "label=com.docker.compose.service=$2" | head -n 1
+    --filter "label=com.docker.compose.service=$2")
+  printf '%s\n' "${ids%%$'\n'*}"
 }
 
 app_container_ids() {
   docker ps -aq --no-trunc --filter "label=com.docker.compose.project=$APP_PROJECT" | sort
 }
 
-# psql_quiet : runs session-quiet.sql and then stdin as the database owner.
-# stderr loses every line that mentions a SCRAM verifier.
+# psql_quiet : runs stdin as the database owner after the quiet-session
+# preamble (lib.sh, pg_quiet); stderr loses every line that mentions a SCRAM
+# verifier.
 psql_quiet() {
   local pg
   pg=$(container_of "$APP_PROJECT" postgres)
@@ -91,9 +100,7 @@ psql_quiet() {
     log "no running $APP_PROJECT postgres container"
     return 1
   }
-  { cat "$payload/sql/session-quiet.sql" -; } |
-    docker exec -i "$pg" psql -X -q -A -t -v ON_ERROR_STOP=1 -v VERBOSITY=terse \
-      -U "$PG_SUPERUSER" -d "$PG_DATABASE" 2> >(sed '/SCRAM-/d' >&2)
+  pg_quiet "$pg" "$PG_SUPERUSER" "$PG_DATABASE"
 }
 
 # role_state : "login|nologin <verifier|->", or nothing when the role is absent.
@@ -155,7 +162,7 @@ SQL
 reconcile_role() {
   {
     printf "\\\\set verifier '%s'\n" "$verifier"
-    cat "$payload/sql/reconcile-role.sql"
+    printf '%s\n' "$reconcile_sql"
   } | psql_quiet
 }
 
@@ -213,7 +220,7 @@ restore() {
       while read -r svc ref id _running; do
         [[ -n "$ref" ]] || continue
         echo "image for $svc: $ref"
-        docker tag "$id" "$ref" 2>/dev/null || docker pull -q "$ref" || rc=1
+        docker tag "$id" "$ref" 2>/dev/null || timeout 300 docker pull -q "$ref" || rc=1
       done <"$SNAPSHOT_DIR/containers"
     fi
     echo "restoring the etg_monitor role"
@@ -222,13 +229,7 @@ restore() {
       restore_role "" || rc=1
     else
       restore_role "$(cat "$SNAPSHOT_DIR/role")" || rc=1
-    fi
-    if [[ ! -f "$SNAPSHOT_DIR/first-deploy" ]]; then
-      if grep -q ' true$' "$SNAPSHOT_DIR/containers"; then
-        compose up -d --force-recreate --remove-orphans --pull never || rc=1
-      else
-        compose down --remove-orphans || rc=1
-      fi
+      restore_services || rc=1
     fi
     echo "restore finished $(date -u +%FT%TZ), status $rc"
   } >>"$RESTORE_LOG" 2>&1
@@ -236,14 +237,50 @@ restore() {
   return "$rc"
 }
 
+# restore_services : brings each service back to what the snapshot recorded:
+# running, stopped (a deliberately stopped Promtail stays stopped), or absent.
+restore_services() {
+  local svc _ref _id running rc=0 run=() stopped=()
+  declare -A state=()
+  while read -r svc _ref _id running; do
+    [[ -n "$svc" ]] || continue
+    if [[ "$running" == true || "${state[$svc]:-}" == running ]]; then
+      state[$svc]=running
+    else
+      state[$svc]=stopped
+    fi
+  done <"$SNAPSHOT_DIR/containers"
+  if ((${#state[@]} == 0)); then
+    compose down --remove-orphans || rc=1
+    return "$rc"
+  fi
+  for svc in $(compose config --services); do
+    case ${state[$svc]:-absent} in
+      running) run+=("$svc") ;;
+      stopped) stopped+=("$svc") ;;
+      absent) compose rm -sf "$svc" || rc=1 ;;
+    esac
+  done
+  if ((${#run[@]})); then
+    compose up -d --no-deps --force-recreate --remove-orphans --pull never "${run[@]}" || rc=1
+  fi
+  if ((${#stopped[@]})); then
+    compose create --force-recreate --remove-orphans --pull never "${stopped[@]}" || rc=1
+  fi
+  return "$rc"
+}
+
 armed=0
+# Restores whenever the restore is still armed, whatever the exit status: a
+# dropped SSH session (SIGHUP, SIGPIPE) must not leave a half-done deploy.
 on_exit() {
   local rc=$?
   set +e
   trap - EXIT
   trap '' HUP INT TERM PIPE
-  if ((armed)) && ((rc != 0)); then
-    log "agent deploy failed (exit $rc); restoring the previous deployment"
+  if ((armed)); then
+    ((rc != 0)) || rc=1
+    log "agent deploy did not finish (exit $rc); restoring the previous deployment"
     if restore; then
       rm -f "$MARKER"
       clear_snapshot
@@ -259,6 +296,7 @@ trap on_exit EXIT
 trap 'log "failed at line $LINENO: $BASH_COMMAND"' ERR
 trap 'exit 129' HUP
 trap 'exit 130' INT
+trap 'exit 141' PIPE
 trap 'exit 143' TERM
 
 wait_for_app() {
@@ -358,12 +396,19 @@ expect_not_ok() {
   [[ "$got" != 2* ]] || die "verify: $what returned HTTP $got"
 }
 
-promtail_ready() {
-  local cid ready
+# promtail_get PATH : GET on Promtail's own HTTP port, from inside its network
+# namespace (the port is not published).
+promtail_get() {
+  local cid
   cid=$(container_of "$PROJECT" promtail)
   [[ -n "$cid" ]] || return 1
-  ready=$(docker run --rm --network "container:$cid" "$ETG_HELPER_IMAGE" \
-    wget -qO- http://127.0.0.1:9080/ready 2>/dev/null) || return 1
+  docker run --rm --network "container:$cid" "$ETG_HELPER_IMAGE" \
+    wget -qO- "http://127.0.0.1:9080$1" 2>/dev/null
+}
+
+promtail_ready() {
+  local ready
+  ready=$(promtail_get /ready) || return 1
   [[ "$ready" == *Ready* ]]
 }
 
@@ -412,6 +457,18 @@ verify() {
     i=$((i + 1))
   done
 
+  # Promtail tails files and none of its pushes so far was refused. A quiet
+  # app may push nothing during the deploy, so a rising sent-entries count is
+  # not required; the authenticated push above covers the credential.
+  if [[ "$env_name" == prod ]]; then
+    local metrics active rejected
+    metrics=$(promtail_get /metrics) || die "verify: cannot read promtail's metrics"
+    active=$(awk '$1 == "promtail_files_active_total" { print $2 }' <<<"$metrics")
+    [[ -n "$active" && "$active" != 0 ]] || die "verify: promtail tails no log file"
+    rejected=$(awk '/^promtail_request_duration_seconds_count\{.*status_code="4[0-9][0-9]"/ && $2 > 0' <<<"$metrics")
+    [[ -z "$rejected" ]] || die "verify: the gateway refused promtail's pushes: $rejected"
+  fi
+
   [[ "$(app_container_ids)" == "$app_ids_before" ]] ||
     die "verify: the app project's containers changed during the agent deploy"
 }
@@ -441,12 +498,13 @@ if [[ -e "$MARKER" ]]; then
   clear_snapshot
 fi
 
-docker compose -p "$PROJECT" -f "$payload/tree/docker-compose.agent.yml" --env-file "$payload/env" \
-  ${profile:+--profile "$profile"} pull --quiet
+timeout 600 docker compose -p "$PROJECT" -f "$payload/tree/docker-compose.agent.yml" \
+  --env-file "$payload/env" ${profile:+--profile "$profile"} pull --quiet
 
+secret_manifest=$(cat "$payload/secrets/manifest")
 take_snapshot
 date -u +%FT%TZ >"$MARKER"
-armed=1 # from here on every failure restores the snapshot
+armed=1 # from here on every exit restores the snapshot until the deploy succeeds
 
 install_files
 install_secrets "$payload/secrets" "$AGENT_DIR/secrets"
@@ -464,6 +522,9 @@ ids_before_up=$(service_ids)
 compose up -d --remove-orphans --pull never
 recreate_changed "$ids_before_up"
 verify
+# Consumers now use the new credentials: drop the files nothing references
+# (e.g. the previous Promtail user's password).
+printf '%s\n' "$secret_manifest" | prune_secrets "$AGENT_DIR/secrets"
 
 install -m 0600 "$payload/config-hashes" "$AGENT_DIR/.state/config-hashes"
 armed=0

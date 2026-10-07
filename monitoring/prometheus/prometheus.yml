@@ -9,10 +9,11 @@
 #
 # The node and postgres jobs scrape the host agent on both VMs
 # (monitoring/agent/) over TLS with basic auth. The CA is the repo's
-# monitoring/tls/ca.crt; the username and password files are written by the
-# deploy workflow into ./secrets/prometheus/ on the host (uid 65534, 0400) from
-# EXPORTER_BASIC_AUTH_USER / EXPORTER_BASIC_AUTH_PASSWORD. Both files are
-# re-read on every scrape.
+# monitoring/tls/ca.crt. The deploy renders `prometheus-a` below into the
+# active EXPORTER_BASIC_AUTH_USER and writes that user's password to
+# ./secrets/prometheus/<user> on the host (uid 65534, 0400). Username and
+# password file change together on the config reload, so a credential
+# rotation never pairs one user with the other's password.
 
 global:
   scrape_interval: 30s
@@ -54,8 +55,8 @@ scrape_configs:
     tls_config:
       ca_file: /etc/monitoring-tls/ca.crt
     basic_auth:
-      username_file: /etc/prometheus-secrets/exporter_username
-      password_file: /etc/prometheus-secrets/exporter_password
+      username: prometheus-a
+      password_file: /etc/prometheus-secrets/prometheus-a
     static_configs:
       - targets: ["10.0.88.2:9100"]
         labels:
@@ -70,8 +71,8 @@ scrape_configs:
     tls_config:
       ca_file: /etc/monitoring-tls/ca.crt
     basic_auth:
-      username_file: /etc/prometheus-secrets/exporter_username
-      password_file: /etc/prometheus-secrets/exporter_password
+      username: prometheus-a
+      password_file: /etc/prometheus-secrets/prometheus-a
     static_configs:
       - targets: ["10.0.88.2:9187"]
         labels:

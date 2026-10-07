@@ -7,7 +7,9 @@
 #   - etg_monitor reads pg_stat_database, cannot read email_addresses
 #   - compose up failing right after the password change restores the old
 #     verifier and the exporter keeps scraping
-#   - an extra grant on the role fails the run and restores
+#   - unexpected privileges fail the run and restore: an explicit grant, a
+#     table privilege or a column SELECT granted to PUBLIC, and a privilege
+#     that only the membership repair switches on (checked again after it)
 #   - an interrupted run (SIGKILL) is restored by the next run
 #   - rollback with compose down, then redeploy
 #   - a failed first deployment takes the agent down and leaves the role
@@ -15,8 +17,14 @@
 #   - prod profile: Promtail ships the app container's lines through the TLS
 #     gateway to a local Loki with env="prod"; Postgres lines (which carry
 #     attrs too) and every other container's lines do not arrive
+#   - a deliberately stopped Promtail stays stopped through a failed deploy
 #   - neither the Postgres server log nor the deploy output contains a
-#     verifier or a password, for a successful and a failing ALTER ROLE
+#     verifier or a password, for successful ALTER ROLEs (the deploys) and a
+#     failing one run through the deploy's own psql path (pg_quiet_raw), whose
+#     unfiltered stderr is checked too
+#
+# Command output is captured before it is matched: `cmd | grep -q` can fail
+# under pipefail when grep exits before cmd has written everything.
 #
 # Uses the real names (projects email-to-telegram and etg-agent, network
 # email-to-telegram_internal, 127.0.0.1:9100 and :9187): run it on a machine
@@ -31,6 +39,8 @@ deploy_dir="$repo/monitoring/agent/deploy"
 work=$(mktemp -d)
 export HOME="$work/home"
 mkdir -p "$HOME"
+# shellcheck source=monitoring/agent/deploy/lib.sh
+. "$deploy_dir/lib.sh"
 app_compose="$work/app/docker-compose.yml"
 transcript="$work/transcript.log"
 : >"$transcript"
@@ -160,12 +170,25 @@ render() { # PG_PASSWORD OUT
     bash "$deploy_dir/render-payload.sh" "$2" 2>>"$transcript"
 }
 
+render_prod() { # PG_PASSWORD OUT
+  ETG_ENV=prod AGENT_BIND_IP=127.0.0.1 ETG_CA_FILE="$tls/ca.crt" HTPASSWD_VIA="" \
+    HOST_TLS_CERT="$(cat "$tls/host.crt")" HOST_TLS_KEY="$(cat "$tls/host.key")" \
+    PG_MONITOR_PASSWORD="$1" EXPORTER_BASIC_AUTH_PASSWORD="$exporter_pw" \
+    LOKI_PUSH_ADDR="$gw_ip:3101" LOKI_PUSH_PASSWORD="$push_pw" \
+    bash "$deploy_dir/render-payload.sh" "$2" 2>>"$transcript"
+}
+
 # deploy OUT : runs the host script like the workflow does; returns its status.
+# The run's output is in OUT/out.log and appended to the transcript.
 deploy() {
   local rc=0
-  bash "$1/payload/agent-deploy.sh" "$1/payload" <"$1/stdin" >>"$transcript" 2>&1 || rc=$?
+  bash "$1/payload/agent-deploy.sh" "$1/payload" <"$1/stdin" >"$1/out.log" 2>&1 || rc=$?
+  cat "$1/out.log" >>"$transcript"
   return "$rc"
 }
+
+# has FILE TEXT : FILE contains TEXT.
+has() { grep -qF -- "$2" "$1"; }
 
 verifier_now() {
   docker exec "$pg" psql -X -A -t -U emailtelegram -d emailtelegram \
@@ -177,9 +200,10 @@ can_login() {
 }
 
 pg_up() {
-  printf 'user = "prometheus-a:%s"\n' "$exporter_pw" |
-    curl -K - -fsS --max-time 10 --cacert "$tls/ca.crt" https://127.0.0.1:9187/metrics 2>/dev/null |
-    grep -qx 'pg_up 1'
+  local body
+  body=$(printf 'user = "prometheus-a:%s"\n' "$exporter_pw" |
+    curl -K - -fsS --max-time 10 --cacert "$tls/ca.crt" https://127.0.0.1:9187/metrics 2>/dev/null) || return 1
+  grep -qx 'pg_up 1' <<<"$body"
 }
 
 # as_monitor PASSWORD SQL : runs SQL as etg_monitor over TCP (password auth).
@@ -211,8 +235,8 @@ for re in '^pg_up 1$' '^pg_stat_database_numbackends\{[^}]*datname="emailtelegra
 done
 v1=$(verifier_now)
 [[ "$v1" == SCRAM-SHA-256* ]] || fail "no SCRAM verifier stored"
-as_monitor "$pg_pw1" "SELECT count(*) > 0 FROM pg_stat_database;" | grep -qx t ||
-  fail "etg_monitor cannot read pg_stat_database"
+allowed=$(as_monitor "$pg_pw1" "SELECT count(*) > 0 FROM pg_stat_database;" || true)
+[[ "$allowed" == t ]] || fail "etg_monitor cannot read pg_stat_database: $allowed"
 denied=$(as_monitor "$pg_pw1" "SELECT count(*) FROM email_addresses;" || true)
 grep -q 'permission denied for table email_addresses' <<<"$denied" ||
   fail "etg_monitor can read email_addresses: $denied"
@@ -231,21 +255,48 @@ step "3. compose up fails right after the password change"
 render "$pg_pw3" "$work/r3"
 sed -i 's/cpus: 0.25/cpus: 999/' "$work/r3/payload/tree/docker-compose.agent.yml"
 if deploy "$work/r3"; then fail "deploy with a broken compose file succeeded"; fi
-grep -q 'previous deployment restored' "$transcript" || fail "no restore after the failed compose up"
+has "$work/r3/out.log" 'previous deployment restored' || fail "no restore after the failed compose up"
 [[ "$(verifier_now)" == "$v2" ]] || fail "the old verifier was not restored"
 [[ ! -e "$HOME/.etg-agent-restore-pending" ]] || fail "marker left after a successful restore"
 pg_up || fail "the exporter does not scrape after the restore"
 grep -q 'cpus: 0.25' "$HOME/monitoring-agent/docker-compose.agent.yml" || fail "the old compose file was not restored"
 
-step "4. an extra grant fails the run"
-docker exec "$pg" psql -q -U emailtelegram -d emailtelegram -c 'GRANT SELECT ON email_addresses TO etg_monitor'
-render "$pg_pw1" "$work/r4"
-if deploy "$work/r4"; then fail "deploy succeeded with an extra grant"; fi
-grep -q 'etg_monitor has unexpected privileges: grant on email_addresses' "$transcript" ||
-  fail "the extra grant was not reported"
-[[ "$(verifier_now)" == "$v2" ]] || fail "verifier changed by the failed run"
-pg_up || fail "the exporter does not scrape after the grant failure"
-docker exec "$pg" psql -q -U emailtelegram -d emailtelegram -c 'REVOKE SELECT ON email_addresses FROM etg_monitor'
+step "4. unexpected privileges fail the run, before and after the repairs"
+as_owner() { docker exec "$pg" psql -q -v ON_ERROR_STOP=1 -U emailtelegram -d emailtelegram -c "$1"; }
+reject_case=0
+# reject DESCRIPTION EXPECTED_MESSAGE SETUP_SQL CLEANUP_SQL
+reject() {
+  reject_case=$((reject_case + 1))
+  local out="$work/r4-$reject_case"
+  as_owner "$3"
+  render "$pg_pw1" "$out"
+  if deploy "$out"; then fail "deploy succeeded with $1"; fi
+  has "$out/out.log" "$2" || fail "$1 was not reported as: $2"
+  has "$out/out.log" 'previous deployment restored' || fail "no restore after $1"
+  [[ "$(verifier_now)" == "$v2" ]] || fail "verifier changed by the failed run ($1)"
+  pg_up || fail "the exporter does not scrape after the failure ($1)"
+  as_owner "$4"
+  echo "rejected: $1"
+}
+reject "an explicit grant to etg_monitor" \
+  'etg_monitor has unexpected privileges: grant on email_addresses' \
+  'GRANT SELECT ON email_addresses TO etg_monitor' \
+  'REVOKE SELECT ON email_addresses FROM etg_monitor'
+reject "DELETE granted to PUBLIC" \
+  'etg_monitor has unexpected privileges: DELETE on email_addresses' \
+  'GRANT DELETE ON email_addresses TO PUBLIC' \
+  'REVOKE DELETE ON email_addresses FROM PUBLIC'
+reject "a column SELECT granted to PUBLIC" \
+  'etg_monitor has unexpected privileges: column SELECT on email_addresses' \
+  'GRANT SELECT (address) ON email_addresses TO PUBLIC' \
+  'REVOKE SELECT (address) ON email_addresses FROM PUBLIC'
+reject "a privilege only the membership repair switches on" \
+  'etg_monitor has unexpected privileges after the repairs: SELECT on email_addresses' \
+  'REVOKE pg_monitor FROM etg_monitor; GRANT pg_monitor TO etg_monitor WITH INHERIT FALSE; GRANT SELECT ON email_addresses TO pg_monitor' \
+  'REVOKE SELECT ON email_addresses FROM pg_monitor; REVOKE pg_monitor FROM etg_monitor; GRANT pg_monitor TO etg_monitor'
+render "$pg_pw1" "$work/r4-ok"
+deploy "$work/r4-ok" || fail "deploy after removing the extra privileges failed"
+v2=$(verifier_now)
 
 step "5. interrupted run (SIGKILL), restored by the next run"
 render "$pg_pw3" "$work/r5"
@@ -262,11 +313,12 @@ wait "$deploy_pid" 2>/dev/null || true
 [[ -e "$HOME/.etg-agent-restore-pending" ]] || fail "SIGKILL did not leave the marker"
 render "$pg_pw3" "$work/r6"
 deploy "$work/r6" || fail "the run after the interruption failed"
-grep -q 'an earlier agent deploy was interrupted' "$transcript" || fail "the next run did not restore first"
+has "$work/r6/out.log" 'an earlier agent deploy was interrupted' || fail "the next run did not restore first"
 [[ ! -e "$HOME/.etg-agent-restore-pending" ]] || fail "marker left after the recovery run"
 pg_up || fail "pg_up is not 1 after the recovery run"
 v6=$(verifier_now)
-as_monitor "$pg_pw3" "SELECT 1;" | grep -qx 1 || fail "the new password does not log in"
+one=$(as_monitor "$pg_pw3" "SELECT 1;" || true)
+[[ "$one" == 1 ]] || fail "the new password does not log in: $one"
 
 step "6. rollback (compose down) and redeploy"
 docker compose -p etg-agent -f "$HOME/monitoring-agent/docker-compose.agent.yml" \
@@ -294,8 +346,6 @@ step "8. prod profile: only the app's lines reach Loki, through the gateway"
 # A local Loki behind the gateway (repo config, pinned images, compose
 # container options). The gateway sits on the agent's egress network with a
 # fixed address, the stand-in for 10.0.88.3:3101.
-# shellcheck source=monitoring/agent/deploy/lib.sh
-. "$deploy_dir/lib.sh"
 mon_compose="$repo/monitoring/docker-compose.monitoring.yml"
 gw_ip=10.213.47.10
 push_pw=$(secret)
@@ -330,15 +380,12 @@ docker create --name etg-agent-test-gw --network etg-agent-test-loki \
 docker network connect --ip "$gw_ip" etg-agent_egress etg-agent-test-gw
 docker start etg-agent-test-gw >/dev/null
 for _ in $(seq 1 60); do
-  docker exec etg-agent-test-loki wget -qO- http://127.0.0.1:3100/ready 2>/dev/null | grep -q ready && break
+  ready=$(docker exec etg-agent-test-loki wget -qO- http://127.0.0.1:3100/ready 2>/dev/null || true)
+  [[ "$ready" == *ready* ]] && break
   sleep 2
 done
 
-ETG_ENV=prod AGENT_BIND_IP=127.0.0.1 ETG_CA_FILE="$tls/ca.crt" HTPASSWD_VIA="" \
-  HOST_TLS_CERT="$(cat "$tls/host.crt")" HOST_TLS_KEY="$(cat "$tls/host.key")" \
-  PG_MONITOR_PASSWORD="$pg_pw1" EXPORTER_BASIC_AUTH_PASSWORD="$exporter_pw" \
-  LOKI_PUSH_ADDR="$gw_ip:3101" LOKI_PUSH_PASSWORD="$push_pw" \
-  bash "$deploy_dir/render-payload.sh" "$work/r9" 2>>"$transcript"
+render_prod "$pg_pw1" "$work/r9"
 deploy "$work/r9" || fail "prod-profile deploy failed"
 [[ -n "$(docker ps -q --filter label=com.docker.compose.project=etg-agent --filter label=com.docker.compose.service=promtail)" ]] ||
   fail "promtail is not running"
@@ -362,16 +409,38 @@ labels=$(jq -c '[.data[] | keys] | add | unique' <<<"$series")
 [[ "$labels" == '["compose_project","env","service","stream"]' ]] || fail "unexpected label set: $labels"
 echo "prod app lines in Loki: $app_lines; streams: $(jq -c '[.data[]]' <<<"$series")"
 
-step "9. failing ALTER ROLE with full server logging"
+step "8b. a stopped Promtail stays stopped through a failed deploy"
+agent_compose=(docker compose -p etg-agent -f "$HOME/monitoring-agent/docker-compose.agent.yml"
+  --env-file "$HOME/monitoring-agent/.env")
+"${agent_compose[@]}" stop promtail
+render_prod "$pg_pw1" "$work/r10"
+sed -i 's/cpus: 0.25/cpus: 999/' "$work/r10/payload/tree/docker-compose.agent.yml"
+if deploy "$work/r10"; then fail "deploy with a broken compose file succeeded"; fi
+has "$work/r10/out.log" 'previous deployment restored' || fail "no restore"
+promtail_id=$(docker ps -aq --filter label=com.docker.compose.project=etg-agent --filter label=com.docker.compose.service=promtail)
+[[ -n "$promtail_id" ]] || fail "the restore removed the stopped promtail"
+[[ "$(docker inspect --format '{{.State.Running}}' "$promtail_id")" == false ]] || fail "the restore started promtail"
+for svc in node-exporter postgres-exporter; do
+  [[ -n "$(docker ps -q --filter label=com.docker.compose.project=etg-agent --filter "label=com.docker.compose.service=$svc")" ]] ||
+    fail "$svc is not running after the restore"
+done
+pg_up || fail "pg_up is not 1 after the restore"
+
+step "9. failing ALTER ROLE through the deploy's psql path, unfiltered stderr"
+# pg_quiet_raw is what the deploy's pg_quiet runs, minus the stderr filter:
+# the same preamble and psql flags. Its stderr must not hold the verifier
+# without any filtering.
 v_fail=$(printf '%s' "$(secret)" | python3 "$deploy_dir/scram-verifier.py")
-out=$({
-  cat "$deploy_dir/sql/session-quiet.sql"
+rc=0
+raw_err=$({
   printf "\\\\set verifier '%s'\n" "$v_fail"
   echo "ALTER ROLE etg_monitor_does_not_exist PASSWORD :'verifier';"
-} | docker exec -i "$pg" psql -X -q -v ON_ERROR_STOP=1 -v VERBOSITY=terse \
-  -U emailtelegram -d emailtelegram 2>&1 | sed '/SCRAM-/d' || true)
-printf '%s\n' "$out" >>"$transcript"
-grep -q 'does not exist' <<<"$out" || fail "the failing ALTER ROLE did not fail: $out"
+} | pg_quiet_raw "$pg" emailtelegram emailtelegram 2>&1 >/dev/null) || rc=$?
+((rc != 0)) || fail "the ALTER ROLE for a missing role succeeded"
+printf '%s\n' "$raw_err" >>"$transcript"
+[[ "$raw_err" == *"does not exist"* ]] || fail "the ALTER ROLE did not fail as expected: $raw_err"
+[[ "$raw_err" != *"$v_fail"* && "$raw_err" != *'SCRAM-SHA-256$'* ]] ||
+  fail "psql's unfiltered stderr contains the verifier"
 
 step "10. no verifier or password in the server log or the deploy output"
 server_log=$(docker logs "$pg" 2>&1)
@@ -385,13 +454,14 @@ done
 grep -Eq 'SCRAM-SHA-256[$][0-9]+:' <<<"$server_log" && fail "a SCRAM verifier reached the Postgres server log"
 grep -Eq 'SCRAM-SHA-256[$][0-9]+:' "$transcript" && fail "a SCRAM verifier reached the deploy output"
 
-step "11. control: without session-quiet.sql the server would log it"
+step "11. control: without the quiet preamble the server would log it"
 v_ctrl=$(printf '%s' "$(secret)" | python3 "$deploy_dir/scram-verifier.py")
 {
   printf "\\\\set verifier '%s'\n" "$v_ctrl"
   echo "ALTER ROLE etg_monitor_does_not_exist PASSWORD :'verifier';"
 } | docker exec -i "$pg" psql -X -q -U emailtelegram -d emailtelegram >/dev/null 2>&1 || true
-docker logs "$pg" 2>&1 | grep -qF -- "$v_ctrl" || fail "control: the unprotected verifier was not logged"
+server_log=$(docker logs "$pg" 2>&1)
+[[ "$server_log" == *"$v_ctrl"* ]] || fail "control: the unprotected verifier was not logged"
 
 echo
 echo "agent deploy test: all checks passed"

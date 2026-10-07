@@ -102,11 +102,11 @@ verifier=$(printf '%s' "$PG_MONITOR_PASSWORD" | python3 "$here/scram-verifier.py
   echo "file postgres-exporter/password 65534"
   if [[ "$env_name" == prod ]]; then
     echo "dir promtail 0"
-    echo "file promtail/push_password 0"
+    echo "file promtail/$push_user 0"
   fi
 } >"$p/secrets/manifest"
 if [[ "$env_name" == prod ]]; then
-  write_secret "$p/secrets/promtail/push_password" "$LOKI_PUSH_PASSWORD"
+  write_secret "$p/secrets/promtail/$push_user" "$LOKI_PUSH_PASSWORD"
 fi
 
 # Files installed into ~/monitoring-agent/ (non-secret, world-readable there).
@@ -114,7 +114,7 @@ cp "$agent_dir/docker-compose.agent.yml" "$p/tree/"
 cp "$agent_dir/promtail/promtail-config.yml" "$p/tree/promtail/"
 cp "$ca_file" "$p/tree/tls/ca.crt"
 cp "$here/agent-deploy.sh" "$here/lib.sh" "$p/"
-cp "$here/sql/session-quiet.sql" "$here/sql/reconcile-role.sql" "$p/sql/"
+cp "$here/sql/reconcile-role.sql" "$p/sql/"
 
 {
   echo "# Written by the Deploy Monitoring Agent workflow; local edits are overwritten."
@@ -142,7 +142,7 @@ cp "$here/sql/session-quiet.sql" "$here/sql/reconcile-role.sql" "$p/sql/"
   echo "postgres-exporter $(config_hash "$p" secrets/postgres-exporter/password)"
   if [[ "$env_name" == prod ]]; then
     echo "promtail $(config_hash "$p" tree/promtail/promtail-config.yml tree/tls/ca.crt \
-      secrets/promtail/push_password env)"
+      "secrets/promtail/$push_user" env)"
   fi
 } >"$p/config-hashes"
 

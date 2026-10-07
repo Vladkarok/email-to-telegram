@@ -69,7 +69,7 @@ The agents and the gateway listen on the private `10.0.88.0/24` subnet.
 into Prometheus and referenced via `bearer_token_file`. The deploy writes
 those files from `METRICS_BEARER_TOKEN_STAGING` / `METRICS_BEARER_TOKEN_PROD`.
 
-`./secrets/prometheus/` (exporter username and password) and
+`./secrets/prometheus/` (the exporter password, one file named after the user) and
 `./secrets/loki-gateway/` (TLS key and certificate, htpasswd) come from the
 GitHub environment `staging`, owned by the UID of the container that reads
 them, mode 0400. `tls/ca.crt` is the private CA's public certificate. Never

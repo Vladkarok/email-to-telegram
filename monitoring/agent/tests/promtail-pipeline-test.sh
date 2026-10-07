@@ -48,7 +48,7 @@ mkdir -p "$work/tls" "$work/secrets"
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1 \
   -subj /CN=etg-test-ca -keyout "$work/tls/ca.key" -out "$work/tls/ca.crt" 2>/dev/null
 chmod 0644 "$work/tls/ca.crt"
-printf 'dummy' >"$work/secrets/push_password"
+printf 'dummy' >"$work/secrets/promtail-a"
 
 docker run -d --name "$name" \
   -e LOKI_PUSH_ADDR=127.0.0.1:9 -e LOKI_PUSH_USER=promtail-a \

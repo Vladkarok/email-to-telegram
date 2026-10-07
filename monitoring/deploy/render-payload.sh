@@ -75,13 +75,19 @@ check_cert "$p/secrets/loki-gateway/tls.crt" "$p/secrets/loki-gateway/tls.key" "
   fi
 } >"$p/secrets/loki-gateway/htpasswd"
 
-write_secret "$p/secrets/prometheus/exporter_username" "$exporter_user"
-write_secret "$p/secrets/prometheus/exporter_password" "$EXPORTER_BASIC_AUTH_PASSWORD"
+# The scrape jobs name the user and its password file; both switch together
+# when Prometheus reloads. The previous user's file stays on the host until
+# the reload is done.
+prom="$p/tree/prometheus/prometheus.yml"
+[[ $(grep -c -E '^ +username: prometheus-a$|^ +password_file: /etc/prometheus-secrets/prometheus-a$' "$prom") == 4 ]] ||
+  die "prometheus.yml: expected the node and postgres jobs to name prometheus-a"
+sed -i -e "s|^\( *username:\) prometheus-a$|\1 $exporter_user|" \
+  -e "s|^\( *password_file: /etc/prometheus-secrets/\)prometheus-a$|\1$exporter_user|" "$prom"
+write_secret "$p/secrets/prometheus/$exporter_user" "$EXPORTER_BASIC_AUTH_PASSWORD"
 
 printf '%s\n' \
   "dir prometheus 65534" \
-  "file prometheus/exporter_username 65534" \
-  "file prometheus/exporter_password 65534" \
+  "file prometheus/$exporter_user 65534" \
   "dir loki-gateway 101" \
   "file loki-gateway/tls.crt 101" \
   "file loki-gateway/tls.key 101" \

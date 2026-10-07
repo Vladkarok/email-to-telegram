@@ -63,10 +63,10 @@ bcrypt_line() {
   local user=$1 out line
   [[ "$user" =~ ^[a-z0-9-]+$ ]] || die "invalid basic-auth user name: $user"
   # shellcheck disable=SC2086 # HTPASSWD_VIA is a command prefix, split on purpose
-  out=$(${HTPASSWD_VIA:-} docker run --rm -i --network none --pull missing \
+  out=$(${HTPASSWD_VIA:-} timeout 300 docker run --rm -i --network none --pull missing \
     "$ETG_HTPASSWD_IMAGE" htpasswd -niB -C 10 "$user") ||
     die "htpasswd failed for user $user"
-  line=$(printf '%s\n' "$out" | head -n 1)
+  line=${out%%$'\n'*}
   [[ "$line" =~ ^${user}:\$2y\$10\$[./A-Za-z0-9]{53}$ ]] ||
     die "htpasswd returned an unexpected line for user $user"
   printf '%s\n' "$line"
@@ -131,7 +131,47 @@ host_has_ip() {
 }
 
 ensure_image() {
-  docker image inspect "$1" >/dev/null 2>&1 || docker pull -q "$1" >/dev/null
+  docker image inspect "$1" >/dev/null 2>&1 || timeout 300 docker pull -q "$1" >/dev/null
+}
+
+# Sent first in every psql session that handles the etg_monitor SCRAM
+# verifier. The verifier is secret, so nothing in such a session may reach
+# the server log whatever the server-level settings are: statement,
+# error-statement and duration logging, statement and transaction sampling,
+# and the debug parse-tree printers are all off for the session (these are
+# superuser settings; the deploy connects as the database owner role). The
+# timeouts keep a blocked catalog lock from hanging the deploy. Kept in this
+# file, not read from the payload, so a restore never runs without it.
+ETG_PG_QUIET_SQL="SET log_statement = 'none';
+SET log_min_error_statement = 'panic';
+SET log_min_duration_statement = -1;
+SET log_min_duration_sample = -1;
+SET log_transaction_sample_rate = 0;
+SET debug_print_parse = off;
+SET debug_print_rewritten = off;
+SET debug_print_plan = off;
+SET lock_timeout = '10s';
+SET statement_timeout = '60s';"
+
+# pg_quiet_raw CONTAINER USER DATABASE : runs ETG_PG_QUIET_SQL and then the
+# SQL on stdin with psql in the Postgres container. stderr is not filtered.
+pg_quiet_raw() {
+  local cid=$1 user=$2 db=$3
+  case $ETG_PG_QUIET_SQL in
+    *"SET log_statement = 'none';"*"SET log_min_error_statement = 'panic';"*) ;;
+    *)
+      log "the quiet-session preamble is missing; refusing to run psql"
+      return 1
+      ;;
+  esac
+  { printf '%s\n' "$ETG_PG_QUIET_SQL" && cat; } |
+    docker exec -i "$cid" psql -X -q -A -t -v ON_ERROR_STOP=1 -v VERBOSITY=terse -U "$user" -d "$db"
+}
+
+# pg_quiet CONTAINER USER DATABASE : pg_quiet_raw, and stderr loses every line
+# that mentions a SCRAM verifier.
+pg_quiet() {
+  pg_quiet_raw "$@" 2> >(sed '/SCRAM-/d' >&2)
 }
 
 # run_helper ARGS... : a throwaway root container without network, used for the
@@ -146,7 +186,8 @@ run_helper() {
 # DST. Manifest lines:
 #   dir  <relative dir>  <gid>   -> DST/<dir>, owner deploy user, group <gid>, 0750
 #   file <relative path> <uid>   -> owner <uid>:<uid>, 0400, written as temp + rename
-# Files in a managed directory that the manifest does not list are removed.
+# Files the manifest no longer lists stay until prune_secrets, so a running
+# consumer keeps its old credential until it has switched.
 install_secrets() {
   local src=$1 dst=$2
   [[ -s "$src/manifest" ]] || die "secret manifest missing in $src"
@@ -174,22 +215,33 @@ install_secrets() {
         *) echo "bad manifest line: $kind" >&2; exit 1 ;;
       esac
     done < /in/manifest
-    awk "\$1 == \"dir\" { print \$2 }" /in/manifest | while read -r dir; do
-      for f in "/out/$dir"/* "/out/$dir"/.[!.]*; do
-        [ -e "$f" ] || continue
-        rel=${f#/out/}
-        awk -v p="$rel" "\$1 == \"file\" && \$2 == p { found = 1 } END { exit !found }" /in/manifest ||
-          rm -rf "$f"
-      done
-    done
   ' install-secrets "$(id -u)"
 }
 
-# check_readable DIR UID : every file in DIR can be read by UID:UID, the user
-# the consuming container runs as.
+# prune_secrets DST : removes files in the managed directories of DST that the
+# manifest on stdin does not list. Run after the consumers switched.
+prune_secrets() {
+  local dst=$1
+  # shellcheck disable=SC2016 # the script runs in the helper container's sh
+  run_helper -v "$dst:/out" "$ETG_HELPER_IMAGE" sh -eu -c '
+    cat > /tmp/manifest
+    awk "\$1 == \"dir\" { print \$2 }" /tmp/manifest | while read -r dir; do
+      for f in "/out/$dir"/* "/out/$dir"/.[!.]*; do
+        [ -e "$f" ] || continue
+        rel=${f#/out/}
+        awk -v p="$rel" "\$1 == \"file\" && \$2 == p { found = 1 } END { exit !found }" /tmp/manifest ||
+          rm -rf "$f"
+      done
+    done
+  '
+}
+
+# check_readable DIR UID : every file in DIR can be read by UID:UID without
+# capabilities, the way the consuming container (cap_drop: ALL) reads it.
 check_readable() {
   local dir=$1 uid=$2
-  docker run --rm --network none --user "$uid:$uid" -v "$dir:/s:ro" "$ETG_HELPER_IMAGE" \
+  docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+    --user "$uid:$uid" -v "$dir:/s:ro" "$ETG_HELPER_IMAGE" \
     sh -c 'set -e; n=0; for f in /s/*; do [ -f "$f" ] || continue; cat "$f" >/dev/null; n=$((n + 1)); done; [ "$n" -gt 0 ]' ||
     die "files in $dir are not readable as uid $uid"
 }

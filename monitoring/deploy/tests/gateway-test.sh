@@ -79,16 +79,24 @@ docker network create "$net" >/dev/null
 docker run -d --name "$loki" --network "$net" --network-alias loki \
   --tmpfs /loki:uid=10001,gid=10001 -v "$repo/monitoring/loki:/etc/loki:ro" \
   "$loki_image" -config.file=/etc/loki/loki-config.yml >/dev/null
+# Command output is captured before matching: `cmd | grep -q` can fail under
+# pipefail when grep exits before cmd has written everything.
+loki_ready() {
+  local out
+  out=$(docker exec "$loki" wget -qO- http://127.0.0.1:3100/ready 2>/dev/null) || return 1
+  [[ "$out" == *ready* ]]
+}
 for _ in $(seq 1 60); do
-  docker exec "$loki" wget -qO- http://127.0.0.1:3100/ready 2>/dev/null | grep -q ready && break
+  loki_ready && break
   sleep 2
 done
-docker exec "$loki" wget -qO- http://127.0.0.1:3100/ready 2>/dev/null | grep -q ready || fail "loki not ready"
+loki_ready || fail "loki not ready"
 
 docker run -d --name "$gw" --network "$net" -p "127.0.0.1:$port:3101" "${gateway_opts[@]}" \
   "$nginx_image" -c /etc/loki-gateway/nginx.conf -g 'daemon off;' >/dev/null
 for _ in $(seq 1 30); do
-  docker exec "$gw" wget -qO- http://127.0.0.1:8080/healthz 2>/dev/null | grep -q ok && break
+  health=$(docker exec "$gw" wget -qO- http://127.0.0.1:8080/healthz 2>/dev/null || true)
+  [[ "$health" == *ok* ]] && break
   sleep 1
 done
 
@@ -141,7 +149,8 @@ temp_files=$(docker exec "$gw" find /tmp -type f ! -name nginx.pid)
 [[ -z "$temp_files" ]] || fail "request body written to disk: $temp_files"
 # nginx deletes a body temp file when the request ends, but warns when it
 # writes one ("a client request body is buffered to a temporary file").
-if docker logs "$gw" 2>&1 | grep -q 'buffered to a temporary file'; then
+gw_log=$(docker logs "$gw" 2>&1)
+if [[ "$gw_log" == *"buffered to a temporary file"* ]]; then
   fail "the request body was buffered to a temporary file"
 fi
 echo "ok  no temp files under /tmp and no buffering warning after the chunked push"

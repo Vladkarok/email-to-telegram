@@ -23,7 +23,9 @@ clients:
   - url: https://${LOKI_PUSH_ADDR}/loki/api/v1/push
     basic_auth:
       username: ${LOKI_PUSH_USER}
-      password_file: /run/etg-promtail/push_password
+      # One file per user, so a running Promtail keeps a matching pair while
+      # the deploy installs the next user's password (see the rotation docs).
+      password_file: /run/etg-promtail/${LOKI_PUSH_USER}
     tls_config:
       ca_file: /etc/etg-tls/ca.crt
     backoff_config:

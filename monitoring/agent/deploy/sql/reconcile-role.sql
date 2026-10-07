@@ -1,7 +1,8 @@
 -- Reconciles etg_monitor, the read-only role postgres_exporter logs in as.
--- Runs after session-quiet.sql, with the psql variable :verifier set to the
--- SCRAM-SHA-256 verifier computed on the runner. One transaction: any error
--- (ON_ERROR_STOP) leaves the role as it was.
+-- Runs after the quiet-session preamble (ETG_PG_QUIET_SQL in lib.sh), with
+-- the psql variable :verifier set to the SCRAM-SHA-256 verifier computed on
+-- the runner. One transaction: any error (ON_ERROR_STOP) leaves the role as
+-- it was.
 BEGIN;
 
 DO $$
@@ -12,10 +13,14 @@ BEGIN
 END
 $$;
 
--- Anything beyond membership in pg_monitor fails the run. Nothing is revoked
--- here: an unexpected privilege needs a person to look at it. Grants are
--- checked in the application database.
-DO $$
+-- Everything etg_monitor must not have, as a list of findings. A temporary
+-- function (gone with the session) so the same checks run before and after
+-- the repairs below: a repaired membership can bring privileges with it.
+-- Nothing is revoked here; an unexpected privilege needs a person to look at
+-- it. Grants and effective privileges are checked in the app database;
+-- relations that belong to an extension are not app data and are skipped.
+CREATE FUNCTION pg_temp.etg_monitor_problems() RETURNS text[]
+LANGUAGE plpgsql AS $$
 DECLARE
   r pg_roles%ROWTYPE;
   problems text[] := ARRAY[]::text[];
@@ -43,6 +48,7 @@ BEGIN
   problems := problems || ARRAY(
     SELECT 'owns database ' || d.datname FROM pg_database d WHERE d.datdba = r.oid);
 
+  -- Explicit grants to the role itself.
   problems := problems || ARRAY(
     SELECT DISTINCT 'grant on ' || c.oid::regclass::text
     FROM pg_class c, aclexplode(c.relacl) a WHERE a.grantee = r.oid);
@@ -64,15 +70,50 @@ BEGIN
     FROM pg_default_acl d LEFT JOIN LATERAL aclexplode(d.defaclacl) a ON true
     WHERE d.defaclrole = r.oid OR a.grantee = r.oid);
 
-  -- Catches PUBLIC grants and inherited roles such as pg_read_all_data too.
+  -- Effective privileges, whatever their source: the role's own grants,
+  -- PUBLIC, and roles it inherits from (pg_monitor included).
   problems := problems || ARRAY(
-    SELECT 'can read ' || c.oid::regclass::text
-    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    SELECT format('%s on %s', p.priv, c.oid::regclass)
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) AS p(priv)
     WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
       AND n.nspname NOT IN ('pg_catalog', 'information_schema')
       AND n.nspname NOT LIKE 'pg\_toast%'
-      AND has_table_privilege(r.oid, c.oid, 'SELECT'));
+      AND NOT EXISTS (SELECT 1 FROM pg_depend d
+                      WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e')
+      AND has_table_privilege(r.oid, c.oid, p.priv));
+  problems := problems || ARRAY(
+    SELECT format('column %s on %s', p.priv, c.oid::regclass)
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']) AS p(priv)
+    WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+      AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+      AND n.nspname NOT LIKE 'pg\_toast%'
+      AND NOT EXISTS (SELECT 1 FROM pg_depend d
+                      WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e')
+      AND NOT has_table_privilege(r.oid, c.oid, p.priv)
+      AND has_any_column_privilege(r.oid, c.oid, p.priv));
+  problems := problems || ARRAY(
+    SELECT format('%s on sequence %s', p.priv, c.oid::regclass)
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    CROSS JOIN unnest(ARRAY['USAGE', 'SELECT', 'UPDATE']) AS p(priv)
+    WHERE c.relkind = 'S'
+      AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+      AND NOT EXISTS (SELECT 1 FROM pg_depend d
+                      WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e')
+      AND has_sequence_privilege(r.oid, c.oid, p.priv));
 
+  RETURN problems;
+END
+$$;
+
+DO $$
+DECLARE
+  problems text[] := pg_temp.etg_monitor_problems();
+BEGIN
   IF cardinality(problems) > 0 THEN
     RAISE EXCEPTION 'etg_monitor has unexpected privileges: %', array_to_string(problems, '; ');
   END IF;
@@ -92,6 +133,17 @@ BEGIN
     WHERE g.rolname = 'pg_monitor' AND u.rolname = 'etg_monitor' AND m.inherit_option
   ) THEN
     GRANT pg_monitor TO etg_monitor WITH INHERIT TRUE;
+  END IF;
+END
+$$;
+
+-- The repairs may have switched on inherited privileges: check again.
+DO $$
+DECLARE
+  problems text[] := pg_temp.etg_monitor_problems();
+BEGIN
+  IF cardinality(problems) > 0 THEN
+    RAISE EXCEPTION 'etg_monitor has unexpected privileges after the repairs: %', array_to_string(problems, '; ');
   END IF;
 END
 $$;

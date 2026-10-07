@@ -11,7 +11,7 @@
 #
 # Files the deploy workflow writes on the host (never in the repo):
 #   ./prometheus/secrets/{staging_token,prod_token} - app /metrics bearer tokens
-#   ./secrets/prometheus/   - exporter basic-auth username and password (uid 65534)
+#   ./secrets/prometheus/   - exporter basic-auth password, file named after the user (uid 65534)
 #   ./secrets/loki-gateway/ - gateway TLS key and certificate, htpasswd (uid 101)
 #
 # Config is mounted as directories, not single files, so a file the deploy
