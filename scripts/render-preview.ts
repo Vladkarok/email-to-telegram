@@ -32,6 +32,7 @@ console.log(
     {
       subject: parsed.subject,
       headerFrom: parsed.headerFrom,
+      headerFromDisplay: parsed.headerFromDisplay,
       hasText: parsed.textBody !== null,
       hasHtml: parsed.htmlBody !== null,
       attachments: parsed.attachments.length,

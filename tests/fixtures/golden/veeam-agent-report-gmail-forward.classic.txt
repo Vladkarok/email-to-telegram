@@ -1,4 +1,4 @@
-<blockquote><b>From:</b> "Example Forwarder" &lt;veeam@example.com&gt;
+<blockquote><b>From:</b> Example Forwarder &lt;veeam@example.com&gt;
 <b>To:</b> alias@example.net
 <b>Subject:</b> Fwd: [Success] WIN-EXAMPLE01 - BackUp-base - Monday, 05 October 2026 21:03:35</blockquote>
 

@@ -35,6 +35,7 @@ describe("parseEmail branch handling", () => {
 
     expect(parsed.envelopeFrom).toBeNull();
     expect(parsed.headerFrom).toBeNull();
+    expect(parsed.headerFromDisplay).toBeNull();
     expect(parsed.textBody).toBeNull();
     expect(parsed.htmlBody).toBeNull();
     expect(parsed.attachments).toEqual([]);
@@ -46,8 +47,8 @@ describe("parseEmail branch handling", () => {
     const attachment = Buffer.from("abc");
     simpleParserMock.mockResolvedValue({
       from: {
-        value: [{ address: "sender@example.com" }],
-        text: "Sender <sender@example.com>",
+        value: [{ address: "sender@example.com", name: "Sender" }],
+        text: '"Sender" <sender@example.com>',
       },
       text: null,
       html: "<p>Hello</p>",
@@ -67,7 +68,8 @@ describe("parseEmail branch handling", () => {
     const parsed = await parseEmail(Buffer.from("raw"), 3);
 
     expect(parsed.envelopeFrom).toBe("sender@example.com");
-    expect(parsed.headerFrom).toBe("Sender <sender@example.com>");
+    expect(parsed.headerFrom).toBe('"Sender" <sender@example.com>');
+    expect(parsed.headerFromDisplay).toBe("Sender <sender@example.com>");
     expect(parsed.bodySha256).toBe(createHash("sha256").update("<p>Hello</p>").digest("hex"));
     expect(parsed.attachments).toEqual([
       {

@@ -1,9 +1,12 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
+import { parseEmail } from "../../../src/email/parser.js";
 import {
   normalizeRenderMode,
   renderEmail,
   renderEmailForDelivery,
+  renderPrivacyAlert,
+  type RenderMode,
 } from "../../../src/email/renderer.js";
 import type { ParsedEmail } from "../../../src/email/types.js";
 
@@ -11,7 +14,8 @@ const BASE: ParsedEmail = {
   messageId: "<test@example.com>",
   subject: "Test Subject",
   envelopeFrom: "sender@example.com",
-  headerFrom: "Sender <sender@example.com>",
+  headerFrom: '"Sender" <sender@example.com>',
+  headerFromDisplay: "Sender <sender@example.com>",
   headerFromEmail: "sender@example.com",
   headerFromDomain: "example.com",
   textBody: "Hello, this is the email body.",
@@ -20,6 +24,16 @@ const BASE: ParsedEmail = {
   attachments: [],
   rawSizeBytes: 500,
 };
+
+const encodedWord = (text: string): string =>
+  `=?UTF-8?B?${Buffer.from(text, "utf8").toString("base64")}?=`;
+
+async function parseFrom(fromHeader: string): Promise<ParsedEmail> {
+  const raw = Buffer.from(
+    `From: ${fromHeader}\r\nTo: alerts@example.com\r\nSubject: Test Subject\r\n\r\nBody`,
+  );
+  return parseEmail(raw, raw.length);
+}
 
 describe("normalizeRenderMode", () => {
   it("maps stored values to the two supported modes", () => {
@@ -189,7 +203,7 @@ describe("renderEmail", () => {
     });
 
     it("HTML-escapes angle brackets in From/Subject header", () => {
-      const email = { ...BASE, headerFrom: "Alice <alice@example.com>" };
+      const email = { ...BASE, headerFromDisplay: "Alice <alice@example.com>" };
       const result = renderEmail(email, "html", "alerts@example.com", []);
       expect(result).toContain("Alice &lt;alice@example.com&gt;");
       expect(result).not.toContain("<alice@example.com>");
@@ -527,5 +541,221 @@ describe("renderEmail", () => {
         '<p>Report</p><p><b>Attachments:</b><br><a href="https://example.com/dl/1">report.pdf</a></p>',
       );
     });
+  });
+
+  describe("From header", () => {
+    async function renderFrom(
+      fromHeader: string,
+      mode: RenderMode,
+    ): Promise<ReturnType<typeof renderEmailForDelivery>> {
+      return renderEmailForDelivery(await parseFrom(fromHeader), mode, "alerts@example.com", []);
+    }
+
+    it("shows a display name without mailparser's quotes on every transport", async () => {
+      const html = await renderFrom('"GitHub" <noreply@github.com>', "html");
+      const plain = await renderFrom('"GitHub" <noreply@github.com>', "plaintext");
+
+      expect(html.text).toContain("<b>From:</b> GitHub &lt;noreply@github.com&gt;\n");
+      expect(html.richHtml).toContain("<b>From:</b> GitHub &lt;noreply@github.com&gt;<br>");
+      expect(plain.text.startsWith("From: GitHub <noreply@github.com>\n")).toBe(true);
+      expect(plain.richHtml).toContain("<b>From:</b> GitHub &lt;noreply@github.com&gt;<br>");
+      for (const output of [html.text, html.richHtml, plain.text, plain.richHtml]) {
+        expect(output).not.toContain('"GitHub"');
+      }
+    });
+
+    it("keeps the quotes on a name that could pass for an address", async () => {
+      const plain = await renderFrom('"support@paypal.com" <attacker@evil.com>', "plaintext");
+
+      expect(plain.text.startsWith('From: "support@paypal.com" <attacker@evil.com>\n')).toBe(true);
+    });
+
+    it("keeps the quotes on a name with a full-width at sign", async () => {
+      const plain = await renderFrom(
+        `${encodedWord("help\uff20bank.com")} <x@evil.com>`,
+        "plaintext",
+      );
+
+      expect(plain.text.startsWith('From: "help\uff20bank.com" <x@evil.com>\n')).toBe(true);
+    });
+
+    it("keeps the quotes on a name-only From", async () => {
+      const plain = await renderFrom("bank.com", "plaintext");
+
+      expect(plain.text.startsWith('From: "bank.com"\n')).toBe(true);
+    });
+
+    it("shows unknown when the From header is empty", async () => {
+      const plain = await renderFrom("", "plaintext");
+
+      expect(plain.text.startsWith("From: unknown\n")).toBe(true);
+    });
+
+    it("shows unknown when there is no displayable sender", () => {
+      const email = { ...BASE, headerFrom: null, headerFromDisplay: null, envelopeFrom: null };
+
+      expect(renderEmail(email, "plaintext", "alerts@example.com", [])).toMatch(/^From: unknown\n/);
+    });
+
+    it("keeps an encoded line break in the name from forging a header line", async () => {
+      const from = `${encodedWord("Alice\r\nSubject: forged")} <alice@example.com>`;
+      const plain = await renderFrom(from, "plaintext");
+      const html = await renderFrom(from, "html");
+
+      const plainHeader = plain.text.split("\n\n")[0] ?? "";
+      expect(plainHeader.split("\n")).toEqual([
+        'From: "Alice Subject: forged" <alice@example.com>',
+        "To: alerts@example.com",
+        "Subject: Test Subject",
+      ]);
+      expect(html.text).toContain(
+        '<blockquote><b>From:</b> "Alice Subject: forged" &lt;alice@example.com&gt;\n<b>To:</b>',
+      );
+      expect(html.richHtml).toContain(
+        '<blockquote><b>From:</b> "Alice Subject: forged" &lt;alice@example.com&gt;<br><b>To:</b>',
+      );
+      for (const output of [plain.text, html.text, html.richHtml]) {
+        expect(output).not.toContain("\nSubject: forged");
+        expect(output).not.toContain("\r");
+      }
+    });
+
+    it("strips directional overrides from the name", async () => {
+      const from = `${encodedWord("Ali\u202eecilce")} <alice@example.com>`;
+      const plain = await renderFrom(from, "plaintext");
+      const html = await renderFrom(from, "html");
+
+      expect(plain.text.startsWith("From: Aliecilce <alice@example.com>\n")).toBe(true);
+      for (const output of [plain.text, plain.richHtml, html.text, html.richHtml]) {
+        expect(output).not.toContain("\u202e");
+      }
+    });
+  });
+});
+
+describe("renderPrivacyAlert", () => {
+  async function alertLines(fromHeader: string): Promise<string[]> {
+    const alert = renderPrivacyAlert(
+      await parseFrom(fromHeader),
+      "alerts@example.com",
+      "https://mail.example.com/view/token",
+      false,
+    );
+    return alert.split("\n");
+  }
+
+  it("names the sender's domain", async () => {
+    expect(await alertLines('"GitHub" <noreply@github.com>')).toEqual([
+      "<b>Private email alert</b>",
+      "Alias: <code>alerts@example.com</code>",
+      "Sender: github.com",
+      "Subject: hidden by privacy mode",
+      'Open: <a href="https://mail.example.com/view/token">view email</a>',
+    ]);
+  });
+
+  it("takes the domain from the parsed address, not from the display name", async () => {
+    const lines = await alertLines(`${encodedWord("Support <help@bank.com>")} <real@evil.com>`);
+
+    expect(lines).toContain("Sender: evil.com");
+    expect(lines.join("\n")).not.toContain("bank.com");
+  });
+
+  it("names the first sender's domain when From lists several addresses", async () => {
+    expect(await alertLines('a@first.example, "B" <b@second.example>')).toContain(
+      "Sender: first.example",
+    );
+  });
+
+  it("shows unknown sender for a group From, whose members carry no single address", async () => {
+    expect(await alertLines("Team: a@example.com;")).toContain("Sender: unknown sender");
+  });
+
+  it("does not let an encoded line break in a name-only From add a line", async () => {
+    const lines = await alertLines(encodedWord("Bank\r\nSubject: Your account is locked"));
+
+    expect(lines).toContain("Sender: unknown sender");
+    expect(lines.filter((line) => line.startsWith("Subject:"))).toEqual([
+      "Subject: hidden by privacy mode",
+    ]);
+  });
+
+  it.each([
+    ["a second at sign", "attacker@evil.com@bank.com"],
+    ["a bracketed second at sign", "<attacker@evil.com@bank.com>"],
+    ["a semicolon in the bracketed domain", "<x@bank.com;evil.com>"],
+    ["a comma in the domain", "<x@bank,com>"],
+    ["a domain that is only U+202E", "<a@\u202e>"],
+    ["an encoded domain that is only U+202E", `${encodedWord("x <a@\u202e>")}`],
+    ["a directional override inside the domain", "<alice@ali\u202eecilce.example>"],
+    ["a zero-width space in the domain", "<a@bank\u200b.com>"],
+    ["an encoded zero-width space in the domain", `${encodedWord("x <a@bank\u200b.com>")}`],
+    ["a zero-width joiner in the domain", "<a@ba\u200dnk.com>"],
+    ["a byte-order mark in the domain", "<a@ba\ufeffnk.com>"],
+    ["full-width letters in the domain", "<a@\uff42\uff41\uff4e\uff4b.com>"],
+    ["an address literal", "<a@[192.0.2.1]>"],
+    ["a single-label domain", "<a@bank>"],
+    ["an unterminated quoted local part", '<"a@bank.com>'],
+  ])("shows unknown sender for an address with %s", async (_label, fromHeader) => {
+    const lines = await alertLines(fromHeader);
+
+    expect(lines).toContain("Sender: unknown sender");
+    expect(lines.join("\n")).not.toMatch(/bank|evil|ecilce|\u202e|\u200b|\u200d|\ufeff/);
+  });
+
+  it("names the first address's domain when a semicolon splits an unbracketed From", async () => {
+    // mailparser reads `x@bank.com;evil.com` as the address x@bank.com and a
+    // second, name-only entry "evil.com".
+    const lines = await alertLines("x@bank.com;evil.com");
+
+    expect(lines).toContain("Sender: bank.com");
+    expect(lines.join("\n")).not.toContain("evil.com");
+  });
+
+  it.each([
+    ["a quoted local part holding an at sign", '"a@b"@bank.com', "bank.com"],
+    ["a named quoted local part holding an at sign", '"Bank" <"a@b"@bank.com>', "bank.com"],
+    ["an escaped quote in the quoted local part", '<"a\\"@"@bank.com>', "bank.com"],
+    ["an IDN domain", "<a@b\u00fccher.example>", "b\u00fccher.example"],
+    ["an uppercase domain", "<A@BANK.COM>", "bank.com"],
+  ])("names the domain of %s", async (_label, fromHeader, domain) => {
+    expect(await alertLines(fromHeader)).toContain(`Sender: ${domain}`);
+  });
+
+  it.each([
+    ["a name", '"Just A Name"'],
+    ["a name shaped like a domain", "bank.com"],
+    ["a bracketed domain with no at sign", "<security.bank.com>"],
+    ["a name with an empty address", '"bank.com" <>'],
+    ["an encoded name shaped like a domain", encodedWord("bank.com")],
+    ["a name with a zero-width prefix", "\u200bbank.com"],
+    ["an encoded name shaped like an address", encodedWord("support@bank.com")],
+    ["a name with a full-width at sign", "security\uff20bank.com"],
+  ])("shows unknown sender for a name-only From: %s", async (_label, fromHeader) => {
+    expect(await alertLines(fromHeader)).toContain("Sender: unknown sender");
+  });
+
+  it.each([
+    ["no at sign", "Support <bank.com>"],
+    ["nothing before the at sign", "<@bank.com>"],
+    ["nothing after the at sign", "help@"],
+  ])("shows unknown sender for an address with %s", async (_label, fromHeader) => {
+    expect(await alertLines(fromHeader)).toContain("Sender: unknown sender");
+  });
+
+  it("names the domain mailparser decodes from an encoded-word-only From, as the From line does", async () => {
+    // Left open: mailparser turns a From made only of B-encoded words into an
+    // address when the decoded text holds one. The Sender line follows that
+    // parsed address, as the From line does; neither proves who sent it.
+    const email = await parseFrom(encodedWord("Support <help@bank.com>"));
+    const alert = renderPrivacyAlert(email, "alerts@example.com", "https://x.example/v", false);
+    const delivery = renderEmailForDelivery(email, "plaintext", "alerts@example.com", []);
+
+    expect(alert.split("\n")).toContain("Sender: bank.com");
+    expect(delivery.text.startsWith("From: Support <help@bank.com>\n")).toBe(true);
+  });
+
+  it("shows unknown sender for an empty From", async () => {
+    expect(await alertLines("")).toContain("Sender: unknown sender");
   });
 });
