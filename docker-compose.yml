@@ -34,11 +34,15 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+    # `labels` adds the compose project and service to every json-file line
+    # (attrs); the prod log collector ships only lines that name this
+    # service. Rotation by size; the files go with the container on recreate.
     logging:
       driver: json-file
       options:
-        max-size: "50m"
+        max-size: "10m"
         max-file: "3"
+        labels: "com.docker.compose.project,com.docker.compose.service"
 
   postgres:
     image: postgres:16-alpine
