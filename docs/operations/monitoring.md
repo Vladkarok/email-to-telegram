@@ -293,7 +293,7 @@ getting from the sender to Telegram, how fast, and where is it lost.
 - **Delivery**: deliveries per hour by path and result, lost mail per hour by
   stage, delivery latency p50 / p95, first-attempt success rate per hour,
   delivery backlog, Telegram send failures by class, rich vs classic fallback,
-  backpressure (24h stat and per hour).
+  local rich downgrades by reason, backpressure (24h stat and per hour).
 - **HTTP**: requests per hour by status class and by route, p95 latency by route
   (1 h window). `/healthz` and `/metrics` are excluded: probe and scrape traffic
   would otherwise drown real requests.
@@ -381,6 +381,7 @@ All gauges/counters are prefixed `email_to_telegram_`. Exposed at `GET /metrics`
 | `email_to_telegram_delivery_backlog{state}`                        | gauge     | Delivery logs not in a final state, by `final_status` (`received`, `processing`, `retrying`, `failed`)                                                | `sum(email_to_telegram_delivery_backlog)`                                                                        |
 | `email_to_telegram_delivery_backlog_oldest_age_seconds`            | gauge     | Age of the oldest non-final delivery log; 0 when there is none                                                                                        | `email_to_telegram_delivery_backlog_oldest_age_seconds > 600`                                                    |
 | `email_to_telegram_rich_messages_total{result}`                    | counter   | Rich-message outcomes: `success`, `fallback` (classic message sent instead), `disabled`                                                               | `sum by (result)(increase(email_to_telegram_rich_messages_total[1h]))`                                           |
+| `email_to_telegram_rich_ineligible_total{reason}`                  | counter   | Classic sends whose body hit a rich limit: first limit hit, or `delivery_budget` (header or attachments). Not privacy mode or `fallback`              | `sum by (reason)(increase(email_to_telegram_rich_ineligible_total[1h]))`                                         |
 | `email_to_telegram_telegram_send_failures_total{error_class}`      | counter   | Telegram send failures bucketed by error class                                                                                                        | `topk(5, sum by (error_class)(rate(email_to_telegram_telegram_send_failures_total[1h])))`                        |
 | `email_to_telegram_quota_rejections_total{reason}`                 | counter   | Quota rejections by reason                                                                                                                            | `sum by (reason)(rate(email_to_telegram_quota_rejections_total[1h]))`                                            |
 | `email_to_telegram_activation_notices_total{stage,result}`         | counter   | Bounce notices to the owner of a not-yet-working alias; `stage` = `raw` or `preflight`, `result` below                                                | `sum by (result)(increase(email_to_telegram_activation_notices_total[7d]))`                                      |

@@ -305,6 +305,7 @@ describe("GET /metrics", () => {
       /email_to_telegram_retry_attempts_total\{result="permanently_failed"[^}]*\} 0\n/,
       /email_to_telegram_telegram_send_failures_total\{error_class="forbidden"[^}]*\} 0\n/,
       /email_to_telegram_rich_messages_total\{result="fallback"[^}]*\} 0\n/,
+      /email_to_telegram_rich_ineligible_total\{reason="delivery_budget"[^}]*\} 0\n/,
       /email_to_telegram_quota_rejections_total\{reason="storage_limit"[^}]*\} 0\n/,
       /email_to_telegram_delivery_latency_seconds_count\{[^}]*path="initial"[^}]*\} 0\n/,
       /email_to_telegram_delivery_latency_seconds_count\{[^}]*path="retry"[^}]*\} 0\n/,

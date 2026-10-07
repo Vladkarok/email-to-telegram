@@ -2058,6 +2058,69 @@
       }
     },
     {
+      "id": 45,
+      "type": "timeseries",
+      "title": "Local rich downgrades per hour by reason",
+      "description": "Classic messages sent because the body hit a rich limit (not privacy mode, not the rich switch, not a Telegram rejection: that is fallback above). Reason is the first limit hit: input_limit, text_limit, block_limit, column_limit, depth_limit; delivery_budget: the header or attachments tipped it over. Counted per acknowledged send, so a resend counts again. Read it against success above: the share of rich-eligible mail that went classic locally.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "pointSize": 4,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "barAlignment": -1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["sum"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (reason) (increase(email_to_telegram_rich_ineligible_total{env=~\"$env\"}[$__interval]))",
+          "legendFormat": "{{reason}}"
+        }
+      ],
+      "interval": "1h",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 53
+      }
+    },
+    {
       "type": "row",
       "id": 24,
       "title": "HTTP",
@@ -2066,7 +2129,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 53
+        "y": 60
       },
       "panels": []
     },
@@ -2191,7 +2254,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 54
+        "y": 61
       }
     },
     {
@@ -2254,7 +2317,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 54
+        "y": 61
       }
     },
     {
@@ -2314,7 +2377,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 54
+        "y": 61
       }
     },
     {
@@ -2326,7 +2389,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 62
+        "y": 69
       },
       "panels": [
         {
@@ -2390,7 +2453,7 @@
             "h": 8,
             "w": 4,
             "x": 0,
-            "y": 63
+            "y": 70
           }
         },
         {
@@ -2426,7 +2489,7 @@
             "h": 8,
             "w": 20,
             "x": 4,
-            "y": 63
+            "y": 70
           }
         }
       ]
@@ -2440,7 +2503,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 63
+        "y": 70
       },
       "panels": [
         {
@@ -2512,7 +2575,7 @@
             "h": 4,
             "w": 3,
             "x": 0,
-            "y": 64
+            "y": 71
           }
         },
         {
@@ -2584,7 +2647,7 @@
             "h": 4,
             "w": 3,
             "x": 3,
-            "y": 64
+            "y": 71
           }
         },
         {
@@ -2644,7 +2707,7 @@
             "h": 4,
             "w": 3,
             "x": 6,
-            "y": 64
+            "y": 71
           }
         },
         {
@@ -2704,7 +2767,7 @@
             "h": 4,
             "w": 3,
             "x": 9,
-            "y": 64
+            "y": 71
           }
         },
         {
@@ -2787,7 +2850,7 @@
             "h": 4,
             "w": 3,
             "x": 12,
-            "y": 64
+            "y": 71
           }
         },
         {
@@ -2847,7 +2910,7 @@
             "h": 4,
             "w": 3,
             "x": 15,
-            "y": 64
+            "y": 71
           }
         },
         {
@@ -2907,7 +2970,7 @@
             "h": 4,
             "w": 3,
             "x": 18,
-            "y": 64
+            "y": 71
           }
         },
         {
@@ -2975,7 +3038,7 @@
             "h": 4,
             "w": 3,
             "x": 21,
-            "y": 64
+            "y": 71
           }
         },
         {
@@ -3036,7 +3099,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 68
+            "y": 75
           }
         },
         {
@@ -3096,7 +3159,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 68
+            "y": 75
           }
         },
         {
@@ -3157,7 +3220,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 68
+            "y": 75
           }
         }
       ]

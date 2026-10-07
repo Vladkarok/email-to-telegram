@@ -207,6 +207,7 @@ export async function deliverQueuedEmail(
         imageAttachments,
         parseMode: rendered.parseMode,
         richHtml: rendered.richHtml,
+        richIneligibleReason: rendered.richIneligibleReason,
         text: rendered.text,
       };
     });
@@ -272,6 +273,7 @@ export async function deliverQueuedEmail(
         text: prepared.text,
         parseMode: prepared.parseMode,
         richHtml: prepared.richHtml,
+        richIneligibleReason: prepared.richIneligibleReason,
         richMessagesEnabled: job.telegramRichMessagesEnabled,
       });
       // When Telegram accepted the first message: the delivery latency end.

@@ -366,6 +366,114 @@ describe("renderEmail", () => {
       expect(over.richHtml).toBeUndefined();
     });
 
+    describe("rich ineligibility reason", () => {
+      const reasonFor = (
+        overrides: Partial<ParsedEmail>,
+        mode: RenderMode = "html",
+        links: { filename: string; sizeBytes: number; url: string }[] = [],
+      ): { richHtml?: string; richIneligibleReason?: string } =>
+        renderEmailForDelivery(
+          { ...BASE, textBody: null, htmlBody: null, ...overrides },
+          mode,
+          "alerts@example.com",
+          links,
+        );
+      const wideTable = (columns: number): string => {
+        const cells = (tag: string): string =>
+          Array.from({ length: columns }, (_, i) => `<${tag}>C${i}</${tag}>`).join("");
+        return `<table><tr>${cells("th")}</tr><tr>${cells("td")}</tr></table>`;
+      };
+
+      it.each([
+        ["input_limit", `${"<i>x</i>".repeat(20_050)}`],
+        ["text_limit", `<p>${"x".repeat(32_769)}</p>`],
+        ["block_limit", "<p>x</p>".repeat(501)],
+        ["column_limit", wideTable(21)],
+        ["depth_limit", `<p>${"<b>".repeat(16)}deep${"</b>".repeat(16)}</p>`],
+      ])("names %s for an HTML body that hit the limit", (reason, htmlBody) => {
+        const rendered = reasonFor({ htmlBody });
+
+        expect(rendered.richHtml).toBeUndefined();
+        expect(rendered.richIneligibleReason).toBe(reason);
+      });
+
+      it("reports the first limit hit in check order", () => {
+        const rendered = reasonFor({
+          htmlBody: `<p>${"x".repeat(32_769)}</p>${wideTable(21)}`,
+        });
+
+        expect(rendered.richIneligibleReason).toBe("text_limit");
+      });
+
+      it.each([
+        ["html", "text_limit", "x".repeat(32_769)],
+        ["html", "block_limit", Array.from({ length: 501 }, (_, i) => `p${i}`).join("\n\n")],
+        ["plaintext", "text_limit", "x".repeat(32_769)],
+        ["plaintext", "block_limit", Array.from({ length: 501 }, (_, i) => `p${i}`).join("\n\n")],
+      ] as const)("names the reason for a %s-mode text body over %s", (mode, reason, textBody) => {
+        const rendered = reasonFor({ textBody }, mode);
+
+        expect(rendered.richHtml).toBeUndefined();
+        expect(rendered.richIneligibleReason).toBe(reason);
+      });
+
+      it("names delivery_budget when the header tips the text budget", () => {
+        const headerText =
+          "From: Sender <sender@example.com>\nTo: alerts@example.com\nSubject: Test Subject";
+        const fits = reasonFor({ htmlBody: `<p>${"x".repeat(32_768 - headerText.length)}</p>` });
+        const over = reasonFor({ htmlBody: `<p>${"x".repeat(32_769 - headerText.length)}</p>` });
+
+        expect(fits.richHtml).toBeDefined();
+        expect(fits.richIneligibleReason).toBeUndefined();
+        expect(over.richHtml).toBeUndefined();
+        expect(over.richIneligibleReason).toBe("delivery_budget");
+      });
+
+      it("names delivery_budget when the header tips the block budget", () => {
+        const fits = reasonFor({ htmlBody: "<p>x</p>".repeat(498) });
+        const over = reasonFor({ htmlBody: "<p>x</p>".repeat(499) });
+
+        expect(fits.richIneligibleReason).toBeUndefined();
+        expect(over.richIneligibleReason).toBe("delivery_budget");
+      });
+
+      it("names delivery_budget when the attachments section tips the block budget", () => {
+        const link = [{ filename: "a.pdf", sizeBytes: 1, url: "https://example.net/dl/a" }];
+        const without = reasonFor({ htmlBody: "<p>x</p>".repeat(498) });
+        const withLink = reasonFor({ htmlBody: "<p>x</p>".repeat(498) }, "html", link);
+
+        expect(without.richIneligibleReason).toBeUndefined();
+        expect(withLink.richHtml).toBeUndefined();
+        expect(withLink.richIneligibleReason).toBe("delivery_budget");
+      });
+
+      it("names delivery_budget when no attachment link fits the text budget", () => {
+        const headerText =
+          "From: Sender <sender@example.com>\nTo: alerts@example.com\nSubject: Test Subject";
+        const rendered = reasonFor(
+          { htmlBody: `<p>${"x".repeat(32_768 - 40 - headerText.length)}</p>` },
+          "html",
+          [{ filename: "a".repeat(40), sizeBytes: 1, url: "https://example.net/dl/a" }],
+        );
+
+        expect(rendered.richHtml).toBeUndefined();
+        expect(rendered.richIneligibleReason).toBe("delivery_budget");
+      });
+
+      it.each([
+        ["an HTML body", { htmlBody: "<p>Hello</p>" }, "html"],
+        ["a text body", { textBody: "Hello" }, "html"],
+        ["a plaintext-mode body", { textBody: "Hello" }, "plaintext"],
+        ["an empty text body", { textBody: "   \n\n  " }, "html"],
+        ["an empty HTML body", { htmlBody: "" }, "html"],
+        ["no body", {}, "html"],
+      ] as const)("gives no reason for %s that is rich or empty", (_name, overrides, mode) => {
+        const rendered = reasonFor(overrides, mode);
+
+        expect(rendered.richIneligibleReason).toBeUndefined();
+      });
+    });
+
     it("sends no rich frame for an empty body", () => {
       const rendered = renderEmailForDelivery(
         { ...BASE, htmlBody: null, textBody: "   \n\n  " },

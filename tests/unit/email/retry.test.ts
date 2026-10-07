@@ -686,6 +686,34 @@ describe("runRetryWorker", () => {
     expect(opts.text).toContain("/dl/");
   });
 
+  it("passes the rich ineligibility reason to the send, and none for a rich body", async () => {
+    mockFindFailedLogs.mockResolvedValue([fakeLog]);
+    mockFindAliasById.mockResolvedValue({ ...fakeAlias, renderMode: "html" });
+    const raw = (body: string): Buffer =>
+      Buffer.from(
+        `From: sender@example.com\r\nTo: alias@example.com\r\nSubject: Big\r\nContent-Type: text/html\r\n\r\n${body}`,
+      );
+    const config = {
+      attachmentTtlHours: 24,
+      rawEmailTtlHours: 24,
+      publicBaseUrl: "https://mail.example.com",
+    };
+
+    mockReadRawEmail.mockResolvedValue(raw("<p>x</p>".repeat(501)));
+    await runRetryWorker(fakeDb, fakeApi, config);
+    mockReadRawEmail.mockResolvedValue(raw("<p>x</p>"));
+    await runRetryWorker(fakeDb, fakeApi, config);
+
+    const [[, over], [, fits]] = mockSendTelegramMessage.mock.calls as [
+      [unknown, { richHtml?: string; richIneligibleReason?: string }],
+      [unknown, { richHtml?: string; richIneligibleReason?: string }],
+    ];
+    expect(over.richHtml).toBeUndefined();
+    expect(over.richIneligibleReason).toBe("block_limit");
+    expect(fits.richHtml).toBeDefined();
+    expect(fits.richIneligibleReason).toBeUndefined();
+  });
+
   it("uses a privacy-mode alert and skips Telegram photo upload when privacy mode is enabled", async () => {
     mockFindFailedLogs.mockResolvedValue([fakeLog]);
     mockFindAliasById.mockResolvedValue({
@@ -717,9 +745,10 @@ describe("runRetryWorker", () => {
 
     const [, opts] = mockSendTelegramMessage.mock.calls[0] as [
       unknown,
-      { text: string; richHtml?: string },
+      { text: string; richHtml?: string; richIneligibleReason?: string },
     ];
     expect(opts.richHtml).toBeUndefined();
+    expect(opts.richIneligibleReason).toBeUndefined();
     expect(opts.text).toContain("/view/");
     expect(opts.text).not.toContain("Hello world");
     expect(mockSendTelegramPhotos).not.toHaveBeenCalled();

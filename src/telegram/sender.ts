@@ -3,7 +3,12 @@ import type { Api } from "grammy";
 import type { ParseMode } from "@grammyjs/types";
 import { getLogger } from "../utils/logger.js";
 import { openAttachmentStream } from "../storage/disk.js";
-import { recordRichMessage, recordTelegramSendFailure } from "../observability/metrics.js";
+import {
+  recordRichIneligible,
+  recordRichMessage,
+  recordTelegramSendFailure,
+  type RichIneligibleReason,
+} from "../observability/metrics.js";
 import {
   classifyTelegramError,
   describeSendError,
@@ -24,6 +29,8 @@ export interface SendOptions {
   richHtml?: string;
   /** Runtime kill switch. Defaults to enabled for backward-compatible callers. */
   richMessagesEnabled?: boolean;
+  /** Set when a non-empty body has no `richHtml` because a limit was hit. */
+  richIneligibleReason?: RichIneligibleReason;
 }
 
 export interface SendResult {
@@ -93,7 +100,14 @@ export async function sendTelegramMessage(api: Api, opts: SendOptions): Promise<
     }
   }
 
-  return sendClassicTelegramMessage(api, opts);
+  const classicResult = await sendClassicTelegramMessage(api, opts);
+  // Only a classic send that never had a rich payload while rich sending was
+  // on; a fallback has richHtml and is counted as a rich outcome instead.
+  const richAvailable = opts.richMessagesEnabled !== false && !richMessageMethodUnavailable;
+  if (classicResult.ok && richAvailable && !opts.richHtml && opts.richIneligibleReason) {
+    recordRichIneligible(opts.richIneligibleReason);
+  }
+  return classicResult;
 }
 
 async function sendClassicTelegramMessage(api: Api, opts: SendOptions): Promise<SendResult> {
