@@ -281,7 +281,9 @@ what "bad" looks like.
 **Email to Telegram – Operations** (`e2t-app`, default range 24 h): is mail
 getting from the sender to Telegram, how fast, and where is it lost.
 
-- Top row, always visible: Scrape up · Version · Uptime · Offered (24h,
+- Top row, always visible: Scrape up · Version · Uptime · Stale bot updates
+  (24h, text messages skipped as older than `STALE_TEXT_UPDATE_MAX_AGE_S`;
+  orange above 0) · Offered (24h,
   preflight decisions without signature failures) · Delivered (24h, first
   attempts plus retries) · Lost (7d, `deliveries_lost_total`; red above 0) ·
   Backlog now (pending logs and the oldest one's age) · Latency (24h, delivery
@@ -386,6 +388,7 @@ All gauges/counters are prefixed `email_to_telegram_`. Exposed at `GET /metrics`
 | `email_to_telegram_quota_rejections_total{reason}`                 | counter   | Quota rejections by reason                                                                                                                            | `sum by (reason)(rate(email_to_telegram_quota_rejections_total[1h]))`                                            |
 | `email_to_telegram_activation_notices_total{stage,result}`         | counter   | Bounce notices to the owner of a not-yet-working alias; `stage` = `raw` or `preflight`, `result` below                                                | `sum by (result)(increase(email_to_telegram_activation_notices_total[7d]))`                                      |
 | `email_to_telegram_activation_allows_total{result}`                | counter   | Taps on a notice's one-tap allow: `added`, `expired` (spent, replaced, expired or stale button), `failed` (rule limit or DB error)                    | `increase(email_to_telegram_activation_allows_total{result="added"}[7d])`                                        |
+| `email_to_telegram_bot_updates_skipped_total{reason}`              | counter   | Telegram updates received but not handled: `stale` = a text message older than `STALE_TEXT_UPDATE_MAX_AGE_S` (a backlog after an outage)              | `increase(email_to_telegram_bot_updates_skipped_total{reason="stale"}[24h])`                                     |
 | `email_to_telegram_manual_plan_grants_total{plan}`                 | counter   | Manual billing plan grants                                                                                                                            | `increase(email_to_telegram_manual_plan_grants_total[7d])`                                                       |
 | `email_to_telegram_http_requests_total{route,method,status_class}` | counter   | HTTP request count                                                                                                                                    | `sum by (status_class)(rate(email_to_telegram_http_requests_total[5m]))`                                         |
 | `email_to_telegram_http_request_duration_seconds_*`                | histogram | HTTP latency histogram (`_bucket`, `_sum`, `_count`)                                                                                                  | `histogram_quantile(0.95, sum by (le, route)(rate(email_to_telegram_http_request_duration_seconds_bucket[5m])))` |

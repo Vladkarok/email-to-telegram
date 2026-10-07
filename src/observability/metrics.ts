@@ -52,6 +52,8 @@ export type ActivationNoticeResult =
   | "failed";
 /** added = the rule exists now; expired = spent, replaced or stale button; failed = not added. */
 export type ActivationAllowResult = "added" | "expired" | "failed";
+/** stale = a text message older than STALE_TEXT_UPDATE_MAX_AGE_S when the bot got it. */
+export type BotUpdateSkipReason = "stale";
 
 const buckets = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
 
@@ -187,6 +189,13 @@ const activationAllowsTotal = new Counter({
   name: "email_to_telegram_activation_allows_total",
   help: "Taps on the one-tap allow button of a first-bounce notice, by result: added, expired (spent, replaced or stale button), failed (rule limit or DB error; the button is spent).",
   labelNames: ["result"] as const,
+  registers: [metricsRegistry],
+});
+
+const botUpdatesSkippedTotal = new Counter({
+  name: "email_to_telegram_bot_updates_skipped_total",
+  help: "Telegram updates the bot received but did not handle, by reason: stale = a text message older than STALE_TEXT_UPDATE_MAX_AGE_S (a backlog after an outage); the user has to send it again.",
+  labelNames: ["reason"] as const,
   registers: [metricsRegistry],
 });
 
@@ -352,6 +361,7 @@ const ACTIVATION_ALLOW_RESULTS = Object.keys({
   failed: true,
 } satisfies Record<ActivationAllowResult, true>);
 const DELIVERY_LOST_STAGES: readonly DeliveryLostStage[] = ["initial", "retry", "cleanup"];
+const BOT_UPDATE_SKIP_REASONS: readonly BotUpdateSkipReason[] = ["stale"];
 
 function initializeSeries(): void {
   buildInfoGauge.set({ version: APP_VERSION }, 1);
@@ -379,6 +389,7 @@ function initializeSeries(): void {
       activationNoticesTotal.inc({ stage, result }, 0);
   }
   for (const result of ACTIVATION_ALLOW_RESULTS) activationAllowsTotal.inc({ result }, 0);
+  for (const reason of BOT_UPDATE_SKIP_REASONS) botUpdatesSkippedTotal.inc({ reason }, 0);
 }
 
 initializeSeries();
@@ -471,6 +482,10 @@ export function recordActivationNotice(
 
 export function recordActivationAllow(result: ActivationAllowResult): void {
   activationAllowsTotal.inc({ result });
+}
+
+export function recordBotUpdateSkipped(reason: BotUpdateSkipReason): void {
+  botUpdatesSkippedTotal.inc({ reason });
 }
 
 // All business reads happen first; gauge mutations only execute once

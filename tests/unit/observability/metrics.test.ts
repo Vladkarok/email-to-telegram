@@ -8,6 +8,7 @@ import {
   readAppVersion,
   recordActivationAllow,
   recordActivationNotice,
+  recordBotUpdateSkipped,
   recordDeliveryLatency,
   recordInboundPreflight,
   resetMetricsForTests,
@@ -127,5 +128,21 @@ describe("first-bounce notice counters", () => {
     expect(sample(notices, /\{stage="preflight",result="gated"[^}]*\} (\d+)/)).toBe(1);
     const allows = await exposition("email_to_telegram_activation_allows_total");
     expect(sample(allows, /\{result="expired"[^}]*\} (\d+)/)).toBe(1);
+  });
+});
+
+describe("bot update skip metric", () => {
+  beforeEach(() => {
+    resetMetricsForTests();
+  });
+
+  it("starts the stale series at 0 and counts skips", async () => {
+    const name = "email_to_telegram_bot_updates_skipped_total";
+    expect(sample(await exposition(name), /\{reason="stale"[^}]*\} (\d+)/)).toBe(0);
+
+    recordBotUpdateSkipped("stale");
+    recordBotUpdateSkipped("stale");
+
+    expect(sample(await exposition(name), /\{reason="stale"[^}]*\} (\d+)/)).toBe(2);
   });
 });
