@@ -24,6 +24,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # The app's shutdown deadline is 25 s; Docker kills 5 s after it.
+    stop_grace_period: 30s
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
       interval: 30s
