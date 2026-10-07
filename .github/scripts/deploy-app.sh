@@ -542,7 +542,7 @@ serving() {
 }
 
 on_exit() {
-  local rc=$?
+  local rc=$? note
   set +e
   trap - EXIT
   trap '' HUP INT TERM PIPE
@@ -551,7 +551,17 @@ on_exit() {
     stop_probe
     case $phase in
       prepare) final_message="interrupted by SIG$interrupted before the migration: nothing was replaced and no migration ran." ;;
-      migrate) final_message="interrupted by SIG$interrupted during the migration: nothing was replaced; the migration outcome is unknown (it may have committed)." ;;
+      migrate)
+        # Bash runs a trap once the foreground command has returned, so the
+        # migration has ended or hit its bound. A container the bound left
+        # behind would block the next deploy; removing it stops it.
+        if dk "$CALL_TIMEOUT" rm -f "$MIGRATE_CONTAINER" >/dev/null 2>&1; then
+          note="no migrate container is left"
+        else
+          note="removing the migrate container failed or timed out, remove it (docker rm -f $MIGRATE_CONTAINER) before the next deploy"
+        fi
+        final_message="interrupted by SIG$interrupted during the migration: nothing was replaced; $note; the migration outcome is unknown (it may have committed)."
+        ;;
       *) final_message="interrupted by SIG$interrupted during the $phase stage: no automatic rollback. Check the app container; redeploy the previous release if needed." ;;
     esac
   elif [[ $phase == replace ]]; then

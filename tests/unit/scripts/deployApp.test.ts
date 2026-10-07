@@ -1174,8 +1174,9 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
           [],
         );
         expect(out).toContain("migration: interrupted; outcome unknown");
+        expect(calls()).toContain("IMAGE_TAG=v1.1.0 docker rm -f etg-migrate");
         expect(out).toContain(
-          "interrupted by SIGTERM during the migration: nothing was replaced; the migration outcome is unknown (it may have committed).",
+          "interrupted by SIGTERM during the migration: nothing was replaced; no migrate container is left; the migration outcome is unknown (it may have committed).",
         );
       } finally {
         if (child.exitCode === null) {

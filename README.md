@@ -618,10 +618,14 @@ whole: the old app keeps serving and nothing is replaced. When the migration
 process is killed or loses its database connection, the outcome is unknown:
 the commit may have happened before. A migration that hits the 300-s limit
 ends the run with `migration outcome unknown: it may have committed`, and a
-run interrupted during the migration says the same. The script removes the
-migrate container and replaces nothing. The old app works with either schema under the
-compatibility rule below, and the next deploy applies whatever is still
-pending. To find out, read `drizzle.__drizzle_migrations` in the database.
+run interrupted during the migration says the same. In both cases the script
+removes the migrate container (`docker rm -f etg-migrate`, bounded at 20 s),
+which stops a migration still running, and replaces nothing. If that removal
+fails, the last line says so; the next deploy then stops before migrating
+until you remove the container yourself with `docker rm -f etg-migrate`. The
+old app works with either schema under the compatibility rule below, and the
+next deploy applies whatever is still pending. To find out, read
+`drizzle.__drizzle_migrations` in the database.
 
 The migration connection uses `lock_timeout=5s` and `statement_timeout=120s`.
 While a migration runs, the old app's queries on a table it locks wait for it, so a migration
