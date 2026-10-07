@@ -935,6 +935,50 @@ describe("runRetryWorker", () => {
     expect(mockDeliverQueuedEmail).toHaveBeenCalledOnce();
   });
 
+  it("leaves pending raw emails younger than two minutes to their live request", async () => {
+    mockFindFailedLogs.mockResolvedValue([]);
+    mockListPendingRawEmails.mockResolvedValue([
+      {
+        rawEmailPath: fakeLog.rawEmailPath,
+        localPart: "alerts",
+        envelopeFrom: "sender@example.com",
+        createdAt: new Date(Date.now() - 30_000).toISOString(),
+      },
+    ]);
+
+    await runRetryWorker(fakeDb, fakeApi, {
+      attachmentDir: "/data/attachments",
+      attachmentTtlHours: 24,
+      publicBaseUrl: "https://mail.example.com",
+      rawEmailDir: "/data/rawemails",
+    });
+
+    expect(mockFindDeliveryLogByRawEmailPath).not.toHaveBeenCalled();
+    expect(mockQueueInboundEmail).not.toHaveBeenCalled();
+    expect(mockDeletePendingRawEmailMeta).not.toHaveBeenCalled();
+  });
+
+  it("recovers a pending raw email whose timestamp cannot be read", async () => {
+    mockFindFailedLogs.mockResolvedValue([]);
+    mockListPendingRawEmails.mockResolvedValue([
+      {
+        rawEmailPath: fakeLog.rawEmailPath,
+        localPart: "alerts",
+        envelopeFrom: "sender@example.com",
+        createdAt: "not a date",
+      },
+    ]);
+
+    await runRetryWorker(fakeDb, fakeApi, {
+      attachmentDir: "/data/attachments",
+      attachmentTtlHours: 24,
+      publicBaseUrl: "https://mail.example.com",
+      rawEmailDir: "/data/rawemails",
+    });
+
+    expect(mockQueueInboundEmail).toHaveBeenCalledOnce();
+  });
+
   it("drops pending raw metadata once the raw email already has a delivery log", async () => {
     mockFindFailedLogs.mockResolvedValue([]);
     mockListPendingRawEmails.mockResolvedValue([

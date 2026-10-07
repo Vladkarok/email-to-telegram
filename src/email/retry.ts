@@ -66,6 +66,10 @@ const STALE_DELIVERY_MS = 2 * 60 * 1000;
 // than this — well beyond any realistic delivery time (Telegram sends plus
 // flood-wait) — so the retry worker never races a live in-progress delivery.
 const PROCESSING_STALE_MS = 10 * 60 * 1000;
+// A pending raw email younger than this may belong to a request that is still
+// committing its delivery log; recovering it then races the live request, and
+// the loser's duplicate branch deletes the raw file the winner points to.
+const PENDING_RAW_MIN_AGE_MS = 2 * 60 * 1000;
 
 // The Telegram send is irreversible; retry the persistence of its outcome a few
 // times so a transient DB blip cannot strand the record and cause a resend.
@@ -239,6 +243,9 @@ async function recoverPendingRawEmails(
       log.info("retry worker: stopping before the next pending raw email");
       return;
     }
+    // An unreadable timestamp counts as old, so such mail is never stranded.
+    const createdAtMs = Date.parse(pendingEmail.createdAt);
+    if (Date.now() - createdAtMs < PENDING_RAW_MIN_AGE_MS) continue;
     try {
       const existingLog = await findDeliveryLogByRawEmailPath(db, pendingEmail.rawEmailPath);
       if (existingLog) {
