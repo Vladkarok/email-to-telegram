@@ -55,14 +55,14 @@ describe("createShutdown", () => {
   });
 
   it.each([
-    ["a request that never ends", { closeHttp: never }, "http_close"],
-    ["a Telegram call that never returns", { stopBot: never }, "bot_stop"],
-    ["a pool.end() that never resolves", { closeDb: never }, "db_close"],
+    ["a request that never ends", { closeHttp: never }, "http_close", 1],
+    ["a Telegram call that never returns", { stopBot: never }, "bot_stop", 1],
+    ["a pool.end() that never resolves", { closeDb: never }, "db_close", 1],
   ] as const)(
     "exits 1 at 25 s with %s and logs what is pending",
-    async (_name, overrides, pendingStep) => {
+    async (_name, overrides, pendingStep, deliveries) => {
       const pipelines = new InFlightTracker();
-      const delivery = pipelines.run(never);
+      const delivery = deliveries > 0 ? pipelines.run(never) : undefined;
       const { shutdown, logger, exit } = setup({ ...overrides, pipelines });
 
       void shutdown("SIGTERM");
@@ -77,7 +77,7 @@ describe("createShutdown", () => {
       ];
       expect(message).toBe("shutdown.deadline_exceeded");
       expect(fields.pending).toContain(pendingStep);
-      expect(fields.pipelinesInFlight).toBe(1);
+      expect(fields.pipelinesInFlight).toBe(deliveries);
       void delivery;
     },
   );
@@ -129,6 +129,51 @@ describe("createShutdown", () => {
       "db_closed",
       "exit:0",
     ]);
+  });
+
+  it("names an active polling run and retry run when HTTP close never ends", async () => {
+    const { shutdown, logger, exit } = setup({
+      closeHttp: never,
+      pollingRun: never,
+      retryRun: never,
+    });
+
+    void shutdown("SIGTERM");
+    await vi.advanceTimersByTimeAsync(SHUTDOWN_DEADLINE_MS);
+
+    expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+    const [fields, message] = logger.error.mock.calls[0] as [{ pending: string[] }, string];
+    expect(message).toBe("shutdown.deadline_exceeded");
+    expect(fields.pending).toEqual(
+      expect.arrayContaining(["http_close", "polling_run", "retry_run"]),
+    );
+  });
+
+  it("takes the polling run when shutdown begins and still closes the DB after HTTP close", async () => {
+    const order: string[] = [];
+    let finishHttp!: () => void;
+    const { shutdown, events } = setup({
+      closeHttp: () =>
+        new Promise<void>((resolve) => {
+          finishHttp = () => {
+            order.push("http_closed");
+            resolve();
+          };
+        }),
+      pollingRun: () => {
+        order.push("polling_run_taken");
+        return Promise.resolve();
+      },
+    });
+
+    const done = shutdown("SIGTERM");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(events).toEqual(["begin"]);
+    finishHttp();
+    await done;
+
+    expect(order).toEqual(["polling_run_taken", "http_closed"]);
+    expect(events).toEqual(["begin", "session_store", "db_closed", "exit:0"]);
   });
 
   it("goes on with the drain when bot.stop() fails", async () => {

@@ -75,6 +75,14 @@ export function createShutdown(
       // Overlaps the HTTP close and the drains below.
       const noticesStopped = track("notices", steps.stopNotices());
 
+      // Taken now, so a deadline hit while HTTP or bot.stop() hangs still
+      // names an active polling or retry run. Awaited after both, below.
+      const pollingRun = track("polling_run", steps.pollingRun());
+      const retryRun = track("retry_run", steps.retryRun());
+      // Marked handled; a rejection still reaches the Promise.all below.
+      pollingRun.catch(() => {});
+      retryRun.catch(() => {});
+
       // HTTP stops triggering new pipelines; bot.stop() aborts the long poll
       // and confirms up to the update in progress. A failed confirm is not
       // fatal: those updates are handled again by the next process.
@@ -92,14 +100,14 @@ export function createShutdown(
       const inFlight = steps.pipelines.inFlight;
       if (inFlight > 0) logger.info({ inFlight }, "Draining in-flight pipelines...");
       await Promise.all([
-        track("polling_run", steps.pollingRun()),
+        pollingRun,
         track(
           "pipeline_drain",
           steps.pipelines.drain(PIPELINE_DRAIN_MS).catch((err: unknown) => {
             logger.warn({ err }, "Pipeline drain timed out; proceeding with shutdown");
           }),
         ),
-        track("retry_run", steps.retryRun()),
+        retryRun,
       ]);
       await noticesStopped;
       steps.destroySessionStore();
