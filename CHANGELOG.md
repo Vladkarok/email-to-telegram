@@ -18,6 +18,34 @@ that has been running in production.
 
 ## [Unreleased]
 
+## [1.13.0] — 2026-10-07
+
+Deploys no longer lose what users send the bot while it restarts.
+
+### Changed
+
+- **Messages and button taps sent during a restart are answered after
+  it.** The bot used to discard everything Telegram queued while it was
+  down. It now handles the queue when it starts, in order, within
+  Telegram's 24-hour retention. Text messages older than 10 minutes
+  (`STALE_TEXT_UPDATE_MAX_AGE_S`) are skipped and counted; taps,
+  membership changes and chat migrations are always handled.
+- **Shutdown has one 25-second deadline** and Docker waits 30 seconds
+  (`stop_grace_period`). The update in progress and deliveries in flight
+  finish first; anything cut at the deadline stays in the delivery log for
+  the retry worker. Only one retry run at a time.
+- The health check turns healthy only once the bot is polling; the
+  healthcheck `start_period` is 60 seconds.
+- Migrations run on their own connection with a 5-second lock timeout and
+  a 2-minute statement timeout.
+- The app runs under Docker's init (`init: true`), so a stop signal during
+  startup is no longer ignored.
+
+### Added
+
+- `email_to_telegram_bot_updates_skipped_total{reason}` and a "Stale bot
+  updates" panel on the Operations dashboard.
+
 ## [1.12.2] — 2026-10-07
 
 Measurement release: the bot behaves exactly as in 1.12.1.
