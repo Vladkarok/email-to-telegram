@@ -32,8 +32,10 @@
 #
 # All output also goes to deploy-logs/ next to this script (mode 700; the
 # newest 30 files are kept), so the report survives a lost SSH session. The
-# job log gets no line of .env and no raw app or migration output: those stay
-# in deploy-logs/.
+# job log gets no line of .env and no raw Compose, app or migration output:
+# Compose can quote .env in a warning, so all of its output goes to a private
+# file in deploy-logs/, and the job log gets exit statuses, durations, image
+# IDs and container states.
 #
 # Exit status: 0 deployed; 1 for everything else (nothing replaced, rolled
 # back, or rollback failed: the last line says which); 128+n on a signal. A
@@ -156,14 +158,36 @@ dk() {
 current_files=()
 target_files=()
 compose_files=()
+# Where Compose's output goes: a private file in deploy-logs/, or in the work
+# directory when there is none.
+COMPOSE_LOG=/dev/null
 
 # dc SECONDS ARGS... : docker compose ARGS with compose_files and .env,
-# bounded.
+# bounded. stdout is the caller's; stderr goes to the Compose log only.
 dc() {
   local t=$1
   shift
+  say_compose "$COMPOSE_LOG" "$*"
   timeout -k "$CALL_KILL_AFTER" "$t" \
-    docker compose "${compose_files[@]}" --env-file .env "$@" </dev/null
+    docker compose "${compose_files[@]}" --env-file .env "$@" </dev/null 2>>"$COMPOSE_LOG"
+}
+
+# dc_stage FILE SECONDS ARGS... : the same for a stage, stdout included, all
+# appended to FILE; a call that ignores SIGTERM at its bound gets SIGKILL
+# KILL_AFTER later.
+dc_stage() {
+  local file=$1 t=$2
+  shift 2
+  say_compose "$file" "$*"
+  timeout -k "$KILL_AFTER" "$t" \
+    docker compose "${compose_files[@]}" --env-file .env "$@" </dev/null >>"$file" 2>&1
+}
+
+# say_compose FILE ARGS : a header line in FILE for the Compose call that
+# follows.
+say_compose() {
+  printf '== %s docker compose %s --env-file .env %s\n' \
+    "$(clock "$(now_ms)")" "${compose_files[*]}" "$2" >>"$1" 2>/dev/null || true
 }
 
 # first_id TEXT : the first line of TEXT that is a container ID. Compose
@@ -352,10 +376,10 @@ replace_and_verify() {
   fail_reason=""
   start=$(now_ms)
   say "$label: docker compose ${compose_files[*]} up -d${*:+ $*} --no-build --pull never with IMAGE_TAG=$tag (at most ${REPLACE_TIMEOUT}s)"
-  IMAGE_TAG=$tag timeout -k "$KILL_AFTER" "$REPLACE_TIMEOUT" \
-    docker compose "${compose_files[@]}" --env-file .env up -d "$@" --no-build --pull never </dev/null
+  IMAGE_TAG=$tag dc_stage "$COMPOSE_LOG" "$REPLACE_TIMEOUT" up -d "$@" --no-build --pull never
   rc=$?
   up_end=$(now_ms)
+  say "$label: compose up exited $rc after $(secs "$((up_end - start))")"
   if timed_out "$rc"; then
     fail_reason="compose up timed out after ${REPLACE_TIMEOUT}s"
     return 1
@@ -363,9 +387,8 @@ replace_and_verify() {
     fail_reason="compose up failed (exit $rc)"
     return 1
   fi
-  say "$label: compose up finished in $(secs "$((up_end - start))")"
 
-  out=$(IMAGE_TAG=$tag dc "$CALL_TIMEOUT" ps -q app 2>/dev/null)
+  out=$(IMAGE_TAG=$tag dc "$CALL_TIMEOUT" ps -q app)
   rc=$?
   if timed_out "$rc"; then
     fail_reason="compose ps timed out after ${CALL_TIMEOUT}s"
@@ -449,7 +472,7 @@ replace_and_verify() {
 print_failed_logs() {
   local cid=$current_cid out rc
   if [[ -z $cid ]]; then
-    out=$(dc "$CALL_TIMEOUT" ps -a -q app 2>/dev/null)
+    out=$(dc "$CALL_TIMEOUT" ps -a -q app)
     cid=$(first_id "$out") || cid=""
   fi
   if [[ -z $cid ]]; then
@@ -616,6 +639,8 @@ printf -v RUN_ID '%(%Y%m%dT%H%M%SZ)T-%s' -1 "$$"
 if mkdir -p deploy-logs && chmod 700 deploy-logs && : >>"deploy-logs/$RUN_ID.log"; then
   LOG_DIR=$PWD/deploy-logs
   exec > >(exec env --ignore-signal=HUP,INT,TERM tee -p -a "$LOG_DIR/$RUN_ID.log") 2>&1
+  COMPOSE_LOG=$LOG_DIR/$RUN_ID.compose.log
+  : >>"$COMPOSE_LOG"
   logs=("$LOG_DIR"/*.log)
   chmod 600 -- "${logs[@]}" 2>/dev/null || say "WARNING: cannot make every file in $LOG_DIR private"
   if ((${#logs[@]} > LOG_KEEP)); then
@@ -679,23 +704,28 @@ current_files=(-f "$current_main" "${override[@]}")
 target_files=(-f "$target_main" "${override[@]}")
 
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/etg-deploy.XXXXXXXX")
+if [[ -n $LOG_DIR ]]; then
+  say "deploy-app: Compose output goes to $COMPOSE_LOG on the host only"
+else
+  COMPOSE_LOG=$WORK_DIR/compose.log
+  say "deploy-app: Compose output goes to the work directory only and is deleted at the end"
+fi
 
-# Compose prints the offending line of an .env it cannot parse. Check first,
-# with all output dropped, so no line of .env reaches the job log. Both files
+# Compose prints the offending line of an .env it cannot parse. Both files
 # must parse: the rollback uses docker-compose.yml.
 compose_files=("${target_files[@]}")
-dc "$CALL_TIMEOUT" config -q >/dev/null 2>&1 ||
-  fail "docker compose cannot read $target_main with .env (output hidden). Nothing changed."
+dc "$CALL_TIMEOUT" config -q >>"$COMPOSE_LOG" ||
+  fail "docker compose cannot read $target_main with .env (see the Compose log). Nothing changed."
 if [[ $current_main != "$target_main" ]]; then
   compose_files=("${current_files[@]}")
-  dc "$CALL_TIMEOUT" config -q >/dev/null 2>&1 ||
-    fail "docker compose cannot read docker-compose.yml, which a rollback would use, with .env (output hidden). Nothing changed."
+  dc "$CALL_TIMEOUT" config -q >>"$COMPOSE_LOG" ||
+    fail "docker compose cannot read docker-compose.yml, which a rollback would use, with .env (see the Compose log). Nothing changed."
 fi
 
 # 1. What runs now.
 say "deploy-app: tooling commit ${DEPLOY_TOOLING_COMMIT:-unknown}, target $IMAGE_REPO:$IMAGE_TAG, compose files: ${target_files[*]}"
 compose_files=("${current_files[@]}")
-ps_out=$(dc "$CALL_TIMEOUT" ps -a -q app 2>/dev/null) ||
+ps_out=$(dc "$CALL_TIMEOUT" ps -a -q app) ||
   fail "docker compose ps failed or timed out; nothing changed"
 old_cid=$(first_id "$ps_out") || old_cid=""
 old_image_id=""
@@ -716,9 +746,11 @@ fi
 # on Compose uses the target's files, until a rollback.
 compose_files=("${target_files[@]}")
 say "pulling $IMAGE_REPO:$IMAGE_TAG (at most ${PULL_TIMEOUT}s)"
-timeout -k "$KILL_AFTER" "$PULL_TIMEOUT" \
-  docker compose "${compose_files[@]}" --env-file .env pull app </dev/null ||
-  fail "pull failed or timed out; nothing changed"
+stage_start=$(now_ms)
+rc=0
+dc_stage "$COMPOSE_LOG" "$PULL_TIMEOUT" pull app || rc=$?
+say "pull exited $rc after $(secs "$(($(now_ms) - stage_start))")"
+((rc == 0)) || fail "pull failed or timed out; nothing changed"
 target_image_id=$(dk "$CALL_TIMEOUT" image inspect --format '{{.Id}}' "$IMAGE_REPO:$IMAGE_TAG") ||
   fail "docker image inspect of the pulled image failed or timed out; nothing changed"
 say "target image $target_image_id"
@@ -757,9 +789,9 @@ stage_start=$(now_ms)
 # `run --no-deps` does not start the database; `up --no-recreate` starts it
 # if it is stopped and leaves a running one alone.
 say "starting the database: docker compose up -d --wait --no-recreate $DB_SERVICE (within the ${MIGRATE_TIMEOUT}s migrate bound)"
-timeout -k "$KILL_AFTER" "$MIGRATE_TIMEOUT" \
-  docker compose "${compose_files[@]}" --env-file .env up -d --wait --no-recreate "$DB_SERVICE" </dev/null
+dc_stage "$COMPOSE_LOG" "$MIGRATE_TIMEOUT" up -d --wait --no-recreate "$DB_SERVICE"
 rc=$?
+say "database: compose up exited $rc after $(secs "$(($(now_ms) - stage_start))")"
 if ((rc != 0)); then
   migrate_result="not run: the database did not start"
   if timed_out "$rc"; then
@@ -775,9 +807,8 @@ phase=migrate
 migrate_result="interrupted; outcome unknown"
 say "migrating (at most ${budget}s); output goes to the host only"
 migrate_start=$(now_ms)
-timeout -k "$KILL_AFTER" "$budget" \
-  docker compose "${compose_files[@]}" --env-file .env run --rm --no-deps --pull never -T --name "$MIGRATE_CONTAINER" \
-  app node dist/index.js --migrate-only </dev/null >"$WORK_DIR/migrate.log" 2>&1
+dc_stage "$WORK_DIR/migrate.log" "$budget" \
+  run --rm --no-deps --pull never -T --name "$MIGRATE_CONTAINER" app node dist/index.js --migrate-only
 rc=$?
 set -e
 migrate_ms=$(($(now_ms) - migrate_start))

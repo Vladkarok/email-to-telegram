@@ -65,6 +65,8 @@ if [[ $1 == compose ]]; then
   done
   sub=$1
   shift
+  # Compose names the text after a $ in an .env value as an unset variable.
+  [[ -z ${"$"}{STUB_WARN:-} ]] || echo "WARN[0000] The \"$STUB_WARN\" variable is not set. Defaulting to a blank string." >&2
   case $sub in
     config)
       if [[ -n ${"$"}{STUB_CONFIG_FAIL:-} && " $files " == *" $STUB_CONFIG_FAIL "* ]]; then
@@ -853,7 +855,8 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
         const names = Object.keys(hostLogs()).sort();
         expect(names).toHaveLength(30);
         expect(names.at(-1)).toMatch(/^\d{8}T\d{6}Z-\d+\.log$/);
-        expect(names[0]).toBe("20200101T000011Z-1.log");
+        // This run's log and Compose log are two of them.
+        expect(names[0]).toBe("20200101T000012Z-1.log");
       },
       TEST_TIMEOUT_MS,
     );
@@ -966,6 +969,11 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
       );
       expectNoSecrets(run.out);
       expectNoSecrets(runLog());
+      // The private Compose log has it.
+      const [name, text] =
+        Object.entries(hostLogs()).find(([file]) => file.endsWith(".compose.log")) ?? [];
+      expect(text).toContain("do-not-print-me");
+      expect(mode(join(appDir, "deploy-logs", name ?? ""))).toBe(0o600);
     },
     TEST_TIMEOUT_MS,
   );
@@ -1178,6 +1186,33 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
   });
 
   describe("private output", () => {
+    it(
+      "keeps a Compose warning that quotes .env out of the job log and readable files",
+      () => {
+        const fragment = "privSuffix9f3";
+        writeFileSync(
+          join(appDir, ".env"),
+          `HOST_BIND_IP=10.0.88.2\nPOSTGRES_PASSWORD=prefix$${fragment}\n`,
+        );
+        chmodSync(join(appDir, ".env"), 0o600);
+        writeFileSync(join(appDir, CANDIDATE), "services: {} # next\n");
+        // Every Compose call warns: the preflight, which passes, then pull,
+        // the database, the migration, ps, and the deploy's and the
+        // rollback's up.
+        const run = deploy({ STUB_WARN: fragment, STUB_UP: "fail" }, { umask: "022" });
+
+        expectRolledBack(run);
+        expect(run.out).not.toContain(fragment);
+        const holding = filesUnder(root).filter((file) =>
+          readFileSync(file, "utf-8").includes(fragment),
+        );
+        expect(holding.some((file) => file.endsWith(".compose.log"))).toBe(true);
+        expect(holding.filter((file) => mode(file) & 0o077)).toEqual([]);
+        expect(mode(join(appDir, "deploy-logs"))).toBe(0o700);
+      },
+      TEST_TIMEOUT_MS,
+    );
+
     it(
       "makes deploy-logs private, an older directory and its files included",
       () => {

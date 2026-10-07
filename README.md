@@ -511,8 +511,7 @@ anything else. Each stage has its own time limit, and every other Docker call
 (`ps`, `inspect`, `tag`, `logs`, `rm`) gets 20 s:
 
 1. Checks that Compose can read the candidate and `docker-compose.yml` with
-   `.env`, with all output hidden, so a line of `.env` never reaches the job
-   log.
+   `.env`.
 2. Prints the tooling commit, the target tag, and the running app container's
    image, image ID, state and restart count.
 3. Pulls the target image (600 s) and reads its image ID.
@@ -552,8 +551,12 @@ The deploy jobs time out after 55 minutes.
 Everything the script prints also goes to `~/email-to-telegram/deploy-logs/`
 on the host (the newest 30 files are kept), so the report survives a lost SSH
 session. The directory is private to the deploy user (mode 700, files 600).
-The full output of a failed migration and of a failed app container is kept
-there too; the job log, which is public, gets only their error lines.
+Compose can quote `.env` in its output (a warning about an unset variable
+names the text after a `$` in a value), so all Compose output goes to a
+`<run>.compose.log` file there and never to the job log, which is public and
+gets exit statuses, durations, image IDs and container states. The full
+output of a failed migration and of a failed app container is kept there too;
+the job log gets only their error lines.
 
 ### The gap
 
