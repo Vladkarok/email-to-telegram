@@ -74,6 +74,9 @@ jobs:
       - name: Format check
         run: npm run format:check
 
+      - name: Shellcheck the deploy script
+        run: shellcheck .github/scripts/*.sh
+
       - name: Test
         run: npm run test:coverage
 

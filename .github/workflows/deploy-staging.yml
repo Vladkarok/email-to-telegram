@@ -69,7 +69,7 @@ jobs:
     if: github.repository == 'Vladkarok/email-to-telegram'
     runs-on: [self-hosted, linux, x64, email-tg-staging]
     needs: build-and-push
-    timeout-minutes: 30
+    timeout-minutes: 45
     # One host-mutating job per VM at a time, shared with the monitoring
     # workflows; a pending run waits in the queue instead of replacing another.
     concurrency:
@@ -99,11 +99,24 @@ jobs:
           ssh staging 'exec 9>>~/.etg-deploy.lock && flock -w 900 9 || { echo "Another deploy has held ~/.etg-deploy.lock for 15 minutes; giving up." >&2; exit 1; }
           cat > ~/email-to-telegram/docker-compose.yml' < docker-compose.yml
 
+      - name: Copy deploy script to staging
+        # Under the host lock; written to a temp file and renamed, so a copy
+        # never changes the file a running deploy is reading.
+        run: |
+          ssh staging 'exec 9>>~/.etg-deploy.lock && flock -w 900 9 || { echo "Another deploy has held ~/.etg-deploy.lock for 15 minutes; giving up." >&2; exit 1; }
+          cat > ~/email-to-telegram/deploy-app.sh.tmp && mv -f ~/email-to-telegram/deploy-app.sh.tmp ~/email-to-telegram/deploy-app.sh' < .github/scripts/deploy-app.sh
+
+      # deploy-app.sh pulls, migrates first, replaces, waits for healthy and
+      # ready, rolls back to the previous image on failure and prints the
+      # availability report. Its stages are bounded (22 minutes in all); with
+      # the 15-minute wait for the host lock that stays inside the 45-minute
+      # job timeout.
       - name: Deploy
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           # The image this run built, not the moving :main tag.
           IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          TOOLING_COMMIT: ${{ github.sha }}
         run: |
           ssh staging bash << EOF
           set -e
@@ -112,25 +125,5 @@ jobs:
           cd ~/email-to-telegram
 
           echo "${GHCR_TOKEN}" | docker login ghcr.io -u vladkarok --password-stdin
-          IMAGE_TAG="${IMAGE_TAG}" timeout 600 docker compose --env-file .env pull app
-          IMAGE_TAG="${IMAGE_TAG}" docker compose --env-file .env up -d --remove-orphans --no-build
-
-          container_id=\$(IMAGE_TAG="${IMAGE_TAG}" docker compose --env-file .env ps -q app)
-          test -n "\$container_id"
-
-          attempts=0
-          while true; do
-            attempts=\$((attempts + 1))
-            health=\$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "\$container_id")
-            if [ "\$health" = "healthy" ]; then
-              break
-            fi
-            if [ "\$health" = "unhealthy" ] || [ "\$health" = "exited" ] || [ "\$health" = "dead" ] || [ "\$attempts" -ge 30 ]; then
-              docker logs "\$container_id" --tail 100
-              exit 1
-            fi
-            sleep 5
-          done
-
-          echo "Staging deploy complete at \$(date)"
+          IMAGE_TAG="${IMAGE_TAG}" DEPLOY_TOOLING_COMMIT="${TOOLING_COMMIT}" bash ./deploy-app.sh </dev/null
           EOF
