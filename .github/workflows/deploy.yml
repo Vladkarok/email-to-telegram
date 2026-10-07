@@ -109,7 +109,7 @@ jobs:
     name: Deploy to VPS
     if: github.repository == 'Vladkarok/email-to-telegram' && github.event_name == 'push'
     runs-on: [self-hosted, linux, x64, email-tg-prod]
-    timeout-minutes: 50
+    timeout-minutes: 55
     concurrency:
       group: host-prod
       cancel-in-progress: false
@@ -128,7 +128,7 @@ jobs:
         run: |
           set -euo pipefail
           incoming=$(tar -cf - docker-compose.yml -C .github/scripts deploy-app.sh |
-            timeout 120 ssh prod 'd=$(mktemp -d "$HOME/.etg-incoming.XXXXXXXX") && tar -xf - -C "$d" && echo "$d"')
+            timeout -k 10 120 ssh prod 'd=$(mktemp -d "$HOME/.etg-incoming.XXXXXXXX") && tar -xf - -C "$d" && echo "$d"')
           case $incoming in
             /*/.etg-incoming.*) ;;
             *) echo "unexpected upload directory: $incoming" >&2; exit 1 ;;
@@ -139,10 +139,13 @@ jobs:
       # at most): the network check, keeping the old compose file for the
       # rollback, installing the new files and deploy-app.sh. The script pulls,
       # migrates first, replaces, waits for healthy and ready, rolls back to
-      # the previous image on failure and prints the availability report. Its
-      # stages are bounded (22 minutes in all) and every other Docker call to
-      # 20 s (a few minutes more at worst); with the lock wait that stays
-      # inside the 50-minute job timeout.
+      # the previous image on failure and prints the availability report.
+      #
+      # Worst case, every bound used: the lock wait 15 min; the script's
+      # stages 22 min and its other Docker calls about 6 min (20 s each); this
+      # job's own calls about 8 min (upload 120 s, network check 2 x 60 s,
+      # login 120 s, cleanup 60 s, each killed 10 s after its bound). About
+      # 51 minutes, inside the 55-minute job timeout.
       - name: Deploy
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
@@ -156,8 +159,8 @@ jobs:
 
           # docker-compose.yml declares monitoring_scrape as external; create
           # it on a host that has never had the monitoring stack.
-          timeout 60 docker network inspect monitoring_scrape >/dev/null 2>&1 ||
-            timeout 60 docker network create monitoring_scrape
+          timeout -k 10 60 docker network inspect monitoring_scrape >/dev/null 2>&1 ||
+            timeout -k 10 60 docker network create monitoring_scrape
 
           cd ~/email-to-telegram
           # Files are renamed into place, never written in place. The rollback
@@ -172,7 +175,7 @@ jobs:
           mv -f docker-compose.yml.tmp docker-compose.yml
           mv -f deploy-app.sh.tmp deploy-app.sh
 
-          echo "${GHCR_TOKEN}" | timeout 120 docker login ghcr.io -u vladkarok --password-stdin
+          echo "${GHCR_TOKEN}" | timeout -k 10 120 docker login ghcr.io -u vladkarok --password-stdin
           IMAGE_TAG="${RELEASE_TAG}" DEPLOY_TOOLING_COMMIT="${TOOLING_COMMIT}" bash ./deploy-app.sh </dev/null
           EOF
 
@@ -183,14 +186,14 @@ jobs:
         if: always()
         run: |
           if [ -n "${ETG_INCOMING:-}" ]; then
-            timeout 60 ssh prod "rm -rf '$ETG_INCOMING'"
+            timeout -k 10 60 ssh prod "rm -rf '$ETG_INCOMING'"
           fi
 
   redeploy-existing-release:
     name: Redeploy existing release to VPS
     if: github.repository == 'Vladkarok/email-to-telegram' && github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, linux, x64, email-tg-prod]
-    timeout-minutes: 50
+    timeout-minutes: 55
     concurrency:
       group: host-prod
       cancel-in-progress: false
@@ -218,7 +221,7 @@ jobs:
         run: |
           set -euo pipefail
           incoming=$(tar -cf - docker-compose.yml -C deploy-tooling/.github/scripts deploy-app.sh |
-            timeout 120 ssh prod 'd=$(mktemp -d "$HOME/.etg-incoming.XXXXXXXX") && tar -xf - -C "$d" && echo "$d"')
+            timeout -k 10 120 ssh prod 'd=$(mktemp -d "$HOME/.etg-incoming.XXXXXXXX") && tar -xf - -C "$d" && echo "$d"')
           case $incoming in
             /*/.etg-incoming.*) ;;
             *) echo "unexpected upload directory: $incoming" >&2; exit 1 ;;
@@ -229,10 +232,13 @@ jobs:
       # at most): the network check, keeping the old compose file for the
       # rollback, installing the new files and deploy-app.sh. The script pulls,
       # migrates first, replaces, waits for healthy and ready, rolls back to
-      # the previous image on failure and prints the availability report. Its
-      # stages are bounded (22 minutes in all) and every other Docker call to
-      # 20 s (a few minutes more at worst); with the lock wait that stays
-      # inside the 50-minute job timeout.
+      # the previous image on failure and prints the availability report.
+      #
+      # Worst case, every bound used: the lock wait 15 min; the script's
+      # stages 22 min and its other Docker calls about 6 min (20 s each); this
+      # job's own calls about 8 min (upload 120 s, network check 2 x 60 s,
+      # login 120 s, cleanup 60 s, each killed 10 s after its bound). About
+      # 51 minutes, inside the 55-minute job timeout.
       - name: Deploy
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
@@ -246,8 +252,8 @@ jobs:
 
           # docker-compose.yml declares monitoring_scrape as external; create
           # it on a host that has never had the monitoring stack.
-          timeout 60 docker network inspect monitoring_scrape >/dev/null 2>&1 ||
-            timeout 60 docker network create monitoring_scrape
+          timeout -k 10 60 docker network inspect monitoring_scrape >/dev/null 2>&1 ||
+            timeout -k 10 60 docker network create monitoring_scrape
 
           cd ~/email-to-telegram
           # Files are renamed into place, never written in place. The rollback
@@ -262,7 +268,7 @@ jobs:
           mv -f docker-compose.yml.tmp docker-compose.yml
           mv -f deploy-app.sh.tmp deploy-app.sh
 
-          echo "${GHCR_TOKEN}" | timeout 120 docker login ghcr.io -u vladkarok --password-stdin
+          echo "${GHCR_TOKEN}" | timeout -k 10 120 docker login ghcr.io -u vladkarok --password-stdin
           IMAGE_TAG="${RELEASE_TAG}" DEPLOY_TOOLING_COMMIT="${TOOLING_COMMIT}" bash ./deploy-app.sh </dev/null
           EOF
 
@@ -273,5 +279,5 @@ jobs:
         if: always()
         run: |
           if [ -n "${ETG_INCOMING:-}" ]; then
-            timeout 60 ssh prod "rm -rf '$ETG_INCOMING'"
+            timeout -k 10 60 ssh prod "rm -rf '$ETG_INCOMING'"
           fi

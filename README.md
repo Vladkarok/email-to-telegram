@@ -526,9 +526,10 @@ The Compose calls after the pull never pull, so a moving tag such as `:main`
 cannot give the migration one image and the app another; a container that
 runs another image ID than the one pulled fails the deploy.
 
-All stages together take at most 22 minutes, the other Docker calls a few
-minutes more at worst, and the job may also wait up to 15 minutes for the host
-lock. The deploy jobs time out after 50 minutes.
+All stages together take at most 22 minutes, the other Docker calls about 6
+minutes more at worst, the job's own calls (upload, network check, login,
+cleanup) about 8, and the job may also wait up to 15 minutes for the host lock.
+The deploy jobs time out after 55 minutes.
 
 Everything the script prints also goes to `~/email-to-telegram/deploy-logs/`
 on the host (the newest 30 files are kept), so the report survives a lost SSH
