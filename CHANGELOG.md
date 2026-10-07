@@ -18,6 +18,23 @@ that has been running in production.
 
 ## [Unreleased]
 
+## [1.13.1] — 2026-10-07
+
+Operations release: deploys run one script that migrates first and rolls
+back on its own. The bot behaves exactly as in 1.13.0.
+
+### Changed
+
+- **Scripted deploys with automatic rollback.** Every app deploy runs
+  `.github/scripts/deploy-app.sh`: it pulls the release, migrates while the
+  old version keeps serving, replaces the app, and waits for it to be
+  healthy and ready. A release that is not healthy within 90 seconds is
+  rolled back to the image that ran before, and the run fails. Each deploy
+  log reports how long the app was unreachable. Compose and migration
+  output stay in private files on the host.
+- New migrations with shapes that can break the running release need a
+  `-- compat:` marker, checked in CI (see CONTRIBUTING).
+
 ## [1.13.0] — 2026-10-07
 
 Deploys no longer lose what users send the bot while it restarts.
