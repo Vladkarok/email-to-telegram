@@ -166,7 +166,13 @@ export function deliveryViewRoute(
       const storedFrom = deliveryMetadata.headerFrom;
       const displayFrom =
         storedFrom !== null && storedFrom === parsed.headerFrom ? parsed.headerFromDisplay : null;
-      const from = displayFrom ?? storedFrom ?? deliveryMetadata.envelopeFrom ?? "unknown";
+      // An empty From ("From: <>") shows "unknown", as in Telegram; a missing
+      // one still falls back to the envelope sender.
+      const from =
+        displayFrom ??
+        (storedFrom === ""
+          ? "unknown"
+          : (storedFrom ?? deliveryMetadata.envelopeFrom ?? "unknown"));
       const subject = deliveryMetadata.subject ?? parsed.subject ?? "(no subject)";
       const bodyHtml = renderEmailBodyHtml(parsed);
       const quotaExceededError = new Error("privacy_view_egress_limit_exceeded");

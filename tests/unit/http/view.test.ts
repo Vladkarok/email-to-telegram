@@ -436,4 +436,22 @@ describe("/view/:token", () => {
     expect(res.body).toContain("<dd>GitHub &lt;noreply@github.com&gt;</dd>");
     expect(res.body).not.toContain('"GitHub"');
   });
+
+  it('shows "unknown" for an empty From, as Telegram does', async () => {
+    const { token, expiresAt } = generateDeliveryViewToken("log-uuid-1", 24);
+    const row = viewLinkRow(expiresAt);
+    mockFindDeliveryViewLinkByTokenHash.mockResolvedValue({
+      ...row,
+      deliveryLog: { ...row.deliveryLog, headerFrom: "" },
+    });
+    mockReadRawEmail.mockResolvedValue(
+      Buffer.from("From: <>\r\nTo: alerts@example.com\r\nSubject: Privacy Test\r\n\r\nBody"),
+    );
+
+    const app = await buildApp();
+    const res = await app.inject({ method: "POST", url: `/view/${token}` });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("<dd>unknown</dd>");
+  });
 });
