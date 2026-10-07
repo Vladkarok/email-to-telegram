@@ -26,18 +26,24 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# Runs start in trigger order and none replaces another, so the last push to
+# main is the one that ends up deployed. Each run deploys the image it built,
+# tagged with its commit, together with that commit's compose file.
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   build-and-push:
     name: Build and push :main image
     if: github.repository == 'Vladkarok/email-to-telegram'
     runs-on: ubuntu-latest
-    # A newer push supersedes an image build still in progress.
-    concurrency:
-      group: build-staging
-      cancel-in-progress: true
     permissions:
       contents: read
       packages: write
+    outputs:
+      image_tag: main-${{ github.sha }}
 
     steps:
       - uses: actions/checkout@v7
@@ -54,13 +60,16 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/vladkarok/email-to-telegram:main
+          tags: |
+            ghcr.io/vladkarok/email-to-telegram:main
+            ghcr.io/vladkarok/email-to-telegram:main-${{ github.sha }}
 
   deploy:
     name: Deploy to staging VPS
     if: github.repository == 'Vladkarok/email-to-telegram'
     runs-on: [self-hosted, linux, x64, email-tg-staging]
     needs: build-and-push
+    timeout-minutes: 30
     # One host-mutating job per VM at a time, shared with the monitoring
     # workflows; a pending run waits in the queue instead of replacing another.
     concurrency:
@@ -70,6 +79,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       # Every remote mutation takes ~/.etg-deploy.lock (flock, 15 minutes at
       # most), shared with the monitoring deploys on this host.
@@ -91,6 +102,8 @@ jobs:
       - name: Deploy
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          # The image this run built, not the moving :main tag.
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
         run: |
           ssh staging bash << EOF
           set -e
@@ -99,10 +112,10 @@ jobs:
           cd ~/email-to-telegram
 
           echo "${GHCR_TOKEN}" | docker login ghcr.io -u vladkarok --password-stdin
-          IMAGE_TAG=main docker compose --env-file .env pull app
-          IMAGE_TAG=main docker compose --env-file .env up -d --remove-orphans --no-build
+          IMAGE_TAG="${IMAGE_TAG}" timeout 600 docker compose --env-file .env pull app
+          IMAGE_TAG="${IMAGE_TAG}" docker compose --env-file .env up -d --remove-orphans --no-build
 
-          container_id=\$(IMAGE_TAG=main docker compose --env-file .env ps -q app)
+          container_id=\$(IMAGE_TAG="${IMAGE_TAG}" docker compose --env-file .env ps -q app)
           test -n "\$container_id"
 
           attempts=0

@@ -43,11 +43,20 @@ env:
 permissions:
   contents: read
 
+# Runs per target start in trigger order and queue instead of replacing each
+# other; the deploy jobs also share host-staging or host-prod with every
+# other job that changes that VM.
+concurrency:
+  group: deploy-monitoring-agent-${{ inputs.environment || 'staging' }}
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   validate:
     name: Validate agent
     if: github.repository == 'Vladkarok/email-to-telegram'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Only main is a supported entry point
@@ -89,6 +98,7 @@ jobs:
     needs: validate
     if: github.repository == 'Vladkarok/email-to-telegram' && (github.event_name == 'push' || inputs.environment == 'staging')
     runs-on: [self-hosted, linux, x64, email-tg-staging]
+    timeout-minutes: 30
     environment: staging
     concurrency:
       group: host-staging
@@ -125,12 +135,14 @@ jobs:
         run: |
           ssh "$SSH_HOST" "bash '$ETG_INCOMING/agent-deploy.sh' '$ETG_INCOMING'" < "$RUNNER_TEMP/etg-agent/stdin"
 
+      # Under the host lock: after a cancel the remote script may still be
+      # restoring, and this waits for it instead of pulling its files away.
       - name: Remove the payload
         if: always()
         run: |
           rm -rf "$RUNNER_TEMP/etg-agent"
           if [ -n "${ETG_INCOMING:-}" ]; then
-            ssh "$SSH_HOST" "rm -rf '$ETG_INCOMING'"
+            ssh "$SSH_HOST" "exec 9>>~/.etg-deploy.lock && flock -w 900 9 && rm -rf '$ETG_INCOMING'"
           fi
 
   deploy-production:
@@ -138,6 +150,7 @@ jobs:
     needs: validate
     if: github.repository == 'Vladkarok/email-to-telegram' && github.event_name == 'workflow_dispatch' && inputs.environment == 'production'
     runs-on: [self-hosted, linux, x64, email-tg-prod]
+    timeout-minutes: 30
     environment: production
     concurrency:
       group: host-prod
@@ -177,10 +190,12 @@ jobs:
         run: |
           ssh "$SSH_HOST" "bash '$ETG_INCOMING/agent-deploy.sh' '$ETG_INCOMING'" < "$RUNNER_TEMP/etg-agent/stdin"
 
+      # Under the host lock: after a cancel the remote script may still be
+      # restoring, and this waits for it instead of pulling its files away.
       - name: Remove the payload
         if: always()
         run: |
           rm -rf "$RUNNER_TEMP/etg-agent"
           if [ -n "${ETG_INCOMING:-}" ]; then
-            ssh "$SSH_HOST" "rm -rf '$ETG_INCOMING'"
+            ssh "$SSH_HOST" "exec 9>>~/.etg-deploy.lock && flock -w 900 9 && rm -rf '$ETG_INCOMING'"
           fi

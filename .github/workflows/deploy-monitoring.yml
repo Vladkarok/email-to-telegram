@@ -36,11 +36,19 @@ env:
 permissions:
   contents: read
 
+# Runs start in trigger order and queue instead of replacing each other; the
+# deploy job also shares host-staging with every other job that changes the VM.
+concurrency:
+  group: deploy-monitoring
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   validate:
     name: Validate monitoring config
     if: github.repository == 'Vladkarok/email-to-telegram'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v7
@@ -68,8 +76,7 @@ jobs:
           sudo mkdir -p /etc/prometheus/secrets /etc/prometheus-secrets /etc/monitoring-tls
           echo "dummy" | sudo tee /etc/prometheus/secrets/staging_token >/dev/null
           echo "dummy" | sudo tee /etc/prometheus/secrets/prod_token >/dev/null
-          echo "prometheus-a" | sudo tee /etc/prometheus-secrets/exporter_username >/dev/null
-          echo "dummy" | sudo tee /etc/prometheus-secrets/exporter_password >/dev/null
+          echo "dummy" | sudo tee /etc/prometheus-secrets/prometheus-a >/dev/null
           sudo cp monitoring/tls/ca.crt /etc/monitoring-tls/ca.crt
 
       - name: promtool check config
@@ -110,6 +117,7 @@ jobs:
     if: github.repository == 'Vladkarok/email-to-telegram'
     runs-on: [self-hosted, linux, x64, email-tg-staging]
     needs: validate
+    timeout-minutes: 30
     environment: staging
     concurrency:
       group: host-staging
@@ -153,10 +161,12 @@ jobs:
         run: |
           ssh "$SSH_HOST" "bash '$ETG_INCOMING/stack-deploy.sh' '$ETG_INCOMING'" < "$RUNNER_TEMP/etg-monitoring/stdin"
 
+      # Under the host lock: after a cancel the remote script may still be
+      # running, and this waits for it instead of pulling its files away.
       - name: Remove the payload
         if: always()
         run: |
           rm -rf "$RUNNER_TEMP/etg-monitoring"
           if [ -n "${ETG_INCOMING:-}" ]; then
-            ssh "$SSH_HOST" "rm -rf '$ETG_INCOMING'"
+            ssh "$SSH_HOST" "exec 9>>~/.etg-deploy.lock && flock -w 900 9 && rm -rf '$ETG_INCOMING'"
           fi
