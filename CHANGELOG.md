@@ -18,6 +18,36 @@ that has been running in production.
 
 ## [Unreleased]
 
+## [1.12.1] — 2026-10-07
+
+Operations release: production logs, host and database metrics, and safer
+deploys. The bot behaves exactly as in 1.12.0.
+
+### Added
+
+- **Production app logs in Loki.** A host agent (`monitoring/agent/`,
+  deployed by `deploy-monitoring-agent.yml`) runs Promtail on prod, which
+  tails the app container's Docker logs only and pushes them over TLS with
+  basic auth to the operator's Loki, kept 7 days. The app's logging gains
+  the compose `labels` it filters on and rotates at 10 MB × 3.
+- **Host and Postgres metrics** from `node_exporter` and
+  `postgres_exporter` on both VMs (TLS and basic auth on the private
+  network, a read-only `etg_monitor` role), and the off-site backup's age.
+  The Operations dashboard's Host & database and Logs rows now have data.
+
+### Changed
+
+- Host deploys are serialized per VM (queued GitHub jobs, a host lock),
+  time-bounded, and staging deploys the image its own run built.
+- The hosted privacy page says how long logs are kept and how a formal
+  erasure request reaches them.
+
+### Fixed
+
+- Staging Promtail discovered every container and lost whole batches to
+  Loki's "at least one label pair is required" error; it now asks Docker
+  for the app container only.
+
 ## [1.12.0] — 2026-10-07
 
 New aliases explain their own bounces, sender names lose their stray quotes,
