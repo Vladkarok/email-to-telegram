@@ -5,7 +5,7 @@ import prettierConfig from "eslint-config-prettier";
 export default tseslint.config(
   eslint.configs.recommended,
   {
-    files: ["src/**/*.ts", "tests/**/*.ts"],
+    files: ["src/**/*.ts", "tests/**/*.ts", ".github/scripts/**/*.ts"],
     extends: [...tseslint.configs.recommendedTypeChecked],
     languageOptions: {
       parserOptions: {

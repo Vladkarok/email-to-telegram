@@ -11,5 +11,5 @@
     "resolveJsonModule": true,
     "noEmit": true
   },
-  "include": ["src/**/*", "tests/**/*", "cloudflare-worker/src/**/*"]
+  "include": ["src/**/*", "tests/**/*", "cloudflare-worker/src/**/*", ".github/scripts/**/*"]
 }
