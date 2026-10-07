@@ -78,7 +78,8 @@ describe.skipIf(!hasTestDatabase)("runMigrations on real Postgres", () => {
     return rows.length > 0;
   }
 
-  it("fails after about 5 s behind a held table lock and leaves schema and history unchanged", async () => {
+  /** Runs the probe migration behind a held table lock and expects lock_not_available after ~5 s. */
+  async function expectLockTimeout(databaseUrl: string): Promise<void> {
     const before = await appliedMigrations();
     const app = await testDb.client();
     try {
@@ -88,7 +89,7 @@ describe.skipIf(!hasTestDatabase)("runMigrations on real Postgres", () => {
       await app.query("select 1 from email_addresses limit 1");
 
       const startedAt = Date.now();
-      const err = await runMigrations(testDb.url, folder).then(
+      const err = await runMigrations(databaseUrl, folder).then(
         () => undefined,
         (error: unknown) => error,
       );
@@ -104,6 +105,20 @@ describe.skipIf(!hasTestDatabase)("runMigrations on real Postgres", () => {
 
     expect(await appliedMigrations()).toBe(before);
     expect(await hasProbeColumn()).toBe(false);
+  }
+
+  it("fails after about 5 s behind a held table lock and leaves schema and history unchanged", async () => {
+    await expectLockTimeout(testDb.url);
+  }, 30_000);
+
+  it("keeps its limits when DATABASE_URL sets conflicting ones", async () => {
+    // pg lets connection-string parameters override the client options, and
+    // 0 disables both limits; the migration must still give up at 5 s.
+    const url = new URL(testDb.url);
+    url.searchParams.set("lock_timeout", "0");
+    url.searchParams.set("statement_timeout", "0");
+    url.searchParams.set("options", "-c lock_timeout=0 -c statement_timeout=0");
+    await expectLockTimeout(url.toString());
   }, 30_000);
 
   it("applies the same migration once the lock is gone", async () => {
