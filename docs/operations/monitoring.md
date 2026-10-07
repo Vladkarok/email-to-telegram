@@ -288,13 +288,14 @@ getting from the sender to Telegram, how fast, and where is it lost.
   attempts plus retries) · Lost (7d, `deliveries_lost_total`; red above 0) ·
   Backlog now (pending logs and the oldest one's age) · Latency (24h, delivery
   p95).
-- Stale bot updates is a lower bound. Skips happen right after a start,
-  often before the first 30-s scrape, so `increase()` can miss them: the
-  process's first sample is already non-zero and no counter reset shows. The
-  panel therefore also shows the highest total one process reported in 24 h
-  (`max_over_time` of the summed counter), which catches skips a later scrape
-  still sees; a process that stops before its first scrape is missed by both.
-  The exact count is the number of `telegram.update.stale_skipped` log lines
+- Stale bot updates: the 24-h increase is a lower bound. Skips happen right
+  after a start, often before the first 30-s scrape, so `increase()` can miss
+  them: the process's first sample is already non-zero and no counter reset
+  shows. The panel therefore also shows the highest since-start total any
+  scrape saw in 24 h (`max_over_time` over the raw samples). It shows skips a
+  scrape saw, but it is not a 24-h count: a process running longer than a day
+  keeps showing older skips. A process that stops before its first scrape is
+  missed by both. The exact count is the number of `telegram.update.stale_skipped` log lines
   in Loki:
   `sum(count_over_time({compose_project="email-to-telegram", service="app", env="prod"} |= "telegram.update.stale_skipped" [24h]))`.
 - **Inbound**: preflight decisions per hour (accepted / deferred / bounced),

@@ -262,7 +262,7 @@
       "id": 46,
       "type": "stat",
       "title": "Stale bot updates (24h)",
-      "description": "Telegram text messages the bot skipped because they were older than STALE_TEXT_UPDATE_MAX_AGE_S (default 10 min) when it got them: a backlog after an outage or a long restart. The user has to send them again. Button taps, membership changes and chat-migration messages are never skipped. Two values: the 24-h increase, and the highest total one process reported in 24 h. Skips happen right after a start, often before the first 30-s scrape, so the increase can miss them (the first sample is already non-zero); the process total catches those that a later scrape still sees, but a process that stops before its first scrape is missed by both. Exact count: the telegram.update.stale_skipped log lines in Loki, sum(count_over_time({compose_project=\"email-to-telegram\", service=\"app\", env=\"$env\"} |= \"telegram.update.stale_skipped\" [24h])). Bad: a non-zero count without a long outage to explain it.",
+      "description": "Telegram text messages the bot skipped because they were older than STALE_TEXT_UPDATE_MAX_AGE_S (default 10 min) when it got them: a backlog after an outage or a long restart. The user has to send them again. Button taps, membership changes and chat-migration messages are never skipped. Two values: the 24-h increase, and the highest since-start total any scrape saw in 24 h. Skips happen right after a start, often before the first 30-s scrape, so the increase can miss them (the first sample is already non-zero); the since-start total shows those a scrape saw, but it can include skips older than 24 h when the process has run longer, and a process that stops before its first scrape is missed by both. Exact count: the telegram.update.stale_skipped log lines in Loki, sum(count_over_time({compose_project=\"email-to-telegram\", service=\"app\", env=\"$env\"} |= \"telegram.update.stale_skipped\" [24h])). Bad: a non-zero count without a long outage to explain it.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -320,8 +320,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max_over_time(sum(email_to_telegram_bot_updates_skipped_total{reason=\"stale\",env=~\"$env\"})[24h:1m]) or vector(0)",
-          "legendFormat": "max process total",
+          "expr": "max(max_over_time(email_to_telegram_bot_updates_skipped_total{reason=\"stale\",env=~\"$env\"}[24h])) or vector(0)",
+          "legendFormat": "since-start total",
           "instant": true,
           "range": false
         }

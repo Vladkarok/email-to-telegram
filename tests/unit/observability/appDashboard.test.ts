@@ -33,12 +33,13 @@ describe("Operations dashboard", () => {
   describe("Stale bot updates panel", () => {
     const panel = allPanels(dashboard.panels).find((p) => p.title === "Stale bot updates (24h)");
 
-    it("shows the 24-h increase and the highest process total, which survives a missed first scrape", () => {
+    it("shows the 24-h increase and the highest since-start total over raw samples", () => {
       const exprs = (panel?.targets ?? []).map((target) => target.expr);
       expect(exprs).toEqual([
         expect.stringMatching(/^sum\(increase\(email_to_telegram_bot_updates_skipped_total\{/),
+        // No subquery: a step would skip a lone 30-s scrape between two of its points.
         expect.stringMatching(
-          /^max_over_time\(sum\(email_to_telegram_bot_updates_skipped_total\{[^}]*\}\)\[24h:/,
+          /^max\(max_over_time\(email_to_telegram_bot_updates_skipped_total\{[^}]*\}\[24h\]\)\)/,
         ),
       ]);
     });
