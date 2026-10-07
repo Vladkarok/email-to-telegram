@@ -32,6 +32,16 @@ scrape_configs:
       # instead of the raw host socket. See docker-compose.monitoring.yml.
       - host: tcp://docker_socket_proxy:2375
         refresh_interval: 30s
+        # Ask Docker for the app container only. A relabel `keep` alone does
+        # not stop docker_sd from tailing the other containers: their lines
+        # go out with an empty label set, and Loki rejects the whole batch
+        # ("at least one label pair is required per stream"), app lines
+        # included. Label filters are ANDed.
+        filters:
+          - name: label
+            values:
+              - com.docker.compose.project=email-to-telegram
+              - com.docker.compose.service=app
     relabel_configs:
       - source_labels:
           - __meta_docker_container_label_com_docker_compose_project
