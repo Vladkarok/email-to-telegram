@@ -163,7 +163,7 @@ describe("one-tap allow button", () => {
       expected: { chatId: OWNER, routingVersion: 2 },
     });
     expect(c.reply).toHaveBeenCalledWith(
-      "Added an allow rule for <code>inbox@mail.example.com</code>: github.com. It allows every address at github.com.",
+      "Added an allow rule for <code>inbox@mail.example.com</code>: <code>github.com</code>. It allows every address at <code>github.com</code>.",
       { parse_mode: "HTML" },
     );
     // The spent one-tap button leaves the notice; "Allow rules" stays, and
@@ -238,7 +238,7 @@ describe("one-tap allow button", () => {
     mockInsertAllowRule.mockRejectedValue(new Error("db error"));
     const c = await tap();
     expect(c.reply).toHaveBeenCalledWith(
-      "Could not allow github.com for <code>inbox@mail.example.com</code>.",
+      "Could not allow <code>github.com</code> for <code>inbox@mail.example.com</code>.",
       { parse_mode: "HTML" },
     );
     expect(mockSendAllowRulesMenu).toHaveBeenCalled();
@@ -253,7 +253,7 @@ describe("one-tap allow button", () => {
     });
     const c = await tap();
     expect(c.reply).toHaveBeenCalledWith(
-      "Could not allow github.com for <code>inbox@mail.example.com</code>: the limit of 10 allow rules is reached.",
+      "Could not allow <code>github.com</code> for <code>inbox@mail.example.com</code>: the limit of 10 allow rules is reached.",
       { parse_mode: "HTML" },
     );
     expect(mockSendAllowRulesMenu).toHaveBeenCalled();
@@ -267,7 +267,7 @@ describe("one-tap allow button", () => {
     });
     const c = await tap();
     expect(c.reply).toHaveBeenCalledWith(
-      "Could not allow github.com for <code>inbox@mail.example.com</code>.",
+      "Could not allow <code>github.com</code> for <code>inbox@mail.example.com</code>.",
       { parse_mode: "HTML" },
     );
   });
@@ -276,7 +276,7 @@ describe("one-tap allow button", () => {
     mockInsertAllowRule.mockResolvedValue({ kind: "duplicate" });
     const c = await tap();
     expect(c.reply).toHaveBeenCalledWith(
-      "<code>inbox@mail.example.com</code> already has an allow rule for github.com. It allows every address at github.com.",
+      "<code>inbox@mail.example.com</code> already has an allow rule for <code>github.com</code>. It allows every address at <code>github.com</code>.",
       { parse_mode: "HTML" },
     );
     expect(await allowCount("added")).toBe(1);

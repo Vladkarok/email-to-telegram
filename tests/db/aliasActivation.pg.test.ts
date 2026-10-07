@@ -312,7 +312,7 @@ describe.skipIf(!hasTestDatabase)("first-bounce notice on real Postgres", () => 
     expect(authentications).toBe(1);
     expect(sent).toHaveLength(1);
     expect(sent[0].chatId).toBe(OWNER.toString());
-    expect(sent[0].text).toContain("from github.com bounced");
+    expect(sent[0].text).toContain("from <code>github.com</code> bounced");
     expect(sent[0].buttons.map((b) => b.text)).toEqual(["Allow github.com", "📋 Allow Rules"]);
     const row = await activation(aliasId);
     expect(row).toMatchObject({ claims_used: 1, domain: "github.com" });
@@ -334,7 +334,7 @@ describe.skipIf(!hasTestDatabase)("first-bounce notice on real Postgres", () => 
     await queue.whenIdle();
 
     expect(sent).toHaveLength(1);
-    expect(sent[0].text).toContain("from github.com bounced");
+    expect(sent[0].text).toContain("from <code>github.com</code> bounced");
     expect(tokenOf(sent[0])).toBeNull();
     expect((await activation(aliasId)).domain).toBeNull();
   });

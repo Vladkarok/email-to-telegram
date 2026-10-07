@@ -525,21 +525,21 @@ This action <b>cannot be undone</b>. Confirm to proceed.`,
   },
   activationNotice: {
     bouncedFromDomain: (address: string, domain: string) =>
-      `Mail to <code>${address}</code> from ${domain} bounced: no allow rule matches it. A rule matches the address in the email's From line.`,
+      `Mail to <code>${address}</code> from <code>${domain}</code> bounced: no allow rule matches it. A rule matches the address in the email's From line.`,
     bouncedNoSender: (address: string) =>
       `Mail to <code>${address}</code> bounced: no allow rule matches its sender.`,
     bouncedNoRules: (address: string) =>
       `Mail to <code>${address}</code> bounced: this alias has no allow rules yet.`,
     allowDomainButton: (domain: string) => `Allow ${domain}`,
     added: (address: string, domain: string) =>
-      `Added an allow rule for <code>${address}</code>: ${domain}. It allows every address at ${domain}.`,
+      `Added an allow rule for <code>${address}</code>: <code>${domain}</code>. It allows every address at <code>${domain}</code>.`,
     alreadyAllowed: (address: string, domain: string) =>
-      `<code>${address}</code> already has an allow rule for ${domain}. It allows every address at ${domain}.`,
+      `<code>${address}</code> already has an allow rule for <code>${domain}</code>. It allows every address at <code>${domain}</code>.`,
     expired: "This button has expired.",
     ruleLimit: (address: string, domain: string, limit: number) =>
-      `Could not allow ${domain} for <code>${address}</code>: the limit of ${limit} allow rules is reached.`,
+      `Could not allow <code>${domain}</code> for <code>${address}</code>: the limit of ${limit} allow rules is reached.`,
     addFailed: (address: string, domain: string) =>
-      `Could not allow ${domain} for <code>${address}</code>.`,
+      `Could not allow <code>${domain}</code> for <code>${address}</code>.`,
     tryAgainToast: "Could not add the rule. Try again.",
   },
   quotaNotice: {

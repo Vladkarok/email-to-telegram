@@ -255,7 +255,7 @@ describe("copy", () => {
       oneTap: { domain: "github.com", token: TOKEN },
     });
     expect(notice.text).toBe(
-      "Mail to <code>inbox@mail.example.com</code> from github.com bounced: no allow rule matches it. A rule matches the address in the email's From line.",
+      "Mail to <code>inbox@mail.example.com</code> from <code>github.com</code> bounced: no allow rule matches it. A rule matches the address in the email's From line.",
     );
     expect(notice.keyboard.inline_keyboard).toEqual([
       [{ text: "Allow github.com", callback_data: CB_ACTIVATION_ALLOW.build(ALIAS_ID, TOKEN) }],
@@ -271,7 +271,7 @@ describe("copy", () => {
       fromDomain: "github.com",
       oneTap: null,
     });
-    expect(notice.text).toContain("from github.com bounced");
+    expect(notice.text).toContain("from <code>github.com</code> bounced");
     expect(notice.keyboard.inline_keyboard).toEqual([
       [{ text: "📋 Allow Rules", callback_data: CB_ACTIVATION_RULES.build(ALIAS_ID) }],
     ]);
@@ -312,7 +312,7 @@ describe("copy", () => {
       oneTap: null,
     });
     expect(notice.text).toContain("<code>a&lt;b&gt;@x</code>");
-    expect(notice.text).toContain("from x&lt;y&gt; bounced");
+    expect(notice.text).toContain("from <code>x&lt;y&gt;</code> bounced");
   });
 
   it("has every string in all four locales, without decorative emoji", () => {
@@ -333,8 +333,17 @@ describe("copy", () => {
       for (const text of strings) {
         expect(text).not.toMatch(/\p{Extended_Pictographic}/u);
       }
-      expect(m.bouncedFromDomain("a@b.c", "d.e")).toContain("d.e");
-      expect(m.added("a@b.c", "d.e")).toContain("d.e");
+      // In <code> so Telegram does not turn the domain into a link.
+      for (const text of [
+        m.bouncedFromDomain("a@b.c", "d.e"),
+        m.added("a@b.c", "d.e"),
+        m.alreadyAllowed("a@b.c", "d.e"),
+        m.ruleLimit("a@b.c", "d.e", 10),
+        m.addFailed("a@b.c", "d.e"),
+      ]) {
+        expect(text).toContain("<code>d.e</code>");
+        expect(text.replaceAll("<code>d.e</code>", "")).not.toContain("d.e");
+      }
     }
   });
 });
@@ -472,7 +481,7 @@ describe("runner", () => {
       authenticate: () => Promise.resolve({ ...pass(), status: "fail", authenticatedDomains: [] }),
     });
     expect(mockSetDomain).not.toHaveBeenCalled();
-    expect(sent[0].text).toContain("from github.com bounced");
+    expect(sent[0].text).toContain("from <code>github.com</code> bounced");
     expect(sent[0].buttons.map((b) => b.text)).toEqual(["📋 Allow Rules"]);
   });
 
@@ -485,7 +494,7 @@ describe("runner", () => {
       authenticate: () => new Promise((resolve) => setTimeout(() => resolve(pass()), 60)),
     });
     expect(mockSetDomain).not.toHaveBeenCalled();
-    expect(sent[0].text).toContain("from github.com bounced");
+    expect(sent[0].text).toContain("from <code>github.com</code> bounced");
     expect(sent[0].buttons).toHaveLength(1);
   });
 
@@ -499,7 +508,7 @@ describe("runner", () => {
       bounds: { maxHeldMimeBytes: 8 },
     });
     expect(authenticate).not.toHaveBeenCalled();
-    expect(sent[0].text).toContain("from github.com bounced");
+    expect(sent[0].text).toContain("from <code>github.com</code> bounced");
     expect(sent[0].buttons).toHaveLength(1);
   });
 
