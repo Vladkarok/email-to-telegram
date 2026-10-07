@@ -146,7 +146,10 @@ operator in both places: the matching entries are deleted from the log store,
 and the application container is recreated on its current version, which
 removes its old log files. Redeploying an unchanged version does not recreate
 the container, so the operator forces the recreate and checks that the old
-container and its log files are gone.
+container and its log files are gone. The log store does not write searches
+or delete requests into its own log. It keeps the delete request itself,
+which names the identifier, in its records on the same hardware as the record
+that the erasure was carried out.
 
 Logs are not shipped to any third-party log aggregation, error tracking, or
 analytics service. Internal log aggregation (Prometheus / Grafana / Loki)
