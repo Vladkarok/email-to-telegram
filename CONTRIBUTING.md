@@ -82,6 +82,53 @@ npm run render:preview -- path/to/message.eml
 Fixtures are public: replace addresses with `example.com` ones and strip
 hostnames, `Received:` and signature headers before adding one.
 
+## Database migrations
+
+Migrations live in `drizzle/` and are generated with `npm run db:generate`.
+A deploy applies them while the previous release is still serving, and an
+automatic rollback runs the previous image on the new schema. So every
+migration must work with the code of the release that is running when it is
+applied, normally the one before yours:
+
+- Expand first, contract one release later. To replace a column, add the new
+  one and stop using the old one in one release, then drop the old column in a
+  later release, once the release that still used it is no longer deployed.
+- A new `NOT NULL` column needs a `DEFAULT`. Constraints, unique indexes and
+  data changes (`UPDATE`, `DELETE`) must not break the running release's
+  writes or reads.
+- A migration that locks a large table for long is planned downtime; say so in
+  the PR.
+
+The reviewer of a contract migration checks which release production runs. A
+deploy that skips the release a contract migration depends on, or a rollback
+further back than the previous image, is outside the rule.
+
+CI runs a compatibility lint (`.github/scripts/migration-compat-lint.ts`) on
+the migrations a pull request adds. It flags `DROP TABLE`, `DROP COLUMN`,
+`RENAME`, `ALTER COLUMN ... TYPE`, `SET NOT NULL`, `ADD COLUMN ... NOT NULL`
+without `DEFAULT`, `ADD CONSTRAINT`, `CREATE UNIQUE INDEX`, `UPDATE`,
+`DELETE`, and every `DO` block (the lint cannot read its body). Each flagged
+statement needs a marker on the line directly before it:
+
+```sql
+-- compat: v1.11.0 no longer uses email_addresses.max_emails_hour
+ALTER TABLE "email_addresses" DROP COLUMN "max_emails_hour";
+```
+
+Use `-- compat: <release> no longer uses <object>` for a contract change,
+naming the first release that no longer uses the object, and
+`-- compat: safe, <reason>` for everything else (for example a constraint on a
+table this migration creates). Drizzle may put `--> statement-breakpoint` at
+the end of the previous line; the marker goes on its own line after it.
+
+The lint only catches common shapes. It does not prove a migration is
+compatible, and a marker is a claim for the reviewer to check. To run it
+locally:
+
+```sh
+npx tsx .github/scripts/migration-compat-lint.ts drizzle/0013_example.sql
+```
+
 ## Code style
 
 - TypeScript with strict mode; prefer types over `any`.

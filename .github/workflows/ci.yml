@@ -74,6 +74,35 @@ jobs:
       - name: Format check
         run: npm run format:check
 
+      - name: Shellcheck the deploy script
+        run: shellcheck .github/scripts/*.sh
+
+      # A review aid for the migrations this change adds, not a proof of
+      # compatibility. See CONTRIBUTING.md, "Database migrations".
+      - name: Migration compatibility lint
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE_SHA:-}" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            echo "No base commit to compare with; skipped."
+            exit 0
+          fi
+          if ! git fetch --no-tags --depth=1 origin "$BASE_SHA"; then
+            # After a force-push the previous head may be gone; pull
+            # requests always have their base.
+            if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then exit 1; fi
+            echo "::warning::Cannot fetch $BASE_SHA; migration compatibility lint skipped."
+            exit 0
+          fi
+          added=$(git diff --no-renames --diff-filter=A --name-only "$BASE_SHA" HEAD -- 'drizzle/*.sql')
+          if [ -z "$added" ]; then
+            echo "No added migrations."
+            exit 0
+          fi
+          mapfile -t files <<<"$added"
+          npx tsx .github/scripts/migration-compat-lint.ts "${files[@]}"
+
       - name: Test
         run: npm run test:coverage
 
