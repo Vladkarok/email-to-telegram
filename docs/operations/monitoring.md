@@ -281,11 +281,23 @@ what "bad" looks like.
 **Email to Telegram – Operations** (`e2t-app`, default range 24 h): is mail
 getting from the sender to Telegram, how fast, and where is it lost.
 
-- Top row, always visible: Scrape up · Version · Uptime · Offered (24h,
+- Top row, always visible: Scrape up · Version · Uptime · Stale bot updates
+  (24h, text messages skipped as older than `STALE_TEXT_UPDATE_MAX_AGE_S`;
+  orange above 0; see below) · Offered (24h,
   preflight decisions without signature failures) · Delivered (24h, first
   attempts plus retries) · Lost (7d, `deliveries_lost_total`; red above 0) ·
   Backlog now (pending logs and the oldest one's age) · Latency (24h, delivery
   p95).
+- Stale bot updates: the 24-h increase is a lower bound. Skips happen right
+  after a start, often before the first 30-s scrape, so `increase()` can miss
+  them: the process's first sample is already non-zero and no counter reset
+  shows. The panel therefore also shows the highest since-start total any
+  scrape saw in 24 h (`max_over_time` over the raw samples). It shows skips a
+  scrape saw, but it is not a 24-h count: a process running longer than a day
+  keeps showing older skips. A process that stops before its first scrape is
+  missed by both. The exact count is the number of `telegram.update.stale_skipped` log lines
+  in Loki:
+  `sum(count_over_time({compose_project="email-to-telegram", service="app", env="prod"} |= "telegram.update.stale_skipped" [24h]))`.
 - **Inbound**: preflight decisions per hour (accepted / deferred / bounced),
   preflight bounces by reason, raw uploads per hour (accepted / rejected), raw
   rejections by reason, bounce notices per hour by stage and result, one-tap
@@ -386,6 +398,7 @@ All gauges/counters are prefixed `email_to_telegram_`. Exposed at `GET /metrics`
 | `email_to_telegram_quota_rejections_total{reason}`                 | counter   | Quota rejections by reason                                                                                                                            | `sum by (reason)(rate(email_to_telegram_quota_rejections_total[1h]))`                                            |
 | `email_to_telegram_activation_notices_total{stage,result}`         | counter   | Bounce notices to the owner of a not-yet-working alias; `stage` = `raw` or `preflight`, `result` below                                                | `sum by (result)(increase(email_to_telegram_activation_notices_total[7d]))`                                      |
 | `email_to_telegram_activation_allows_total{result}`                | counter   | Taps on a notice's one-tap allow: `added`, `expired` (spent, replaced, expired or stale button), `failed` (rule limit or DB error)                    | `increase(email_to_telegram_activation_allows_total{result="added"}[7d])`                                        |
+| `email_to_telegram_bot_updates_skipped_total{reason}`              | counter   | Telegram updates received but not handled: `stale` = a text message older than `STALE_TEXT_UPDATE_MAX_AGE_S` (a backlog after an outage)              | `increase(email_to_telegram_bot_updates_skipped_total{reason="stale"}[24h])`                                     |
 | `email_to_telegram_manual_plan_grants_total{plan}`                 | counter   | Manual billing plan grants                                                                                                                            | `increase(email_to_telegram_manual_plan_grants_total[7d])`                                                       |
 | `email_to_telegram_http_requests_total{route,method,status_class}` | counter   | HTTP request count                                                                                                                                    | `sum by (status_class)(rate(email_to_telegram_http_requests_total[5m]))`                                         |
 | `email_to_telegram_http_request_duration_seconds_*`                | histogram | HTTP latency histogram (`_bucket`, `_sum`, `_count`)                                                                                                  | `histogram_quantile(0.95, sum by (le, route)(rate(email_to_telegram_http_request_duration_seconds_bucket[5m])))` |

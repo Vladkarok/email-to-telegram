@@ -12,12 +12,17 @@ export function loadStartupConfig(): AppConfig {
   return config;
 }
 
-export function nextPollingStartOptions(isInitialPollingStart: boolean): {
+/**
+ * Pending updates are never dropped, the first start included: updates sent
+ * while no process was polling (a deploy, a restart) are handled after start,
+ * within Telegram's 24-h retention.
+ */
+export function nextPollingStartOptions(_isInitialPollingStart: boolean): {
   dropPendingUpdates: boolean;
   nextIsInitialPollingStart: boolean;
 } {
   return {
-    dropPendingUpdates: isInitialPollingStart,
+    dropPendingUpdates: false,
     nextIsInitialPollingStart: false,
   };
 }

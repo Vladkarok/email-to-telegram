@@ -4,20 +4,17 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { schedule } from "node-cron";
 import { parseStartupOptions } from "./cli.js";
-import {
-  buildRetryWorkerOptions,
-  loadStartupConfig,
-  nextPollingStartOptions,
-} from "./startup/runtime.js";
+import { buildRetryWorkerOptions, loadStartupConfig } from "./startup/runtime.js";
 import { createLogger, setLogger, stderrLoggerDestination } from "./utils/logger.js";
 import { initDb, closeDb, getDb } from "./db/client.js";
 import { runMigrations } from "./db/migrate.js";
 import { createHttpServer, startHttpServer } from "./http/server.js";
 import { createBot, syncBotCommands } from "./telegram/bot.js";
 import { setApi, getApi } from "./telegram/api.js";
-import { markBotHealthy, markBotUnhealthy } from "./telegram/health.js";
+import { markBotUnhealthy } from "./telegram/health.js";
+import { createPollingController } from "./telegram/polling.js";
 import { upsertAllowedUser } from "./db/repos/users.js";
-import { runRetryWorker } from "./email/retry.js";
+import { createRetryRunner, runRetryWorker } from "./email/retry.js";
 import { reconcileActivationMarkers, runCleanup } from "./storage/cleanup.js";
 import { shutdownActivationNotices } from "./activation/notice.js";
 import { runUptimeCheck } from "./utils/uptime.js";
@@ -34,6 +31,7 @@ import {
   hasHostedManualBillingOperation,
 } from "./startup/hostedManualBilling.js";
 import { dispatchOperatorCommand } from "./cli/dispatcher.js";
+import { createShutdown } from "./startup/shutdown.js";
 
 async function main() {
   const startup = parseStartupOptions(process.argv.slice(2));
@@ -76,7 +74,7 @@ async function main() {
 
   // 3. Connect to DB and run migrations
   initDb(config.databaseUrl);
-  await runMigrations();
+  await runMigrations(config.databaseUrl);
 
   if (await dispatchOperatorCommand({ startup, config, logger })) {
     return;
@@ -110,34 +108,21 @@ async function main() {
 
   // 4. Start Telegram bot
   startSessionSweep();
-  const bot = createBot(config.telegramBotToken);
+  let shuttingDown = false;
+  const isShuttingDown = () => shuttingDown;
+  const bot = createBot(config.telegramBotToken, {
+    isShuttingDown,
+    staleTextMaxAgeS: config.staleTextUpdateMaxAgeS,
+  });
   setApi(bot.api);
   markBotUnhealthy();
-  let shuttingDown = false;
-  let pollingRestartTimer: ReturnType<typeof setTimeout> | null = null;
-  let isInitialPollingStart = true;
-  const startPolling = async () => {
-    if (shuttingDown) return; // guard against already-queued setTimeout callbacks
-    const pollingStart = nextPollingStartOptions(isInitialPollingStart);
-    isInitialPollingStart = pollingStart.nextIsInitialPollingStart;
-
-    try {
-      await bot.api.getMe();
-      await syncBotCommands(bot).catch((err) => {
-        logger.warn({ err }, "Failed to sync bot commands; will retry on next start");
-      });
-      markBotHealthy();
-      await bot.start({ drop_pending_updates: pollingStart.dropPendingUpdates });
-    } catch (err: unknown) {
-      markBotUnhealthy();
-      if (shuttingDown) return;
-      logger.error({ err }, "Bot polling error — restarting in 5s");
-      pollingRestartTimer = setTimeout(() => {
-        void startPolling();
-      }, 5000);
-    }
-  };
-  void startPolling();
+  const polling = createPollingController({
+    bot,
+    logger,
+    isShuttingDown,
+    syncCommands: syncBotCommands,
+  });
+  void polling.start();
 
   // 5. Start HTTP server
   const app = await createHttpServer(config);
@@ -152,12 +137,14 @@ async function main() {
     deliveryLogRetentionDays: config.deliveryLogRetentionDays,
   };
 
+  const retryRunner = createRetryRunner((shouldStop) =>
+    runRetryWorker(getDb(), getApi(), { ...buildRetryWorkerOptions(config), shouldStop }),
+  );
+
   const cronTasks = [
-    // Retry failed deliveries every 5 minutes
+    // Retry failed deliveries every 5 minutes, one run at a time
     schedule("*/5 * * * *", () => {
-      runRetryWorker(getDb(), getApi(), buildRetryWorkerOptions(config)).catch((err: unknown) => {
-        logger.error({ err }, "retry worker error");
-      });
+      retryRunner.tick();
     }),
 
     // Clean up expired files and old DB rows every 15 minutes
@@ -216,45 +203,27 @@ async function main() {
     );
   }
 
-  // 7. Graceful shutdown
-  const shutdown = async (signal: string) => {
-    logger.info({ signal }, "Shutting down...");
-    shuttingDown = true;
-    markBotUnhealthy();
-    if (pollingRestartTimer) {
-      clearTimeout(pollingRestartTimer);
-      pollingRestartTimer = null;
-    }
-    try {
-      // 7a. Stop cron schedulers so no new background work starts.
-      for (const task of cronTasks) void task.stop();
-
-      // Bounce notices: stop admission, discard queued jobs, abort sends.
-      // Waits at most 2 s, overlapping the HTTP close and the drain below.
-      const noticesStopped = shutdownActivationNotices();
-
-      // 7b. Close HTTP and stop bot in parallel — both stop accepting new work.
-      // HTTP is closed first priority so that /inbound/raw stops triggering
-      // new pipelines immediately; bot.stop() runs concurrently.
-      await Promise.all([app.close(), bot.stop()]);
-
-      // 7d. Wait for any in-flight email pipelines to finish before closing the DB.
-      if (pipelineTracker.inFlight > 0) {
-        logger.info({ inFlight: pipelineTracker.inFlight }, "Draining in-flight pipelines...");
-        await pipelineTracker.drain(15_000).catch((err: unknown) => {
-          logger.warn({ err }, "Pipeline drain timed out; proceeding with shutdown");
-        });
-      }
-      await noticesStopped;
-      destroySessionStore();
-      await closeDb();
-      logger.info("Shutdown complete.");
-      process.exit(0);
-    } catch (err: unknown) {
-      logger.error({ err }, "Error during shutdown");
-      process.exit(1);
-    }
-  };
+  // 7. Graceful shutdown, bounded by one 25-s deadline (Docker kills at 30 s)
+  const shutdown = createShutdown(
+    {
+      begin: () => {
+        shuttingDown = true; // the admission gate skips every update from here
+        markBotUnhealthy();
+        polling.cancelRestart();
+        for (const task of cronTasks) void task.stop();
+        retryRunner.stop();
+      },
+      stopNotices: shutdownActivationNotices,
+      closeHttp: () => app.close(),
+      stopBot: () => bot.stop(),
+      pollingRun: () => polling.currentRun(),
+      retryRun: () => retryRunner.activeRun(),
+      pipelines: pipelineTracker,
+      destroySessionStore,
+      closeDb,
+    },
+    { logger, exit: (code) => process.exit(code) },
+  );
 
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGINT", () => void shutdown("SIGINT"));

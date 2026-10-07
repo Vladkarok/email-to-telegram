@@ -94,6 +94,7 @@ export async function runRetryWorker(
     attachmentDir = "",
     rawEmailDir,
     telegramRichMessagesEnabled = true,
+    shouldStop = () => false,
   }: {
     attachmentTtlHours?: number;
     rawEmailTtlHours?: number;
@@ -101,6 +102,8 @@ export async function runRetryWorker(
     attachmentDir?: string;
     rawEmailDir?: string;
     telegramRichMessagesEnabled?: boolean;
+    /** Checked before each claim, each pending file and each queueing; true ends the run there. */
+    shouldStop?: () => boolean;
   } = {},
 ): Promise<void> {
   if (!api) return;
@@ -124,6 +127,7 @@ export async function runRetryWorker(
       publicBaseUrl,
       rawEmailDir,
       telegramRichMessagesEnabled,
+      shouldStop,
     });
   }
 
@@ -139,6 +143,10 @@ export async function runRetryWorker(
   log.info({ count: retryableLogs.length }, "retry worker: processing retryable deliveries");
 
   for (const deliveryLog of retryableLogs) {
+    if (shouldStop()) {
+      log.info("retry worker: stopping before the next claim");
+      return;
+    }
     if (pipelineTracker.isActive(deliveryLog.id)) continue;
 
     const claimed = await claimDeliveryLogForRetry(db, deliveryLog.id);
@@ -165,6 +173,51 @@ export async function runRetryWorker(
   }
 }
 
+/** Runs the retry worker for the cron, one run at a time, and stops it at shutdown. */
+export interface RetryRunner {
+  /** A cron tick: starts a run unless one is still active or a stop was requested. */
+  tick(): void;
+  /** Stops claiming: the active run ends after the delivery in progress. */
+  stop(): void;
+  /** Settles when the active run has ended; at once when none is active. */
+  activeRun(): Promise<void>;
+  isActive(): boolean;
+}
+
+export function createRetryRunner(run: (shouldStop: () => boolean) => Promise<void>): RetryRunner {
+  let active: Promise<void> | null = null;
+  let stopped = false;
+  const shouldStop = (): boolean => stopped;
+
+  return {
+    tick() {
+      if (stopped) return;
+      if (active) {
+        // A run works through its list in sequence; a second one would claim
+        // the same backlog. Newly due logs wait for the next tick after it.
+        getLogger().info("retry.run.overlap_skipped");
+        return;
+      }
+      active = run(shouldStop)
+        .catch((err: unknown) => {
+          getLogger().error({ err }, "retry worker error");
+        })
+        .finally(() => {
+          active = null;
+        });
+    },
+    stop() {
+      stopped = true;
+    },
+    activeRun() {
+      return active ?? Promise.resolve();
+    },
+    isActive() {
+      return active !== null;
+    },
+  };
+}
+
 async function recoverPendingRawEmails(
   db: Db,
   api: Api,
@@ -175,12 +228,17 @@ async function recoverPendingRawEmails(
     attachmentDir: string;
     rawEmailDir: string;
     telegramRichMessagesEnabled: boolean;
+    shouldStop: () => boolean;
   },
 ): Promise<void> {
   const log = getLogger();
   const pendingRawEmails = await listPendingRawEmails(opts.rawEmailDir);
 
   for (const pendingEmail of pendingRawEmails) {
+    if (opts.shouldStop()) {
+      log.info("retry worker: stopping before the next pending raw email");
+      return;
+    }
     try {
       const existingLog = await findDeliveryLogByRawEmailPath(db, pendingEmail.rawEmailPath);
       if (existingLog) {
@@ -203,6 +261,12 @@ async function recoverPendingRawEmails(
         throw err;
       }
 
+      // The lookup and the read awaited; a shutdown that began meanwhile
+      // must not queue (and charge) new work.
+      if (opts.shouldStop()) {
+        log.info("retry worker: stopping before queueing a pending raw email");
+        return;
+      }
       const queued = await queueInboundEmail(db, {
         rawEmail,
         rawEmailPath: pendingEmail.rawEmailPath,

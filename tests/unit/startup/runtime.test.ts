@@ -29,11 +29,11 @@ describe("startup runtime helpers", () => {
     expect(getPlanDefinition("free").limits.deliveredEmailsMonth).toBe(300);
   });
 
-  it("drops pending updates only on the first polling start", () => {
+  it("never drops pending updates, the first polling start included", () => {
     const first = nextPollingStartOptions(true);
     const second = nextPollingStartOptions(first.nextIsInitialPollingStart);
 
-    expect(first).toEqual({ dropPendingUpdates: true, nextIsInitialPollingStart: false });
+    expect(first).toEqual({ dropPendingUpdates: false, nextIsInitialPollingStart: false });
     expect(second).toEqual({ dropPendingUpdates: false, nextIsInitialPollingStart: false });
   });
 

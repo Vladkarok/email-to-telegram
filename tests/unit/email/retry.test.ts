@@ -73,8 +73,9 @@ vi.mock("../../../src/email/pipeline.js", () => ({
   queueInboundEmail: (...args: unknown[]): unknown => mockQueueInboundEmail(...args),
   deliverQueuedEmail: (...args: unknown[]): unknown => mockDeliverQueuedEmail(...args),
 }));
+const mockLogger = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }));
 vi.mock("../../../src/utils/logger.js", () => ({
-  getLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
+  getLogger: () => mockLogger,
 }));
 vi.mock("../../../src/utils/inFlight.js", () => ({
   pipelineTracker: {
@@ -110,7 +111,8 @@ const fakeLog = {
   rawEmailKekKeyId: null,
 };
 
-const { runRetryWorker } = await import("../../../src/email/retry.js");
+const { runRetryWorker, createRetryRunner } = await import("../../../src/email/retry.js");
+const { createShutdown } = await import("../../../src/startup/shutdown.js");
 
 const fakeDb = {
   // retryDelivery persists the attempt + final status inside a transaction.
@@ -1066,5 +1068,187 @@ describe("runRetryWorker", () => {
 
     expect(mockDeletePendingRawEmailMeta).not.toHaveBeenCalled();
     expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe("retry runs at shutdown", () => {
+  const dueLogs = [1, 2, 3].map((n) => ({ ...fakeLog, id: `log-${n}` }));
+
+  function deferred() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  const pending = (path: string) => ({
+    rawEmailPath: path,
+    localPart: "alerts",
+    recipientDomain: "mail.example.com",
+    envelopeFrom: "sender@example.com",
+    rawEmailEncryptionMode: "none",
+    rawEmailWrappedDek: null,
+    rawEmailKekKeyId: null,
+    correlationId: "req-1",
+    createdAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  /** The shutdown wired as src/index.ts wires it, around a retry runner. */
+  function processWith(runner: ReturnType<typeof createRetryRunner>, events: string[]) {
+    return createShutdown(
+      {
+        begin: () => runner.stop(),
+        stopNotices: () => Promise.resolve(),
+        closeHttp: () => Promise.resolve(),
+        stopBot: () => Promise.resolve(),
+        pollingRun: () => Promise.resolve(),
+        retryRun: () => runner.activeRun(),
+        // Between two retry deliveries the pipeline tracker reads zero.
+        pipelines: { inFlight: 0, drain: () => Promise.resolve() },
+        destroySessionStore: () => {},
+        closeDb: () => {
+          events.push("db_closed");
+          return Promise.resolve();
+        },
+      },
+      { logger: mockLogger, exit: (code) => events.push(`exit:${code}`) },
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    markBotHealthy();
+    mockFindAliasById.mockResolvedValue(fakeAlias);
+    mockCountAttempts.mockResolvedValue(0);
+    mockCountCountedFailed.mockResolvedValue(0);
+    mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockReadRawEmail.mockResolvedValue(RAW_EMAIL);
+    mockListAttachments.mockResolvedValue([]);
+    mockListPendingRawEmails.mockResolvedValue([]);
+    mockPipelineTrackerIsActive.mockReturnValue(false);
+    mockPipelineTrackerRunFor.mockImplementation(async (_key: string, fn: () => Promise<unknown>) =>
+      fn(),
+    );
+    mockFindFailedLogs.mockResolvedValue(dueLogs);
+    process.env["HMAC_SECRET"] = "hmac-secret-test-32chars-abcdef";
+  });
+
+  it("claims nothing after shutdown begins, and closes the DB after the run", async () => {
+    const events: string[] = [];
+    const runner = createRetryRunner((shouldStop) =>
+      runRetryWorker(fakeDb, fakeApi, { shouldStop }),
+    );
+    const shutdown = processWith(runner, events);
+    let shutdownDone: Promise<void> | undefined;
+    mockClaimLog.mockImplementation((_db: unknown, id: string) => {
+      events.push(`claim:${id}`);
+      shutdownDone ??= shutdown("SIGTERM");
+      return Promise.resolve(true);
+    });
+    mockSendTelegramMessage.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      events.push("sent");
+      return { ok: true, telegramMessageId: 42 };
+    });
+
+    runner.tick();
+    await vi.waitFor(() => expect(shutdownDone).toBeDefined());
+    await shutdownDone;
+
+    expect(events).toEqual(["claim:log-1", "sent", "db_closed", "exit:0"]);
+    expect(mockClaimLog).toHaveBeenCalledOnce();
+  });
+
+  it("stops pending raw email recovery before the next file", async () => {
+    let stop = false;
+    mockListPendingRawEmails.mockResolvedValue([pending("/raw/a.eml"), pending("/raw/b.eml")]);
+    mockQueueInboundEmail.mockImplementation(() => {
+      stop = true;
+      return Promise.resolve({ queued: true, job: { deliveryLog: { id: "recovered-log" } } });
+    });
+    mockDeliverQueuedEmail.mockResolvedValue({ ok: true });
+
+    await runRetryWorker(fakeDb, fakeApi, {
+      rawEmailDir: "/data/rawemails",
+      shouldStop: () => stop,
+    });
+
+    expect(mockQueueInboundEmail).toHaveBeenCalledOnce();
+    expect(mockDeliverQueuedEmail).toHaveBeenCalledOnce();
+    expect(mockClaimLog).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the delivery-log lookup", () => mockFindDeliveryLogByRawEmailPath],
+    ["the raw email read", () => mockReadRawEmail],
+  ])("queues nothing when shutdown begins during %s", async (_step, stalledMock) => {
+    let stop = false;
+    const gate = deferred();
+    mockListPendingRawEmails.mockResolvedValue([pending("/raw/a.eml")]);
+    mockFindDeliveryLogByRawEmailPath.mockResolvedValue(null);
+    stalledMock().mockImplementation(async () => {
+      await gate.promise;
+      return stalledMock() === mockReadRawEmail ? RAW_EMAIL : null;
+    });
+    mockQueueInboundEmail.mockResolvedValue({
+      queued: true,
+      job: { deliveryLog: { id: "recovered-log" } },
+    });
+
+    const run = runRetryWorker(fakeDb, fakeApi, {
+      rawEmailDir: "/data/rawemails",
+      shouldStop: () => stop,
+    });
+    await vi.waitFor(() => expect(stalledMock()).toHaveBeenCalledOnce());
+    stop = true;
+    gate.resolve();
+    await run;
+
+    expect(mockQueueInboundEmail).not.toHaveBeenCalled();
+    expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
+    expect(mockDeletePendingRawEmailMeta).not.toHaveBeenCalled();
+    expect(mockClaimLog).not.toHaveBeenCalled();
+  });
+
+  it("skips a tick while a run is active, runs on the next one, and awaits the run at shutdown", async () => {
+    const events: string[] = [];
+    const run = vi.fn((shouldStop: () => boolean) =>
+      runRetryWorker(fakeDb, fakeApi, { shouldStop }),
+    );
+    const runner = createRetryRunner(run);
+    mockFindFailedLogs.mockResolvedValue([dueLogs[0]]);
+    mockClaimLog.mockResolvedValue(true);
+    let sendGate = deferred();
+    mockSendTelegramMessage.mockImplementation(async () => {
+      await sendGate.promise;
+      events.push("sent");
+      return { ok: true, telegramMessageId: 42 };
+    });
+
+    runner.tick();
+    await vi.waitFor(() => expect(mockSendTelegramMessage).toHaveBeenCalledOnce());
+    runner.tick();
+    expect(run).toHaveBeenCalledOnce();
+    expect(mockLogger.info).toHaveBeenCalledWith("retry.run.overlap_skipped");
+
+    sendGate.resolve();
+    await runner.activeRun();
+    expect(runner.isActive()).toBe(false);
+
+    sendGate = deferred();
+    runner.tick();
+    expect(run).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(mockSendTelegramMessage).toHaveBeenCalledTimes(2));
+
+    const shutdownDone = processWith(runner, events)("SIGTERM");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(events).toEqual(["sent"]);
+    sendGate.resolve();
+    await shutdownDone;
+
+    expect(events).toEqual(["sent", "sent", "db_closed", "exit:0"]);
+    runner.tick();
+    expect(run).toHaveBeenCalledTimes(2);
   });
 });

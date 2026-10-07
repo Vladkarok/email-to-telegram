@@ -28,12 +28,18 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # The app's shutdown deadline is 25 s; Docker kills 5 s after it.
+    stop_grace_period: 30s
+    # Node is not PID 1 behind Docker's init: a stop signal that arrives
+    # before the app installs its handlers (migrations, startup) ends it at
+    # once instead of being ignored until the grace period runs out.
+    init: true
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 60s
     # `labels` adds the compose project and service to every json-file line
     # (attrs); the prod log collector ships only lines that name this
     # service. Rotation by size; the files go with the container on recreate.

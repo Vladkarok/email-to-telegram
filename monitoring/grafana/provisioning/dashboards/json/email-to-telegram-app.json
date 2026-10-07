@@ -133,7 +133,7 @@
       ],
       "gridPos": {
         "h": 4,
-        "w": 3,
+        "w": 2,
         "x": 0,
         "y": 0
       }
@@ -194,7 +194,7 @@
       "gridPos": {
         "h": 4,
         "w": 3,
-        "x": 3,
+        "x": 2,
         "y": 0
       }
     },
@@ -254,7 +254,82 @@
       "gridPos": {
         "h": 4,
         "w": 3,
-        "x": 6,
+        "x": 5,
+        "y": 0
+      }
+    },
+    {
+      "id": 46,
+      "type": "stat",
+      "title": "Stale bot updates (24h)",
+      "description": "Telegram text messages the bot skipped because they were older than STALE_TEXT_UPDATE_MAX_AGE_S (default 10 min) when it got them: a backlog after an outage or a long restart. The user has to send them again. Button taps, membership changes and chat-migration messages are never skipped. Two values: the 24-h increase, and the highest since-start total any scrape saw in 24 h. Skips happen right after a start, often before the first 30-s scrape, so the increase can miss them (the first sample is already non-zero); the since-start total shows those a scrape saw, but it can include skips older than 24 h when the process has run longer, and a process that stops before its first scrape is missed by both. Exact count: the telegram.update.stale_skipped log lines in Loki, sum(count_over_time({compose_project=\"email-to-telegram\", service=\"app\", env=\"$env\"} |= \"telegram.update.stale_skipped\" [24h])). Bad: a non-zero count without a long outage to explain it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.5
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(email_to_telegram_bot_updates_skipped_total{reason=\"stale\",env=~\"$env\"}[24h])) or vector(0)",
+          "legendFormat": "24h increase",
+          "instant": true,
+          "range": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(max_over_time(email_to_telegram_bot_updates_skipped_total{reason=\"stale\",env=~\"$env\"}[24h])) or vector(0)",
+          "legendFormat": "since-start total",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 8,
         "y": 0
       }
     },
@@ -317,8 +392,8 @@
       ],
       "gridPos": {
         "h": 4,
-        "w": 3,
-        "x": 9,
+        "w": 2,
+        "x": 11,
         "y": 0
       }
     },
@@ -377,8 +452,8 @@
       ],
       "gridPos": {
         "h": 4,
-        "w": 3,
-        "x": 12,
+        "w": 2,
+        "x": 13,
         "y": 0
       }
     },
