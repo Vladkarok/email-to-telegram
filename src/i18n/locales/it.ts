@@ -531,21 +531,21 @@ L'azione <b>non è reversibile</b>. Conferma per procedere.`,
   },
   activationNotice: {
     bouncedFromDomain: (address: string, domain: string) =>
-      `Un'email per <code>${address}</code> da ${domain} è stata respinta: nessuna allow rule corrisponde. Una regola confronta l'indirizzo nella riga From (Da) dell'email.`,
+      `Un'email per <code>${address}</code> da <code>${domain}</code> è stata respinta: nessuna allow rule corrisponde. Una regola confronta l'indirizzo nella riga From (Da) dell'email.`,
     bouncedNoSender: (address: string) =>
       `Un'email per <code>${address}</code> è stata respinta: nessuna allow rule corrisponde al suo mittente.`,
     bouncedNoRules: (address: string) =>
       `Un'email per <code>${address}</code> è stata respinta: questo alias non ha ancora allow rules.`,
     allowDomainButton: (domain: string) => `Autorizza ${domain}`,
     added: (address: string, domain: string) =>
-      `Allow rule aggiunta per <code>${address}</code>: ${domain}. Autorizza tutti gli indirizzi di ${domain}.`,
+      `Allow rule aggiunta per <code>${address}</code>: <code>${domain}</code>. Autorizza tutti gli indirizzi di <code>${domain}</code>.`,
     alreadyAllowed: (address: string, domain: string) =>
-      `<code>${address}</code> ha già una allow rule per ${domain}. Autorizza tutti gli indirizzi di ${domain}.`,
+      `<code>${address}</code> ha già una allow rule per <code>${domain}</code>. Autorizza tutti gli indirizzi di <code>${domain}</code>.`,
     expired: "Questo pulsante è scaduto.",
     ruleLimit: (address: string, domain: string, limit: number) =>
-      `Impossibile autorizzare ${domain} per <code>${address}</code>: è stato raggiunto il limite di ${limit} allow rules.`,
+      `Impossibile autorizzare <code>${domain}</code> per <code>${address}</code>: è stato raggiunto il limite di ${limit} allow rules.`,
     addFailed: (address: string, domain: string) =>
-      `Impossibile autorizzare ${domain} per <code>${address}</code>.`,
+      `Impossibile autorizzare <code>${domain}</code> per <code>${address}</code>.`,
     tryAgainToast: "Impossibile aggiungere la regola. Riprova.",
   },
   quotaNotice: {

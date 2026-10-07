@@ -523,21 +523,21 @@ ${policyUrl ? `Повна політика: ${policyUrl}\n` : ""}${supportContac
   },
   activationNotice: {
     bouncedFromDomain: (address: string, domain: string) =>
-      `Лист на <code>${address}</code> від ${domain} повернуто відправнику: жодне allow rule йому не відповідає. Правило звіряється з адресою в полі From листа.`,
+      `Лист на <code>${address}</code> від <code>${domain}</code> повернуто відправнику: жодне allow rule йому не відповідає. Правило звіряється з адресою в полі From листа.`,
     bouncedNoSender: (address: string) =>
       `Лист на <code>${address}</code> повернуто відправнику: жодне allow rule не відповідає його відправнику.`,
     bouncedNoRules: (address: string) =>
       `Лист на <code>${address}</code> повернуто відправнику: у цього аліаса ще немає allow rules.`,
     allowDomainButton: (domain: string) => `Дозволити ${domain}`,
     added: (address: string, domain: string) =>
-      `Додано allow rule для <code>${address}</code>: ${domain}. Воно дозволяє всі адреси на ${domain}.`,
+      `Додано allow rule для <code>${address}</code>: <code>${domain}</code>. Воно дозволяє всі адреси на <code>${domain}</code>.`,
     alreadyAllowed: (address: string, domain: string) =>
-      `<code>${address}</code> вже має allow rule для ${domain}. Воно дозволяє всі адреси на ${domain}.`,
+      `<code>${address}</code> вже має allow rule для <code>${domain}</code>. Воно дозволяє всі адреси на <code>${domain}</code>.`,
     expired: "Ця кнопка вже недійсна.",
     ruleLimit: (address: string, domain: string, limit: number) =>
-      `Не вдалося дозволити ${domain} для <code>${address}</code>: досягнуто ліміту в ${limit} allow rules.`,
+      `Не вдалося дозволити <code>${domain}</code> для <code>${address}</code>: досягнуто ліміту в ${limit} allow rules.`,
     addFailed: (address: string, domain: string) =>
-      `Не вдалося дозволити ${domain} для <code>${address}</code>.`,
+      `Не вдалося дозволити <code>${domain}</code> для <code>${address}</code>.`,
     tryAgainToast: "Не вдалося додати правило. Спробуйте ще раз.",
   },
   quotaNotice: {
