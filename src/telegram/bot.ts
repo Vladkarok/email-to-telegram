@@ -1,4 +1,4 @@
-import { Bot, type Context, type NextFunction } from "grammy";
+import { Bot, type ApiClientOptions, type Context, type NextFunction } from "grammy";
 import { getDb } from "../db/client.js";
 import { authMiddleware } from "./middleware/auth.js";
 import {
@@ -130,14 +130,26 @@ import { InlineKeyboard } from "grammy";
 import { hasActiveHostedUser } from "../billing/limits.js";
 import { escapeHtml } from "../utils/html.js";
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES, getMessages, resolveLocale } from "../i18n/index.js";
+import { admissionGate, staleTextGuard, tolerateLateCallbackAnswers } from "./updateGates.js";
 
 export { assertHostedChatReady, assertHostedAliasReady } from "./middleware/authorization.js";
 
 const PRE_AUTH_COMMANDS = new Set(["start", "privacy", "delete_me", "export_me"]);
 const PRE_AUTH_CALLBACKS = new Set([CB_DELETE_ME_CONFIRM, CB_DELETE_ME_CANCEL]);
 
-export function createBot(token: string): Bot {
-  const bot = new Bot(token);
+export interface CreateBotOptions {
+  /** True once shutdown has begun; no handler starts after that. */
+  isShuttingDown?: () => boolean;
+  /** Text messages older than this are skipped (STALE_TEXT_UPDATE_MAX_AGE_S). */
+  staleTextMaxAgeS?: number;
+  /** Bot API client options (tests point `fetch` at a fake Bot API). */
+  client?: ApiClientOptions;
+}
+
+export function createBot(token: string, options: CreateBotOptions = {}): Bot {
+  const { isShuttingDown = () => false, staleTextMaxAgeS = 600, client } = options;
+  const bot = new Bot(token, client ? { client } : undefined);
+  bot.api.config.use(tolerateLateCallbackAnswers);
   const logger = getLogger();
   const preAuthLimiter = new RateLimiter(5, 60_000);
   preAuthLimiter.startSweep();
@@ -146,6 +158,10 @@ export function createBot(token: string): Bot {
   bot.catch((err) => {
     logger.error({ err: err.error, update: err.ctx.update }, "Bot error");
   });
+
+  // ── Update gates, before every handler ─────────────────────────────────────
+  bot.use(admissionGate(isShuttingDown));
+  bot.use(staleTextGuard(staleTextMaxAgeS));
 
   // ── Auto-register groups ────────────────────────────────────────────────────
   bot.on("my_chat_member", chatMemberHandler);

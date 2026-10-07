@@ -143,6 +143,9 @@ const envSchema = z.object({
   // Over this, the email is left for the (sequential) retry worker to drain,
   // protecting the DB pool and memory under an inbound flood.
   MAX_INFLIGHT_DELIVERIES: z.coerce.number().int().positive().default(30),
+  // A text message older than this when the bot gets it (a backlog after an
+  // outage) is skipped and counted instead of handled.
+  STALE_TEXT_UPDATE_MAX_AGE_S: z.coerce.number().int().positive().default(600),
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "silent"]).default("info"),
   NODE_ENV: z.enum(["development", "production", "test"]).default("production"),
   // Comma-separated Telegram user IDs; validated as integers here so bad values
@@ -230,6 +233,7 @@ export interface AppConfig {
   rawEmailTtlHours: number;
   deliveryLogRetentionDays: number;
   maxInflightDeliveries: number;
+  staleTextUpdateMaxAgeS: number;
   storageEncryptionMode: StorageEncryptionMode;
   masterEncryptionKey: string | undefined;
   masterEncryptionKeyId: string;
@@ -423,6 +427,7 @@ export function loadConfig(): AppConfig {
     masterEncryptionKeyring,
     maxSizeBytes: env.MAX_SIZE_BYTES,
     maxInflightDeliveries: env.MAX_INFLIGHT_DELIVERIES,
+    staleTextUpdateMaxAgeS: env.STALE_TEXT_UPDATE_MAX_AGE_S,
     logLevel: env.LOG_LEVEL,
     nodeEnv: env.NODE_ENV,
     initialAllowedUsers: env.INITIAL_ALLOWED_USERS,

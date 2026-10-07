@@ -362,6 +362,7 @@ See [`.env.example`](./.env.example) for the authoritative template.
 | `MASTER_ENCRYPTION_KEY_ID`       | No       | Optional key label stored with wrapped DEKs                                                                         |
 | `MASTER_ENCRYPTION_KEYRING`      | No       | Older read-only local keys for staged key rotation                                                                  |
 | `MAX_SIZE_BYTES`                 | No       | Max accepted inbound body size                                                                                      |
+| `STALE_TEXT_UPDATE_MAX_AGE_S`    | No       | Telegram text messages older than this many seconds on arrival are skipped, not answered. Default `600`             |
 | `TRUST_PROXY`                    | No       | Trust `X-Forwarded-*` for client IP (rate limits). Default `false`. Set `true` only behind a trusted reverse proxy. |
 | `TELEGRAM_RICH_MESSAGES_ENABLED` | No       | Prefer native Rich Messages for structured mail. Default `true`; set `false` for classic-only delivery.             |
 | `INITIAL_ALLOWED_USERS`          | No       | Initial Telegram operators; recommended on first deploy                                                             |

@@ -22,6 +22,7 @@ const OPTIONAL_ENV = [
   "MASTER_ENCRYPTION_KEY_ID",
   "MASTER_ENCRYPTION_KEYRING",
   "MAX_SIZE_BYTES",
+  "STALE_TEXT_UPDATE_MAX_AGE_S",
   "LOG_LEVEL",
   "NODE_ENV",
   "INITIAL_ALLOWED_USERS",
@@ -101,6 +102,14 @@ describe("loadConfig", () => {
     expect(config.metricsToken).toBeUndefined();
     expect(config.trustProxy).toBe(false);
     expect(config.telegramRichMessagesEnabled).toBe(true);
+    expect(config.staleTextUpdateMaxAgeS).toBe(600);
+  });
+
+  it("parses STALE_TEXT_UPDATE_MAX_AGE_S and rejects a non-positive value", () => {
+    process.env["STALE_TEXT_UPDATE_MAX_AGE_S"] = "3600";
+    expect(loadConfig().staleTextUpdateMaxAgeS).toBe(3600);
+    process.env["STALE_TEXT_UPDATE_MAX_AGE_S"] = "0";
+    expect(() => loadConfig()).toThrow();
   });
 
   it("parses TRUST_PROXY as boolean", () => {
