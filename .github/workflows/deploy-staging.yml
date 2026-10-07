@@ -69,7 +69,7 @@ jobs:
     if: github.repository == 'Vladkarok/email-to-telegram'
     runs-on: [self-hosted, linux, x64, email-tg-staging]
     needs: build-and-push
-    timeout-minutes: 45
+    timeout-minutes: 50
     # One host-mutating job per VM at a time, shared with the monitoring
     # workflows; a pending run waits in the queue instead of replacing another.
     concurrency:
@@ -82,35 +82,27 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
-      # Every remote mutation takes ~/.etg-deploy.lock (flock, 15 minutes at
-      # most), shared with the monitoring deploys on this host.
-      - name: Ensure monitoring_scrape network exists
-        # docker-compose.yml declares monitoring_scrape as external so
-        # Prometheus (running in the sibling monitoring compose) can
-        # resolve `app`. Compose refuses to start if it's missing. Create
-        # it idempotently here in case this workflow races ahead of the
-        # monitoring deploy workflow on a fresh host.
+      # No lock needed: a fresh directory only this run uses. The Deploy step
+      # installs the files from it under the host lock.
+      - name: Upload deploy files to staging
         run: |
-          ssh staging 'exec 9>>~/.etg-deploy.lock && flock -w 900 9 || { echo "Another deploy has held ~/.etg-deploy.lock for 15 minutes; giving up." >&2; exit 1; }
-          docker network inspect monitoring_scrape >/dev/null 2>&1 || docker network create monitoring_scrape'
+          set -euo pipefail
+          incoming=$(tar -cf - docker-compose.yml -C .github/scripts deploy-app.sh |
+            timeout 120 ssh staging 'd=$(mktemp -d "$HOME/.etg-incoming.XXXXXXXX") && tar -xf - -C "$d" && echo "$d"')
+          case $incoming in
+            /*/.etg-incoming.*) ;;
+            *) echo "unexpected upload directory: $incoming" >&2; exit 1 ;;
+          esac
+          echo "ETG_INCOMING=$incoming" >> "$GITHUB_ENV"
 
-      - name: Copy compose file to staging
-        run: |
-          ssh staging 'exec 9>>~/.etg-deploy.lock && flock -w 900 9 || { echo "Another deploy has held ~/.etg-deploy.lock for 15 minutes; giving up." >&2; exit 1; }
-          cat > ~/email-to-telegram/docker-compose.yml' < docker-compose.yml
-
-      - name: Copy deploy script to staging
-        # Under the host lock; written to a temp file and renamed, so a copy
-        # never changes the file a running deploy is reading.
-        run: |
-          ssh staging 'exec 9>>~/.etg-deploy.lock && flock -w 900 9 || { echo "Another deploy has held ~/.etg-deploy.lock for 15 minutes; giving up." >&2; exit 1; }
-          cat > ~/email-to-telegram/deploy-app.sh.tmp && mv -f ~/email-to-telegram/deploy-app.sh.tmp ~/email-to-telegram/deploy-app.sh' < .github/scripts/deploy-app.sh
-
-      # deploy-app.sh pulls, migrates first, replaces, waits for healthy and
-      # ready, rolls back to the previous image on failure and prints the
-      # availability report. Its stages are bounded (22 minutes in all); with
-      # the 15-minute wait for the host lock that stays inside the 45-minute
-      # job timeout.
+      # Everything below runs under one hold of the host lock (15-minute wait
+      # at most): the network check, keeping the old compose file for the
+      # rollback, installing the new files and deploy-app.sh. The script pulls,
+      # migrates first, replaces, waits for healthy and ready, rolls back to
+      # the previous image on failure and prints the availability report. Its
+      # stages are bounded (22 minutes in all) and every other Docker call to
+      # 20 s (a few minutes more at worst); with the lock wait that stays
+      # inside the 50-minute job timeout.
       - name: Deploy
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
@@ -122,8 +114,35 @@ jobs:
           set -e
           exec 9>>~/.etg-deploy.lock
           flock -w 900 9 || { echo "Another deploy has held ~/.etg-deploy.lock for 15 minutes; giving up." >&2; exit 1; }
-          cd ~/email-to-telegram
 
-          echo "${GHCR_TOKEN}" | docker login ghcr.io -u vladkarok --password-stdin
+          # docker-compose.yml declares monitoring_scrape as external; create
+          # it on a host that has never had the monitoring stack.
+          timeout 60 docker network inspect monitoring_scrape >/dev/null 2>&1 ||
+            timeout 60 docker network create monitoring_scrape
+
+          cd ~/email-to-telegram
+          # Files are renamed into place, never written in place. The rollback
+          # starts the previous image with the compose file it ran with.
+          cp "${ETG_INCOMING}/docker-compose.yml" docker-compose.yml.tmp
+          cp "${ETG_INCOMING}/deploy-app.sh" deploy-app.sh.tmp
+          rm -rf "${ETG_INCOMING}"
+          if [ -f docker-compose.yml ]; then
+            cp -p docker-compose.yml docker-compose.previous.yml.tmp
+            mv -f docker-compose.previous.yml.tmp docker-compose.previous.yml
+          fi
+          mv -f docker-compose.yml.tmp docker-compose.yml
+          mv -f deploy-app.sh.tmp deploy-app.sh
+
+          echo "${GHCR_TOKEN}" | timeout 120 docker login ghcr.io -u vladkarok --password-stdin
           IMAGE_TAG="${IMAGE_TAG}" DEPLOY_TOOLING_COMMIT="${TOOLING_COMMIT}" bash ./deploy-app.sh </dev/null
           EOF
+
+      # For a run that failed or was cancelled before the Deploy step installed
+      # the files. A Deploy still waiting for the lock then finds no files and
+      # stops without changing anything.
+      - name: Remove the uploaded files
+        if: always()
+        run: |
+          if [ -n "${ETG_INCOMING:-}" ]; then
+            timeout 60 ssh staging "rm -rf '$ETG_INCOMING'"
+          fi
