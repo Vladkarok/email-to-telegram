@@ -187,12 +187,19 @@ describe("mailboxDomainForDisplay", () => {
     ["a space", "a@bank .com", null],
     ["a numeric last label", "a@192.0.2.1", null],
     ["an IPv4 shorthand", "a@0x7f.1", null],
-    ["invalid punycode", "a@xn--zz.com", null],
     ["a soft hyphen", "a@ba\u00adnk.com", null],
     ["a right-to-left mark", "a@bank.com\u200f", null],
     ["a 64-character label", `a@${longLabel}a.com`, null],
     ["a domain over 253 characters", tooLong, null],
   ])("handles %s", (_label, address, expected) => {
     expect(mailboxDomainForDisplay(address)).toBe(expected);
+  });
+});
+
+describe("mailboxDomainForDisplay with an ACE label that does not decode", () => {
+  // ICU decides whether "xn--zz" decodes, and Node 22 and Node 24 disagree.
+  // Either outcome is safe for the alert: the ASCII form or "unknown sender".
+  it("returns the ASCII form or null, never anything else", () => {
+    expect(["xn--zz.com", null]).toContain(mailboxDomainForDisplay("a@xn--zz.com"));
   });
 });
