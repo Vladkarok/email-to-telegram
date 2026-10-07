@@ -8,7 +8,8 @@
 #
 # Backup files: <backup_dir>/backup-YYYY-MM-DD.sql.gz
 # Metadata:      <backup_dir>/backup-YYYY-MM-DD.meta
-# Retention:    keep_days (default 7) — older files are deleted
+# Retention:    keep_days (default 7) — older files are deleted, including
+#               temp files left behind by runs that were killed
 
 set -eu
 umask 077
@@ -32,6 +33,17 @@ META_FILE="${BACKUP_DIR}/backup-${DATE}.meta"
 
 mkdir -p "$BACKUP_DIR"
 
+# Temp files from runs killed before their EXIT trap could run (SIGKILL, OOM).
+# They can hold a plaintext dump or DB credentials, and the rotation patterns
+# below never match them. Sweep them before the dump, so a run that fails
+# (for example on a disk those leftovers filled) still removes them. The mtime
+# filter leaves the in-progress files of a concurrent run alone. Best effort:
+# two runs sweeping the same leftover race on it, so a failed sweep must not
+# stop the backup. `-exec rm -f` instead of `-delete`: not every find has it
+# (Ubuntu's BusyBox does not).
+find "$BACKUP_DIR" -maxdepth 1 -type f -name '.backup-*' -mtime "+${KEEP_DAYS}" -exec rm -f -- {} \; 2>/dev/null || :
+find "$BACKUP_DIR" -maxdepth 1 -type f -name 'backup-*.tmp' -mtime "+${KEEP_DAYS}" -exec rm -f -- {} \; 2>/dev/null || :
+
 # Parse connection components from DATABASE_URL using Node's URL parser so that
 # percent-encoded characters and special chars in passwords are handled correctly.
 # PGPASSWORD is passed via environment (not argv) to keep the credential out of
@@ -39,16 +51,39 @@ mkdir -p "$BACKUP_DIR"
 old_ifs=$IFS
 IFS='
 '
-TMP_CONN="${BACKUP_DIR}/.backup-conn-${DATE}-$$.txt"
-TMP_SQL="${BACKUP_DIR}/.backup-${DATE}-$$.sql"
-TMP_GZ="${PLAIN_BACKUP_FILE}.tmp"
-TMP_ENC="${ENCRYPTED_BACKUP_FILE}.tmp"
-TMP_META="${META_FILE}.tmp"
-TMP_ARCHIVE_META="${BACKUP_DIR}/.backup-${DATE}-$$.archive-meta"
+TMP_CONN=
+TMP_SQL=
+TMP_GZ=
+TMP_ENC=
+TMP_META=
+TMP_ARCHIVE_META=
 cleanup_tmp() {
-  rm -f "$TMP_SQL" "$TMP_GZ" "$TMP_ENC" "$TMP_CONN" "$TMP_META" "$TMP_ARCHIVE_META"
+  for tmp_file in "$TMP_CONN" "$TMP_SQL" "$TMP_GZ" "$TMP_ENC" "$TMP_META" "$TMP_ARCHIVE_META"; do
+    if [ -n "$tmp_file" ]; then
+      rm -f "$tmp_file"
+    fi
+  done
 }
-trap cleanup_tmp EXIT INT TERM
+trap cleanup_tmp EXIT
+# Exit on HUP/INT/TERM so the EXIT trap cleans up and the run stops there.
+# Untrapped, these signals kill the shell without running the EXIT trap; a
+# trap that only cleaned up would let the run continue and commit incomplete
+# metadata.
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Every temp file name carries this run's PID and a token mktemp reserved in
+# BACKUP_DIR, so no two runs share one, not even runs in separate containers
+# that share the volume and the PID. Cleanup then only ever removes this run's
+# own files. The dump and .meta keep their date-only names.
+TMP_CONN=$(mktemp "${BACKUP_DIR}/.backup-conn-${DATE}-$$-XXXXXX")
+RUN_ID="$$-${TMP_CONN##*-}"
+TMP_SQL="${BACKUP_DIR}/.backup-${DATE}-${RUN_ID}.sql"
+TMP_GZ="${PLAIN_BACKUP_FILE}.${RUN_ID}.tmp"
+TMP_ENC="${ENCRYPTED_BACKUP_FILE}.${RUN_ID}.tmp"
+TMP_META="${META_FILE}.${RUN_ID}.tmp"
+TMP_ARCHIVE_META="${BACKUP_DIR}/.backup-${DATE}-${RUN_ID}.archive-meta"
 
 if [ "$STORAGE_ENCRYPTION_MODE" = "local-v1" ] && [ -z "$MASTER_ENCRYPTION_KEY" ]; then
   echo "backup.sh: MASTER_ENCRYPTION_KEY is required when STORAGE_ENCRYPTION_MODE=local-v1" >&2
@@ -133,14 +168,14 @@ if [ "$BACKUP_ARCHIVE_ENCRYPTION" = "storage-key" ]; then
   mv "$TMP_ENC" "$BACKUP_FILE"
 fi
 
-rm -f "$TMP_SQL" "$TMP_CONN"
-trap - EXIT INT TERM
+cleanup_tmp
+trap - EXIT HUP INT TERM
 
 echo "Backup written: $BACKUP_FILE ($(du -sh "$BACKUP_FILE" | cut -f1))"
 echo "Backup metadata: $META_FILE"
 
 # Rotate: delete backups older than KEEP_DAYS
-find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.sql.gz' -mtime "+${KEEP_DAYS}" -delete
-find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.sql.gz.etg' -mtime "+${KEEP_DAYS}" -delete
-find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.meta' -mtime "+${KEEP_DAYS}" -delete
+find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.sql.gz' -mtime "+${KEEP_DAYS}" -exec rm -f -- {} \;
+find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.sql.gz.etg' -mtime "+${KEEP_DAYS}" -exec rm -f -- {} \;
+find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.meta' -mtime "+${KEEP_DAYS}" -exec rm -f -- {} \;
 echo "Retention: kept last ${KEEP_DAYS} days of backups"
