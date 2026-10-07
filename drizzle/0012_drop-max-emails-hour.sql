@@ -1,0 +1,1 @@
+ALTER TABLE "email_addresses" DROP COLUMN "max_emails_hour";

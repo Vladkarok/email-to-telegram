@@ -1029,10 +1029,11 @@ describe.skipIf(!hasTestDatabase)("migration 0011 backfill", () => {
     expect(rows).toEqual([
       { alias_id: working, first_delivered_at: new Date("2026-09-02T00:00:00Z") },
     ]);
-    // The column a rollback image still reads survives this migration.
+    // 0012 drops max_emails_hour: nothing has read it since v1.10.0, and
+    // v1.11.0, the rollback target, no longer lists it in its schema.
     const { rows: columns } = await t.pool.query(
       "select 1 from information_schema.columns where table_name = 'email_addresses' and column_name = 'max_emails_hour'",
     );
-    expect(columns).toHaveLength(1);
+    expect(columns).toHaveLength(0);
   });
 });
