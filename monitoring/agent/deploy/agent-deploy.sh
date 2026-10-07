@@ -254,7 +254,14 @@ restore_services() {
     compose down --remove-orphans || rc=1
     return "$rc"
   fi
-  for svc in $(compose config --services); do
+  # Listed on its own: a compose error must fail the restore (and keep the
+  # marker and snapshot), not silently restore nothing.
+  local listed
+  if ! listed=$(compose config --services) || [[ -z "$listed" ]]; then
+    echo "cannot list the services of the restored compose file"
+    return 1
+  fi
+  for svc in $listed; do
     case ${state[$svc]:-absent} in
       running) run+=("$svc") ;;
       stopped) stopped+=("$svc") ;;
@@ -412,8 +419,18 @@ promtail_ready() {
   [[ "$ready" == *Ready* ]]
 }
 
+# promtail_rejected : how many pushes the gateway or Loki refused (4xx) since
+# the Promtail container started.
+promtail_rejected() {
+  local metrics
+  metrics=$(promtail_get /metrics) || return 1
+  awk '/^promtail_request_duration_seconds_count\{.*status_code="4[0-9][0-9]"/ { n += $2 }
+       END { printf "%d\n", n }' <<<"$metrics"
+}
+
 verify() {
   local ca="$AGENT_DIR/tls/ca.crt" base="https://$bind_ip" svc cid state restarts=() i=0 got wrong
+  local promtail_before="" rejected_before=0
   wrong="wrong-$(date +%s%N)"
 
   retry_until 60 metrics_match "$base:9100/metrics" '^node_exporter_build_info' ||
@@ -440,6 +457,10 @@ verify() {
       --cacert "$ca" -X POST -H 'Content-Type: application/json' --data-raw '{"streams":[]}' \
       "https://$push_addr/loki/api/v1/push" || true)
     [[ "$got" == 204 ]] || die "verify: an authenticated empty push to https://$push_addr returned HTTP $got, expected 204"
+    # Refusals are counted over the verification window only: an earlier,
+    # recovered refusal stays in the lifetime counter and is not this deploy's.
+    promtail_before=$(container_of "$PROJECT" promtail)
+    rejected_before=$(promtail_rejected) || die "verify: cannot read promtail's metrics"
   fi
 
   # Running and not restarting, twice, ten seconds apart.
@@ -457,16 +478,20 @@ verify() {
     i=$((i + 1))
   done
 
-  # Promtail tails files and none of its pushes so far was refused. A quiet
-  # app may push nothing during the deploy, so a rising sent-entries count is
-  # not required; the authenticated push above covers the credential.
+  # Promtail tails files and none of its pushes was refused during the
+  # window. A quiet app may push nothing during the deploy, so a rising
+  # sent-entries count is not required; the authenticated push above covers
+  # the credential.
   if [[ "$env_name" == prod ]]; then
-    local metrics active rejected
+    local metrics active rejected_after
     metrics=$(promtail_get /metrics) || die "verify: cannot read promtail's metrics"
     active=$(awk '$1 == "promtail_files_active_total" { print $2 }' <<<"$metrics")
     [[ -n "$active" && "$active" != 0 ]] || die "verify: promtail tails no log file"
-    rejected=$(awk '/^promtail_request_duration_seconds_count\{.*status_code="4[0-9][0-9]"/ && $2 > 0' <<<"$metrics")
-    [[ -z "$rejected" ]] || die "verify: the gateway refused promtail's pushes: $rejected"
+    rejected_after=$(promtail_rejected) || die "verify: cannot read promtail's metrics"
+    # A new container counts from zero.
+    [[ "$(container_of "$PROJECT" promtail)" == "$promtail_before" ]] || rejected_before=0
+    ((rejected_after <= rejected_before)) ||
+      die "verify: the gateway refused $((rejected_after - rejected_before)) of promtail's pushes during the verification"
   fi
 
   [[ "$(app_container_ids)" == "$app_ids_before" ]] ||

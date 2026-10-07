@@ -17,8 +17,10 @@ $$;
 -- function (gone with the session) so the same checks run before and after
 -- the repairs below: a repaired membership can bring privileges with it.
 -- Nothing is revoked here; an unexpected privilege needs a person to look at
--- it. Grants and effective privileges are checked in the app database;
--- relations that belong to an extension are not app data and are skipped.
+-- it. Grants and effective privileges are checked in the app database,
+-- extension relations included: the app's only extension (pgcrypto) has
+-- none, and a monitoring extension such as pg_stat_statements is not
+-- installed, so there is nothing to exempt.
 CREATE FUNCTION pg_temp.etg_monitor_problems() RETURNS text[]
 LANGUAGE plpgsql AS $$
 DECLARE
@@ -80,8 +82,6 @@ BEGIN
     WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
       AND n.nspname NOT IN ('pg_catalog', 'information_schema')
       AND n.nspname NOT LIKE 'pg\_toast%'
-      AND NOT EXISTS (SELECT 1 FROM pg_depend d
-                      WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e')
       AND has_table_privilege(r.oid, c.oid, p.priv));
   problems := problems || ARRAY(
     SELECT format('column %s on %s', p.priv, c.oid::regclass)
@@ -91,8 +91,6 @@ BEGIN
     WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
       AND n.nspname NOT IN ('pg_catalog', 'information_schema')
       AND n.nspname NOT LIKE 'pg\_toast%'
-      AND NOT EXISTS (SELECT 1 FROM pg_depend d
-                      WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e')
       AND NOT has_table_privilege(r.oid, c.oid, p.priv)
       AND has_any_column_privilege(r.oid, c.oid, p.priv));
   problems := problems || ARRAY(
@@ -102,8 +100,6 @@ BEGIN
     CROSS JOIN unnest(ARRAY['USAGE', 'SELECT', 'UPDATE']) AS p(priv)
     WHERE c.relkind = 'S'
       AND n.nspname NOT IN ('pg_catalog', 'information_schema')
-      AND NOT EXISTS (SELECT 1 FROM pg_depend d
-                      WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e')
       AND has_sequence_privilege(r.oid, c.oid, p.priv));
 
   RETURN problems;

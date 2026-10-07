@@ -10,13 +10,17 @@
 #   - unexpected privileges fail the run and restore: an explicit grant, a
 #     table privilege or a column SELECT granted to PUBLIC, and a privilege
 #     that only the membership repair switches on (checked again after it)
-#   - an interrupted run (SIGKILL) is restored by the next run
+#   - an interrupted run (SIGKILL) is restored by the next run; a restore
+#     that cannot list the snapshot's services fails and keeps the marker
+#     and the snapshot
 #   - rollback with compose down, then redeploy
 #   - a failed first deployment takes the agent down and leaves the role
 #     without LOGIN
 #   - prod profile: Promtail ships the app container's lines through the TLS
 #     gateway to a local Loki with env="prod"; Postgres lines (which carry
 #     attrs too) and every other container's lines do not arrive
+#   - a refused push that has since recovered does not fail an unchanged
+#     repeat deploy (refusals are counted over the verification window)
 #   - a deliberately stopped Promtail stays stopped through a failed deploy
 #   - neither the Postgres server log nor the deploy output contains a
 #     verifier or a password, for successful ALTER ROLEs (the deploys) and a
@@ -135,6 +139,8 @@ step "starting the stand-in app"
 docker compose -f "$app_compose" up -d --wait --quiet-pull
 pg=$(docker compose -f "$app_compose" ps -q postgres)
 docker exec -i "$pg" psql -q -U emailtelegram -d emailtelegram <<'SQL'
+-- The app's only extension; the role checks must pass with it installed.
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TABLE email_addresses (id serial PRIMARY KEY, address text NOT NULL);
 INSERT INTO email_addresses (address) VALUES ('someone@example.com');
 SQL
@@ -311,6 +317,19 @@ sleep 1
 kill -9 "$deploy_pid"
 wait "$deploy_pid" 2>/dev/null || true
 [[ -e "$HOME/.etg-agent-restore-pending" ]] || fail "SIGKILL did not leave the marker"
+# A restore that cannot list the snapshot's services must fail and keep the
+# marker and the snapshot, not report success with nothing restored.
+snap_compose="$HOME/.etg-agent-snapshot/files/docker-compose.agent.yml"
+cp "$snap_compose" "$work/snapshot-compose.good"
+printf 'services: [broken\n' >>"$snap_compose"
+render "$pg_pw3" "$work/r6a"
+if deploy "$work/r6a"; then fail "a run whose restore cannot list the services succeeded"; fi
+has "$work/r6a/out.log" 'cannot list the services of the restored compose file' ||
+  fail "the failed service listing was not reported"
+has "$work/r6a/out.log" 'failed; fix the host by hand' || fail "the failed restore did not stop the run"
+[[ -e "$HOME/.etg-agent-restore-pending" ]] || fail "a failed restore removed the marker"
+[[ -f "$HOME/.etg-agent-snapshot/complete" ]] || fail "a failed restore removed the snapshot"
+cp "$work/snapshot-compose.good" "$snap_compose"
 render "$pg_pw3" "$work/r6"
 deploy "$work/r6" || fail "the run after the interruption failed"
 has "$work/r6/out.log" 'an earlier agent deploy was interrupted' || fail "the next run did not restore first"
@@ -408,6 +427,38 @@ others=$(jq -r '[.data[] | select(.service != "app" or .compose_project != "emai
 labels=$(jq -c '[.data[] | keys] | add | unique' <<<"$series")
 [[ "$labels" == '["compose_project","env","service","stream"]' ]] || fail "unexpected label set: $labels"
 echo "prod app lines in Loki: $app_lines; streams: $(jq -c '[.data[]]' <<<"$series")"
+
+step "8a. an earlier, recovered refusal does not fail the next deploy"
+# Give the gateway another password until Promtail has a refused push on its
+# lifetime counter, put the right one back, then deploy again unchanged.
+gateway_password() { # PASSWORD : the gateway accepts promtail-a with PASSWORD
+  printf '%s' "$1" | HTPASSWD_VIA="" bcrypt_line promtail-a >"$work/gw-in/loki-gateway/htpasswd"
+  install_secrets "$work/gw-in" "$HOME/gw-secrets"
+}
+promtail_id() {
+  docker ps -q --no-trunc --filter label=com.docker.compose.project=etg-agent \
+    --filter label=com.docker.compose.service=promtail
+}
+promtail_rejections() {
+  local m
+  m=$(docker run --rm --network "container:$(promtail_id)" busybox:1.37 \
+    wget -qO- http://127.0.0.1:9080/metrics 2>/dev/null) || m=""
+  awk '/^promtail_request_duration_seconds_count\{.*status_code="4[0-9][0-9]"/ { n += $2 }
+       END { printf "%d\n", n }' <<<"$m"
+}
+gateway_password "$(secret)"
+for _ in $(seq 1 30); do
+  (($(promtail_rejections) > 0)) && break
+  sleep 2
+done
+(($(promtail_rejections) > 0)) || fail "promtail recorded no refused push against a wrong gateway password"
+gateway_password "$push_pw"
+promtail_before=$(promtail_id)
+echo "promtail has $(promtail_rejections) refused push(es) on its counter; redeploying unchanged"
+render_prod "$pg_pw1" "$work/r9b"
+deploy "$work/r9b" || fail "a repeat deploy failed on an earlier, recovered refusal"
+[[ "$(promtail_id)" == "$promtail_before" ]] || fail "the repeat deploy recreated promtail (counter not carried over)"
+(($(promtail_rejections) > 0)) || fail "the refused push is no longer on the counter"
 
 step "8b. a stopped Promtail stays stopped through a failed deploy"
 agent_compose=(docker compose -p etg-agent -f "$HOME/monitoring-agent/docker-compose.agent.yml"
