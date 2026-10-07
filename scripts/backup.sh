@@ -38,10 +38,11 @@ mkdir -p "$BACKUP_DIR"
 # below never match them. Sweep them before the dump, so a run that fails
 # (for example on a disk those leftovers filled) still removes them. The mtime
 # filter leaves the in-progress files of a concurrent run alone. Best effort:
-# two runs sweeping the same leftover race on it, and BusyBox find has no
-# -ignore_readdir_race, so a failed sweep must not stop the backup.
-find "$BACKUP_DIR" -maxdepth 1 -type f -name '.backup-*' -mtime "+${KEEP_DAYS}" -delete 2>/dev/null || :
-find "$BACKUP_DIR" -maxdepth 1 -type f -name 'backup-*.tmp' -mtime "+${KEEP_DAYS}" -delete 2>/dev/null || :
+# two runs sweeping the same leftover race on it, so a failed sweep must not
+# stop the backup. `-exec rm -f` instead of `-delete`: not every find has it
+# (Ubuntu's BusyBox does not).
+find "$BACKUP_DIR" -maxdepth 1 -type f -name '.backup-*' -mtime "+${KEEP_DAYS}" -exec rm -f -- {} \; 2>/dev/null || :
+find "$BACKUP_DIR" -maxdepth 1 -type f -name 'backup-*.tmp' -mtime "+${KEEP_DAYS}" -exec rm -f -- {} \; 2>/dev/null || :
 
 # Parse connection components from DATABASE_URL using Node's URL parser so that
 # percent-encoded characters and special chars in passwords are handled correctly.
@@ -174,7 +175,7 @@ echo "Backup written: $BACKUP_FILE ($(du -sh "$BACKUP_FILE" | cut -f1))"
 echo "Backup metadata: $META_FILE"
 
 # Rotate: delete backups older than KEEP_DAYS
-find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.sql.gz' -mtime "+${KEEP_DAYS}" -delete
-find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.sql.gz.etg' -mtime "+${KEEP_DAYS}" -delete
-find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.meta' -mtime "+${KEEP_DAYS}" -delete
+find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.sql.gz' -mtime "+${KEEP_DAYS}" -exec rm -f -- {} \;
+find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.sql.gz.etg' -mtime "+${KEEP_DAYS}" -exec rm -f -- {} \;
+find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.meta' -mtime "+${KEEP_DAYS}" -exec rm -f -- {} \;
 echo "Retention: kept last ${KEEP_DAYS} days of backups"
