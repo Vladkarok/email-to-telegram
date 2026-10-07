@@ -18,6 +18,21 @@ that has been running in production.
 
 ## [Unreleased]
 
+## [1.12.2] — 2026-10-07
+
+Measurement release: the bot behaves exactly as in 1.12.1.
+
+### Added
+
+- **Local rich downgrades by reason.**
+  `email_to_telegram_rich_ineligible_total{reason}` counts deliveries sent
+  as classic messages because the body hit a rich-message limit (input
+  size, text, blocks, table columns, nesting depth) or because the
+  delivery header or attachments tipped it over. Counted per acknowledged
+  send, not while rich sending is off, not for privacy mode. A new
+  Operations panel shows it next to the rich vs classic outcomes, as a
+  baseline before any change to how wide tables are rendered.
+
 ## [1.12.1] — 2026-10-07
 
 Operations release: production logs, host and database metrics, and safer
