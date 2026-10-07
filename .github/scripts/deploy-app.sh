@@ -4,15 +4,25 @@
 # ready in time.
 #
 # The three app deploy jobs (Deploy on a tag push or a dispatch, Deploy
-# Staging) upload this file and docker-compose.yml, then, under the host lock
-# (~/.etg-deploy.lock), keep the old compose file as docker-compose.previous.yml,
-# install the new files and run the script after `docker login`:
+# Staging) upload this file and the release's docker-compose.yml, then, under
+# the host lock (~/.etg-deploy.lock), run `docker login`, install the compose
+# file as docker-compose.next.yml (the candidate) and this script, and run it:
 #
 #   IMAGE_TAG=v1.2.3 DEPLOY_TOOLING_COMMIT=<sha> bash deploy-app.sh </dev/null
 #
-# By hand, take the lock yourself:
+# By hand, take the lock yourself; put a changed compose file at
+# docker-compose.next.yml first, or the deploy uses docker-compose.yml:
 #
 #   flock -w 900 ~/.etg-deploy.lock env IMAGE_TAG=<tag> bash ~/email-to-telegram/deploy-app.sh </dev/null
+#
+# docker-compose.yml always describes the release that runs. The pull, the
+# migration and the replacement use the candidate; once the new release is
+# healthy and ready, the candidate is renamed to docker-compose.yml. Every
+# other outcome deletes the candidate and leaves docker-compose.yml as it was,
+# and the rollback uses it. Every Compose call gets the same files a plain
+# `docker compose` here would read: the compose file plus the first override
+# file in Compose's order (compose.override.yml, compose.override.yaml,
+# docker-compose.override.yml, docker-compose.override.yaml).
 #
 # Stages and their time bounds: pull 600 s, migrate 300 s (starting the
 # database included), replace 120 s, health 90 s; rollback 120 s plus 90 s.
@@ -31,7 +41,7 @@
 #
 # Needs Compose 2.32 or later (`run --pull never`) and GNU coreutils 8.31 or
 # later (`env --ignore-signal`). Reads no secret: from .env it reads only the
-# HOST_BIND_IP line.
+# HOST_BIND_IP and COMPOSE_FILE lines.
 
 set -euo pipefail
 # Every file this script creates (logs, work files) is private to this user.
@@ -41,7 +51,7 @@ readonly IMAGE_REPO=ghcr.io/vladkarok/email-to-telegram
 readonly PREVIOUS_TAG=deploy-previous
 readonly MIGRATE_CONTAINER=etg-migrate
 readonly DB_SERVICE=postgres
-readonly PREVIOUS_COMPOSE=docker-compose.previous.yml
+readonly CANDIDATE=docker-compose.next.yml
 readonly LOG_KEEP=30
 # Stage bounds in seconds. The ETG_DEPLOY_* overrides exist for the tests.
 readonly PULL_TIMEOUT=${ETG_DEPLOY_PULL_TIMEOUT:-600}
@@ -140,11 +150,14 @@ dk() {
   timeout -k "$CALL_KILL_AFTER" "$t" docker "$@" </dev/null
 }
 
-# Compose files for every compose call: empty for Compose's own default
-# (docker-compose.yml plus an override file), set for the rollback.
+# -f lists for Compose: the running release's (docker-compose.yml) and the
+# target's (the candidate), each with the override file; compose_files is the
+# one the next Compose call uses.
+current_files=()
+target_files=()
 compose_files=()
 
-# dc SECONDS ARGS... : docker compose ARGS for this deploy's files and .env,
+# dc SECONDS ARGS... : docker compose ARGS with compose_files and .env,
 # bounded.
 dc() {
   local t=$1
@@ -338,7 +351,7 @@ replace_and_verify() {
   healthy_ms=""
   fail_reason=""
   start=$(now_ms)
-  say "$label: docker compose${compose_files[*]:+ ${compose_files[*]}} up -d${*:+ $*} --no-build --pull never with IMAGE_TAG=$tag (at most ${REPLACE_TIMEOUT}s)"
+  say "$label: docker compose ${compose_files[*]} up -d${*:+ $*} --no-build --pull never with IMAGE_TAG=$tag (at most ${REPLACE_TIMEOUT}s)"
   IMAGE_TAG=$tag timeout -k "$KILL_AFTER" "$REPLACE_TIMEOUT" \
     docker compose "${compose_files[@]}" --env-file .env up -d "$@" --no-build --pull never </dev/null
   rc=$?
@@ -455,24 +468,6 @@ print_failed_logs() {
   say "----"
 }
 
-# use_previous_compose : point compose_files at the compose file the running
-# release was started with, when the deploy job kept it and it parses.
-use_previous_compose() {
-  local files=(-f "$PREVIOUS_COMPOSE")
-  [[ ! -f docker-compose.override.yml ]] || files+=(-f docker-compose.override.yml)
-  if [[ ! -f $PREVIOUS_COMPOSE ]]; then
-    rollback_note="image $previous_image_id with the new docker-compose.yml (no $PREVIOUS_COMPOSE)"
-    return 0
-  fi
-  compose_files=("${files[@]}")
-  if dc "$CALL_TIMEOUT" config -q >/dev/null 2>&1; then
-    rollback_note="image $previous_image_id with $PREVIOUS_COMPOSE"
-  else
-    compose_files=()
-    rollback_note="image $previous_image_id with the new docker-compose.yml ($PREVIOUS_COMPOSE does not parse)"
-  fi
-}
-
 # Called once the new release has failed. Sets final_message; the caller
 # exits 1.
 rollback() {
@@ -490,21 +485,13 @@ rollback() {
     phase=done
     return 0
   fi
-  use_previous_compose
+  # docker-compose.yml is still the one the previous release ran with.
+  compose_files=("${current_files[@]}")
+  rollback_note="image $previous_image_id with ${current_files[1]}"
   say "rolling back: $rollback_note ($IMAGE_REPO:$PREVIOUS_TAG)"
   if replace_and_verify "$PREVIOUS_TAG" rollback "$previous_image_id"; then
     rollback_healthy=$(secs "$healthy_ms")
     final_message="deploy failed: $first_reason. Rolled back to $previous_image_id."
-    # docker-compose.yml describes what runs, so the next deploy keeps the
-    # right file as its previous one.
-    if ((${#compose_files[@]})); then
-      if cp -p "$PREVIOUS_COMPOSE" docker-compose.yml.rollback &&
-        mv -f docker-compose.yml.rollback docker-compose.yml; then
-        final_message+=" docker-compose.yml restored from $PREVIOUS_COMPOSE."
-      else
-        final_message+=" docker-compose.yml could not be restored from $PREVIOUS_COMPOSE."
-      fi
-    fi
   else
     [[ -z $healthy_ms ]] || rollback_healthy=$(secs "$healthy_ms")
     print_failed_logs
@@ -531,6 +518,10 @@ target_image_id=""
 old_cid=""
 old_state=""
 old_restarts=""
+# The candidate this run deploys. It is deleted at the end unless it became
+# docker-compose.yml (keep_candidate).
+candidate=""
+keep_candidate=""
 
 # serving : what the old app does while nothing is replaced.
 serving() {
@@ -538,6 +529,15 @@ serving() {
     say "the running app keeps serving"
   else
     say "no app was running before this deploy"
+  fi
+}
+
+drop_candidate() {
+  [[ -n $candidate && -z $keep_candidate ]] || return 0
+  if rm -f -- "$candidate"; then
+    say "deleted $candidate; docker-compose.yml is unchanged"
+  else
+    say "WARNING: cannot delete $candidate; delete it before running this script by hand"
   fi
 }
 
@@ -575,6 +575,7 @@ on_exit() {
   fi
   stop_probe
   print_report
+  drop_candidate
   [[ -z $final_message ]] || say "$final_message"
   [[ -z $WORK_DIR ]] || rm -rf "$WORK_DIR"
   if ((rc != 0 && rc < 128)); then rc=1; fi
@@ -597,6 +598,7 @@ trap 'say "failed at line $LINENO: $BASH_COMMAND"' ERR
 ((BASH_VERSINFO[0] >= 5)) || fail "bash 5 or newer is required"
 MAIN_PID=$$
 cd "$(dirname "${BASH_SOURCE[0]}")" || fail "cannot enter the script's directory"
+[[ ! -f $CANDIDATE ]] || candidate=$CANDIDATE
 
 # Without env --ignore-signal, env would exit before tee starts below and the
 # run's output would go nowhere.
@@ -624,7 +626,6 @@ else
   say "WARNING: cannot write $PWD/deploy-logs; this run keeps no host-local log"
 fi
 
-[[ -f docker-compose.yml ]] || fail "no docker-compose.yml next to this script ($PWD)"
 [[ -f .env ]] || fail "no .env next to this script ($PWD)"
 
 IMAGE_TAG=${IMAGE_TAG:-}
@@ -652,15 +653,48 @@ else
   PROBE_URL="http://$bind_ip:3000/readyz"
 fi
 
+# The compose files. An explicit -f list turns Compose's own discovery off,
+# so the list holds what a plain `docker compose` here reads: the compose
+# file and the first override file in Compose's order. Refuse what would make
+# a plain call read other files.
+if [[ -n ${COMPOSE_FILE:-} || -n $(env_value COMPOSE_FILE) ]]; then
+  fail "COMPOSE_FILE is set in the environment or .env; this script picks the compose files itself, unset it. Nothing changed."
+fi
+for name in compose.yaml compose.yml docker-compose.yaml; do
+  [[ ! -e $name ]] || fail "$name is next to docker-compose.yml and a plain docker compose would read it instead; remove it. Nothing changed."
+done
+override=()
+for name in compose.override.yml compose.override.yaml docker-compose.override.yml docker-compose.override.yaml; do
+  if [[ -f $name ]]; then
+    override=(-f "$name")
+    break
+  fi
+done
+target_main=${candidate:-docker-compose.yml}
+[[ -f $target_main ]] || fail "no docker-compose.yml or $CANDIDATE next to this script ($PWD)"
+# A host that has never run the app may have no docker-compose.yml yet.
+current_main=docker-compose.yml
+[[ -f $current_main ]] || current_main=$target_main
+current_files=(-f "$current_main" "${override[@]}")
+target_files=(-f "$target_main" "${override[@]}")
+
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/etg-deploy.XXXXXXXX")
 
 # Compose prints the offending line of an .env it cannot parse. Check first,
-# with all output dropped, so no line of .env reaches the job log.
+# with all output dropped, so no line of .env reaches the job log. Both files
+# must parse: the rollback uses docker-compose.yml.
+compose_files=("${target_files[@]}")
 dc "$CALL_TIMEOUT" config -q >/dev/null 2>&1 ||
-  fail "docker compose cannot read docker-compose.yml with .env (output hidden; run 'docker compose --env-file .env config -q' on the host). Nothing changed."
+  fail "docker compose cannot read $target_main with .env (output hidden). Nothing changed."
+if [[ $current_main != "$target_main" ]]; then
+  compose_files=("${current_files[@]}")
+  dc "$CALL_TIMEOUT" config -q >/dev/null 2>&1 ||
+    fail "docker compose cannot read docker-compose.yml, which a rollback would use, with .env (output hidden). Nothing changed."
+fi
 
 # 1. What runs now.
-say "deploy-app: tooling commit ${DEPLOY_TOOLING_COMMIT:-unknown}, target $IMAGE_REPO:$IMAGE_TAG"
+say "deploy-app: tooling commit ${DEPLOY_TOOLING_COMMIT:-unknown}, target $IMAGE_REPO:$IMAGE_TAG, compose files: ${target_files[*]}"
+compose_files=("${current_files[@]}")
 ps_out=$(dc "$CALL_TIMEOUT" ps -a -q app 2>/dev/null) ||
   fail "docker compose ps failed or timed out; nothing changed"
 old_cid=$(first_id "$ps_out") || old_cid=""
@@ -678,9 +712,12 @@ else
 fi
 
 # 2. Pull. Nothing after this pulls the app image again (--pull never), and
-# every container started from it must run the image ID read here.
+# every container started from it must run the image ID read here. From here
+# on Compose uses the target's files, until a rollback.
+compose_files=("${target_files[@]}")
 say "pulling $IMAGE_REPO:$IMAGE_TAG (at most ${PULL_TIMEOUT}s)"
-timeout -k "$KILL_AFTER" "$PULL_TIMEOUT" docker compose --env-file .env pull app </dev/null ||
+timeout -k "$KILL_AFTER" "$PULL_TIMEOUT" \
+  docker compose "${compose_files[@]}" --env-file .env pull app </dev/null ||
   fail "pull failed or timed out; nothing changed"
 target_image_id=$(dk "$CALL_TIMEOUT" image inspect --format '{{.Id}}' "$IMAGE_REPO:$IMAGE_TAG") ||
   fail "docker image inspect of the pulled image failed or timed out; nothing changed"
@@ -721,7 +758,7 @@ stage_start=$(now_ms)
 # if it is stopped and leaves a running one alone.
 say "starting the database: docker compose up -d --wait --no-recreate $DB_SERVICE (within the ${MIGRATE_TIMEOUT}s migrate bound)"
 timeout -k "$KILL_AFTER" "$MIGRATE_TIMEOUT" \
-  docker compose --env-file .env up -d --wait --no-recreate "$DB_SERVICE" </dev/null
+  docker compose "${compose_files[@]}" --env-file .env up -d --wait --no-recreate "$DB_SERVICE" </dev/null
 rc=$?
 if ((rc != 0)); then
   migrate_result="not run: the database did not start"
@@ -739,7 +776,7 @@ migrate_result="interrupted; outcome unknown"
 say "migrating (at most ${budget}s); output goes to the host only"
 migrate_start=$(now_ms)
 timeout -k "$KILL_AFTER" "$budget" \
-  docker compose --env-file .env run --rm --no-deps --pull never -T --name "$MIGRATE_CONTAINER" \
+  docker compose "${compose_files[@]}" --env-file .env run --rm --no-deps --pull never -T --name "$MIGRATE_CONTAINER" \
   app node dist/index.js --migrate-only </dev/null >"$WORK_DIR/migrate.log" 2>&1
 rc=$?
 set -e
@@ -772,6 +809,15 @@ if replace_and_verify "$IMAGE_TAG" deploy "$target_image_id" --remove-orphans; t
   deploy_healthy=$(secs "$healthy_ms")
   phase=done
   final_message="deployed $IMAGE_REPO:$IMAGE_TAG ($target_image_id)"
+  if [[ -n $candidate ]]; then
+    # Verified: the candidate now describes what runs.
+    keep_candidate=1
+    if ! mv -f -- "$candidate" docker-compose.yml; then
+      final_message+=", but renaming $candidate to docker-compose.yml failed: rename it by hand, docker-compose.yml describes the previous release"
+      exit 1
+    fi
+    say "$candidate renamed to docker-compose.yml"
+  fi
   exit 0
 fi
 [[ -z $healthy_ms ]] || deploy_healthy=$(secs "$healthy_ms")

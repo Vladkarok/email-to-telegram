@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 // Runs .github/scripts/deploy-app.sh against stub `docker` and `curl` on PATH.
 // The stubs keep their state in files under STUB_DIR: which app container
 // compose would report ("old", "new", "prev" or none), what /readyz answers,
-// and every docker call. Stage bounds and the poll interval are shortened
+// every docker call, and the first line of each compose file an app `up` got. Stage bounds and the poll interval are shortened
 // through the script's ETG_DEPLOY_* overrides so a run takes a few seconds.
 
 const SCRIPT_SOURCE = resolve(process.cwd(), ".github/scripts/deploy-app.sh");
@@ -67,8 +67,10 @@ if [[ $1 == compose ]]; then
   shift
   case $sub in
     config)
-      if [[ $files == *docker-compose.previous.yml* ]]; then mode=${"$"}{STUB_PREV_CONFIG:-ok}; else mode=${"$"}{STUB_CONFIG:-ok}; fi
-      [[ $mode == ok ]] || { echo "failed to read .env: line 2: TELEGRAM_BOT_TOKEN=123456:do-not-print-me" >&2; exit 15; }
+      if [[ -n ${"$"}{STUB_CONFIG_FAIL:-} && " $files " == *" $STUB_CONFIG_FAIL "* ]]; then
+        echo "failed to read .env: line 2: TELEGRAM_BOT_TOKEN=123456:do-not-print-me" >&2
+        exit 15
+      fi
       exit 0
       ;;
     ps)
@@ -104,6 +106,7 @@ if [[ $1 == compose ]]; then
         exit 0
       fi
       echo "${"$"}{HOST_BIND_IP:-}" >"$d/up-bind-ip"
+      for f in $files; do printf '%s %s: %s\n' "$IMAGE_TAG" "$f" "$(head -n 1 "$f")"; done >>"$d/up-files"
       if [[ $IMAGE_TAG == deploy-previous ]]; then
         mode=${"$"}{STUB_ROLLBACK_UP:-ok}; target=prev
       else
@@ -288,6 +291,12 @@ function survivors(): string[] {
   return found;
 }
 
+// IMAGE_TAG, file and first line of each compose file the app `up` calls got.
+function upFiles(): string[] {
+  const file = join(stubDir, "up-files");
+  return existsSync(file) ? readFileSync(file, "utf-8").trim().split("\n") : [];
+}
+
 // App replacements and rollbacks: compose up calls other than the database's.
 function upCalls(run: Run): string[] {
   return run.calls.filter(
@@ -296,13 +305,14 @@ function upCalls(run: Run): string[] {
   );
 }
 
-const DEPLOY_UP =
-  "IMAGE_TAG=v1.1.0 docker compose --env-file .env up -d --remove-orphans --no-build --pull never";
-const ROLLBACK_UP =
-  "IMAGE_TAG=deploy-previous docker compose --env-file .env up -d --no-build --pull never";
-const DB_UP = "IMAGE_TAG=v1.1.0 docker compose --env-file .env up -d --wait --no-recreate postgres";
-const MIGRATE_RUN =
-  "docker compose --env-file .env run --rm --no-deps --pull never -T --name etg-migrate app node dist/index.js --migrate-only";
+const MAIN = "docker-compose.yml";
+const CANDIDATE = "docker-compose.next.yml";
+const RUNNING_COMPOSE = "services: {} # the running release\n";
+const DEPLOY_UP = `IMAGE_TAG=v1.1.0 docker compose -f ${MAIN} --env-file .env up -d --remove-orphans --no-build --pull never`;
+const ROLLBACK_UP = `IMAGE_TAG=deploy-previous docker compose -f ${MAIN} --env-file .env up -d --no-build --pull never`;
+const DB_UP = `IMAGE_TAG=v1.1.0 docker compose -f ${MAIN} --env-file .env up -d --wait --no-recreate postgres`;
+const MIGRATE_RUN = `docker compose -f ${MAIN} --env-file .env run --rm --no-deps --pull never -T --name etg-migrate app node dist/index.js --migrate-only`;
+const CONFIG = `IMAGE_TAG=v1.1.0 docker compose -f ${MAIN} --env-file .env config -q`;
 const SECRETS = [
   "do-not-print-me",
   "also-secret",
@@ -370,7 +380,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
     binDir = join(root, "bin");
     for (const dir of [appDir, stubDir, binDir]) mkdirSync(dir);
     copyFileSync(SCRIPT_SOURCE, join(appDir, "deploy-app.sh"));
-    writeFileSync(join(appDir, "docker-compose.yml"), "services: {}\n");
+    writeFileSync(join(appDir, MAIN), RUNNING_COMPOSE);
     writeFileSync(
       join(appDir, ".env"),
       [
@@ -408,7 +418,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
       expect(db).toBeGreaterThan(-1);
       expect(migrate).toBeGreaterThan(db);
       expect(up).toBeGreaterThan(migrate);
-      expect(run.calls).toContain("IMAGE_TAG=v1.1.0 docker compose --env-file .env config -q");
+      expect(run.calls).toContain(CONFIG);
       expect(run.calls).not.toContain(ROLLBACK_UP);
       expect(readFileSync(join(stubDir, "curl-url"), "utf-8").trim()).toBe(
         "http://10.0.88.2:3000/readyz",
@@ -481,7 +491,9 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
       expect(run.status).toBe(1);
       expect(run.out).toContain("ERROR: pull failed or timed out; nothing changed");
       expect(
-        run.calls.some((call) => / docker (tag|compose --env-file \.env (run|up)) /.test(call)),
+        run.calls.some((call) =>
+          / docker (tag|compose (-f \S+ )*--env-file \.env (run|up)) /.test(call),
+        ),
       ).toBe(false);
     },
     TEST_TIMEOUT_MS,
@@ -703,9 +715,9 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
 
         expect(run.status).toBe(1);
         expect(lastLine(run)).toBe("ERROR: docker compose ps failed or timed out; nothing changed");
-        expect(run.calls.some((call) => / docker compose --env-file \.env pull /.test(call))).toBe(
-          false,
-        );
+        expect(
+          run.calls.some((call) => / docker compose (-f \S+ )*--env-file \.env pull /.test(call)),
+        ).toBe(false);
       },
       TEST_TIMEOUT_MS,
     );
@@ -945,10 +957,10 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
   it(
     "hides compose output when it cannot read .env, before any other compose call",
     () => {
-      const run = deploy({ STUB_CONFIG: "fail" });
+      const run = deploy({ STUB_CONFIG_FAIL: MAIN });
 
       expect(run.status).toBe(1);
-      expect(run.calls).toEqual(["IMAGE_TAG=v1.1.0 docker compose --env-file .env config -q"]);
+      expect(run.calls).toEqual([CONFIG]);
       expect(lastLine(run)).toContain(
         "ERROR: docker compose cannot read docker-compose.yml with .env",
       );
@@ -1014,52 +1026,152 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
     );
   });
 
-  describe("the previous compose file", () => {
-    const PREVIOUS = "services: {} # previous\n";
+  describe("the candidate compose file", () => {
+    const candidatePath = (): string => join(appDir, CANDIDATE);
+    const mainText = (): string => readFileSync(join(appDir, MAIN), "utf-8");
 
     it(
-      "rolls back with docker-compose.previous.yml and restores it",
+      "deploys with the candidate and renames it to docker-compose.yml once verified",
       () => {
-        writeFileSync(join(appDir, "docker-compose.previous.yml"), PREVIOUS);
-        const run = deploy({ STUB_UP: "fail" });
+        writeFileSync(candidatePath(), "services: {} # next\n");
+        const run = deploy();
+
+        expect(run.status).toBe(0);
+        expect(run.calls).toContain(
+          `IMAGE_TAG=v1.1.0 docker compose -f ${CANDIDATE} --env-file .env pull app`,
+        );
+        expect(
+          run.calls.some((call) =>
+            call.endsWith(MIGRATE_RUN.replace(`-f ${MAIN}`, `-f ${CANDIDATE}`)),
+          ),
+        ).toBe(true);
+        expect(upFiles()).toEqual([`v1.1.0 ${CANDIDATE}: services: {} # next`]);
+        expect(mainText()).toBe("services: {} # next\n");
+        expect(existsSync(candidatePath())).toBe(false);
+        expect(lastLine(run)).toBe(`deployed ${REPO}:v1.1.0 (${NEW_IMAGE})`);
+      },
+      TEST_TIMEOUT_MS,
+    );
+
+    it(
+      "keeps docker-compose.yml for the rollback after a failure before and one after the replacement",
+      () => {
+        // The first deploy fails at the migration: nothing replaced.
+        writeFileSync(candidatePath(), "services: {} # release A\n");
+        const first = deploy({ STUB_MIGRATE: "fail" });
+
+        expect(first.status).toBe(1);
+        expect(upCalls(first)).toEqual([]);
+        expect(mainText()).toBe(RUNNING_COMPOSE);
+        expect(existsSync(candidatePath())).toBe(false);
+        expect(first.out).toContain(`deleted ${CANDIDATE}; docker-compose.yml is unchanged`);
+
+        // The second one replaces, fails and rolls back with the running
+        // release's file, not release A's or its own.
+        writeFileSync(candidatePath(), "services: {} # release B\n");
+        const second = deploy({ STUB_UP: "fail" });
+
+        expectRolledBack(second);
+        expect(upFiles()).toEqual([
+          `v1.1.0 ${CANDIDATE}: services: {} # release B`,
+          `deploy-previous ${MAIN}: services: {} # the running release`,
+        ]);
+        expect(second.out).toContain(`rollback: image ${OLD_IMAGE} with ${MAIN}`);
+        expect(mainText()).toBe(RUNNING_COMPOSE);
+        expect(existsSync(candidatePath())).toBe(false);
+      },
+      TEST_TIMEOUT_MS,
+    );
+
+    it.each([
+      [CANDIDATE, "ERROR: docker compose cannot read docker-compose.next.yml with .env"],
+      [MAIN, "ERROR: docker compose cannot read docker-compose.yml, which a rollback would use"],
+    ])(
+      "changes nothing when %s does not parse",
+      (file, message) => {
+        writeFileSync(candidatePath(), "services: {} # next\n");
+        const run = deploy({ STUB_CONFIG_FAIL: file });
 
         expect(run.status).toBe(1);
-        expect(run.calls).toContain(
-          "IMAGE_TAG=deploy-previous docker compose -f docker-compose.previous.yml --env-file .env up -d --no-build --pull never",
-        );
-        expect(run.out).toContain(`rollback: image ${OLD_IMAGE} with docker-compose.previous.yml`);
-        expect(lastLine(run)).toBe(
-          `deploy failed: compose up failed (exit 1). Rolled back to ${OLD_IMAGE}. docker-compose.yml restored from docker-compose.previous.yml.`,
-        );
-        expect(readFileSync(join(appDir, "docker-compose.yml"), "utf-8")).toBe(PREVIOUS);
+        expect(lastLine(run)).toContain(message);
+        expect(run.calls.every((call) => call.endsWith(" config -q"))).toBe(true);
+        expect(mainText()).toBe(RUNNING_COMPOSE);
+        expect(existsSync(candidatePath())).toBe(false);
+        expectNoSecrets(run.out);
       },
       TEST_TIMEOUT_MS,
     );
 
     it(
-      "rolls back with the new compose file when there is no previous one",
+      "deploys the candidate on a host without docker-compose.yml",
       () => {
+        setState({ oldApp: false });
+        rmSync(join(appDir, MAIN));
+        writeFileSync(candidatePath(), "services: {} # first\n");
+        const run = deploy();
+
+        expect(run.status).toBe(0);
+        expect(mainText()).toBe("services: {} # first\n");
+      },
+      TEST_TIMEOUT_MS,
+    );
+  });
+
+  describe("the compose file list", () => {
+    it(
+      "adds the override file Compose would pick to every Compose call, the rollback's included",
+      () => {
+        // Compose prefers compose.override.yaml to docker-compose.override.yml.
+        writeFileSync(join(appDir, "compose.override.yaml"), "services: {}\n");
+        writeFileSync(join(appDir, "docker-compose.override.yml"), "services: {}\n");
         const run = deploy({ STUB_UP: "fail" });
 
-        expectRolledBack(run);
-        expect(run.out).toContain(
-          `rollback: image ${OLD_IMAGE} with the new docker-compose.yml (no docker-compose.previous.yml)`,
-        );
-        expect(readFileSync(join(appDir, "docker-compose.yml"), "utf-8")).toBe("services: {}\n");
+        expect(lastLine(run)).toContain(`Rolled back to ${OLD_IMAGE}.`);
+        const composeCalls = run.calls.filter((call) => call.includes(" docker compose "));
+        expect(composeCalls.length).toBeGreaterThan(5);
+        for (const call of composeCalls) {
+          expect(call).toContain(
+            `docker compose -f ${MAIN} -f compose.override.yaml --env-file .env `,
+          );
+        }
+        expect(upFiles()).toEqual([
+          `v1.1.0 ${MAIN}: services: {} # the running release`,
+          "v1.1.0 compose.override.yaml: services: {}",
+          `deploy-previous ${MAIN}: services: {} # the running release`,
+          "deploy-previous compose.override.yaml: services: {}",
+        ]);
       },
       TEST_TIMEOUT_MS,
     );
 
-    it(
-      "does not use a previous compose file that does not parse",
-      () => {
-        writeFileSync(join(appDir, "docker-compose.previous.yml"), PREVIOUS);
-        const run = deploy({ STUB_UP: "fail", STUB_PREV_CONFIG: "fail" });
+    it.each([
+      [
+        "COMPOSE_FILE in .env",
+        () => writeFileSync(join(appDir, ".env"), "HOST_BIND_IP=10.0.88.2\nCOMPOSE_FILE=a.yml\n"),
+        {},
+        "ERROR: COMPOSE_FILE is set in the environment or .env",
+      ],
+      [
+        "COMPOSE_FILE in the environment",
+        () => undefined,
+        { COMPOSE_FILE: "a.yml" },
+        "ERROR: COMPOSE_FILE is set in the environment or .env",
+      ],
+      [
+        "a compose.yaml",
+        () => writeFileSync(join(appDir, "compose.yaml"), "services: {}\n"),
+        {},
+        "ERROR: compose.yaml is next to docker-compose.yml",
+      ],
+    ] as const)(
+      "refuses %s, which a plain docker compose would read",
+      (_name, prepare, extra, message) => {
+        prepare();
+        const run = deploy(extra);
 
-        expectRolledBack(run);
-        expect(run.out).toContain("(docker-compose.previous.yml does not parse)");
-        expectNoSecrets(run.out);
-        expect(readFileSync(join(appDir, "docker-compose.yml"), "utf-8")).toBe("services: {}\n");
+        expect(run.status).toBe(1);
+        expect(lastLine(run)).toContain(message);
+        expect(run.calls).toEqual([]);
       },
       TEST_TIMEOUT_MS,
     );

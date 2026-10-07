@@ -485,8 +485,24 @@ Every app deploy (tag push, dispatch, and the staging deploy on each push to
 `main`) first uploads `docker-compose.yml` and `deploy-app.sh` to a fresh
 directory on the host, without the lock. It then takes the host deploy lock
 once and, under it, creates the `monitoring_scrape` network if it is missing,
-keeps the current `docker-compose.yml` as `docker-compose.previous.yml`,
-installs the new files and runs `deploy-app.sh`.
+logs in to GHCR, installs the new compose file as `docker-compose.next.yml`
+(the candidate) and the script, and runs `deploy-app.sh`.
+
+`docker-compose.yml` on the host always describes the release that runs. The
+script pulls, migrates and replaces with the candidate, and renames it to
+`docker-compose.yml` only once the new release is healthy and ready. Any other
+outcome deletes the candidate and leaves `docker-compose.yml` as it was, and
+the rollback uses that file. Without a candidate (a run by hand) the script
+deploys with `docker-compose.yml`. A `docker-compose.previous.yml` left by an
+older deploy is no longer read; delete it.
+
+Every Compose call gets the same files a plain `docker compose` in that
+directory would read: the compose file plus the first override file that
+exists, in Compose's order (`compose.override.yml`, `compose.override.yaml`,
+`docker-compose.override.yml`, `docker-compose.override.yaml`). The script
+refuses to run when `COMPOSE_FILE` is set in the environment or `.env`, or when
+a `compose.yaml`, `compose.yml` or `docker-compose.yaml` sits next to
+`docker-compose.yml`, because a plain call would then read other files.
 
 The script needs Compose 2.32 or later (`docker compose run --pull never`)
 and GNU coreutils 8.31 or later (`env --ignore-signal`, which keeps the host
@@ -494,8 +510,9 @@ log's `tee` alive through a Ctrl-C); without the latter it stops before
 anything else. Each stage has its own time limit, and every other Docker call
 (`ps`, `inspect`, `tag`, `logs`, `rm`) gets 20 s:
 
-1. Checks that Compose can read `docker-compose.yml` with `.env`, with all
-   output hidden, so a line of `.env` never reaches the job log.
+1. Checks that Compose can read the candidate and `docker-compose.yml` with
+   `.env`, with all output hidden, so a line of `.env` never reaches the job
+   log.
 2. Prints the tooling commit, the target tag, and the running app container's
    image, image ID, state and restart count.
 3. Pulls the target image (600 s) and reads its image ID.
@@ -520,7 +537,8 @@ anything else. Each stage has its own time limit, and every other Docker call
    `docker compose up -d --remove-orphans --no-build --pull never` (120 s).
 8. Waits up to 90 s for the container to run the pulled image ID, for Docker
    to report `healthy` and for the probe to get a 200.
-9. Prints the availability report and exits 0.
+9. Renames the candidate to `docker-compose.yml`, prints the availability
+   report and exits 0.
 
 The Compose calls after the pull never pull, so a moving tag such as `:main`
 cannot give the migration one image and the app another; a container that
@@ -534,8 +552,8 @@ The deploy jobs time out after 55 minutes.
 Everything the script prints also goes to `~/email-to-telegram/deploy-logs/`
 on the host (the newest 30 files are kept), so the report survives a lost SSH
 session. The directory is private to the deploy user (mode 700, files 600).
-The full output of a failed migration and of a failed app container
-is kept there too; the job log, which is public, gets only their error lines.
+The full output of a failed migration and of a failed app container is kept
+there too; the job log, which is public, gets only their error lines.
 
 ### The gap
 
@@ -592,15 +610,11 @@ waits for it the same way (it must run the previous image ID), prints the
 report and exits 1 with `Rolled back to <image id>.` on the last line. The run
 is red either way.
 
-The rollback restores the previous image and, when the deploy job kept it, the
-previous compose file: it runs Compose with `docker-compose.previous.yml` (plus
-`docker-compose.override.yml` if there is one) and, once the previous image is
-healthy and ready, copies that file back to `docker-compose.yml`. Without a
-readable `docker-compose.previous.yml` it uses the new `docker-compose.yml`
-with the previous image; the report's `rollback:` line says which. It does not
-restore `.env`, the database schema or data, or the deploy script. Before
-running the script by hand after changing `docker-compose.yml`, copy the old
-file to `docker-compose.previous.yml` or delete a stale one.
+The rollback runs the previous image with `docker-compose.yml`, which the
+failed deploy never touched, so the previous release gets back the compose
+file it ran with. It does not restore `.env`, the database schema or data, or
+the deploy script. To deploy a changed compose file by hand, put it at
+`docker-compose.next.yml` before running the script.
 
 There is no rollback on a first deploy (no previous image) or when the
 previous image is the target image. If the rollback fails too, the run exits 1
@@ -609,8 +623,11 @@ previous release.
 
 The rollback does not cover a release that fails after it was healthy and
 ready, a database outage, a run cancelled by hand, or a lost runner. A run
-stopped by a signal does not roll back. Recovery in those cases is a dispatch of
-the previous tag.
+stopped by a signal does not roll back; it deletes the candidate like any
+other failed run, so after a signal during the replacement the new release may
+run while `docker-compose.yml` still describes the previous one. Recovery in
+those cases is a dispatch of the previous tag, which brings its own compose
+file.
 
 ### Migrations
 
@@ -654,7 +671,9 @@ docker compose --env-file .env stop app
 The first line of every deploy log shows the container's state and restart
 count, and the script warns when it is restarting.
 
-To run the script by hand, take the host lock first:
+To run the script by hand, take the host lock first. It deploys with
+`docker-compose.yml`, or with `docker-compose.next.yml` when you put a changed
+compose file there:
 
 ```bash
 flock -w 900 ~/.etg-deploy.lock env IMAGE_TAG=v1.2.3 \

@@ -96,10 +96,13 @@ jobs:
           echo "ETG_INCOMING=$incoming" >> "$GITHUB_ENV"
 
       # Everything below runs under one hold of the host lock (15-minute wait
-      # at most): the network check, keeping the old compose file for the
-      # rollback, installing the new files and deploy-app.sh. The script pulls,
-      # migrates first, replaces, waits for healthy and ready, rolls back to
-      # the previous image on failure and prints the availability report.
+      # at most): the network check, the registry login, installing the new
+      # compose file as docker-compose.next.yml and deploy-app.sh, and the
+      # script. The script pulls, migrates first and replaces with the new
+      # file, waits for healthy and ready, and only then renames it to
+      # docker-compose.yml; on any failure it deletes it, and a rollback runs
+      # the previous image with docker-compose.yml. It prints the availability
+      # report.
       #
       # Worst case, every bound used: the lock wait 15 min; the script's
       # stages 22 min and its other Docker calls about 6 min (20 s each); this
@@ -124,19 +127,18 @@ jobs:
             timeout -k 10 60 docker network create monitoring_scrape
 
           cd ~/email-to-telegram
-          # Files are renamed into place, never written in place. The rollback
-          # starts the previous image with the compose file it ran with.
-          cp "${ETG_INCOMING}/docker-compose.yml" docker-compose.yml.tmp
+          echo "${GHCR_TOKEN}" | timeout -k 10 120 docker login ghcr.io -u vladkarok --password-stdin
+
+          # Files are renamed into place, never written in place.
+          # docker-compose.yml stays the running release's: the script renames
+          # docker-compose.next.yml over it once the new release is verified,
+          # and deletes it otherwise.
+          cp "${ETG_INCOMING}/docker-compose.yml" docker-compose.next.yml.tmp
           cp "${ETG_INCOMING}/deploy-app.sh" deploy-app.sh.tmp
           rm -rf "${ETG_INCOMING}"
-          if [ -f docker-compose.yml ]; then
-            cp -p docker-compose.yml docker-compose.previous.yml.tmp
-            mv -f docker-compose.previous.yml.tmp docker-compose.previous.yml
-          fi
-          mv -f docker-compose.yml.tmp docker-compose.yml
+          mv -f docker-compose.next.yml.tmp docker-compose.next.yml
           mv -f deploy-app.sh.tmp deploy-app.sh
 
-          echo "${GHCR_TOKEN}" | timeout -k 10 120 docker login ghcr.io -u vladkarok --password-stdin
           IMAGE_TAG="${IMAGE_TAG}" DEPLOY_TOOLING_COMMIT="${TOOLING_COMMIT}" bash ./deploy-app.sh </dev/null
           EOF
 
