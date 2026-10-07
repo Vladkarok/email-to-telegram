@@ -534,6 +534,7 @@ final_message=""
 WORK_DIR=""
 LOG_DIR=""
 RUN_ID=""
+tee_pid=""
 migrate_result=""
 deploy_healthy=""
 rollback_healthy=""
@@ -605,6 +606,15 @@ on_exit() {
   [[ -z $final_message ]] || say "$final_message"
   [[ -z $WORK_DIR ]] || rm -rf "$WORK_DIR"
   if ((rc != 0 && rc < 128)); then rc=1; fi
+  # Bash does not wait for a process substitution: close the pipe so tee
+  # finishes the host log, and give it up to 5 s, so it never outlives the run.
+  if [[ -n $tee_pid ]]; then
+    exec >&- 2>&-
+    for _ in {1..50}; do
+      kill -0 "$tee_pid" 2>/dev/null || break
+      sleep_ms 100
+    done
+  fi
   exit "$rc"
 }
 
@@ -642,6 +652,7 @@ printf -v RUN_ID '%(%Y%m%dT%H%M%SZ)T-%s' -1 "$$"
 if mkdir -p deploy-logs && chmod 700 deploy-logs && : >>"deploy-logs/$RUN_ID.log"; then
   LOG_DIR=$PWD/deploy-logs
   exec > >(exec env --ignore-signal=HUP,INT,TERM tee -p -a "$LOG_DIR/$RUN_ID.log") 2>&1
+  tee_pid=$!
   COMPOSE_LOG=$LOG_DIR/$RUN_ID.compose.log
   : >>"$COMPOSE_LOG"
   logs=("$LOG_DIR"/*.log)
