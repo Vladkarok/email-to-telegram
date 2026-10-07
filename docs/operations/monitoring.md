@@ -101,7 +101,7 @@ Environment variables (`gh variable set NAME --env staging --body prometheus-a`)
 
 Keep both variables equal in the two environments. Generate every password with `openssl rand -hex 32`. Prometheus scrapes both VMs and prod Promtail pushes to staging, which is why the exporter and push passwords are the same in both environments. The workflow refuses passwords shorter than 24 characters or with characters outside `[A-Za-z0-9._~+/=-]`.
 
-The workflows render secrets on the runner with shell tracing off and never print them. bcrypt hashes (cost 10) come from the pinned `httpd:2.4.69-alpine` image on the target VM, password on stdin. The `etg_monitor` SCRAM verifier is computed on the runner (`python3`), so its plaintext never reaches Postgres. Runner prerequisites: `ssh`, `tar`, `openssl`, `python3`, `sha256sum`; VM prerequisites: `docker`, `flock`, `curl`, `ip`, and `rsync` on staging. A missing one fails the run.
+The workflows render secrets on the runner with shell tracing off and never print them. bcrypt hashes (cost 10) come from the pinned `httpd:2.4.69-alpine` image on the target VM, password on stdin. The `etg_monitor` SCRAM verifier is computed on the runner (`python3`), so its plaintext never reaches Postgres. Runner prerequisites: `ssh`, `tar`, `rsync`, `openssl`, `python3`, `sha256sum`; VM prerequisites: `docker`, `flock`, `curl`, `ip`, `timeout`, and `rsync` on staging. A missing one fails the run.
 
 ## Certificates
 
@@ -154,11 +154,13 @@ What the deploy does on the VM (`monitoring/agent/deploy/agent-deploy.sh`), unde
 1. Checks that the VM has the expected address (`10.0.88.2` or `10.0.88.3`) and waits up to 120 s for the network `email-to-telegram_internal` and a healthy app Postgres, creating neither.
 2. Pulls the pinned images.
 3. Takes a snapshot of the previous deployment into `~/.etg-agent-snapshot/`: the `~/monitoring-agent/` tree, the image IDs in use and the role's current SCRAM verifier from `pg_authid`.
-4. Writes the marker `~/.etg-agent-restore-pending` and arms the restore: from here on any failure, or an interruption, restores the snapshot (files, image tags, the old verifier) and recreates the agent.
-5. Installs the files and `.env`, writes the secrets as temp file + rename with the consuming container's UID as owner (`65534` for the exporters, `0` for Promtail, mode `0400`) and checks each is readable as that UID.
+4. Writes the marker `~/.etg-agent-restore-pending` and arms the restore: from here on any exit before the deploy completes (a failure, SIGHUP or SIGPIPE from a dropped SSH session, a cancel) restores the snapshot: files, image tags, the old verifier, and each service's recorded state (running, stopped or absent; a Promtail stopped on purpose stays stopped). Everything the restore needs is in memory or in the snapshot, not in the uploaded payload.
+5. Installs the files and `.env`, writes the secrets as temp file + rename with the consuming container's UID as owner (`65534` for the exporters, `0` for Promtail, mode `0400`) and checks each is readable as that UID with no capabilities, the way the containers read them.
 6. Reconciles the `etg_monitor` role, runs `compose up`, and recreates a service whose start-time input (database password, Promtail config) changed.
-7. Verifies: authenticated scrapes answer and `pg_up` is 1, requests without or with a wrong password get 401, plain HTTP fails, on prod Promtail is ready and an authenticated empty push to the gateway gets 204, the containers do not restart, and the app and Postgres container IDs did not change.
-8. Removes the marker and the snapshot.
+7. Verifies: authenticated scrapes answer and `pg_up` is 1, requests without or with a wrong password get 401, plain HTTP fails; on prod, Promtail is ready, tails files and has had no push refused, and an authenticated empty push to the gateway gets 204; the containers do not restart; the app and Postgres container IDs did not change.
+8. Removes secret files the new manifest no longer lists (such as the previous Promtail user's password), then the marker and the snapshot.
+
+Image pulls run under `timeout`, the `etg_monitor` session under `lock_timeout` and `statement_timeout`, and each deploy job has `timeout-minutes: 30`. The workflow's cleanup step removes the uploaded payload under the host lock, so after a cancel it waits for the remote script to finish restoring.
 
 On a first deployment there is nothing to restore to: a failure takes the agent down, removes `~/monitoring-agent/` and leaves the role without `LOGIN`. If a run is killed before it could restore (runner lost, SIGKILL), the marker stays and the next run restores the snapshot before doing anything else. If that restore fails too, the run stops; read `~/.etg-agent-restore.log`, repair by hand, then remove the marker.
 
@@ -182,13 +184,15 @@ To go back to an earlier agent version, revert the change on `main`; staging red
 
 Firewall: node_exporter uses the host network, so a host firewall that filters input (ufw's default) must allow `tcp/9100` from the scraper: on prod from `10.0.88.3`, on staging from the Docker bridge subnets, because Prometheus connects from a container. Ports `9187` and `3101` are Docker-published and do not need a rule.
 
+Accepted residual risk, postgres_exporter's `/probe` endpoint: v0.20.1 always serves `/probe?target=<DSN>` (multi-target mode, no flag turns it off), so a client holding the exporter credential can make the prod exporter open Postgres connections to a target of its choosing, with credentials it supplies. There is no small fix: exporter-toolkit cannot restrict paths, and a filtering proxy in front would not fit the agent's 192 MiB budget. The exposure is limited to holders of the exporter credential, which only staging Prometheus has (environment secrets, `0400` on the VMs), behind TLS and basic auth on `10.0.88.2:9187`. Revisit if an exporter release adds a switch or the budget allows a proxy.
+
 ## The etg_monitor role
 
-postgres_exporter logs in as `etg_monitor`. Every agent deploy creates or reconciles it under the host lock, with `psql -X -q -v ON_ERROR_STOP=1` and SQL from files (`monitoring/agent/deploy/sql/`) on stdin, in one transaction:
+postgres_exporter logs in as `etg_monitor`. Every agent deploy creates or reconciles it under the host lock, with `psql -X -q -v ON_ERROR_STOP=1` and `monitoring/agent/deploy/sql/reconcile-role.sql` on stdin, in one transaction:
 
 - Created if absent. Missing `LOGIN`, `INHERIT` or membership in `pg_monitor` is repaired.
-- Any other privilege fails the run and nothing is revoked automatically: `SUPERUSER`, `CREATEDB`, `CREATEROLE`, `REPLICATION`, `BYPASSRLS`, any other role membership or admin option, owned objects, table, column, schema, database, function or default grants, or read access to any table in the app database.
-- The password is set as a SCRAM-SHA-256 verifier computed on the runner. The verifier is still secret, so the session first switches off statement, error-statement, duration and sampling logs (`session-quiet.sql`); psql runs with `VERBOSITY terse` and its stderr drops any line containing `SCRAM-`. The CI test runs a successful and a failing `ALTER ROLE` against a Postgres with all of those logs switched on and checks that neither the server log nor the deploy output contains the verifier.
+- Any other privilege fails the run and nothing is revoked automatically: `SUPERUSER`, `CREATEDB`, `CREATEROLE`, `REPLICATION`, `BYPASSRLS`, any other role membership or admin option, owned objects, explicit table, column, schema, database, function or default grants, and every effective table, column and sequence privilege in the app database, whatever its source (the role's own grants, `PUBLIC`, inherited roles; relations owned by an extension are skipped). The same checks run again after the repairs, before `COMMIT`, because a repaired membership can switch on inherited privileges.
+- The password is set as a SCRAM-SHA-256 verifier computed on the runner. The verifier is still secret, so the session first switches off statement, error-statement, duration and sampling logs and sets `lock_timeout` and `statement_timeout` (the preamble lives in `monitoring/agent/deploy/lib.sh`, so a restore never runs without it); psql runs with `VERBOSITY terse` and its stderr drops any line containing `SCRAM-`. The CI test runs the deploys' `ALTER ROLE`s and a failing one through the same psql path against a Postgres with all of those logs switched on, and checks the server log, the deploy output and psql's unfiltered stderr for the verifier.
 
 `pg_monitor` can read statistics, settings and other sessions' current query text in `pg_stat_activity`. App queries are parameterised; ad-hoc operator SQL may contain literals. The exporter's default collectors export counts, not query text.
 
@@ -211,6 +215,8 @@ Compatibility boundary: the allowlist needs the `attrs` that the app's logging `
 
 Each direction has two users so that a consumer never holds a credential the server rejects: the servers accept both while the consumer switches. Rotate one direction at a time and do not run deploys while editing secrets.
 
+A consumer's username and password always change together. Each password file is named after its user (`~/monitoring/secrets/prometheus/<user>`, `~/monitoring-agent/secrets/promtail/<user>`) and the previous user's file stays until the deploy has finished. Prometheus takes the new username and file name from its config on the reload, and Promtail from its environment when it is recreated, so neither sends one user's name with the other's password.
+
 Exporters (servers: both agents; consumer: Prometheus), from `prometheus-a` to `prometheus-b`:
 
 1. Set `EXPORTER_BASIC_AUTH_PASSWORD_SECONDARY` to the new password in `staging` and `production`. Deploy the agent to staging and to production. The exporters now accept `prometheus-a` with the old password and `prometheus-b` with the new one.
@@ -227,7 +233,9 @@ Push (server: the staging gateway; consumer: prod Promtail), from `promtail-a` t
 
 ## The host lock
 
-Every job that changes a VM (`Deploy`, `Deploy Staging`, `Deploy Monitoring`, `Deploy Monitoring Agent`) shares a job-level concurrency group per VM, `host-prod` or `host-staging`, with `cancel-in-progress: false` and `queue: max`: a second run waits in the queue instead of replacing a pending one. On the VM, each remote script also takes `flock -w 900 ~/.etg-deploy.lock` and fails if the lock is still held after 15 minutes.
+Every job that changes a VM (`Deploy`, `Deploy Staging`, `Deploy Monitoring`, `Deploy Monitoring Agent`) shares a job-level concurrency group per VM, `host-prod` or `host-staging`, with `cancel-in-progress: false` and `queue: max`: a second run waits in the queue instead of replacing a pending one. Each workflow also has a workflow-level group of its own (`deploy-release`, `deploy-staging`, `deploy-monitoring`, `deploy-monitoring-agent-<environment>`), also queued, so its runs start in trigger order. On the VM, each remote script also takes `flock -w 900 ~/.etg-deploy.lock` and fails if the lock is still held after 15 minutes. Deploy jobs time out after 30 minutes.
+
+`Deploy Staging` deploys the image its own build pushed, tagged `main-<commit>`, together with that commit's compose file; `:main` is still pushed but no longer deployed.
 
 Only the workflow definitions on `main` are supported entry points. An app rollback dispatches `main`'s `Deploy` with an older `release_tag`, never the workflow file of an old tag; older definitions do not take the lock.
 
@@ -473,15 +481,14 @@ docker image prune -f
 
 Do not `docker volume prune` blindly — it can wipe Grafana dashboards if the volume is detached.
 
-Check that retention actually deletes data, separately from what queries show. On the staging VM:
+Check that retention actually deletes data, separately from what queries show. Loki logs at `warn` (at `info` it would log every query's text, identifiers included), so the compactor's progress comes from its metrics. On the staging VM:
 
 ```sh
 cd ~/monitoring
 dc() { docker compose -f docker-compose.monitoring.yml --env-file .env "$@"; }
 # Compactor and sweeper ran: a recent timestamp, marker files being processed.
-dc exec -T loki wget -qO- http://127.0.0.1:3100/metrics |
-  grep -E '^loki_boltdb_shipper_(apply_retention_last_successful_run_timestamp_seconds|retention_sweeper_marker_files_(current|deleted_total))'
-dc logs --since 24h loki | grep -iE 'compactor|retention|sweep|marker' | tail
+metrics=$(dc exec -T loki wget -qO- http://127.0.0.1:3100/metrics)
+grep -E '^loki_boltdb_shipper_(apply_retention_last_successful_run_timestamp_seconds|retention_sweeper_marker_files_(current|deleted_total))' <<<"$metrics"
 # No chunk file older than retention plus the delete delay is left on disk.
 dc exec -T loki find /loki/chunks -type f -mmin +$((7 * 24 * 60 + 180)) | wc -l   # 0
 ```
@@ -490,15 +497,17 @@ dc exec -T loki find /loki/chunks -type f -mmin +$((7 * 24 * 60 + 180)) | wc -l 
 
 Application logs hold identifiers (Telegram user and chat IDs, IP addresses, alias names, delivery and error codes), not message content. `/delete_me` does not remove them one by one: they expire with the Loki retention and, on the VMs, with rotation or the next recreate of the app container. A formal erasure request that cannot wait is handled in both stores.
 
-1. Loki, on the staging VM. One delete request per identifier; repeat for each chat ID, alias name or IP:
+1. Loki, on the staging VM. One delete request per identifier; repeat for each chat ID, alias name or IP. The identifier is read from a prompt, so it stays out of the shell history:
 
    ```sh
    cd ~/monitoring
-   q='{compose_project="email-to-telegram", service="app"} |= "<identifier>"'
-   enc=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$q")
+   read -r -p 'identifier: ' ident
+   q="{compose_project=\"email-to-telegram\", service=\"app\"} |= \"$ident\""
+   enc=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.stdin.read().rstrip("\n")))' <<<"$q")
    start=$(( $(date +%s) - 8 * 86400 ))
    docker compose -f docker-compose.monitoring.yml --env-file .env exec -T loki \
      wget -qO- --post-data= "http://127.0.0.1:3100/loki/api/v1/delete?query=$enc&start=$start"
+   unset ident q enc
    # List requests and their status (received, then processed):
    docker compose -f docker-compose.monitoring.yml --env-file .env exec -T loki \
      wget -qO- http://127.0.0.1:3100/loki/api/v1/delete
@@ -506,18 +515,23 @@ Application logs hold identifiers (Telegram user and chat IDs, IP addresses, ali
 
    Loki waits out its 24-hour cancellation period, then the compactor deletes the matching lines in both environments; `loki_compactor_pending_delete_requests_count` returns to 0 when it is done.
 
-2. The local log files on prod: recreate the app container only, on its current image, under the host lock. Postgres is not touched. A plain redeploy of an unchanged release does not recreate the container and is not enough.
+   Traces of the request itself: Loki logs at `warn`, so neither the delete request nor any query writes the identifier into Loki's container log. The delete request (its query, with the identifier) stays in Loki's compactor store (`/loki/compactor/deletion/` in the `loki_data` volume on the staging VM) as the record that the erasure was carried out; only the operator can read it. Do not search for the identifier in Grafana Explore: Grafana keeps its own query history.
+
+2. The local log files on prod: recreate the app container only, on its current image, all under one hold of the host lock (inspection, recreate and the check that the old container is gone). Postgres is not touched. A plain redeploy of an unchanged release does not recreate the container and is not enough.
 
    ```sh
    cd ~/email-to-telegram
-   old=$(docker inspect --format '{{.Id}}' "$(docker compose --env-file .env ps -q app)")
-   image=$(docker inspect --format '{{.Config.Image}}' "$old")   # ghcr.io/vladkarok/email-to-telegram:vX.Y.Z
-   flock -w 900 ~/.etg-deploy.lock env IMAGE_TAG="${image##*:}" \
-     docker compose --env-file .env up -d --force-recreate --no-deps app
-   # The old container and its log directory are gone:
-   docker ps -a --no-trunc --format '{{.ID}}' | grep -c "$old"      # 0
-   docker run --rm -v /var/lib/docker/containers:/c:ro busybox:1.37 \
-     sh -c "test ! -e /c/$old && echo gone"
+   flock -w 900 ~/.etg-deploy.lock bash -euo pipefail -c '
+     old=$(docker inspect --format "{{.Id}}" "$(docker compose --env-file .env ps -q app)")
+     image=$(docker inspect --format "{{.Config.Image}}" "$old")
+     echo "recreating app container $old on $image"
+     IMAGE_TAG="${image##*:}" docker compose --env-file .env up -d --force-recreate --no-deps app
+     ids=$(docker ps -aq --no-trunc)
+     [[ "$ids" != *"$old"* ]] || { echo "old container $old still exists" >&2; exit 1; }
+     docker run --rm -v /var/lib/docker/containers:/c:ro busybox:1.37 test ! -e "/c/$old" ||
+       { echo "/var/lib/docker/containers/$old still exists" >&2; exit 1; }
+     echo "old container $old and its log directory are gone"
+   '
    ```
 
    Repeat on staging if the person also used the staging bot.
