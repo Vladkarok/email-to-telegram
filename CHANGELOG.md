@@ -18,6 +18,39 @@ that has been running in production.
 
 ## [Unreleased]
 
+## [1.12.0] — 2026-10-07
+
+New aliases explain their own bounces, sender names lose their stray quotes,
+and the nightly backup cleans up after itself.
+
+### Added
+
+- **Bounce notice for new aliases.** When mail to an alias that has not
+  received anything yet bounces because no allow rule matches the sender,
+  the owner gets one private message: which alias, which sender domain,
+  and that rules match the address in the email's From line. When that
+  domain authenticated the message, the notice has an **Allow
+  &lt;domain&gt;** button that adds the rule in one tap (it allows every
+  address at the domain and works for 7 days); **📋 Allow Rules** opens the
+  rules menu. An alias with no rules gets a notice without a domain. At
+  most one notice per alias per 24 hours and three in total, only while
+  the alias has no delivery yet and is at most 7 days old (or its owner has
+  never had mail accepted). The sender domain is kept with the button for
+  7 days, then removed; `/export_me` includes it, `/delete_me` removes it,
+  and `/privacy` says so. Migration `0011` adds the `alias_activation`
+  table and backfills first deliveries.
+- Metrics `email_to_telegram_activation_notices_total{stage,result}` and
+  `email_to_telegram_activation_allows_total{result}`, with two panels in
+  the Operations dashboard.
+
+### Changed
+
+- **`email_addresses.max_emails_hour` is dropped** (migration `0012`). It
+  has not been read since 1.10.0. A rollback to 1.11.0 works as before; a
+  rollback to 1.10.0 or older first needs `ALTER TABLE email_addresses ADD
+COLUMN max_emails_hour integer NOT NULL DEFAULT 60`.
+- CI also runs the real-Postgres test suites (`TEST_DATABASE_URL`).
+
 ### Fixed
 
 - The From line showed every sender name in quotes, as in
@@ -35,10 +68,19 @@ that has been running in production.
   with no `user@domain` address, such as a bare `bank.com`, shows
   `unknown sender`, as does a malformed address such as
   `a@evil.com@bank.com` or `<a@bank.com;evil.com>`, and a domain with
-  zero-width or direction-changing characters. The domain is what the From header claims; it does not
-  prove who sent the message. A line break in a name-only From could also
+  zero-width or direction-changing characters. The domain is what the
+  From header claims; it does not prove who sent the message. A line break in a name-only From could also
   add a fake line to the alert; the line now goes through the same
   sanitizer as the message header.
+- The bounce notice and its replies show the sender domain as code, so
+  Telegram does not turn it into a link.
+- **`scripts/backup.sh` no longer leaves temp files behind.** A nightly
+  `.backup-*.archive-meta` was left on every run, and a run killed by a
+  signal could leave a partial plaintext dump and the database credentials
+  file in the backups volume. Every exit path, `HUP` included, now removes
+  this run's own files (named per run, so a concurrent run's files are
+  never touched), and leftovers of killed runs are swept at the start of
+  each run.
 
 ## [1.11.0] — 2026-10-06
 
