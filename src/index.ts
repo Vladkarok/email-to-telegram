@@ -76,7 +76,7 @@ async function main() {
 
   // 3. Connect to DB and run migrations
   initDb(config.databaseUrl);
-  await runMigrations();
+  await runMigrations(config.databaseUrl);
 
   if (await dispatchOperatorCommand({ startup, config, logger })) {
     return;
