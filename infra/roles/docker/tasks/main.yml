@@ -51,3 +51,32 @@
     name: "{{ ansible_user }}"
     groups: docker
     append: true
+
+# Docker must not start before the VM has its private IPv4 address, or the
+# ports published on it stay unbound (see files/wait-ipv4).
+- name: Install the wait-ipv4 boot guard
+  ansible.builtin.copy:
+    src: wait-ipv4
+    dest: /usr/local/sbin/wait-ipv4
+    mode: "0755"
+
+- name: Create the docker.service drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/docker.service.d
+    state: directory
+    mode: "0755"
+
+- name: Make docker.service wait for the IPv4 address
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/docker.service.d/10-wait-ipv4.conf
+    mode: "0644"
+    content: |
+      [Service]
+      # Wait for the private address before dockerd binds published ports; see /usr/local/sbin/wait-ipv4.
+      ExecStartPre=/usr/local/sbin/wait-ipv4 {{ docker_wait_ipv4_interface | default(ansible_default_ipv4.interface) }} 180
+  register: docker_wait_ipv4_dropin
+
+- name: Reload systemd after the drop-in changed
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: docker_wait_ipv4_dropin.changed

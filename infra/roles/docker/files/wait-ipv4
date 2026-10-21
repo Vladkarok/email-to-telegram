@@ -1,0 +1,27 @@
+#!/bin/sh
+# Installed as /usr/local/sbin/wait-ipv4 by the docker role and run before
+# dockerd by its docker.service drop-in (10-wait-ipv4.conf).
+#
+# Docker publishes ports on the VM's private address. At boot ifup can return
+# before dhcpcd holds the IPv4 lease; a port that fails to bind then stays
+# unbound for the container's lifetime ("Failed to allocate port" is only a
+# warning, and a restart does not retry it), as on staging after the host
+# reboots of 2026-10-12 and 2026-10-17. `auto <iface>` orders Docker after
+# ifup but does not wait for the lease. This waits for the address itself.
+#
+# Usage: wait-ipv4 <iface> <max seconds>. Exits 0 either way: after the limit
+# Docker starts anyway (containers without published ports still run), with a
+# log line.
+iface=${1:?iface}
+limit=${2:-180}
+i=0
+while ! ip -4 -o addr show dev "$iface" scope global | grep -q ' inet '; do
+  if [ "$i" -ge "$limit" ]; then
+    echo "wait-ipv4: $iface has no IPv4 address after ${limit}s; starting docker anyway" >&2
+    exit 0
+  fi
+  sleep 1
+  i=$((i + 1))
+done
+[ "$i" -gt 0 ] && echo "wait-ipv4: $iface got its IPv4 address after ${i}s"
+exit 0

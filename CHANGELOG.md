@@ -18,6 +18,25 @@ that has been running in production.
 
 ## [Unreleased]
 
+### Added
+
+- **The monitoring is watched too.** `infra/monitor-check/` installs a
+  5-minute timer on each VM that reports to healthchecks.io: Prometheus
+  targets down, containers running without their published ports, and
+  Promtail stopped or dropping log batches. A problem is reported once two
+  runs in a row see it. See `docs/operations/monitoring.md`, "Monitoring
+  check".
+
+### Fixed
+
+- **Docker waits for the VM's address at boot.** The docker role installs a
+  `docker.service` drop-in that holds Docker back until the VM has its
+  private IPv4 address (at most 3 minutes). Before, a host reboot could start
+  containers before the DHCP lease, and their ports on that address stayed
+  unbound until the container was recreated; after the staging reboots of
+  2026-10-12 and 2026-10-17 the Loki gateway was unreachable and prod logs
+  were lost for ten days.
+
 ## [1.13.2] — 2026-10-21
 
 Maintenance release: one rare recovery race fixed and dependencies updated.

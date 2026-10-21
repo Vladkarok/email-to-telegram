@@ -1,0 +1,285 @@
+#!/usr/bin/env python3
+"""Watch the monitoring itself and report to healthchecks.io.
+
+Runs every 5 minutes from etg-monitor-check.timer on the staging VM (the
+monitoring host) and on the prod VM. Each run collects problems from the
+checks enabled in /etc/etg-monitor-check/config.env:
+
+  targets   a Prometheus target has been down for every sample of the window
+            (monitoring host only; queried through `docker exec`)
+  ports     a running container lacks a host port its config publishes; Docker
+            keeps such a container running with only a warning, and a
+            restart does not bring the port back (2026-10-12, 2026-10-17)
+  promtail  a Promtail container is not running, or logged
+            "final error sending batch" (it dropped log lines) within the
+            log window, which spans two runs so every drop is seen twice
+
+A problem is reported only when the previous run saw it too, so one bad
+sample (a deploy, a restart) does not page anyone. Reported problems go to
+<ping URL>/fail with the list as the body; otherwise the plain ping URL is
+called. healthchecks.io also alerts when the pings stop, which covers the
+host or this timer dying.
+
+Usage: etg-monitor-check [--dry-run] [--config PATH]
+  --dry-run  print what would be sent; no ping, no state update.
+Stdlib only, Python 3.11+.
+"""
+
+import argparse
+import json
+import socket
+import subprocess
+import sys
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+DEFAULT_CONFIG = "/etc/etg-monitor-check/config.env"
+STATE_FILE = Path("/var/lib/etg-monitor-check/previous.json")
+DOCKER_TIMEOUT_S = 30
+PING_TIMEOUT_S = 10
+PING_ATTEMPTS = 3
+BODY_LIMIT = 10_000  # healthchecks.io keeps the first 100 kB; stay well under
+
+
+def load_config(path):
+    """KEY=VALUE lines; blank lines and # comments ignored; no shell quoting."""
+    config = {}
+    for raw in Path(path).read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, sep, value = line.partition("=")
+        if sep:
+            config[key.strip()] = value.strip()
+    return config
+
+
+def split_list(value):
+    return [item.strip() for item in (value or "").split(",") if item.strip()]
+
+
+def run(argv, timeout=DOCKER_TIMEOUT_S):
+    """Run a command; return stdout. Raises CalledProcessError or TimeoutExpired."""
+    result = subprocess.run(
+        argv, capture_output=True, text=True, timeout=timeout, check=True
+    )
+    return result.stdout
+
+
+# --------------------------------------------------------------------- ports
+
+
+def missing_ports(inspect):
+    """Published ports a container's config asks for but Docker did not bind.
+
+    `inspect` is one element of `docker inspect` output. Returns strings like
+    "10.0.88.3:3101->3101/tcp".
+    """
+    wanted = (inspect.get("HostConfig") or {}).get("PortBindings") or {}
+    actual = (inspect.get("NetworkSettings") or {}).get("Ports") or {}
+    missing = []
+    for container_port, bindings in sorted(wanted.items()):
+        bound = actual.get(container_port) or []
+        for binding in bindings or []:
+            host_ip = binding.get("HostIp") or ""
+            host_port = binding.get("HostPort") or ""
+            if not any(port_matches(host_ip, host_port, b) for b in bound):
+                shown_ip = host_ip or "*"
+                shown_port = host_port or "(any)"
+                missing.append(f"{shown_ip}:{shown_port}->{container_port}")
+    return missing
+
+
+def port_matches(host_ip, host_port, bound):
+    if host_port and bound.get("HostPort") != host_port:
+        return False
+    # An empty HostIp asks for every address; Docker reports 0.0.0.0 and ::.
+    return not host_ip or bound.get("HostIp") == host_ip
+
+
+def check_ports(config):
+    ignore = set(split_list(config.get("ETG_MONITOR_IGNORE_CONTAINERS")))
+    ids = run(["docker", "ps", "-q", "--no-trunc"]).split()
+    if not ids:
+        return {}
+    problems = {}
+    for inspect in json.loads(run(["docker", "inspect", *ids])):
+        name = inspect.get("Name", "").lstrip("/")
+        if name in ignore or not (inspect.get("State") or {}).get("Running"):
+            continue
+        missing = missing_ports(inspect)
+        if missing:
+            problems[f"ports:{name}"] = (
+                f"{name} runs without its published port(s) {', '.join(missing)}; "
+                "recreate it (docker compose up -d --force-recreate <service>)"
+            )
+    return problems
+
+
+# ------------------------------------------------------------------- targets
+
+
+def prometheus_query(config, query):
+    container = config.get("ETG_MONITOR_PROMETHEUS_CONTAINER", "monitoring-prometheus-1")
+    url = "http://localhost:9090/api/v1/query?" + urllib.parse.urlencode({"query": query})
+    body = json.loads(run(["docker", "exec", container, "wget", "-qO-", url]))
+    if body.get("status") != "success":
+        raise RuntimeError(f"Prometheus answered {body.get('status')}: {body.get('error')}")
+    return body["data"]["result"]
+
+
+def down_targets(result):
+    """Problems from a `max_over_time(up[W]) == 0` vector result."""
+    problems = {}
+    for sample in result:
+        labels = sample.get("metric") or {}
+        job = labels.get("job", "?")
+        instance = labels.get("instance", "?")
+        problems[f"target:{job}:{instance}"] = f"Prometheus target {job} {instance} is down"
+    return problems
+
+
+def check_targets(config):
+    minutes = int(config.get("ETG_MONITOR_TARGET_DOWN_MINUTES", "5"))
+    result = prometheus_query(config, f"max_over_time(up[{minutes}m]) == 0")
+    problems = down_targets(result)
+    for key in problems:
+        problems[key] += f" for {minutes}+ min"
+    return problems
+
+
+# ------------------------------------------------------------------ promtail
+
+
+def dropped_batches(log_text):
+    """Lines in which Promtail gave up on a batch (the lines in it are lost)."""
+    return [line for line in log_text.splitlines() if "final error sending batch" in line]
+
+
+def check_promtail(config, since):
+    problems = {}
+    for name in split_list(config.get("ETG_MONITOR_PROMTAIL_CONTAINERS")):
+        try:
+            state = json.loads(run(["docker", "inspect", "--format", "{{json .State}}", name]))
+        except subprocess.CalledProcessError as error:
+            if "No such" not in (error.stderr or ""):
+                raise
+            problems[f"promtail:{name}:missing"] = f"Promtail container {name} does not exist"
+            continue
+        if not state.get("Running"):
+            problems[f"promtail:{name}:stopped"] = (
+                f"Promtail container {name} is {state.get('Status', 'not running')}"
+            )
+            continue
+        logs = subprocess.run(
+            ["docker", "logs", "--since", since, name],
+            capture_output=True, text=True, timeout=DOCKER_TIMEOUT_S, check=True,
+        )
+        dropped = dropped_batches(logs.stdout + logs.stderr)
+        if dropped:
+            problems[f"promtail:{name}:dropped"] = (
+                f"Promtail {name} dropped {len(dropped)} log batch(es) since {since} ago; "
+                f"last: {dropped[-1][:300]}"
+            )
+    return problems
+
+
+# --------------------------------------------------------------------- core
+
+
+CHECKS = {
+    "targets": lambda config, since: check_targets(config),
+    "ports": lambda config, since: check_ports(config),
+    "promtail": check_promtail,
+}
+
+
+def collect(config):
+    """Run the enabled checks. A check that fails to run is a problem itself."""
+    since = config.get("ETG_MONITOR_LOG_WINDOW", "11m")
+    problems = {}
+    for name in split_list(config.get("ETG_MONITOR_CHECKS", "ports")):
+        check = CHECKS.get(name)
+        if check is None:
+            problems[f"config:{name}"] = f"unknown check '{name}' in ETG_MONITOR_CHECKS"
+            continue
+        try:
+            problems.update(check(config, since))
+        except Exception as error:  # noqa: BLE001 - every failure must reach the report
+            problems[f"check:{name}"] = f"check '{name}' could not run: {describe(error)}"
+    return problems
+
+
+def describe(error):
+    if isinstance(error, subprocess.CalledProcessError):
+        detail = (error.stderr or error.stdout or "").strip().splitlines()
+        return f"{' '.join(error.cmd[:3])} exited {error.returncode}: {detail[-1] if detail else ''}"
+    if isinstance(error, subprocess.TimeoutExpired):
+        return f"{' '.join(error.cmd[:3])} timed out after {error.timeout}s"
+    return f"{type(error).__name__}: {error}"
+
+
+def confirm(current, previous_keys):
+    """Split problems into reported (also seen last run) and pending (new)."""
+    reported = {k: v for k, v in current.items() if k in previous_keys}
+    pending = {k: v for k, v in current.items() if k not in previous_keys}
+    return reported, pending
+
+
+def report_body(host, reported, pending):
+    lines = [f"{host}: {len(reported)} problem(s)"]
+    lines += [f"- {text}" for _, text in sorted(reported.items())]
+    if pending:
+        lines.append(f"also new this run (reported if still there in 5 min): {len(pending)}")
+        lines += [f"- {text}" for _, text in sorted(pending.items())]
+    return "\n".join(lines)[:BODY_LIMIT]
+
+
+def ping(url, body=None):
+    data = body.encode() if body is not None else None
+    last_error = None
+    for _ in range(PING_ATTEMPTS):
+        try:
+            with urllib.request.urlopen(url, data=data, timeout=PING_TIMEOUT_S) as response:
+                response.read()
+            return
+        except OSError as error:
+            last_error = error
+    raise RuntimeError(f"ping failed after {PING_ATTEMPTS} attempts: {last_error}")
+
+
+def load_previous(path):
+    try:
+        return set(json.loads(path.read_text()))
+    except (OSError, ValueError, TypeError):
+        return set()
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--config", default=DEFAULT_CONFIG)
+    args = parser.parse_args(argv)
+
+    config = load_config(args.config)
+    host = config.get("ETG_MONITOR_HOST") or socket.gethostname()
+
+    current = collect(config)
+    reported, pending = confirm(current, load_previous(STATE_FILE))
+    body = report_body(host, reported, pending)
+    print(body)
+
+    if args.dry_run:
+        return 0
+    STATE_FILE.write_text(json.dumps(sorted(current)))
+    url = config.get("ETG_MONITOR_HC_URL", "").rstrip("/")
+    if not url:
+        print("ETG_MONITOR_HC_URL is not set; nothing sent", file=sys.stderr)
+        return 1
+    ping(f"{url}/fail" if reported else url, body)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

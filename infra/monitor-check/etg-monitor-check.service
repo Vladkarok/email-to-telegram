@@ -1,0 +1,28 @@
+[Unit]
+Description=Check that the monitoring works and report to healthchecks.io
+After=docker.service
+ConditionPathExists=/etc/etg-monitor-check/config.env
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/usr/local/sbin/etg-monitor-check
+StateDirectory=etg-monitor-check
+StateDirectoryMode=0700
+TimeoutStartSec=4min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
