@@ -18,6 +18,23 @@ that has been running in production.
 
 ## [Unreleased]
 
+## [1.13.2] — 2026-10-21
+
+Maintenance release: one rare recovery race fixed and dependencies updated.
+
+### Fixed
+
+- The retry worker no longer recovers mail whose original request is still
+  running. Recovery skips pending files younger than two minutes, so a
+  delivery can no longer lose its raw email to a duplicate recovered copy.
+
+### Security
+
+- `sanitize-html` 2.18.0 (three XSS advisories: `meta` refresh URLs,
+  `noscript` in `nonTextTags`, prefixed SVG animation elements). The web
+  view's tag allowlist allows none of these, so it was not affected.
+- Dev dependency `vite` 8.3.4.
+
 ## [1.13.1] — 2026-10-07
 
 Operations release: deploys run one script that migrates first and rolls
