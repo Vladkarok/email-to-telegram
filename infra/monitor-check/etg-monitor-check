@@ -12,7 +12,7 @@ checks enabled in /etc/etg-monitor-check/config.env:
             restart does not bring the port back (2026-10-12, 2026-10-17)
   promtail  a Promtail container is not running, or logged
             "final error sending batch" (it dropped log lines) within the
-            log window, which spans two runs so every drop is seen twice
+            log window (12 min), which spans two runs so every drop is seen twice
 
 A problem is reported only when the previous run saw it too, so one bad
 sample (a deploy, a restart) does not page anyone. Reported problems go to
@@ -106,10 +106,18 @@ def check_ports(config):
     problems = {}
     for inspect in json.loads(run(["docker", "inspect", *ids])):
         name = inspect.get("Name", "").lstrip("/")
-        if name in ignore or not (inspect.get("State") or {}).get("Running"):
+        state = inspect.get("State") or {}
+        if name in ignore or not state.get("Running"):
             continue
         missing = missing_ports(inspect)
-        if missing:
+        if missing and state.get("Restarting"):
+            # Docker keeps Running=true during restart backoff and releases the
+            # ports on each exit: a crash loop, not a lost binding.
+            problems[f"ports:{name}"] = (
+                f"{name} is restarting (exit code {state.get('ExitCode', '?')}); "
+                "its ports return once it stays up"
+            )
+        elif missing:
             problems[f"ports:{name}"] = (
                 f"{name} runs without its published port(s) {', '.join(missing)}; "
                 "recreate it (docker compose up -d --force-recreate <service>)"
@@ -167,7 +175,8 @@ def check_promtail(config, since):
                 raise
             problems[f"promtail:{name}:missing"] = f"Promtail container {name} does not exist"
             continue
-        if not state.get("Running"):
+        # Not Running: a container in restart backoff reports Running=true.
+        if state.get("Status") != "running":
             problems[f"promtail:{name}:stopped"] = (
                 f"Promtail container {name} is {state.get('Status', 'not running')}"
             )
@@ -197,7 +206,7 @@ CHECKS = {
 
 def collect(config):
     """Run the enabled checks. A check that fails to run is a problem itself."""
-    since = config.get("ETG_MONITOR_LOG_WINDOW", "11m")
+    since = config.get("ETG_MONITOR_LOG_WINDOW", "12m")
     problems = {}
     for name in split_list(config.get("ETG_MONITOR_CHECKS", "ports")):
         check = CHECKS.get(name)

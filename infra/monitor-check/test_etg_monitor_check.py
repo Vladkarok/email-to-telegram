@@ -19,10 +19,10 @@ mc = importlib.util.module_from_spec(_spec)
 _loader.exec_module(mc)
 
 
-def container(name, wanted, actual, running=True):
+def container(name, wanted, actual, running=True, restarting=False):
     return {
         "Name": f"/{name}",
-        "State": {"Running": running},
+        "State": {"Running": running, "Restarting": restarting, "ExitCode": 1 if restarting else 0},
         "HostConfig": {"PortBindings": wanted},
         "NetworkSettings": {"Ports": actual},
     }
@@ -93,6 +93,13 @@ class CheckPorts(unittest.TestCase):
         self.assertEqual(list(problems), ["ports:grafana-1"])
         self.assertIn("*:8080->80/tcp", problems["ports:grafana-1"])
 
+    def test_restart_loop_is_not_reported_as_a_lost_port(self):
+        wanted = {"3000/tcp": [{"HostIp": "10.0.88.3", "HostPort": "3000"}]}
+        outputs = {"ps": "a\n", "inspect": json.dumps([container("app-1", wanted, {}, restarting=True)])}
+        with mock.patch.object(mc, "run", side_effect=lambda argv, **_: outputs[argv[1]]):
+            problems = mc.check_ports({})
+        self.assertEqual(problems, {"ports:app-1": "app-1 is restarting (exit code 1); its ports return once it stays up"})
+
     def test_no_running_containers(self):
         with mock.patch.object(mc, "run", return_value=""):
             self.assertEqual(mc.check_ports({}), {})
@@ -145,12 +152,17 @@ class Promtail(unittest.TestCase):
             return mc.check_promtail({"ETG_MONITOR_PROMTAIL_CONTAINERS": "promtail-1"}, "11m")
 
     def test_dropped_batch_on_stderr_is_a_problem(self):
-        problems = self.check(*self.fake({"Running": True}, logs=self.LOG))
+        problems = self.check(*self.fake({"Running": True, "Status": "running"}, logs=self.LOG))
         self.assertEqual(list(problems), ["promtail:promtail-1:dropped"])
         self.assertIn("dropped 1 log batch(es)", problems["promtail:promtail-1:dropped"])
 
     def test_retries_alone_are_fine(self):
-        self.assertEqual(self.check(*self.fake({"Running": True}, logs=self.LOG.splitlines()[0])), {})
+        self.assertEqual(self.check(*self.fake({"Running": True, "Status": "running"}, logs=self.LOG.splitlines()[0])), {})
+
+    def test_restart_loop_counts_as_stopped(self):
+        # Docker reports Running=true while a container waits to restart.
+        problems = self.check(*self.fake({"Running": True, "Restarting": True, "Status": "restarting"}))
+        self.assertEqual(problems, {"promtail:promtail-1:stopped": "Promtail container promtail-1 is restarting"})
 
     def test_stopped_container(self):
         problems = self.check(*self.fake({"Running": False, "Status": "exited"}))
@@ -180,7 +192,7 @@ class Collect(unittest.TestCase):
         seen = {}
         with mock.patch.dict(mc.CHECKS, {"promtail": lambda config, since: seen.setdefault("since", since) and {}}):
             mc.collect({"ETG_MONITOR_CHECKS": "promtail"})
-        self.assertEqual(seen["since"], "11m")
+        self.assertEqual(seen["since"], "12m")
 
 
 class Debounce(unittest.TestCase):
