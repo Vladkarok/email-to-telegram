@@ -582,6 +582,41 @@ App or host down shows up as missing pings after period plus grace. Configure
 each check with period 5 min and grace 10 min. The body carries only fixed
 text and dimension names, as the hosted privacy page promises.
 
+### Monitoring check (etg-monitor-check)
+
+The uptime check watches the app; nothing watched the monitoring itself. After
+the staging VM rebooted on 2026-10-12, the Loki gateway, Grafana and the
+staging postgres_exporter ran for ten days without their published ports, and
+every prod log line of that time was lost. `infra/monitor-check/` adds a
+systemd timer on each VM that runs `etg-monitor-check` every 5 minutes and
+reports to a healthchecks.io check of its own (period 5 min, grace 10 min,
+Telegram integration):
+
+| Check      | VM      | Problem                                                                             |
+| ---------- | ------- | ----------------------------------------------------------------------------------- |
+| `targets`  | staging | a Prometheus target was down for every sample of the last 5 minutes                 |
+| `ports`    | both    | a running container lacks a host port its config publishes                          |
+| `promtail` | both    | the Promtail container is missing or stopped, or logged `final error sending batch` |
+
+A problem is reported when two consecutive runs see it, so a deploy or a
+restart does not page. Reported problems go to `<url>/fail` with one line per
+problem as the body; otherwise the plain URL is pinged. A dead VM, Docker
+daemon or timer shows up as missing pings. A check that cannot run (Prometheus
+not answering, Docker timing out) is a problem itself.
+
+Install or update, as root, from a checkout of the repo:
+
+```sh
+sudo bash infra/monitor-check/install.sh monitoring   # staging VM
+sudo bash infra/monitor-check/install.sh agent        # prod VM
+```
+
+It asks for the ping URL (or reads `ETG_MONITOR_HC_URL`), writes
+`/etc/etg-monitor-check/config.env` once and keeps it on re-runs, and prints a
+dry run. `sudo etg-monitor-check --dry-run` shows the current problems at any
+time without pinging. A container that may run without its ports (not one of
+ours) goes into `ETG_MONITOR_IGNORE_CONTAINERS`.
+
 ## Troubleshooting
 
 - **Grafana shows "no data"**: inspect the Prometheus targets endpoint from inside the container (port 9090 is not published on the host):
@@ -591,13 +626,14 @@ text and dimension names, as the hosted privacy page promises.
 - **Promtail not shipping logs**: confirm the `docker_socket_proxy` container is healthy (`docker compose ... ps`) and that `/var/lib/docker/containers` is mounted read-only into promtail. Promtail talks to the proxy at `tcp://docker_socket_proxy:2375`, not the host docker socket directly. Only the app container is shipped; other containers are dropped on purpose.
 - **`node` or `postgres` target down**: `401 Unauthorized` means Prometheus and the exporters disagree on the credential: `EXPORTER_BASIC_AUTH_USER` or `EXPORTER_BASIC_AUTH_PASSWORD` differ between the two environments, or one side was not redeployed after a change. An `x509` error means the VM's certificate does not chain to `monitoring/tls/ca.crt` or lacks its IP. A timeout on `:9100` only is the host firewall (see [Host agent](#host-agent)). `pg_up 0` with the target up means the exporter cannot log in: check `docker compose -p etg-agent ... logs postgres-exporter` and redeploy the agent, which reconciles the role.
 - **Prod app lines (15 min) stays 0**: on prod, `docker compose -p etg-agent -f ~/monitoring-agent/docker-compose.agent.yml --env-file ~/monitoring-agent/.env logs --tail 50 promtail` shows push errors (`401`, `x509`, connection refused). If Promtail is quiet, check that the running app has the logging labels: `docker inspect --format '{{json .HostConfig.LogConfig}}' email-to-telegram-app-1` must list `labels`; a release from before that option ships nothing.
+- **A container runs without its published port** (`ports` problem, `docker port <container>` empty, `connection refused` on its `10.0.88.x` port): at boot Docker started it before the VM had its address, logged `Failed to allocate port ... cannot assign requested address` as a warning and kept it running. `docker restart` does not retry the binding; recreate it with the same config, under the host lock: `flock -w 900 ~/.etg-deploy.lock docker compose -f <compose file> --env-file .env up -d --no-deps --force-recreate <service>`. The docker role's `wait-ipv4` drop-in (`infra/roles/docker/files/wait-ipv4`) makes Docker wait for the address at boot so this should not recur.
 - **`bearer token authentication failed`**: the token file in `~/monitoring/prometheus/secrets/` does not match `METRICS_TOKEN` in the scraped app's `.env`. Rotate both sides via GitHub secrets and re-run `Deploy Monitoring`.
 - **Grafana login fails after rotating password**: restart the Grafana container; the admin password env var is only read at startup.
 - **`/api/live/ws` 401 loop (dashboards don't auto-refresh; log spam)**: symptom is a flood of `path=/api/live/ws status=401 userId=0` lines in `docker logs monitoring-grafana-1`, all from the Caddy host IP, while ordinary requests authenticate as `userId=1`. Cause is `GRAFANA_ROOT_URL` pointing at the internal `http://<vm-private-ip>:3001/` while browsers reach Grafana via Caddy at `https://grafana.example.com` — the Live WebSocket origin check derives allowed origins from `root_url`, so the mismatch rejects every upgrade. Fix: set `GRAFANA_ROOT_URL` to the Caddy URL (e.g. `https://grafana.example.com/`) in `~/monitoring/.env` and `docker compose -f docker-compose.monitoring.yml --env-file .env up -d grafana` (env is read only at startup). Verify a fresh browser connect logs `path=/api/live/ws status=-1 userId=1` (a successful upgrade), not `401`.
 
 ## Out of scope
 
-- Alertmanager. The app already pushes operator alerts to Telegram via `ALERT_CHAT_ID`; Prometheus-side alerting is not wired up.
+- Alertmanager. The app pushes its own alerts to Telegram via `ALERT_CHAT_ID`, and `etg-monitor-check` reports down targets through healthchecks.io; no metric-threshold alert rules beyond that.
 - Public Grafana exposure. Access stays LAN/VPN-only; Caddy 404s the public internet and no monitoring port binds to a public IP.
 - Multi-region scraping. Single staging-VM scraper only; HA Prometheus is not in scope.
 - Logs of any container other than the app. Postgres logs can contain statement text with values.
