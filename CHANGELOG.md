@@ -45,6 +45,15 @@ that has been running in production.
   2026-10-12 and 2026-10-17 the Loki gateway was unreachable and prod logs
   were lost for ten days.
 
+### Security
+
+- `mailparser` 3.12, `mailauth` 8 and `nodemailer` 10.2. mailparser no longer
+  turns a From made only of encoded words into an address when the decoded
+  text looks like one (`=?UTF-8?B?…?=` decoding to `Support <help@bank.com>`).
+  Such a From is now a display name: the privacy alert says
+  `Sender: unknown sender` and the From line shows the quoted name, as for any
+  other name-only From.
+
 ## [1.13.2] — 2026-10-21
 
 Maintenance release: one rare recovery race fixed and dependencies updated.
