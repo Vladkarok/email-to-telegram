@@ -851,16 +851,17 @@ describe("renderPrivacyAlert", () => {
     expect(await alertLines(fromHeader)).toContain("Sender: unknown sender");
   });
 
-  it("names the domain mailparser decodes from an encoded-word-only From, as the From line does", async () => {
-    // Left open: mailparser turns a From made only of B-encoded words into an
-    // address when the decoded text holds one. The Sender line follows that
-    // parsed address, as the From line does; neither proves who sent it.
+  it("treats an encoded-word-only From as a name, not an address", async () => {
+    // Up to mailparser 3.9 a From made only of B-encoded words became an
+    // address when the decoded text held one. Since 3.12 the decoded text stays
+    // a display name (RFC 2047: an encoded-word never forms an address), so the
+    // Sender line says unknown sender and the From line quotes the name.
     const email = await parseFrom(encodedWord("Support <help@bank.com>"));
     const alert = renderPrivacyAlert(email, "alerts@example.com", "https://x.example/v", false);
     const delivery = renderEmailForDelivery(email, "plaintext", "alerts@example.com", []);
 
-    expect(alert.split("\n")).toContain("Sender: bank.com");
-    expect(delivery.text.startsWith("From: Support <help@bank.com>\n")).toBe(true);
+    expect(alert.split("\n")).toContain("Sender: unknown sender");
+    expect(delivery.text.startsWith('From: "Support <help@bank.com>"\n')).toBe(true);
   });
 
   it("shows unknown sender for an empty From", async () => {
