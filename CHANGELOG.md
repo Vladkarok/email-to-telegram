@@ -18,6 +18,12 @@ that has been running in production.
 
 ## [Unreleased]
 
+## [1.13.3] — 2026-10-26
+
+Dependency release with a stricter reading of encoded sender names, plus
+operations work: the monitoring watches itself and Docker waits for the
+VM's address at boot.
+
 ### Added
 
 - **The monitoring is watched too.** `infra/monitor-check/` installs a
@@ -53,6 +59,11 @@ that has been running in production.
   Such a From is now a display name: the privacy alert says
   `Sender: unknown sender` and the From line shows the quoted name, as for any
   other name-only From.
+- `sanitize-html` 2.18.1 drops its `deepmerge` dependency (scanners report
+  CVE-2026-93753 there; sanitize-html only merged its own configuration).
+- `fast-uri` 3.1.9 (through fastify's ajv): four URI parsing and
+  normalization advisories, among them GHSA-w74x-v6f9-j3xg and
+  GHSA-wjr9-j795-jxcr.
 
 ## [1.13.2] — 2026-10-21
 
