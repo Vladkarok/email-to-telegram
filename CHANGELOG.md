@@ -29,6 +29,14 @@ that has been running in production.
 
 ### Fixed
 
+- **Staging logs no longer bounce off Loki every night.** Staging's Promtail
+  now tails the json-file logs with the same pipeline as prod instead of
+  following the Docker API through a socket proxy (removed). The proxy cut
+  the idle stream every 10 minutes and each reconnect resent the app's last
+  lines; after the 02:00 UTC backup line Loki rejected them for two hours,
+  and the monitor check reported it every night. Nothing was lost (the
+  rejected lines were duplicates). Stream labels lose `container_name` and
+  `container_id`, as on prod.
 - **Docker waits for the VM's address at boot.** The docker role installs a
   `docker.service` drop-in that holds Docker back until the VM has its
   private IPv4 address (at most 3 minutes). Before, a host reboot could start

@@ -27,6 +27,7 @@ on:
       # The host agent has its own workflow; only the shared helpers matter here.
       - "!monitoring/agent/**"
       - "monitoring/agent/deploy/lib.sh"
+      - "monitoring/agent/tests/promtail-pipeline-test.sh"
       - ".github/workflows/deploy-monitoring.yml"
   workflow_dispatch:
 
@@ -108,6 +109,9 @@ jobs:
           image=$(awk '/image: grafana\/promtail:/ { print $2; exit }' monitoring/docker-compose.monitoring.yml)
           docker run --rm -v "$PWD/monitoring/promtail:/etc/promtail:ro" "$image" \
             -config.file=/etc/promtail/promtail-config.yml -check-syntax
+
+      - name: Promtail pipeline keeps only the app line (pinned image)
+        run: bash monitoring/agent/tests/promtail-pipeline-test.sh staging
 
       - name: nginx -t and push gateway behaviour (pinned images)
         run: bash monitoring/deploy/tests/gateway-test.sh
