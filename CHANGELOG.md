@@ -54,7 +54,6 @@ that has been running in production.
   `Sender: unknown sender` and the From line shows the quoted name, as for any
   other name-only From.
 
-
 ## [1.13.2] — 2026-10-21
 
 Maintenance release: one rare recovery race fixed and dependencies updated.
