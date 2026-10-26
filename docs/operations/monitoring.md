@@ -207,7 +207,8 @@ Delivery is best effort. Known loss and duplicate windows:
 - lines written after Promtail last read the file, when Docker deletes the file on a container recreate (Promtail reads within seconds; deploys stop the old container first);
 - batches still pending when Promtail stops;
 - batches dropped after Promtail's retries (10, backoff up to 5 minutes) run out during a long Loki or gateway outage;
-- lines sent twice after a crash, from the last positions checkpoint.
+- lines sent twice after a crash, from the last positions checkpoint;
+- a file Promtail has no position for is read from its start: on staging's switch from Docker SD to file tailing (2026-10), the app's current log file was shipped once more under the new label set, so staging shows those lines twice; lines older than 7 days in such a file are rejected by Loki (400) and reported by the monitor check.
 
 Compatibility boundary: the allowlist needs the `attrs` that the app's logging `labels` option adds, so only releases from the first one with that option ship logs. Rolling prod back to an older release stops prod log shipping until a newer release is deployed again. The Logs row's **Prod app lines (15 min)** stat shows 0 in that state.
 
