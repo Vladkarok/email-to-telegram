@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
-# Runs the prod Promtail config (pinned image, --dry-run) against a fake
+# Runs a Promtail config (pinned image, --dry-run) against a fake
 # /var/lib/docker/containers and checks that only the app container's line
 # passes the pipeline, with the expected labels and the envelope timestamp.
+# Both collectors run the same pipeline: the prod agent's and the staging
+# monitoring stack's.
 #
-#   bash monitoring/agent/tests/promtail-pipeline-test.sh
+#   bash monitoring/agent/tests/promtail-pipeline-test.sh [prod|staging]
 set -Eeuo pipefail
 
+env=${1:-prod}
 repo=$(cd "$(dirname "$0")/../../.." && pwd)
-image=$(awk '/image: grafana\/promtail:/ { print $2; exit }' "$repo/monitoring/agent/docker-compose.agent.yml")
+case "$env" in
+  prod) config_dir=$repo/monitoring/agent/promtail compose=$repo/monitoring/agent/docker-compose.agent.yml ;;
+  staging) config_dir=$repo/monitoring/promtail compose=$repo/monitoring/docker-compose.monitoring.yml ;;
+  *) echo "usage: $0 [prod|staging]" >&2; exit 2 ;;
+esac
+image=$(awk '/image: grafana\/promtail:/ { print $2; exit }' "$compose")
 work=$(mktemp -d)
 name="etg-promtail-test-$$"
 cleanup() {
@@ -53,7 +61,7 @@ printf 'dummy' >"$work/secrets/promtail-a"
 docker run -d --name "$name" \
   -e LOKI_PUSH_ADDR=127.0.0.1:9 -e LOKI_PUSH_USER=promtail-a \
   -v "$work/containers:/var/lib/docker/containers:ro" \
-  -v "$repo/monitoring/agent/promtail:/etc/promtail:ro" \
+  -v "$config_dir:/etc/promtail:ro" \
   -v "$work/tls:/etc/etg-tls:ro" \
   -v "$work/secrets:/run/etg-promtail:ro" \
   --tmpfs /positions \
@@ -83,7 +91,7 @@ for dropped in dropped-postgres-line dropped-other-project-line dropped-line-wit
   [[ "$out" != *"$dropped"* ]] || fail "$dropped passed the pipeline"
 done
 app_line=$(printf '%s\n' "$out" | grep kept-app-line)
-for label in 'env="prod"' 'compose_project="email-to-telegram"' 'service="app"' 'stream="stdout"'; do
+for label in "env=\"$env\"" 'compose_project="email-to-telegram"' 'service="app"' 'stream="stdout"'; do
   [[ "$app_line" == *"$label"* ]] || fail "app line lacks label $label"
 done
 [[ "$app_line" != *filename=* ]] || fail "filename label was not dropped"
@@ -91,5 +99,5 @@ done
 # Dry-run prints the entry timestamp first; it must be the envelope time.
 [[ "$app_line" == "${now:0:19}"* ]] || fail "app line timestamp is not the json-file time ($now)"
 
-echo "promtail pipeline: only the app line passed"
+echo "promtail pipeline ($env): only the app line passed"
 printf '%s\n' "$app_line"

@@ -19,9 +19,10 @@ the prod log collector).
 - **loki-gateway** (`nginx:1.30.5-alpine`) — `${LOKI_PUSH_BIND_IP}:3101`.
   Accepts only an authenticated `POST /loki/api/v1/push` and streams it to
   Loki; every other path and method gets 403.
-- **Promtail** (`grafana/promtail:2.9.10`) — Docker SD; ships the staging app
-  container's logs only, with labels `service`, `compose_project`,
-  `container_name`, `container_id`, `stream`, `env`.
+- **Promtail** (`grafana/promtail:2.9.10`) — tails the json-file logs
+  read-only (no Docker API) and ships the staging app container's lines only,
+  with labels `env`, `compose_project`, `service`, `stream`; the same pipeline
+  as the prod agent's.
 
 ## Host agent
 

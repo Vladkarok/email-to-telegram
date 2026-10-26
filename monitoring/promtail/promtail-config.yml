@@ -1,12 +1,22 @@
-# Promtail on the staging VM: ships the staging app container's logs to Loki
-# using Docker service discovery through the read-only socket proxy. Static
-# label env=staging. Prod logs arrive through loki-gateway from the prod host
-# agent (monitoring/agent/), not from here.
+# Promtail on the staging VM: tails Docker's json-file logs from the host
+# (mounted read-only), keeps only the staging app container's lines and
+# pushes them to the local Loki with the static label env=staging. No Docker
+# API. Prod logs arrive through loki-gateway from the prod host agent
+# (monitoring/agent/), which runs the same pipeline.
 #
-# App-only allowlist, the same as on prod: only containers of compose project
-# email-to-telegram, service app, are tailed. Postgres (its log can contain
-# statement text), the monitoring stack and any other project on this VM are
-# never read.
+# Why files and not Docker service discovery: Docker SD followed the log
+# stream through the socket proxy, whose 10-minute idle timeout cut it every
+# 10 minutes on a quiet app. Each reconnect re-read from the last saved
+# second, so the same startup lines were pushed again; once the app logged a
+# newer line (the 02:00 UTC backup), Loki rejected the resent ones as "entry
+# too far behind" for the next two hours, every night. A file position is a
+# byte offset and is never re-read.
+#
+# The app service's logging options add `attrs` to every json line
+# (labels: com.docker.compose.project,com.docker.compose.service). A line is
+# kept only when attrs names project email-to-telegram and service app.
+# Postgres (its log can contain statement text), the monitoring stack and any
+# other project on this VM are dropped here and never reach Loki.
 
 server:
   http_listen_port: 9080
@@ -26,42 +36,40 @@ clients:
       max_retries: 10
 
 scrape_configs:
-  - job_name: docker
-    docker_sd_configs:
-      # Talks to the docker_socket_proxy (read-only Docker API surface)
-      # instead of the raw host socket. See docker-compose.monitoring.yml.
-      - host: tcp://docker_socket_proxy:2375
-        refresh_interval: 30s
-        # Ask Docker for the app container only. A relabel `keep` alone does
-        # not stop docker_sd from tailing the other containers: their lines
-        # go out with an empty label set, and Loki rejects the whole batch
-        # ("at least one label pair is required per stream"), app lines
-        # included. Label filters are ANDed.
-        filters:
-          - name: label
-            values:
-              - com.docker.compose.project=email-to-telegram
-              - com.docker.compose.service=app
-    relabel_configs:
-      - source_labels:
-          - __meta_docker_container_label_com_docker_compose_project
-          - __meta_docker_container_label_com_docker_compose_service
-        separator: ";"
-        regex: "email-to-telegram;app"
-        action: keep
-      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
-        target_label: service
-      - source_labels: ["__meta_docker_container_label_com_docker_compose_project"]
-        target_label: compose_project
-      - source_labels: ["__meta_docker_container_name"]
-        regex: "/(.*)"
-        target_label: container_name
-      - source_labels: ["__meta_docker_container_id"]
-        target_label: container_id
-      - source_labels: ["__meta_docker_container_log_stream"]
-        target_label: stream
-      - target_label: env
-        replacement: staging
-    # No pipeline stages: the Docker target already delivers the decoded log
-    # line and its timestamp (the json-file envelope stages belong to the prod
-    # collector, which tails the files directly).
+  - job_name: app-json-file
+    static_configs:
+      - targets: [localhost]
+        labels:
+          env: staging
+          __path__: /var/lib/docker/containers/*/*-json.log
+    pipeline_stages:
+      # The json-file envelope: {"log": "...", "stream": "...", "attrs": {...}, "time": "..."}
+      - json:
+          expressions:
+            output: log
+            stream: stream
+            time: time
+            compose_project: 'attrs."com.docker.compose.project"'
+            service: 'attrs."com.docker.compose.service"'
+      - labels:
+          stream:
+          compose_project:
+          service:
+      # App-only allowlist. A line without attrs has neither label and is
+      # dropped by the first rule.
+      - match:
+          selector: '{compose_project!="email-to-telegram"}'
+          action: drop
+          drop_counter_reason: not_app_container
+      - match:
+          selector: '{service!="app"}'
+          action: drop
+          drop_counter_reason: not_app_container
+      - timestamp:
+          source: time
+          format: RFC3339Nano
+      - output:
+          source: output
+      # The file path carries the container ID; keep the stream set small.
+      - labeldrop:
+          - filename

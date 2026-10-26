@@ -21,8 +21,8 @@ Each VM also runs a small host agent (`monitoring/agent/`, compose project `etg-
  |   promtail (json-file logs,   |  push    |                                      |
  |   app container only)  --------- TLS ----> loki-gateway :3101 --> loki :3100    |
  |                               |  + basic |                          ^           |
- +-------------------------------+   auth   |  promtail (Docker SD,    |           |
-                                            |  app container only) ----+           |
+ +-------------------------------+   auth   |  promtail (json-file     |           |
+                                            |  logs, app only) --------+           |
                                             |  grafana :3001 (VPN, via Caddy)      |
                                             +--------------------------------------+
 ```
@@ -200,14 +200,15 @@ postgres_exporter logs in as `etg_monitor`. Every agent deploy creates or reconc
 
 Prod app logs go to the staging Loki with `env="prod"`. The prod Promtail has no Docker API access. It tails `/var/lib/docker/containers/*/*-json.log` read-only. The app service's logging options in `docker-compose.yml` add `labels: com.docker.compose.project,com.docker.compose.service`, which puts an `attrs` object on every json-file line. The pipeline keeps a line only when `attrs` names project `email-to-telegram` and service `app`; Postgres lines, the agent's own lines and anything else are dropped on the VM. Stream labels: `env`, `compose_project`, `service`, `stream`. The timestamp is the json-file envelope's. Positions live in the volume `etg-agent_promtail-positions`.
 
-Staging's Promtail applies the same allowlist through Docker service discovery: only the `email-to-telegram` project's `app` container is read, other projects on the staging VM are not.
+Staging's Promtail (`monitoring/promtail/`) runs the same pipeline on the staging VM's files with `env="staging"` and pushes to the local Loki; other projects on the staging VM are dropped the same way. It used Docker service discovery through a socket proxy until 2026-10: the proxy cut the idle log stream every 10 minutes, each reconnect resent the last second's lines, and after the 02:00 UTC backup line Loki rejected them ("entry too far behind") for two hours every night. Positions live in the volume `monitoring_promtail_positions`.
 
 Delivery is best effort. Known loss and duplicate windows:
 
 - lines written after Promtail last read the file, when Docker deletes the file on a container recreate (Promtail reads within seconds; deploys stop the old container first);
 - batches still pending when Promtail stops;
 - batches dropped after Promtail's retries (10, backoff up to 5 minutes) run out during a long Loki or gateway outage;
-- lines sent twice after a crash, from the last positions checkpoint.
+- lines sent twice after a crash, from the last positions checkpoint;
+- a file Promtail has no position for is read from its start: on staging's switch from Docker SD to file tailing (2026-10), the app's current log file was shipped once more under the new label set, so staging shows those lines twice; lines older than 7 days in such a file are rejected by Loki (400) and reported by the monitor check.
 
 Compatibility boundary: the allowlist needs the `attrs` that the app's logging `labels` option adds, so only releases from the first one with that option ship logs. Rolling prod back to an older release stops prod log shipping until a newer release is deployed again. The Logs row's **Prod app lines (15 min)** stat shows 0 in that state.
 
@@ -623,7 +624,7 @@ ours) goes into `ETG_MONITOR_IGNORE_CONTAINERS`.
   ```sh
   ssh <staging-host> 'cd ~/monitoring && docker compose -f docker-compose.monitoring.yml --env-file .env exec prometheus wget -qO- http://127.0.0.1:9090/api/v1/targets' | jq
   ```
-- **Promtail not shipping logs**: confirm the `docker_socket_proxy` container is healthy (`docker compose ... ps`) and that `/var/lib/docker/containers` is mounted read-only into promtail. Promtail talks to the proxy at `tcp://docker_socket_proxy:2375`, not the host docker socket directly. Only the app container is shipped; other containers are dropped on purpose.
+- **Promtail not shipping logs**: both collectors tail `/var/lib/docker/containers/*/*-json.log` (mounted read-only) and keep only lines whose `attrs` name project `email-to-telegram` and service `app`; other containers are dropped on purpose. Check that the running app has the logging labels (`docker inspect --format '{{json .HostConfig.LogConfig}}' email-to-telegram-app-1` lists `labels`) and read the Promtail container's log for push errors.
 - **`node` or `postgres` target down**: `401 Unauthorized` means Prometheus and the exporters disagree on the credential: `EXPORTER_BASIC_AUTH_USER` or `EXPORTER_BASIC_AUTH_PASSWORD` differ between the two environments, or one side was not redeployed after a change. An `x509` error means the VM's certificate does not chain to `monitoring/tls/ca.crt` or lacks its IP. A timeout on `:9100` only is the host firewall (see [Host agent](#host-agent)). `pg_up 0` with the target up means the exporter cannot log in: check `docker compose -p etg-agent ... logs postgres-exporter` and redeploy the agent, which reconciles the role.
 - **Prod app lines (15 min) stays 0**: on prod, `docker compose -p etg-agent -f ~/monitoring-agent/docker-compose.agent.yml --env-file ~/monitoring-agent/.env logs --tail 50 promtail` shows push errors (`401`, `x509`, connection refused). If Promtail is quiet, check that the running app has the logging labels: `docker inspect --format '{{json .HostConfig.LogConfig}}' email-to-telegram-app-1` must list `labels`; a release from before that option ships nothing.
 - **A container runs without its published port** (`ports` problem, `docker port <container>` empty, `connection refused` on its `10.0.88.x` port): at boot Docker started it before the VM had its address, logged `Failed to allocate port ... cannot assign requested address` as a warning and kept it running. `docker restart` does not retry the binding; recreate it with the same config, under the host lock: `flock -w 900 ~/.etg-deploy.lock docker compose -f <compose file> --env-file .env up -d --no-deps --force-recreate <service>`. The docker role's `wait-ipv4` drop-in (`infra/roles/docker/files/wait-ipv4`) makes Docker wait for the address at boot so this should not recur.
