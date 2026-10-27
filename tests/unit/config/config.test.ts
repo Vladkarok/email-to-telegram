@@ -385,11 +385,11 @@ describe("loadConfig", () => {
 
   it.each([
     ["not JSON", "{free:", /PLAN_LIMITS: must be valid JSON/],
-    ["an unknown plan", '{"fre":{"aliases":1}}', /PLAN_LIMITS: Unrecognized key.*'fre'/],
+    ["an unknown plan", '{"fre":{"aliases":1}}', /PLAN_LIMITS: Unrecognized key.*"fre"/],
     [
       "an unknown limit",
       '{"free":{"deliveredEmailMonth":1}}',
-      /PLAN_LIMITS\.free: Unrecognized key.*'deliveredEmailMonth'/,
+      /PLAN_LIMITS\.free: Unrecognized key.*"deliveredEmailMonth"/,
     ],
     ["a negative value", '{"free":{"aliases":-1}}', /PLAN_LIMITS\.free\.aliases/],
     ["a fraction", '{"free":{"aliases":1.5}}', /PLAN_LIMITS\.free\.aliases/],

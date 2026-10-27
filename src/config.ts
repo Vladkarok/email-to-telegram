@@ -92,7 +92,7 @@ const planLimitsSchema = z
     try {
       return JSON.parse(value);
     } catch {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "must be valid JSON" });
+      ctx.addIssue({ code: "custom", message: "must be valid JSON" });
       return z.NEVER;
     }
   })
