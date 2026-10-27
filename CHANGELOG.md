@@ -18,6 +18,13 @@ that has been running in production.
 
 ## [Unreleased]
 
+### Changed
+
+- `zod` 4 validates the configuration. A bad value now produces the zod 4
+  message (`Invalid input: expected string, received undefined` instead of
+  `Required`). Integer settings above 2^53 are refused instead of read
+  imprecisely, and URL settings lose surrounding spaces.
+
 ## [1.13.3] — 2026-10-26
 
 Dependency release with a stricter reading of encoded sender names, plus
