@@ -18,12 +18,23 @@ that has been running in production.
 
 ## [Unreleased]
 
+## [1.13.4] — 2026-10-27
+
+Dependency release: fastify 5.12.6 (security) and zod 4 for the
+configuration.
+
 ### Changed
 
 - `zod` 4 validates the configuration. A bad value now produces the zod 4
   message (`Invalid input: expected string, received undefined` instead of
   `Required`). Integer settings above 2^53 are refused instead of read
   imprecisely, and URL settings lose surrounding spaces.
+
+### Security
+
+- `fastify` 5.12.6: header-name rules in a `propertyNames` schema are now
+  matched against the lowercased request headers (GHSA-389g-gv7q-r4x8,
+  CVE-2026-107832). The app has no such schema, so it was not exposed.
 
 ## [1.13.3] — 2026-10-26
 
