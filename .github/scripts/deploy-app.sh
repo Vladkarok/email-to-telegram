@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # on_exit, the probe and their helpers run from traps, which shellcheck does
-# not follow (SC2317).
-# shellcheck disable=SC2317
+# not follow (SC2317; SC2329 since shellcheck 0.11).
+# shellcheck disable=SC2317,SC2329
 # Deploy the app container on this host: pull, migrate first, replace, verify,
 # and roll back to the previous image when the new one is not healthy and
 # ready in time.
