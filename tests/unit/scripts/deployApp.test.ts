@@ -55,6 +55,12 @@ app_output() {
   echo '{"level":50,"time":1,"msg":"'"$1"'","err":{"type":"Error","message":"pw=err-secret-value","code":"42P01"}}'
 }
 current=$(cat "$d/current" 2>/dev/null)
+# What /readyz answers. The probe's curl reads this file while the script runs
+# docker, so replace it whole: a truncate-and-write can be read empty.
+set_http() {
+  echo "$1" >"$d/http.$$"
+  mv -f "$d/http.$$" "$d/http"
+}
 
 if [[ $1 == compose ]]; then
   shift
@@ -117,7 +123,7 @@ if [[ $1 == compose ]]; then
       # Nothing changed: compose keeps the running container.
       [[ -z ${"$"}{STUB_UP_KEEP:-} ]] || exit 0
       # The old container stops first: /readyz is down from here.
-      echo 000 >"$d/http"
+      set_http 000
       [[ $mode != hang ]] || exec sleep 30
       sleep "${"$"}{STUB_UP_SLEEP:-0}"
       if [[ $mode == fail ]]; then
@@ -167,7 +173,7 @@ case $1 in
     delay=""
     if [[ $token == *@* ]]; then delay=${"$"}{token#*@}; token=${"$"}{token%@*}; fi
     IFS=: read -r health state restarts <<<"$token"
-    if [[ $health == healthy && $probe == up ]]; then echo 200 >"$d/http"; fi
+    if [[ $health == healthy && $probe == up ]]; then set_http 200; fi
     [[ -z $delay ]] || sleep "$delay"
     echo "$health $state $restarts $image"
     ;;
@@ -195,6 +201,9 @@ esac
 `;
 
 const CURL_STUB = String.raw`#!/usr/bin/env bash
+# A real curl has no children. With a TERM trap, bash finishes the command in
+# flight before it exits, so the probe's kill leaves none of the stub's behind.
+trap 'exit 143' TERM
 d=$STUB_DIR
 for arg in "$@"; do last=$arg; done
 echo "$last" >"$d/curl-url"
@@ -277,14 +286,15 @@ function deploy(extra: Record<string, string> = {}, { umask }: { umask?: string 
 }
 
 // Processes that carry this test's marker in their environment: the script,
-// its probe, the stubs and anything they started.
+// its probe, the stubs and anything they started, as "PID: command line".
 function survivors(): string[] {
   const found: string[] = [];
   for (const pid of readdirSync("/proc")) {
     if (!/^\d+$/.test(pid)) continue;
     try {
       if (readFileSync(`/proc/${pid}/environ`, "utf-8").includes(`ETG_TEST_RUN=${runId}`)) {
-        found.push(pid);
+        const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf-8").split("\0").join(" ");
+        found.push(`${pid}: ${cmdline.trim()}`);
       }
     } catch {
       // Gone, or not ours.
