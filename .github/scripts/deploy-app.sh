@@ -256,25 +256,27 @@ PROBE_URL=""
 # script's process is gone.
 probe_loop() {
   set +e
-  local child="" t now next code
-  trap '[[ -n $child ]] && kill "$child" 2>/dev/null && wait "$child" 2>/dev/null; exit 0' TERM
+  local t now next code pause
+  # The trap asks the job table for the curl or sleep in flight: a PID saved
+  # after the fork would miss a SIGTERM that lands between the fork and the
+  # assignment, and leave that job running after the probe is gone.
+  trap 'kill $(jobs -p) 2>/dev/null; wait; exit 0' TERM
   trap '' HUP INT
   while kill -0 "$MAIN_PID" 2>/dev/null; do
     t=$(now_ms)
     curl -s -o /dev/null -w '%{http_code}' --max-time 1 "$PROBE_URL" >"$WORK_DIR/probe.out" 2>/dev/null </dev/null &
-    child=$!
-    wait "$child"
-    child=""
+    wait "$!"
     code=$(<"$WORK_DIR/probe.out")
     [[ $code =~ ^[0-9]{3}$ ]] || code=000
     printf '%s %s\n' "$t" "$code" >>"$PROBE_LOG"
     now=$(now_ms)
     next=$((t + POLL_MS))
     if ((now < next)); then
-      sleep_ms "$((next - now))" &
-      child=$!
-      wait "$child"
-      child=""
+      # sleep itself, not sleep_ms: a backgrounded function is a subshell,
+      # and killing it would leave its sleep running.
+      printf -v pause '%d.%03d' "$(((next - now) / 1000))" "$(((next - now) % 1000))"
+      sleep "$pause" &
+      wait "$!"
     fi
   done
 }
