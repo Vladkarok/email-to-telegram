@@ -224,6 +224,11 @@ interface Run {
   out: string;
   stdout: string;
   calls: string[];
+  // What spawnSync reported beyond the exit: its error (ENOBUFS when output
+  // passed maxBuffer, ETIMEDOUT at the bound) and the bytes each pipe carried.
+  error?: { code?: string; message: string };
+  stdoutBytes?: number;
+  stderrBytes?: number;
 }
 
 let root: string;
@@ -286,13 +291,40 @@ function deploy(
     // it leaves behind, afterEach reports and kills.
     killSignal: "SIGKILL",
   });
+  const error = result.error as NodeJS.ErrnoException | undefined;
   return {
     status: result.status,
     signal: result.signal,
     out: `${result.stdout}${result.stderr}`,
     stdout: result.stdout,
     calls: calls(),
+    error: error && { code: error.code, message: error.message },
+    stdoutBytes: Buffer.byteLength(result.stdout ?? ""),
+    stderrBytes: Buffer.byteLength(result.stderr ?? ""),
   };
+}
+
+const OUTPUT_TAIL_CHARS = 2_000;
+
+// Everything known about how a run ended, for a failed exit assertion: a
+// status of null alone does not say which signal or spawn error ended it.
+function describeRun(run: Run): string {
+  const error = run.error ? `${run.error.code ?? "no code"}: ${run.error.message}` : "none";
+  const left = survivors();
+  return [
+    `status ${run.status}, signal ${run.signal}, spawn error ${error}`,
+    `stdout ${run.stdoutBytes ?? "?"} bytes, stderr ${run.stderrBytes ?? "?"} bytes`,
+    `left running: ${left.length > 0 ? left.join(", ") : "none"}`,
+    `output tail (last ${OUTPUT_TAIL_CHARS} chars):`,
+    run.out.slice(-OUTPUT_TAIL_CHARS),
+  ].join("\n");
+}
+
+// The exit-status check for every run, with describeRun's detail on failure.
+// The detail is built only then: survivors() reads /proc.
+function expectStatus(run: Run, status: number): void {
+  if (run.status === status) return;
+  expect(run.status, describeRun(run)).toBe(status);
 }
 
 // Processes that carry this test's marker in their environment: the script,
@@ -399,7 +431,7 @@ function runLog(): string {
 }
 
 function expectRolledBack(run: Run): void {
-  expect(run.status).toBe(1);
+  expectStatus(run, 1);
   expect(run.calls).toContain(`IMAGE_TAG=v1.1.0 docker tag ${OLD_IMAGE} ${REPO}:deploy-previous`);
   expect(run.calls).toContain(ROLLBACK_UP);
   expect(run.out).toContain(`Rolled back to ${OLD_IMAGE}.`);
@@ -454,7 +486,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
     () => {
       const run = deploy();
 
-      expect(run.status).toBe(0);
+      expectStatus(run, 0);
       expect(run.out).toContain("tooling commit abc1234, target " + `${REPO}:v1.1.0`);
       expect(run.out).toContain(`image ${OLD_IMAGE}, state running, restarts 0`);
       const migrate = run.calls.findIndex((call) => call.endsWith(MIGRATE_RUN));
@@ -492,7 +524,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
     () => {
       const run = deploy({ STUB_MIGRATE: "fail" });
 
-      expect(run.status).toBe(1);
+      expectStatus(run, 1);
       expect(upCalls(run)).toEqual([]);
       expect(run.out).toContain("migration: failed (exit 3)");
       expect(run.out).toContain("replacement: not started");
@@ -519,7 +551,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
     () => {
       const run = deploy({ STUB_MIGRATE: "hang" });
 
-      expect(run.status).toBe(1);
+      expectStatus(run, 1);
       expect(upCalls(run)).toEqual([]);
       expect(run.calls).toContain("IMAGE_TAG=v1.1.0 docker rm -f etg-migrate");
       expect(run.out).toMatch(/migration: timed out after \d+\.\d s/);
@@ -533,7 +565,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
     () => {
       const run = deploy({ STUB_PULL: "fail" });
 
-      expect(run.status).toBe(1);
+      expectStatus(run, 1);
       expect(run.out).toContain("ERROR: pull failed or timed out; nothing changed");
       expect(
         run.calls.some((call) =>
@@ -549,7 +581,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
     () => {
       const run = deploy({ STUB_MIGRATE_LEFTOVER: "1" });
 
-      expect(run.status).toBe(1);
+      expectStatus(run, 1);
       expect(run.calls.some((call) => call.endsWith(MIGRATE_RUN))).toBe(false);
       expect(upCalls(run)).toEqual([]);
       expect(run.out).toContain("a container named etg-migrate is left from an earlier run");
@@ -631,7 +663,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
       setState({ oldApp: false });
       const run = deploy({ STUB_UP: "fail" });
 
-      expect(run.status).toBe(1);
+      expectStatus(run, 1);
       expect(run.out).toContain("running app container: none");
       expect(run.calls.some((call) => call.includes(" docker tag "))).toBe(false);
       expect(upCalls(run)).toHaveLength(1);
@@ -647,7 +679,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
     () => {
       const run = deploy({ STUB_TARGET_IMAGE: OLD_IMAGE, STUB_UP: "fail" });
 
-      expect(run.status).toBe(1);
+      expectStatus(run, 1);
       expect(upCalls(run)).toHaveLength(1);
       expect(run.out).toContain(
         `The previous image is the same image (${OLD_IMAGE}): not rolled back`,
@@ -661,7 +693,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
     () => {
       const run = deploy({ STUB_UP: "fail", STUB_ROLLBACK_UP: "fail" });
 
-      expect(run.status).toBe(1);
+      expectStatus(run, 1);
       expect(run.calls).toContain(ROLLBACK_UP);
       expect(run.out).toContain("not recovered");
       expect(lastLine(run)).toBe(
@@ -676,7 +708,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
     () => {
       const run = deploy({ STUB_UP: "fail", STUB_PREV_HEALTH: "starting:restarting:2" });
 
-      expect(run.status).toBe(1);
+      expectStatus(run, 1);
       expect(run.out).toContain("rollback failed: the app container is restarting");
       expect(run.out).toContain("not recovered");
     },
@@ -690,7 +722,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
       writeFileSync(join(stubDir, "curl-seq"), "000\n");
       const run = deploy({ STUB_MIGRATE_SLEEP: "0.6" });
 
-      expect(run.status).toBe(0);
+      expectStatus(run, 0);
       const down = downLines(run);
       expect(down).toHaveLength(2);
       for (const line of down) {
@@ -707,7 +739,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
       writeFileSync(join(stubDir, "curl-seq"), "429\n");
       const run = deploy({ STUB_MIGRATE_SLEEP: "0.3" });
 
-      expect(run.status).toBe(0);
+      expectStatus(run, 0);
       expect(run.out).toContain("unreliable: /readyz answered 429");
     },
     TEST_TIMEOUT_MS,
@@ -733,7 +765,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
         STUB_OLD_RESTARTS: "2",
       });
 
-      expect(run.status).toBe(0);
+      expectStatus(run, 0);
       expect(run.out).toContain("never down");
     },
     TEST_TIMEOUT_MS,
@@ -745,7 +777,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
       writeFileSync(join(appDir, ".env"), "HOST_BIND_IP=\nOTHER=1\n");
       const run = deploy();
 
-      expect(run.status).toBe(1);
+      expectStatus(run, 1);
       expect(run.out).toContain("ERROR: HOST_BIND_IP in .env is missing or not an IP address");
       expect(run.calls).toEqual([]);
     },
@@ -758,7 +790,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
       () => {
         const run = deploy({ STUB_PS_HANG: "all", ETG_DEPLOY_CALL_TIMEOUT: "1" });
 
-        expect(run.status).toBe(1);
+        expectStatus(run, 1);
         expect(lastLine(run)).toBe("ERROR: docker compose ps failed or timed out; nothing changed");
         expect(
           run.calls.some((call) => / docker compose (-f \S+ )*--env-file \.env pull /.test(call)),
@@ -797,7 +829,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
           STUB_NEW_HEALTH: "starting:running:0@0.5,healthy:running:0@0.9",
         });
 
-        expect(run.status).toBe(1);
+        expectStatus(run, 1);
         expect(run.out).toContain(
           "deploy failed: not healthy and ready within 1s (Docker: healthy",
         );
@@ -830,7 +862,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
           ETG_DEPLOY_CALL_TIMEOUT: "1",
         });
 
-        expect(run.status).toBe(1);
+        expectStatus(run, 1);
         expect(run.calls).toContain("IMAGE_TAG=v1.1.0 docker rm -f etg-migrate");
         expect(lastLine(run)).toBe(
           "migration outcome unknown: it may have committed. Nothing was replaced; the running app keeps serving.",
@@ -884,7 +916,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
       // The first SIGTERM only sets the probe's own trap.
       const run = deploy(probeTrapHook(`builtin trap "builtin trap $(printf %q "$1") TERM" TERM`));
 
-      expect(run.status).toBe(0);
+      expectStatus(run, 0);
       expect(run.out).not.toContain("WARNING: the availability probe");
       expect(run.out).toContain("---- availability report");
       expect(lastLine(run)).toBe(`deployed ${REPO}:v1.1.0 (${NEW_IMAGE})`);
@@ -900,8 +932,8 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
 
       // About 5 s more than a plain run, not the run bound.
       expect(Date.now() - started).toBeLessThan(RUN_TIMEOUT_MS / 2);
-      expect(run.signal).toBeNull();
-      expect(run.status).toBe(0);
+      expect(run.signal, describeRun(run)).toBeNull();
+      expectStatus(run, 0);
       expect(run.out).toContain(
         "WARNING: the availability probe did not stop within 5 s of SIGTERM; killed it",
       );
@@ -971,7 +1003,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
         }
         const run = deploy();
 
-        expect(run.status).toBe(0);
+        expectStatus(run, 0);
         const names = Object.keys(hostLogs()).sort();
         expect(names).toHaveLength(30);
         expect(names.at(-1)).toMatch(/^\d{8}T\d{6}Z-\d+\.log$/);
@@ -1000,7 +1032,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
         const moved = "sha256:c0ffee0000000000000000000000000000000000000000000000000000000000";
         const run = deploy({ STUB_TAG_MOVES: moved });
 
-        expect(run.status).toBe(1);
+        expectStatus(run, 1);
         expect(run.calls.some((call) => call.endsWith(MIGRATE_RUN))).toBe(false);
         expect(upCalls(run)).toEqual([]);
         expect(lastLine(run)).toBe(
@@ -1030,7 +1062,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
         const other = "sha256:0e1e000000000000000000000000000000000000000000000000000000000000";
         const run = deploy({ STUB_UP: "fail", STUB_PREV_CONTAINER_IMAGE: other });
 
-        expect(run.status).toBe(1);
+        expectStatus(run, 1);
         expect(run.out).toContain(
           `rollback failed: the app container runs image ${other}, not ${OLD_IMAGE}`,
         );
@@ -1045,7 +1077,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
       () => {
         const run = deploy({ HOST_BIND_IP: "10.0.99.9" });
 
-        expect(run.status).toBe(1);
+        expectStatus(run, 1);
         expect(lastLine(run)).toBe(
           "ERROR: HOST_BIND_IP in the environment differs from the one in .env; unset it or make them agree",
         );
@@ -1059,7 +1091,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
       () => {
         const run = deploy({ HOST_BIND_IP: "10.0.88.2" });
 
-        expect(run.status).toBe(0);
+        expectStatus(run, 0);
         expect(readFileSync(join(stubDir, "up-bind-ip"), "utf-8").trim()).toBe("10.0.88.2");
       },
       TEST_TIMEOUT_MS,
@@ -1070,7 +1102,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
       () => {
         const run = deploy();
 
-        expect(run.status).toBe(0);
+        expectStatus(run, 0);
         expect(readFileSync(join(stubDir, "up-bind-ip"), "utf-8").trim()).toBe("10.0.88.2");
       },
       TEST_TIMEOUT_MS,
@@ -1082,7 +1114,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
     () => {
       const run = deploy({ STUB_CONFIG_FAIL: MAIN });
 
-      expect(run.status).toBe(1);
+      expectStatus(run, 1);
       expect(run.calls).toEqual([CONFIG]);
       expect(lastLine(run)).toContain(
         "ERROR: docker compose cannot read docker-compose.yml with .env",
@@ -1103,7 +1135,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
     () => {
       const run = deploy({ STUB_PS_WARN: "1" });
 
-      expect(run.status).toBe(0);
+      expectStatus(run, 0);
       expect(run.out).toContain("running app container aaaaaaaaaaaa");
     },
     TEST_TIMEOUT_MS,
@@ -1115,7 +1147,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
       () => {
         const run = deploy({ STUB_DB_UP: "fail" });
 
-        expect(run.status).toBe(1);
+        expectStatus(run, 1);
         expect(run.calls.some((call) => call.endsWith(MIGRATE_RUN))).toBe(false);
         expect(upCalls(run)).toEqual([]);
         expect(run.out).toContain("migration: not run: the database did not start");
@@ -1131,7 +1163,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
       () => {
         const run = deploy({ STUB_DB_UP: "hang" });
 
-        expect(run.status).toBe(1);
+        expectStatus(run, 1);
         expect(run.calls.some((call) => call.endsWith(MIGRATE_RUN))).toBe(false);
         expect(lastLine(run)).toBe(
           "the database was not healthy within 1s. Nothing was replaced; the running app keeps serving.",
@@ -1164,7 +1196,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
         writeFileSync(candidatePath(), "services: {} # next\n");
         const run = deploy();
 
-        expect(run.status).toBe(0);
+        expectStatus(run, 0);
         expect(run.calls).toContain(
           `IMAGE_TAG=v1.1.0 docker compose -f ${CANDIDATE} --env-file .env pull app`,
         );
@@ -1188,7 +1220,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
         writeFileSync(candidatePath(), "services: {} # release A\n");
         const first = deploy({ STUB_MIGRATE: "fail" });
 
-        expect(first.status).toBe(1);
+        expectStatus(first, 1);
         expect(upCalls(first)).toEqual([]);
         expect(mainText()).toBe(RUNNING_COMPOSE);
         expect(existsSync(candidatePath())).toBe(false);
@@ -1220,7 +1252,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
         writeFileSync(candidatePath(), "services: {} # next\n");
         const run = deploy({ STUB_CONFIG_FAIL: file });
 
-        expect(run.status).toBe(1);
+        expectStatus(run, 1);
         expect(lastLine(run)).toContain(message);
         expect(run.calls.every((call) => call.endsWith(" config -q"))).toBe(true);
         expect(mainText()).toBe(RUNNING_COMPOSE);
@@ -1238,7 +1270,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
         writeFileSync(candidatePath(), "services: {} # first\n");
         const run = deploy();
 
-        expect(run.status).toBe(0);
+        expectStatus(run, 0);
         expect(mainText()).toBe("services: {} # first\n");
       },
       TEST_TIMEOUT_MS,
@@ -1297,7 +1329,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
         prepare();
         const run = deploy(extra);
 
-        expect(run.status).toBe(1);
+        expectStatus(run, 1);
         expect(lastLine(run)).toContain(message);
         expect(run.calls).toEqual([]);
       },
@@ -1344,7 +1376,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
         chmodSync(old, 0o644);
         const run = deploy({ STUB_MIGRATE: "fail" }, { umask: "022" });
 
-        expect(run.status).toBe(1);
+        expectStatus(run, 1);
         expect(mode(dir)).toBe(0o700);
         const files = filesUnder(dir);
         // The old file, this run's log and the kept migration output at least.
@@ -1369,7 +1401,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
         chmodSync(join(binDir, "env"), 0o755);
         const run = deploy();
 
-        expect(run.status).toBe(1);
+        expectStatus(run, 1);
         expect(lastLine(run)).toBe(
           "ERROR: GNU coreutils 8.31 or later is required (env --ignore-signal). Nothing changed.",
         );
