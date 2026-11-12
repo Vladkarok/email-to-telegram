@@ -360,9 +360,39 @@ start_probe() {
   say "availability probe: GET $PROBE_URL every ${POLL_INTERVAL}s, 1-s timeout"
 }
 
+# probe_running : the probe has not ended. This asks the job table, not
+# kill -0: bash reaps the probe as soon as it ends, and its PID can then be
+# reused.
+probe_running() {
+  local pid
+  for pid in $(jobs -rp); do
+    [[ $pid != "$PROBE_PID" ]] || return 0
+  done
+  return 1
+}
+
+# Bounded: on_exit ignores signals while it waits here, and the probe runs for
+# as long as this process does, so a probe that missed its SIGTERM would hold
+# the run forever. SIGTERM goes again each second; after 5 s the probe and
+# its curl or sleep in flight are killed.
 stop_probe() {
   [[ -n $PROBE_PID ]] || return 0
+  local i pids
   kill -TERM "$PROBE_PID" 2>/dev/null
+  for i in {1..50}; do
+    probe_running || break
+    ((i % 10 != 0)) || kill -TERM "$PROBE_PID" 2>/dev/null
+    sleep_ms 100
+  done
+  if probe_running; then
+    say "WARNING: the availability probe did not stop within 5 s of SIGTERM; killed it"
+    # Stopped, it starts nothing new, and its children stay its own.
+    kill -STOP "$PROBE_PID" 2>/dev/null
+    pids=$(ps -o pid= --ppid "$PROBE_PID" 2>/dev/null)
+    # shellcheck disable=SC2086 # one PID per word
+    [[ -z $pids ]] || kill -KILL $pids 2>/dev/null
+    kill -KILL "$PROBE_PID" 2>/dev/null
+  fi
   wait "$PROBE_PID" 2>/dev/null
   PROBE_PID=""
 }
