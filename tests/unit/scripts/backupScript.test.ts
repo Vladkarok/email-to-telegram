@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { type ChildProcess, type SpawnSyncReturns, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   chmodSync,
@@ -134,6 +134,22 @@ function runBackup(extra: Record<string, string>) {
     // child lives on; afterEach reports and kills it.
     killSignal: "SIGKILL",
   });
+}
+
+const OUTPUT_TAIL_CHARS = 2_000;
+
+// How a runBackup() run ended, for a failed exit assertion: a status of null
+// alone does not say which signal or spawn error (ENOBUFS, ETIMEDOUT) ended it.
+function describeExit(result: SpawnSyncReturns<string>): string {
+  const error = result.error as NodeJS.ErrnoException | undefined;
+  const stdout = result.stdout ?? "";
+  const stderr = result.stderr ?? "";
+  return [
+    `status ${result.status}, signal ${result.signal}, spawn error ${error ? `${error.code ?? "no code"}: ${error.message}` : "none"}`,
+    `stdout ${Buffer.byteLength(stdout)} bytes, stderr ${Buffer.byteLength(stderr)} bytes`,
+    `output tail (last ${OUTPUT_TAIL_CHARS} chars):`,
+    `${stdout}${stderr}`.slice(-OUTPUT_TAIL_CHARS),
+  ].join("\n");
 }
 
 interface RunExit {
@@ -314,7 +330,7 @@ describe.skipIf(process.platform === "win32")(`scripts/backup.sh under ${SHELL_N
     const result = runBackup({ BACKUP_ARCHIVE_ENCRYPTION: "storage-key" });
 
     expect(result.stderr).toBe("");
-    expect(result.status).toBe(0);
+    expect(result.status, describeExit(result)).toBe(0);
     const files = listOut();
     expect(files).toHaveLength(2);
     expect(files[0]).toMatch(new RegExp(`^backup-${DATE_RE}\\.meta$`));
@@ -331,7 +347,7 @@ describe.skipIf(process.platform === "win32")(`scripts/backup.sh under ${SHELL_N
     const result = runBackup({ BACKUP_ARCHIVE_ENCRYPTION: "off" });
 
     expect(result.stderr).toBe("");
-    expect(result.status).toBe(0);
+    expect(result.status, describeExit(result)).toBe(0);
     const files = listOut();
     expect(files).toHaveLength(2);
     expect(files[0]).toMatch(new RegExp(`^backup-${DATE_RE}\\.meta$`));
@@ -342,23 +358,23 @@ describe.skipIf(process.platform === "win32")(`scripts/backup.sh under ${SHELL_N
   it("removes every temp file when the configuration is rejected", () => {
     const result = runBackup({ BACKUP_ARCHIVE_ENCRYPTION: "bogus" });
 
-    expect(result.status).toBe(1);
+    expect(result.status, describeExit(result)).toBe(1);
     expect(listOut()).toEqual([]);
   });
 
   it("removes every temp file when encryption fails", () => {
     const result = runBackup({ BACKUP_ARCHIVE_ENCRYPTION: "storage-key", STUB_ENCRYPT_FAIL: "1" });
 
-    expect(result.signal).toBeNull();
-    expect(result.status).not.toBe(0);
+    expect(result.signal, describeExit(result)).toBeNull();
+    expect(result.status, describeExit(result)).not.toBe(0);
     expect(listOut()).toEqual([]);
   });
 
   it("removes every temp file when pg_dump fails", () => {
     const result = runBackup({ BACKUP_ARCHIVE_ENCRYPTION: "storage-key", STUB_PG_FAIL: "1" });
 
-    expect(result.signal).toBeNull();
-    expect(result.status).not.toBe(0);
+    expect(result.signal, describeExit(result)).toBeNull();
+    expect(result.status, describeExit(result)).not.toBe(0);
     expect(listOut()).toEqual([]);
   });
 
@@ -408,7 +424,7 @@ describe.skipIf(process.platform === "win32")(`scripts/backup.sh under ${SHELL_N
         // A same-day run that finishes while the first is still encrypting.
         const fast = runBackup({ BACKUP_ARCHIVE_ENCRYPTION: "off" });
         expect(fast.stderr).toBe("");
-        expect(fast.status).toBe(0);
+        expect(fast.status, describeExit(fast)).toBe(0);
         expect(listOut()).toEqual(expect.arrayContaining(slowTemps));
 
         release(slow);
@@ -461,7 +477,7 @@ describe.skipIf(process.platform === "win32")(`scripts/backup.sh under ${SHELL_N
     it("are swept once past retention", () => {
       const result = runBackup({ BACKUP_ARCHIVE_ENCRYPTION: "storage-key" });
 
-      expect(result.status).toBe(0);
+      expect(result.status, describeExit(result)).toBe(0);
       const files = listOut();
       for (const name of stale) expect(files).not.toContain(name);
       for (const name of fresh) expect(files).toContain(name);
@@ -471,8 +487,8 @@ describe.skipIf(process.platform === "win32")(`scripts/backup.sh under ${SHELL_N
     it("are swept even when the run itself fails", () => {
       const result = runBackup({ BACKUP_ARCHIVE_ENCRYPTION: "storage-key", STUB_PG_FAIL: "1" });
 
-      expect(result.signal).toBeNull();
-      expect(result.status).not.toBe(0);
+      expect(result.signal, describeExit(result)).toBeNull();
+      expect(result.status, describeExit(result)).not.toBe(0);
       expect(listOut()).toEqual([...fresh].sort());
     });
   });
