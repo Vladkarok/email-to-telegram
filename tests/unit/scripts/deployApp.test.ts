@@ -1312,7 +1312,11 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
       const child = spawn("bash", [join(appDir, "deploy-app.sh")], {
         env: scriptEnv({ STUB_MIGRATE_SLEEP: "1", ETG_DEPLOY_MIGRATE_TIMEOUT: "10" }),
         stdio: ["ignore", "pipe", "pipe"],
+        // Its own process group: the cleanup below reaches the deploy too, not
+        // only the supervising process the signal goes to.
+        detached: true,
       });
+      const pid = child.pid ?? 0;
       let out = "";
       child.stdout.setEncoding("utf-8").on("data", (chunk: string) => (out += chunk));
       child.stderr.setEncoding("utf-8").on("data", (chunk: string) => (out += chunk));
@@ -1337,7 +1341,7 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
         );
       } finally {
         if (child.exitCode === null) {
-          child.kill("SIGKILL");
+          process.kill(-pid, "SIGKILL");
           await exit;
         }
       }
@@ -1345,17 +1349,23 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
     TEST_TIMEOUT_MS,
   );
 
+  // Sent to the whole process group, SIGTERM and SIGHUP reach the deploy
+  // twice: directly and passed on by the supervising process.
   it.each([
-    ["SIGTERM", 143],
-    ["SIGINT", 130],
-    ["SIGHUP", 129],
+    ["SIGTERM", 143, "the script's PID", false],
+    ["SIGINT", 130, "the script's PID", false],
+    ["SIGHUP", 129, "the script's PID", false],
+    ["SIGTERM", 143, "the whole process group", true],
+    ["SIGHUP", 129, "the whole process group", true],
   ] as const)(
-    "stops the probe and does not roll back on %s",
-    async (signal, exitCode) => {
+    "stops the probe and does not roll back on %s to %s",
+    async (signal, exitCode, _target, group) => {
       const child = spawn("bash", [join(appDir, "deploy-app.sh")], {
         env: scriptEnv({ STUB_NEW_HEALTH: "starting:running:0", ETG_DEPLOY_HEALTH_TIMEOUT: "20" }),
         stdio: ["ignore", "pipe", "pipe"],
+        detached: true,
       });
+      const pid = child.pid ?? 0;
       let out = "";
       child.stdout.setEncoding("utf-8").on("data", (chunk: string) => (out += chunk));
       child.stderr.setEncoding("utf-8").on("data", (chunk: string) => (out += chunk));
@@ -1368,16 +1378,86 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
           if (Date.now() > deadline) throw new Error(`the health wait never started: ${out}`);
           await new Promise((resolveSleep) => setTimeout(resolveSleep, 20));
         }
-        child.kill(signal);
+        process.kill(group ? -pid : pid, signal);
         expect(await exit).toBe(exitCode);
         expect(calls()).not.toContain(ROLLBACK_UP);
         expect(out).toContain(
           `interrupted by ${signal} during the replace stage: no automatic rollback`,
         );
+        expect(out.split("---- availability report")).toHaveLength(2);
+        expect(out.split("interrupted by SIG")).toHaveLength(2);
+      } finally {
+        if (child.exitCode === null) {
+          process.kill(-pid, "SIGKILL");
+          await exit;
+        }
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  // Bash drops a trapped SIGINT that arrives after a command substitution's
+  // output has ended but before bash has reaped its process, when that
+  // process exits normally. Under CPU load any $(...) can leave that window
+  // open long enough; here the first health-wait inspect keeps it open: its
+  // $(dk ...) closes its output, then waits on a timeout(1), which has its
+  // own process group, so not even a Ctrl-C to the whole group ends it.
+  it.each([
+    ["to the script's PID", false],
+    ["to the whole process group", true],
+  ] as const)(
+    "acts on a SIGINT %s that arrives while a command substitution is being reaped",
+    async (_target, group) => {
+      const hook = join(root, "bash-env");
+      writeFileSync(
+        hook,
+        [
+          "timeout() {",
+          '  if [[ ${phase:-} == replace && " $* " == *" inspect --format {{if"* && ! -e $STUB_DIR/lingering ]]; then',
+          '    command timeout "$@"',
+          "    local rc=$?",
+          "    exec >&-",
+          '    : >"$STUB_DIR/lingering"',
+          "    command timeout 5 sleep 1 </dev/null",
+          "    return $rc",
+          "  fi",
+          '  command timeout "$@"',
+          "}",
+          "",
+        ].join("\n"),
+      );
+      const child = spawn("bash", [join(appDir, "deploy-app.sh")], {
+        env: scriptEnv({
+          BASH_ENV: hook,
+          STUB_NEW_HEALTH: "starting:running:0",
+          ETG_DEPLOY_HEALTH_TIMEOUT: "20",
+        }),
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: true,
+      });
+      const pid = child.pid ?? 0;
+      let out = "";
+      child.stdout.setEncoding("utf-8").on("data", (chunk: string) => (out += chunk));
+      child.stderr.setEncoding("utf-8").on("data", (chunk: string) => (out += chunk));
+      const exit = new Promise<number | null>((resolveExit) => {
+        child.on("close", (code) => resolveExit(code));
+      });
+      try {
+        const deadline = Date.now() + 10_000;
+        while (!existsSync(join(stubDir, "lingering"))) {
+          if (Date.now() > deadline) throw new Error(`the health wait never started: ${out}`);
+          await new Promise((resolveSleep) => setTimeout(resolveSleep, 20));
+        }
+        process.kill(group ? -pid : pid, "SIGINT");
+        expect(await exit).toBe(130);
+        expect(calls()).not.toContain(ROLLBACK_UP);
+        expect(out).toContain(
+          "interrupted by SIGINT during the replace stage: no automatic rollback",
+        );
         expect(out).toContain("---- availability report");
       } finally {
         if (child.exitCode === null) {
-          child.kill("SIGKILL");
+          process.kill(-pid, "SIGKILL");
           await exit;
         }
       }
