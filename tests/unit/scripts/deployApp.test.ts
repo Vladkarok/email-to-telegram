@@ -231,6 +231,7 @@ let appDir: string;
 let stubDir: string;
 let binDir: string;
 let runId: string;
+let lastError = "";
 
 function scriptEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
   return {
@@ -286,6 +287,7 @@ function deploy(
     // it leaves behind, afterEach reports and kills.
     killSignal: "SIGKILL",
   });
+  lastError = result.error ? String(result.error) : "";
   return {
     status: result.status,
     signal: result.signal,
@@ -868,7 +870,10 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
     writeFileSync(
       hook,
       [
+        'kill() { printf "%s pid=%s: kill %s\\n" "$EPOCHREALTIME" "$BASHPID" "$*" >>"$STUB_DIR/trace"; builtin kill "$@"; }',
+        'printf "%s pid=%s start %s\\n" "$EPOCHREALTIME" "$BASHPID" "$0" >>"$STUB_DIR/trace"',
         "trap() {",
+        '  printf "%s pid=%s: trap %q\\n" "$EPOCHREALTIME" "$BASHPID" "$*" >>"$STUB_DIR/trace"',
         `  if [[ $# == 2 && $2 == TERM && $1 == *"jobs -p"* ]]; then ${replacement}; return 0; fi`,
         '  builtin trap "$@"',
         "}",
@@ -878,12 +883,31 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
     return { BASH_ENV: hook };
   }
 
-  it(
-    "stops a probe that missed its first SIGTERM with the next one",
+  it.for(Array.from({ length: Number(process.env.REPS ?? 150) }, (_, i) => i))(
+    "stops a probe that missed its first SIGTERM with the next one %i",
     () => {
       // The first SIGTERM only sets the probe's own trap.
       const run = deploy(probeTrapHook(`builtin trap "builtin trap $(printf %q "$1") TERM" TERM`));
 
+      if (run.status !== 0) {
+        const states = markedProcesses().map(({ pid, cmdline }) => {
+          let stat = "?";
+          let wchan = "?";
+          try {
+            stat = readFileSync(`/proc/${pid}/stat`, "utf-8").split(") ")[1].slice(0, 1);
+            wchan = readFileSync(`/proc/${pid}/wchan`, "utf-8");
+          } catch {
+            // gone
+          }
+          return `${pid} ${stat} ${wchan} ${cmdline}`;
+        });
+        const trace = existsSync(join(stubDir, "trace"))
+          ? readFileSync(join(stubDir, "trace"), "utf-8")
+          : "";
+        console.log(
+          `DIAG signal=${run.signal} status=${run.status} error=${lastError} outlen=${run.out.length}\nSURV:\n${states.join("\n")}\nTRACE (last 80):\n${trace.split("\n").slice(-80).join("\n")}\nOUT head:\n${run.out.slice(0, 3000)}\nOUT tail:\n${run.out.slice(-3000)}\nDIAG END`,
+        );
+      }
       expect(run.status).toBe(0);
       expect(run.out).not.toContain("WARNING: the availability probe");
       expect(run.out).toContain("---- availability report");

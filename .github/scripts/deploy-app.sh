@@ -101,6 +101,7 @@ if [[ ${ETG_DEPLOY_SUPERVISOR:-} != "$PPID" ]]; then
     trapped=""
     rc=0
     wait "$child" || rc=$?
+    printf '%s pid=%s: supervisor wait rc=%s trapped=%s\n' "$EPOCHREALTIME" "$$" "$rc" "$trapped" >>"$STUB_DIR/trace"
     [[ -n $trapped ]] || break
   done
   trap '' INT TERM HUP
