@@ -267,14 +267,24 @@ function calls(): string[] {
 }
 
 // umask: run the script from a shell with this umask instead of the test's.
-function deploy(extra: Record<string, string> = {}, { umask }: { umask?: string } = {}): Run {
+// timeoutMs: the run's bound, RUN_TIMEOUT_MS unless the case says otherwise.
+function deploy(
+  extra: Record<string, string> = {},
+  { umask, timeoutMs = RUN_TIMEOUT_MS }: { umask?: string; timeoutMs?: number } = {},
+): Run {
   const script = join(appDir, "deploy-app.sh");
   const args = umask ? ["-c", `umask ${umask} && exec bash "$0"`, script] : [script];
   const result = spawnSync("bash", args, {
     env: scriptEnv(extra),
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "pipe"],
-    timeout: RUN_TIMEOUT_MS,
+    timeout: timeoutMs,
+    // spawnSync sends this once at the bound and then waits for the process
+    // to exit, with the worker blocked, so no test or hook timeout can fire.
+    // The script traps SIGTERM and ignores it from on_exit on: a run stuck
+    // there would hold the whole test run. SIGKILL always ends it; whatever
+    // it leaves behind, afterEach reports and kills.
+    killSignal: "SIGKILL",
   });
   return {
     status: result.status,
@@ -288,19 +298,40 @@ function deploy(extra: Record<string, string> = {}, { umask }: { umask?: string 
 // Processes that carry this test's marker in their environment: the script,
 // its probe, the stubs and anything they started, as "PID: command line".
 function survivors(): string[] {
-  const found: string[] = [];
+  return markedProcesses().map(({ pid, cmdline }) => `${pid}: ${cmdline}`);
+}
+
+function markedProcesses(): { pid: number; cmdline: string }[] {
+  const found: { pid: number; cmdline: string }[] = [];
   for (const pid of readdirSync("/proc")) {
     if (!/^\d+$/.test(pid)) continue;
     try {
       if (readFileSync(`/proc/${pid}/environ`, "utf-8").includes(`ETG_TEST_RUN=${runId}`)) {
         const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf-8").split("\0").join(" ");
-        found.push(`${pid}: ${cmdline.trim()}`);
+        found.push({ pid: Number(pid), cmdline: cmdline.trim() });
       }
     } catch {
       // Gone, or not ours.
     }
   }
   return found;
+}
+
+// SIGKILL every process that carries this test's marker, so one case's
+// leftovers cannot run on into the next ones or outlive the test run. Again
+// for anything started between a scan and its kills, a few times at most.
+function killSurvivors(): void {
+  for (let round = 0; round < 5; round++) {
+    const found = markedProcesses();
+    if (found.length === 0) return;
+    for (const { pid } of found) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // Gone already.
+      }
+    }
+  }
 }
 
 // IMAGE_TAG, file and first line of each compose file the app `up` calls got.
@@ -412,8 +443,10 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
   });
 
   afterEach(() => {
-    expect(survivors()).toEqual([]);
+    const left = survivors();
+    killSurvivors();
     rmSync(root, { recursive: true, force: true });
+    expect(left).toEqual([]);
   });
 
   it(
@@ -806,6 +839,83 @@ describe.skipIf(process.platform !== "linux")(".github/scripts/deploy-app.sh", (
       TEST_TIMEOUT_MS,
     );
   });
+
+  // The harness itself: a run that ignores SIGTERM, as the script does from
+  // on_exit on, must still end at its bound. Otherwise spawnSync waits for it
+  // with the worker blocked and the whole test run never finishes.
+  it(
+    "ends a run that ignores SIGTERM at the run bound",
+    () => {
+      const hook = join(root, "bash-env");
+      writeFileSync(hook, "trap '' TERM\ncommand sleep 20\nexit 0\n");
+      const started = Date.now();
+      const run = deploy({ BASH_ENV: hook }, { timeoutMs: 1_000 });
+
+      expect(Date.now() - started).toBeLessThan(10_000);
+      expect(run.signal).toBe("SIGKILL");
+      // Its sleep is still running; this case expects that.
+      expect(survivors()).toEqual([expect.stringMatching(/^\d+: sleep 20$/)]);
+      killSurvivors();
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  // on_exit ignores signals while it stops the probe, and the probe runs for
+  // as long as the script does: a probe that missed its SIGTERM would hold
+  // the run forever. A BASH_ENV hook replaces the probe's TERM trap.
+  function probeTrapHook(replacement: string): Record<string, string> {
+    const hook = join(root, "bash-env");
+    writeFileSync(
+      hook,
+      [
+        "trap() {",
+        `  if [[ $# == 2 && $2 == TERM && $1 == *"jobs -p"* ]]; then ${replacement}; return 0; fi`,
+        '  builtin trap "$@"',
+        "}",
+        "",
+      ].join("\n"),
+    );
+    return { BASH_ENV: hook };
+  }
+
+  it(
+    "stops a probe that missed its first SIGTERM with the next one",
+    () => {
+      // The first SIGTERM only sets the probe's own trap.
+      const run = deploy(probeTrapHook(`builtin trap "builtin trap $(printf %q "$1") TERM" TERM`));
+
+      expect(run.status).toBe(0);
+      expect(run.out).not.toContain("WARNING: the availability probe");
+      expect(run.out).toContain("---- availability report");
+      expect(lastLine(run)).toBe(`deployed ${REPO}:v1.1.0 (${NEW_IMAGE})`);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "kills a probe that ignores SIGTERM, and its curl or sleep, and finishes the run",
+    async () => {
+      const started = Date.now();
+      const run = deploy(probeTrapHook("builtin trap '' TERM"));
+
+      // About 5 s more than a plain run, not the run bound.
+      expect(Date.now() - started).toBeLessThan(RUN_TIMEOUT_MS / 2);
+      expect(run.signal).toBeNull();
+      expect(run.status).toBe(0);
+      expect(run.out).toContain(
+        "WARNING: the availability probe did not stop within 5 s of SIGTERM; killed it",
+      );
+      expect(run.out).toContain("---- availability report");
+      expect(lastLine(run)).toBe(`deployed ${REPO}:v1.1.0 (${NEW_IMAGE})`);
+      // Killed processes can take a moment to be reaped.
+      const deadline = Date.now() + 2_000;
+      while (survivors().length > 0) {
+        if (Date.now() > deadline) throw new Error(`left running: ${survivors().join(", ")}`);
+        await new Promise((resolveSleep) => setTimeout(resolveSleep, 50));
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
 
   describe("unexpected exit and a lost session", () => {
     it(
