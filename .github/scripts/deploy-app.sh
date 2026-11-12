@@ -52,6 +52,77 @@ set -euo pipefail
 # Every file this script creates (logs, work files) is private to this user.
 umask 077
 
+# ---------------------------------------------------------------- signals
+# Bash can drop a trapped SIGINT: one that arrives after a command
+# substitution's output has ended, but before bash has reaped that
+# substitution's process, is discarded when the process exits normally, and
+# the trap never runs (bash 5.2 and 5.3). That holds for a Ctrl-C to the
+# whole process group too when the substitution waits on timeout(1), which
+# has its own group, as $(dk ...) and $(dc ...) do. The window is short, but
+# CPU load can stretch it, and this script runs $(...) throughout. So the
+# process that is started only supervises: it runs the deploy as a
+# background child and does nothing but `wait`, which a trapped signal
+# reliably interrupts. A background child ignores SIGINT, and so do the
+# commands it runs, so a Ctrl-C to the group does not reach the deploy; the
+# supervisor passes a SIGINT on as SIGUSR1, and SIGTERM and SIGHUP as they
+# are (sent to the whole group, the deploy gets those twice and acts on the
+# first). Its exit status is the deploy's.
+if [[ ${ETG_DEPLOY_SUPERVISOR:-} != "$PPID" ]]; then
+  if [[ ! -f ${BASH_SOURCE[0]:-} ]]; then
+    echo "ERROR: run this script from its file (bash deploy-app.sh), not from standard input" >&2
+    exit 1
+  fi
+  child=""
+  pending=""
+  trapped=""
+  # pass_on SIGNAL : send SIGNAL to the deploy, or as soon as it is started.
+  pass_on() {
+    trapped=1
+    if [[ -n $child ]]; then
+      kill -s "$1" "$child" 2>/dev/null || true
+    else
+      pending=$1
+    fi
+  }
+  trap 'pass_on USR1' INT
+  trap 'pass_on TERM' TERM
+  trap 'pass_on HUP' HUP
+  # bash -x or -v on the command line traces the deploy, not just this.
+  opts=()
+  [[ $- != *x* ]] || opts+=(-x)
+  [[ $- != *v* ]] || opts+=(-v)
+  ETG_DEPLOY_SUPERVISOR=$$ "$BASH" "${opts[@]}" "${BASH_SOURCE[0]}" "$@" </dev/null &
+  child=$!
+  [[ -z $pending ]] || kill -s "$pending" "$child" 2>/dev/null || true
+  # A trap ends a wait early, so wait again until one ends with no trap in
+  # between. bash keeps the deploy's status: a wait after it has ended, even
+  # after another wait reported it, returns that status.
+  while :; do
+    trapped=""
+    rc=0
+    wait "$child" || rc=$?
+    [[ -n $trapped ]] || break
+  done
+  trap '' INT TERM HUP
+  # Killed by SIGUSR1 before its traps were set: that was a SIGINT.
+  ((rc != 138)) || rc=130
+  exit "$rc"
+fi
+unset ETG_DEPLOY_SUPERVISOR
+
+# interrupt NAME STATUS : the first signal ends the run; a second copy of it
+# (one sent to the whole group arrives twice, see above) changes nothing.
+interrupted=""
+interrupt() {
+  [[ -z $interrupted ]] || return 0
+  interrupted=$1
+  exit "$2"
+}
+trap 'interrupt HUP 129' HUP
+# The supervisor's SIGINT; this process ignores SIGINT itself.
+trap 'interrupt INT 130' USR1
+trap 'interrupt TERM 143' TERM
+
 readonly IMAGE_REPO=ghcr.io/vladkarok/email-to-telegram
 readonly PREVIOUS_TAG=deploy-previous
 readonly MIGRATE_CONTAINER=etg-migrate
@@ -531,7 +602,6 @@ rollback() {
 # --------------------------------------------------------------- lifecycle
 
 phase=prepare
-interrupted=""
 final_message=""
 WORK_DIR=""
 LOG_DIR=""
@@ -572,9 +642,9 @@ drop_candidate() {
 
 on_exit() {
   local rc=$? note
+  trap '' HUP INT TERM USR1 PIPE
   set +e
   trap - EXIT
-  trap '' HUP INT TERM PIPE
   if [[ -n $interrupted ]]; then
     # Stop the probe first: no rollback follows.
     stop_probe
@@ -625,10 +695,8 @@ fail() {
   exit 1
 }
 
+# The HUP, USR1 and TERM traps are set at the top.
 trap on_exit EXIT
-trap 'interrupted=HUP; exit 129' HUP
-trap 'interrupted=INT; exit 130' INT
-trap 'interrupted=TERM; exit 143' TERM
 trap 'say "failed at line $LINENO: $BASH_COMMAND"' ERR
 
 # -------------------------------------------------------------------- main
@@ -646,10 +714,10 @@ env --ignore-signal=INT true </dev/null >/dev/null 2>&1 ||
 # A host-local copy of all output, private to this user (umask 077; the
 # chmods fix a directory and files from before that); the newest LOG_KEEP
 # files are kept. tee -p goes on writing the file after the job's side of the
-# pipe is gone, and it ignores the signals this script traps (a Ctrl-C
-# reaches the whole process group), so it ends only when the script's output
-# does. (`trap ''` in the subshell does not hold for SIGINT across the exec;
-# GNU env's --ignore-signal does.)
+# pipe is gone, and it ignores the signals a whole process group can get
+# (HUP, TERM; INT is ignored here already), so it ends only when the
+# script's output does. (`trap ''` in the subshell does not hold for SIGINT
+# across the exec; GNU env's --ignore-signal does.)
 printf -v RUN_ID '%(%Y%m%dT%H%M%SZ)T-%s' -1 "$$"
 if mkdir -p deploy-logs && chmod 700 deploy-logs && : >>"deploy-logs/$RUN_ID.log"; then
   LOG_DIR=$PWD/deploy-logs
