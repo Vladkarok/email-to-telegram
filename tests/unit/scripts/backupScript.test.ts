@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
@@ -98,6 +99,7 @@ if (ready && release) {
 `;
 
 let appletDir: string | undefined;
+let runId: string;
 let root: string;
 let script: string;
 let outDir: string;
@@ -111,6 +113,8 @@ function scriptEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
     DATABASE_URL: "postgres://user:secret@localhost:5432/db",
     STORAGE_ENCRYPTION_MODE: "local-v1",
     MASTER_ENCRYPTION_KEY: "test-key",
+    // Inherited by everything the script starts, so afterEach can find it.
+    ETG_TEST_RUN: runId,
     ...extra,
   };
 }
@@ -121,6 +125,14 @@ function runBackup(extra: Record<string, string>) {
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 20_000,
+    // spawnSync sends this to the shell alone at the bound and then waits for
+    // it to exit, with the worker blocked. The script traps TERM, and the shell
+    // runs that trap only after its current command returns, so a hung pg_dump,
+    // gzip or node would hold the whole test run. SIGKILL ends the shell at the
+    // bound; the EXIT trap does not run, so the temp files stay and the case
+    // fails instead of passing on the cleanup a trap would have done. The hung
+    // child lives on; afterEach reports and kills it.
+    killSignal: "SIGKILL",
   });
 }
 
@@ -214,6 +226,42 @@ async function settle(run: BlockedRun): Promise<void> {
   }
 }
 
+// Processes that carry this test's marker in their environment, as
+// "PID: command line". Empty where there is no /proc to scan.
+function markedProcesses(): { pid: number; cmdline: string }[] {
+  if (!existsSync("/proc")) return [];
+  const found: { pid: number; cmdline: string }[] = [];
+  for (const pid of readdirSync("/proc")) {
+    if (!/^\d+$/.test(pid)) continue;
+    try {
+      if (readFileSync(`/proc/${pid}/environ`, "utf-8").includes(`ETG_TEST_RUN=${runId}`)) {
+        const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf-8").split("\0").join(" ");
+        found.push({ pid: Number(pid), cmdline: cmdline.trim() });
+      }
+    } catch {
+      // Gone, or not ours.
+    }
+  }
+  return found;
+}
+
+// SIGKILL every process that carries this test's marker, so a run that hung
+// cannot outlive its case. Again for anything started between a scan and its
+// kills, a few times at most.
+function killSurvivors(): void {
+  for (let round = 0; round < 5; round++) {
+    const found = markedProcesses();
+    if (found.length === 0) return;
+    for (const { pid } of found) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // Gone already.
+      }
+    }
+  }
+}
+
 function listOut(): string[] {
   return readdirSync(outDir).sort();
 }
@@ -241,6 +289,7 @@ describe.skipIf(process.platform === "win32")(`scripts/backup.sh under ${SHELL_N
   });
 
   beforeEach(() => {
+    runId = randomUUID();
     root = mkdtempSync(join(tmpdir(), "email-to-telegram-backup-sh-"));
     mkdirSync(join(root, "scripts"));
     mkdirSync(join(root, "dist"));
@@ -255,7 +304,10 @@ describe.skipIf(process.platform === "win32")(`scripts/backup.sh under ${SHELL_N
   });
 
   afterEach(() => {
+    const left = markedProcesses().map(({ pid, cmdline }) => `${pid}: ${cmdline}`);
+    killSurvivors();
     rmSync(root, { recursive: true, force: true });
+    expect(left).toEqual([]);
   });
 
   it("leaves only the encrypted dump and its metadata after a storage-key run", () => {
@@ -297,6 +349,7 @@ describe.skipIf(process.platform === "win32")(`scripts/backup.sh under ${SHELL_N
   it("removes every temp file when encryption fails", () => {
     const result = runBackup({ BACKUP_ARCHIVE_ENCRYPTION: "storage-key", STUB_ENCRYPT_FAIL: "1" });
 
+    expect(result.signal).toBeNull();
     expect(result.status).not.toBe(0);
     expect(listOut()).toEqual([]);
   });
@@ -304,6 +357,7 @@ describe.skipIf(process.platform === "win32")(`scripts/backup.sh under ${SHELL_N
   it("removes every temp file when pg_dump fails", () => {
     const result = runBackup({ BACKUP_ARCHIVE_ENCRYPTION: "storage-key", STUB_PG_FAIL: "1" });
 
+    expect(result.signal).toBeNull();
     expect(result.status).not.toBe(0);
     expect(listOut()).toEqual([]);
   });
@@ -417,6 +471,7 @@ describe.skipIf(process.platform === "win32")(`scripts/backup.sh under ${SHELL_N
     it("are swept even when the run itself fails", () => {
       const result = runBackup({ BACKUP_ARCHIVE_ENCRYPTION: "storage-key", STUB_PG_FAIL: "1" });
 
+      expect(result.signal).toBeNull();
       expect(result.status).not.toBe(0);
       expect(listOut()).toEqual([...fresh].sort());
     });
