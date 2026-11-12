@@ -39,6 +39,9 @@ jobs:
     name: Build and push :main image
     if: github.repository == 'Vladkarok/email-to-telegram'
     runs-on: ubuntu-latest
+    # Recent builds take 1-2 minutes with no layer cache; the bound leaves room
+    # for a slow registry without the 6-hour default.
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write

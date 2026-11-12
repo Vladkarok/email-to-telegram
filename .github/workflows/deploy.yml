@@ -27,6 +27,8 @@ jobs:
     name: Resolve release tag
     if: github.repository == 'Vladkarok/email-to-telegram'
     runs-on: ubuntu-latest
+    # A git fetch and a few checks; recent runs take under 10 seconds.
+    timeout-minutes: 10
     outputs:
       release_tag: ${{ steps.resolve.outputs.release_tag }}
       release_sha: ${{ steps.resolve.outputs.release_sha }}
@@ -78,6 +80,9 @@ jobs:
     name: Build and push Docker image
     if: github.repository == 'Vladkarok/email-to-telegram' && github.event_name == 'push'
     runs-on: ubuntu-latest
+    # Recent builds take 1-2 minutes with no layer cache; the bound leaves room
+    # for a slow registry without the 6-hour default.
+    timeout-minutes: 30
     needs: resolve-release
     permissions:
       contents: read
