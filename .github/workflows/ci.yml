@@ -20,7 +20,11 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16-alpine
+        # Pinned to the multi-arch index digest; nothing bumps it
+        # automatically (Dependabot's docker ecosystem does not read
+        # workflow files). Re-resolve with
+        # `docker buildx imagetools inspect postgres:16-alpine`.
+        image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
         env:
           POSTGRES_USER: app
           POSTGRES_PASSWORD: test
