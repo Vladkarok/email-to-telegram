@@ -65,7 +65,7 @@ jobs:
           echo "::error::Deploy Monitoring Agent runs only from main, not ${GITHUB_REF}."
           exit 1
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install yamllint
         run: pip install --user yamllint
@@ -110,7 +110,7 @@ jobs:
       AGENT_BIND_IP: 10.0.88.3
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Validate secrets and render the payload
         env:
@@ -163,7 +163,7 @@ jobs:
       LOKI_PUSH_ADDR: 10.0.88.3:3101
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Validate secrets and render the payload
         env:
