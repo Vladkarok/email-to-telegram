@@ -42,6 +42,17 @@ type AdminConfig = Pick<
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+const INT64_MIN = -(2n ** 63n);
+const INT64_MAX = 2n ** 63n - 1n;
+
+// users.id is a Postgres bigint: a longer number would fail in the driver
+// with a bare 500 instead of a 400 or an empty result.
+function parseUserId(raw: string): bigint | null {
+  if (!/^-?\d+$/.test(raw)) return null;
+  const id = BigInt(raw);
+  return id >= INT64_MIN && id <= INT64_MAX ? id : null;
+}
+
 export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Promise<void> {
   if (!config.adminEnabled || !config.adminSecret) return;
 
@@ -128,14 +139,21 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
     const query = rawQuery.slice(0, 64);
 
     let results: UserSearchResult[];
-    if (query) {
+    const isNumeric = /^-?\d+$/.test(query);
+    const numericId = isNumeric ? parseUserId(query) : null;
+    if (isNumeric && numericId === null) {
+      // No user can have an id outside bigint. Not a username search either:
+      // numeric queries have always meant "by id".
+      results = [];
+    } else if (query) {
       const db = getDb();
-      const isNumeric = /^-?\d+$/.test(query);
       const escapedQuery = query.replace(/[\\%_]/g, (c) => `\\${c}`);
       const rows = await db
         .select()
         .from(users)
-        .where(isNumeric ? eq(users.id, BigInt(query)) : ilike(users.username, `%${escapedQuery}%`))
+        .where(
+          numericId !== null ? eq(users.id, numericId) : ilike(users.username, `%${escapedQuery}%`),
+        )
         .limit(50);
 
       results = rows.map((u) => ({
@@ -165,9 +183,9 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
     { preHandler: guard },
     async (req, reply) => {
       const csrfToken = req.session.admin?.csrfToken ?? "";
-      const userIdRaw = req.params.id;
+      const userId = parseUserId(req.params.id);
 
-      if (!/^-?\d+$/.test(userIdRaw)) {
+      if (userId === null) {
         await reply
           .status(400)
           .type("text/html")
@@ -192,7 +210,7 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         };
       }
 
-      const detail = await buildUserDetail(BigInt(userIdRaw));
+      const detail = await buildUserDetail(userId);
       if (!detail) {
         await reply.status(404).send();
         return;
@@ -211,7 +229,8 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
       const userIdRaw = req.params.id;
       const csrfToken = req.session.admin?.csrfToken ?? "";
 
-      if (!/^-?\d+$/.test(userIdRaw)) {
+      const userId = parseUserId(userIdRaw);
+      if (userId === null) {
         await reply
           .status(400)
           .type("text/html")
@@ -219,7 +238,6 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
         return;
       }
 
-      const userId = BigInt(userIdRaw);
       const body = req.body as Record<string, unknown> | undefined;
 
       const getString = (key: string): string | null => {
@@ -355,8 +373,9 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
           return;
         }
         // Operator picks a calendar day; intent is "paid through the end of
-        // this day". Storing UTC midnight would silently downgrade users up
-        // to ~24h before the grace boundary the operator chose.
+        // this day". Storing UTC midnight would list the user under Billing
+        // Attention up to ~24h early. The date is informational for an
+        // active manual plan: nothing downgrades it automatically.
         paidThroughAt = new Date(`${paidThroughRaw}T23:59:59.999Z`);
       }
 

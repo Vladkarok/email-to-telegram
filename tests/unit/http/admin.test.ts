@@ -399,6 +399,49 @@ describe("admin user search", () => {
     expect(res.body).toContain("12345");
     expect(res.body).toContain("2026-05-17");
   });
+
+  it("renders no results for a numeric query outside the bigint range without querying", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+
+    const { getDb } = await import("../../../src/db/client.js");
+    const mockSelect = vi.fn();
+    vi.mocked(getDb).mockReturnValue({ select: mockSelect } as unknown as ReturnType<typeof getDb>);
+
+    for (const q of ["9223372036854775808", "-9223372036854775809", "9".repeat(64)]) {
+      const res = await app.inject({
+        method: "GET",
+        url: `/admin/users?q=${q}`,
+        headers: { cookie },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain("No users found.");
+    }
+    expect(mockSelect).not.toHaveBeenCalled();
+    expect(mockListRecentSignups).not.toHaveBeenCalled();
+  });
+
+  it("still searches by id at the bigint boundaries", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+
+    const { getDb } = await import("../../../src/db/client.js");
+    const mockLimit = vi.fn().mockResolvedValue([]);
+    const mockSelect = vi.fn().mockReturnValue({
+      from: vi.fn().mockReturnValue({ where: vi.fn().mockReturnValue({ limit: mockLimit }) }),
+    });
+    vi.mocked(getDb).mockReturnValue({ select: mockSelect } as unknown as ReturnType<typeof getDb>);
+
+    for (const q of ["9223372036854775807", "-9223372036854775808"]) {
+      const res = await app.inject({
+        method: "GET",
+        url: `/admin/users?q=${q}`,
+        headers: { cookie },
+      });
+      expect(res.statusCode).toBe(200);
+    }
+    expect(mockLimit).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("admin user detail", () => {
@@ -453,6 +496,36 @@ describe("admin user detail", () => {
       headers: { cookie },
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  it("rejects user IDs outside the bigint range without a lookup", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    for (const id of ["99999999999999999999", "9223372036854775808", "-9223372036854775809"]) {
+      const res = await app.inject({
+        method: "GET",
+        url: `/admin/users/${id}`,
+        headers: { cookie },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.body).toContain("Invalid user ID.");
+    }
+    expect(mockFindUserById).not.toHaveBeenCalled();
+  });
+
+  it("still looks up user IDs at the bigint boundaries", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    mockFindUserById.mockResolvedValue(null);
+    for (const id of ["9223372036854775807", "-9223372036854775808"]) {
+      const res = await app.inject({
+        method: "GET",
+        url: `/admin/users/${id}`,
+        headers: { cookie },
+      });
+      expect(res.statusCode).toBe(404);
+      expect(mockFindUserById).toHaveBeenLastCalledWith(expect.anything(), BigInt(id));
+    }
   });
 });
 
@@ -628,6 +701,25 @@ describe("admin billing mutations", () => {
         operatorSource: expect.stringMatching(/^admin:/) as unknown,
       }),
     );
+  });
+
+  it("rejects a user ID outside the bigint range with 400 before granting", async () => {
+    const app = await buildApp();
+    const cookie = await loginSession(app);
+    const { csrf, userVersion } = await getCsrfAndVersion(app, cookie);
+    mockFindUserById.mockClear();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/admin/users/99999999999999999999/billing",
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      payload: `_csrf=${csrf}&_user_version=${encodeURIComponent(userVersion)}&plan=pro&status=active&paid_through=2026-12-31&payment_reference=wise-2026-001`,
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toContain("Invalid user ID.");
+    expect(mockGrantManualUserPlan).not.toHaveBeenCalled();
+    expect(mockFindUserById).not.toHaveBeenCalled();
   });
 
   it("redirects with billing=idempotent when payment reference already exists", async () => {

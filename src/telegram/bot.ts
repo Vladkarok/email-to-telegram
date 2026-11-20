@@ -582,9 +582,8 @@ export function createBot(token: string, options: CreateBotOptions = {}): Bot {
       await ctx.answerCallbackQuery(messages.common.ruleNotFoundShort);
       return;
     }
-    // Answer Telegram promptly before the async access check (Telegram requires ≤10s)
-    await ctx.answerCallbackQuery(messages.allowCommand.removedToast);
     if (!(await assertAliasAccess(ctx, rule.emailAddressId, { fresh: true }))) return;
+    await ctx.answerCallbackQuery(messages.allowCommand.removedToast);
     await removeAllowRule(getDb(), {
       emailAddressId: rule.emailAddressId,
       matchValue: rule.matchValue,

@@ -11,8 +11,11 @@ export function billingRoutes(app: FastifyInstance): void {
     "/billing/checkout",
     { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
     async (req, reply) => {
-      const { token, priceKey } = req.body as { token?: string; priceKey?: string };
-      const access = verifyBillingAccessToken(token ?? "");
+      // A missing or JSON null body must get the 401 below, not a TypeError.
+      const body = (req.body ?? {}) as { token?: unknown; priceKey?: unknown };
+      const token = typeof body.token === "string" ? body.token : "";
+      const priceKey = typeof body.priceKey === "string" ? body.priceKey : "";
+      const access = verifyBillingAccessToken(token);
       if (!access) {
         await reply.status(401).send({ error: "invalid token" });
         return;
@@ -40,8 +43,9 @@ export function billingRoutes(app: FastifyInstance): void {
     "/billing/portal",
     { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
     async (req, reply) => {
-      const { token } = req.body as { token?: string };
-      const access = verifyBillingAccessToken(token ?? "");
+      const body = (req.body ?? {}) as { token?: unknown };
+      const token = typeof body.token === "string" ? body.token : "";
+      const access = verifyBillingAccessToken(token);
       if (!access) {
         await reply.status(401).send({ error: "invalid token" });
         return;

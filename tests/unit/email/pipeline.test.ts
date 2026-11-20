@@ -145,10 +145,25 @@ const activeAlias = {
 
 const authenticatedExampleRules = [{ matchType: "domain", matchValue: "example.com" }];
 
+// What a nested tx.transaction() hands its callback: the savepoint handle.
+const SAVEPOINT = { savepoint: true };
+const mockSavepoint = vi.fn();
+
+function fakeTx<E>(execute: E) {
+  return {
+    execute,
+    transaction: async <T>(fn: (savepoint: unknown) => Promise<T>): Promise<T> => {
+      mockSavepoint();
+      return fn(SAVEPOINT);
+    },
+  };
+}
+
 function fakeDb() {
   return {
-    transaction: async <T>(fn: (tx: { execute: ReturnType<typeof vi.fn> }) => Promise<T>) =>
-      fn({ execute: vi.fn().mockResolvedValue(undefined) }),
+    transaction: async <T>(
+      fn: (tx: ReturnType<typeof fakeTx<ReturnType<typeof vi.fn>>>) => Promise<T>,
+    ) => fn(fakeTx(vi.fn().mockResolvedValue(undefined))),
   };
 }
 
@@ -156,8 +171,8 @@ function fakeDbHarness() {
   const execute = vi.fn().mockResolvedValue(undefined);
   return {
     db: {
-      transaction: async <T>(fn: (tx: { execute: typeof execute }) => Promise<T>) =>
-        fn({ execute }),
+      transaction: async <T>(fn: (tx: ReturnType<typeof fakeTx<typeof execute>>) => Promise<T>) =>
+        fn(fakeTx(execute)),
     } as Parameters<typeof processInboundEmail>[0],
     execute,
   };
@@ -1269,6 +1284,66 @@ describe("deliverQueuedEmail", () => {
       expect.any(String),
       expect.any(Date),
     );
+  });
+
+  it("runs each attachment insert and link insert in its own savepoint", async () => {
+    // A failed statement aborts the Postgres transaction it runs in; only a
+    // savepoint lets the per-attachment catch carry on with the rest.
+    mockCreateAttachment
+      .mockRejectedValueOnce(new Error("insert failed"))
+      .mockResolvedValueOnce({ id: "att-pdf" });
+    mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 99 });
+    const attachment = (filename: string) => ({
+      filename,
+      contentType: "application/pdf",
+      sizeBytes: 12,
+      sha256: "pdf-hash",
+      content: Buffer.from("pdf-bytes"),
+    });
+
+    await deliverQueuedEmail(
+      fakeDb() as Parameters<typeof processInboundEmail>[0],
+      {} as Parameters<typeof processInboundEmail>[1],
+      {
+        alias: activeAlias,
+        parsed: {
+          messageId: "<id@test>",
+          subject: "Two attachments",
+          envelopeFrom: "sender@example.com",
+          headerFrom: "Sender <sender@example.com>",
+          headerFromDisplay: "Sender <sender@example.com>",
+          headerFromEmail: "sender@example.com",
+          headerFromDomain: "example.com",
+          textBody: "hello",
+          htmlBody: null,
+          bodySha256: "hash",
+          attachments: [attachment("broken.pdf"), attachment("report.pdf")],
+          rawSizeBytes: 24,
+        },
+        deliveryLog: { id: "log-savepoints" } as never,
+        envelopeFrom: "sender@example.com",
+        ...PIPELINE_CONFIG,
+      },
+    );
+
+    // Two attachment inserts and the surviving attachment's link insert.
+    expect(mockSavepoint).toHaveBeenCalledTimes(3);
+    expect(mockCreateAttachment).toHaveBeenCalledTimes(2);
+    for (const call of mockCreateAttachment.mock.calls) expect(call[0]).toBe(SAVEPOINT);
+    expect(mockCreateAttachmentLink).toHaveBeenCalledTimes(1);
+    expect(mockCreateAttachmentLink).toHaveBeenCalledWith(
+      SAVEPOINT,
+      "att-pdf",
+      expect.any(String),
+      expect.any(Date),
+    );
+    // The failed attachment is compensated on the outer transaction.
+    expect(mockDeleteFile).toHaveBeenCalledTimes(1);
+    const [storageDb] = mockDecrementOrganizationStorageUsage.mock.calls[0] as [unknown];
+    expect(storageDb).not.toBe(SAVEPOINT);
+    const [, sent] = mockSendTelegram.mock.calls[0] as [unknown, { text: string }];
+    expect(sent.text).toContain("report.pdf");
+    expect(sent.text).not.toContain("broken.pdf");
   });
 
   it("releases reserved attachment storage when attachment persistence fails", async () => {

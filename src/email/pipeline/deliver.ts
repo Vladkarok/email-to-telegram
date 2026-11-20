@@ -118,7 +118,7 @@ export async function deliverQueuedEmail(
           storagePath = join(attachmentDir, deliveryLog.id, `${fileId}.bin`);
           const storageMetadata = await writeAttachment(storagePath, attachmentId, att.content);
 
-          const dbAtt = await createAttachment(workDb, {
+          const newAttachment = {
             id: attachmentId,
             deliveryLogId: deliveryLog.id,
             originalFilename: att.filename,
@@ -130,7 +130,13 @@ export async function deliverQueuedEmail(
             wrappedDek: storageMetadata.wrappedDek,
             kekKeyId: storageMetadata.kekKeyId,
             encryptedAt: storageMetadata.encryptedAt,
-          });
+          };
+          // Each insert runs in its own savepoint: a failed statement would
+          // otherwise abort the whole transaction, and the catch below could
+          // neither compensate nor let the remaining attachments through.
+          const dbAtt = await tx.transaction((savepoint) =>
+            createAttachment(savepoint as Db, newAttachment),
+          );
           attachmentStored = true;
 
           if (isInlinePhoto(att.contentType, att.sizeBytes)) {
@@ -146,7 +152,9 @@ export async function deliverQueuedEmail(
             });
           } else if (!privacyMode) {
             const { token, expiresAt } = generateDownloadToken(dbAtt.id, attachmentTtlHours);
-            await createAttachmentLink(workDb, dbAtt.id, token, expiresAt);
+            await tx.transaction((savepoint) =>
+              createAttachmentLink(savepoint as Db, dbAtt.id, token, expiresAt),
+            );
             attachmentLinks.push({
               filename: att.filename,
               sizeBytes: att.sizeBytes,

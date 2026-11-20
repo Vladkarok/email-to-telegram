@@ -44,9 +44,10 @@ vi.mock("../../../src/telegram/commands/allow.js", () => ({
 }));
 
 const mockSendAllowRulesMenu = vi.fn();
+const mockEditAllowRulesMenu = vi.fn();
 vi.mock("../../../src/telegram/menu/allowRulesMenu.js", () => ({
   sendAllowRulesMenu: (...args: unknown[]): unknown => mockSendAllowRulesMenu(...args),
-  editAllowRulesMenu: vi.fn(),
+  editAllowRulesMenu: (...args: unknown[]): unknown => mockEditAllowRulesMenu(...args),
 }));
 
 vi.mock("../../../src/telegram/commands/start.js", () => ({ startHandler: vi.fn() }));
@@ -84,9 +85,11 @@ vi.mock("../../../src/telegram/menu/aliasMenu.js", () => ({
 vi.mock("../../../src/db/repos/chats.js", () => ({
   findChatById: (...args: unknown[]): unknown => mockFindChatById(...args),
 }));
+const mockFindAllowRuleById = vi.fn();
+const mockRemoveAllowRule = vi.fn();
 vi.mock("../../../src/db/repos/allowRules.js", () => ({
-  findAllowRuleById: vi.fn(),
-  removeAllowRule: vi.fn(),
+  findAllowRuleById: (...args: unknown[]): unknown => mockFindAllowRuleById(...args),
+  removeAllowRule: (...args: unknown[]): unknown => mockRemoveAllowRule(...args),
 }));
 vi.mock("../../../src/utils/logger.js", () => ({
   getLogger: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() }),
@@ -396,5 +399,71 @@ describe("pending text flow", () => {
         (button) => button.callback_data === "qr:550e8400-e29b-41d4-a716-446655440000:github.com",
       ),
     ).toBe(true);
+  });
+
+  describe("dr: delete allow rule callback", () => {
+    const ruleId = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+    const rule = {
+      id: ruleId,
+      emailAddressId: "550e8400-e29b-41d4-a716-446655440000",
+      matchValue: "github.com",
+    };
+
+    it("answers with access denied, not the removed toast, when the caller lost access", async () => {
+      mockFindAllowRuleById.mockResolvedValue(rule);
+      mockCanManageAlias.mockResolvedValue(false);
+      const bot = createInitializedBot();
+
+      await bot.handleUpdate(buildCallbackUpdate(`dr:${ruleId}`) as never);
+
+      expect(mockAnswerCallbackQuery).toHaveBeenCalledTimes(1);
+      expect(mockAnswerCallbackQuery).toHaveBeenCalledWith(expect.stringMatching(/access denied/i));
+      expect(mockRemoveAllowRule).not.toHaveBeenCalled();
+      expect(mockEditAllowRulesMenu).not.toHaveBeenCalled();
+    });
+
+    it("runs the fresh access check before the removed toast, then removes the rule", async () => {
+      mockFindAllowRuleById.mockResolvedValue(rule);
+      const bot = createInitializedBot();
+
+      await bot.handleUpdate(buildCallbackUpdate(`dr:${ruleId}`) as never);
+
+      expect(mockCanManageAlias).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        123,
+        rule.emailAddressId,
+        { fresh: true },
+      );
+      expect(mockAnswerCallbackQuery).toHaveBeenCalledTimes(1);
+      expect(mockAnswerCallbackQuery).toHaveBeenCalledWith("Rule removed.");
+      expect(mockCanManageAlias.mock.invocationCallOrder[0]).toBeLessThan(
+        mockAnswerCallbackQuery.mock.invocationCallOrder[0],
+      );
+      expect(mockRemoveAllowRule).toHaveBeenCalledWith(expect.anything(), {
+        emailAddressId: rule.emailAddressId,
+        matchValue: rule.matchValue,
+      });
+      expect(mockAnswerCallbackQuery.mock.invocationCallOrder[0]).toBeLessThan(
+        mockRemoveAllowRule.mock.invocationCallOrder[0],
+      );
+      expect(mockEditAllowRulesMenu).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        rule.emailAddressId,
+      );
+    });
+
+    it("answers rule not found without an access check when the rule is gone", async () => {
+      mockFindAllowRuleById.mockResolvedValue(undefined);
+      const bot = createInitializedBot();
+
+      await bot.handleUpdate(buildCallbackUpdate(`dr:${ruleId}`) as never);
+
+      expect(mockAnswerCallbackQuery).toHaveBeenCalledTimes(1);
+      expect(mockAnswerCallbackQuery).toHaveBeenCalledWith("Rule not found.");
+      expect(mockCanManageAlias).not.toHaveBeenCalled();
+      expect(mockRemoveAllowRule).not.toHaveBeenCalled();
+    });
   });
 });

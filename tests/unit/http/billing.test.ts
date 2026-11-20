@@ -117,6 +117,43 @@ describe("billing routes", () => {
     expect(res.statusCode).toBe(401);
   });
 
+  it("answers 401, not 500, when the body is missing or null", async () => {
+    mockVerifyBillingAccessToken.mockReturnValue(null);
+    const app = await buildApp();
+    for (const url of ["/billing/checkout", "/billing/portal"]) {
+      const missing = await app.inject({ method: "POST", url });
+      expect(missing.statusCode).toBe(401);
+
+      const nullBody = await app.inject({
+        method: "POST",
+        url,
+        headers: { "content-type": "application/json" },
+        payload: "null",
+      });
+      expect(nullBody.statusCode).toBe(401);
+      expect(nullBody.json()).toEqual({ error: "invalid token" });
+    }
+    expect(mockVerifyBillingAccessToken).toHaveBeenCalledTimes(4);
+    expect(mockVerifyBillingAccessToken).toHaveBeenCalledWith("");
+  });
+
+  it("treats a non-string token as an empty token", async () => {
+    mockVerifyBillingAccessToken.mockImplementation((token: unknown) =>
+      token === "" ? null : { telegramUserId: "123" },
+    );
+    const app = await buildApp();
+    for (const url of ["/billing/checkout", "/billing/portal"]) {
+      const res = await app.inject({
+        method: "POST",
+        url,
+        payload: { token: 123, priceKey: "pro_monthly" },
+      });
+      expect(res.statusCode).toBe(401);
+    }
+    expect(mockCreateCheckoutSession).not.toHaveBeenCalled();
+    expect(mockCreateCustomerPortalSession).not.toHaveBeenCalled();
+  });
+
   it("rejects checkout when the requested price key is invalid", async () => {
     const app = await buildApp();
     const res = await app.inject({

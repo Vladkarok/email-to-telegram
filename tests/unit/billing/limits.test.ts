@@ -360,6 +360,17 @@ describe("billing limits", () => {
     expect(plan.code).toBe("free");
   });
 
+  it("keeps paid limits for an active plan whose paid-through date has passed (manual plans do not auto-expire)", () => {
+    const plan = getEffectivePlan({
+      planCode: "pro",
+      subscriptionStatus: "active",
+      currentPeriodEnd: null,
+      paidThroughAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+    });
+
+    expect(plan.code).toBe("pro");
+  });
+
   it("keeps paid limits during recent past_due paid-through grace", () => {
     const plan = getEffectivePlan({
       planCode: "pro",

@@ -2,7 +2,11 @@ import { Transform } from "node:stream";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { checkEgressLimit, withUserQuotaLock } from "../../billing/limits.js";
 import { getDb } from "../../db/client.js";
-import { findAttachmentLinkByToken, markLinkDownloaded } from "../../db/repos/attachmentLinks.js";
+import {
+  findAttachmentLinkByToken,
+  markLinkDownloaded,
+  releaseLinkDownload,
+} from "../../db/repos/attachmentLinks.js";
 import {
   decrementUserUsageMonth,
   incrementUserUsageMonth,
@@ -43,6 +47,7 @@ export function downloadRoute(app: FastifyInstance): void {
       const quotaMonth = usageMonthForDate();
       const ownerUserId = link.attachment.userId;
       const reservedSize = BigInt(link.attachment.sizeBytes ?? 0);
+      const claimedAt = new Date();
 
       const claimResult = await withUserQuotaLock(getDb(), ownerUserId, async (tx: Db) => {
         const egressLimit = await checkEgressLimit(tx, ownerUserId, reservedSize, quotaMonth);
@@ -50,7 +55,7 @@ export function downloadRoute(app: FastifyInstance): void {
           return { status: "quota_exceeded" as const };
         }
 
-        const claimed = await markLinkDownloaded(tx, link.id);
+        const claimed = await markLinkDownloaded(tx, link.id, claimedAt);
         if (!claimed) {
           return { status: "already_claimed" as const };
         }
@@ -74,23 +79,50 @@ export function downloadRoute(app: FastifyInstance): void {
         return;
       }
 
+      // For failures before the usage tracker below is attached to the response.
+      const releaseReservedEgress = async (): Promise<void> => {
+        if (ownerUserId == null || reservedSize <= 0n) return;
+        await decrementUserUsageMonth(getDb(), {
+          userId: ownerUserId,
+          month: quotaMonth,
+          egressBytes: reservedSize,
+        }).catch((err: unknown) => {
+          getLogger().error({ err, userId: ownerUserId.toString() }, "failed to release egress");
+        });
+      };
+
       let opened;
       try {
         opened = await openAttachmentStream(link.attachment);
       } catch {
-        if (ownerUserId != null && reservedSize > 0n) {
-          await decrementUserUsageMonth(getDb(), {
-            userId: ownerUserId,
-            month: quotaMonth,
-            egressBytes: reservedSize,
-          }).catch((err: unknown) => {
-            getLogger().error({ err, userId: ownerUserId.toString() }, "failed to release egress");
-          });
-        }
+        await releaseReservedEgress();
+        // Nothing was served, so hand the one-time link back instead of
+        // leaving it answering 410. Only this request's own claim is released.
+        await releaseLinkDownload(getDb(), link.id, claimedAt).catch((err: unknown) => {
+          getLogger().error({ err, linkId: link.id }, "failed to release download claim");
+        });
         await reply.status(500).send({ error: "download failed" });
         return;
       }
       const { stream, size } = opened;
+
+      // The response closing (sent in full, or the client gone) is the one point
+      // every outcome reaches. An owned download is piped through a meter, so an
+      // abort would otherwise leave the source open and, for an encrypted
+      // attachment, its decrypted temp file on disk. dispose() is idempotent.
+      const closeSource = (): void => {
+        if (!opened.dispose) {
+          stream.destroy();
+          return;
+        }
+        void opened.dispose().catch((err: unknown) => {
+          getLogger().error({ err, linkId: link.id }, "failed to dispose attachment stream");
+        });
+      };
+      // The client may have gone while the file was being opened; "close" has
+      // then already fired and would never reach a listener added now.
+      if (reply.raw.destroyed) closeSource();
+      else reply.raw.once("close", closeSource);
 
       const originalFilename = link.attachment.originalFilename ?? "attachment";
       // ASCII fallback for legacy clients: strip control chars and quote/backslash.
@@ -98,7 +130,15 @@ export function downloadRoute(app: FastifyInstance): void {
         // eslint-disable-next-line no-control-regex
         originalFilename.replace(/[\x00-\x1f\x7f"\\]/g, "_").replace(/[^\x20-\x7e]/g, "_") ||
         "attachment";
-      const encodedFilename = encodeURIComponent(originalFilename);
+      let encodedFilename: string;
+      try {
+        encodedFilename = encodeURIComponent(originalFilename);
+      } catch (err: unknown) {
+        // A lone surrogate in the stored name. The request fails as before, but
+        // the egress reserved for it is given back.
+        await releaseReservedEgress();
+        throw err;
+      }
       const contentDisposition = `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodedFilename}`;
 
       const trackedStream = trackReservedEgressUsage(

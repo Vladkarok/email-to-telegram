@@ -18,6 +18,36 @@ that has been running in production.
 
 ## [Unreleased]
 
+### Fixed
+
+- **One bad attachment no longer breaks the others.** An attachment whose
+  name is longer than 255 characters, or whose name or type contains a NUL
+  byte, made the database reject it and silently undo the whole email's
+  attachment records: the message arrived with dead download links and the
+  storage quota was not given back. Names and types are now cut to fit, and
+  each attachment is saved separately, so a failure drops only that one.
+- **Temporary files of encrypted attachments are removed.** With
+  `STORAGE_ENCRYPTION_MODE=local-v1`, a failed decryption or a download the
+  client aborted left the decrypted file in `/tmp` until the container
+  restarted.
+- **A download link survives a server error.** When the file could not be
+  opened, the one-time link stayed used up. It can now be tried again until
+  it expires.
+- The chat menu no longer asks Telegram about other users' private chats,
+  which could never be offered anyway.
+- The "Rule removed" notice appears only after the access check; a user
+  without rights to the alias sees "Access denied".
+- Admin panel: a user id too large for the database gives "Invalid user ID"
+  or an empty search result instead of an error page.
+- `POST /billing/checkout` and `/billing/portal` answer 401 instead of 500 to
+  a request without a body.
+
+### Changed
+
+- The README and the admin code now say that a manually granted plan does
+  not expire on its own: after the paid-through date the user is listed
+  under Billing Attention and keeps the plan until an operator changes it.
+
 ## [1.13.4] — 2026-10-27
 
 Dependency release: fastify 5.12.6 (security) and zod 4 for the

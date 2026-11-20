@@ -71,7 +71,9 @@ export async function processStripeWebhookEvent(
         return applyStripeInvoicePaymentSucceeded(txDb, event.data.object);
       }
       case "invoice.payment_failed": {
-        return validateStripeInvoiceSubject(txDb, event.data.object);
+        // A failed invoice must not change state; subscription.updated
+        // carries past_due.
+        return "ignored";
       }
       default:
         return "ignored";
@@ -136,32 +138,6 @@ async function applyStripeSubscription(
         : null,
   });
   return "processed";
-}
-
-async function validateStripeInvoiceSubject(db: Db, invoice: Stripe.Invoice): Promise<"ignored"> {
-  const stripeSubscriptionId = getInvoiceSubscriptionId(invoice);
-  const user = await findUserForStripeSubject(db, {
-    telegramUserId: parseTelegramUserIdMetadata(
-      invoice.parent?.subscription_details?.metadata?.["telegramUserId"] ?? null,
-    ),
-    stripeCustomerId: typeof invoice.customer === "string" ? invoice.customer : null,
-    stripeSubscriptionId,
-  });
-  if (!user) return "ignored";
-  if (
-    await shouldIgnoreStripeUpdate(
-      db,
-      user,
-      stripeSubscriptionId,
-      typeof invoice.customer === "string" ? invoice.customer : null,
-    )
-  ) {
-    return "ignored";
-  }
-  if (!stripeSubscriptionId || user.stripeSubscriptionId !== stripeSubscriptionId) {
-    return "ignored";
-  }
-  return "ignored";
 }
 
 async function applyStripeInvoicePaymentSucceeded(

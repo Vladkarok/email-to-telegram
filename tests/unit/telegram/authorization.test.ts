@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mockFindActiveChats = vi.fn();
+const mockFindActiveChatsForUser = vi.fn();
 const mockFindAliasById = vi.fn();
 
 vi.mock("../../../src/db/repos/chats.js", () => ({
-  findActiveChats: (...args: unknown[]): unknown => mockFindActiveChats(...args),
+  findActiveChatsForUser: (...args: unknown[]): unknown => mockFindActiveChatsForUser(...args),
 }));
 
 vi.mock("../../../src/db/repos/aliases.js", () => ({
@@ -16,7 +16,7 @@ const { canManageAlias, canManageChat, getAccessibleChats } =
 
 describe("telegram authorization", () => {
   beforeEach(() => {
-    mockFindActiveChats.mockReset();
+    mockFindActiveChatsForUser.mockReset();
     mockFindAliasById.mockReset();
   });
 
@@ -121,7 +121,7 @@ describe("telegram authorization", () => {
     // other tests in this file (the module-level chatMemberCache persists
     // across tests).
     it("returns only chats the user can manage", async () => {
-      mockFindActiveChats.mockResolvedValue([
+      mockFindActiveChatsForUser.mockResolvedValue([
         { id: 42n, title: "DM" }, // user's own DM
         { id: -400n, title: "Group A" }, // admin
         { id: -500n, title: "Group B" }, // ordinary member
@@ -134,6 +134,39 @@ describe("telegram authorization", () => {
       };
       const accessible = await getAccessibleChats({} as never, api as never, 42);
       expect(accessible.map((c) => c.id)).toEqual([42n, -400n]);
+    });
+
+    it("asks the repo for the caller's candidates by bigint id and skips Telegram for the own DM", async () => {
+      const db = {};
+      mockFindActiveChatsForUser.mockResolvedValue([{ id: 43n, title: "DM" }]);
+      const api = { getChatMember: vi.fn() };
+      const accessible = await getAccessibleChats(db as never, api as never, 43);
+      expect(mockFindActiveChatsForUser).toHaveBeenCalledTimes(1);
+      expect(mockFindActiveChatsForUser).toHaveBeenCalledWith(db, 43n);
+      expect(accessible.map((c) => c.id)).toEqual([43n]);
+      expect(api.getChatMember).not.toHaveBeenCalled();
+    });
+
+    it("checks each group once on a cold cache and not at all on an immediate repeat", async () => {
+      mockFindActiveChatsForUser.mockResolvedValue([
+        { id: -610n, title: "Group A" },
+        { id: -620n, title: "Group B" },
+        { id: -630n, title: "Group C" },
+      ]);
+      const api = {
+        getChatMember: vi
+          .fn()
+          .mockImplementation((chatId: string) =>
+            Promise.resolve({ status: chatId === "-620" ? "member" : "creator" }),
+          ),
+      };
+      const first = await getAccessibleChats({} as never, api as never, 44);
+      expect(api.getChatMember).toHaveBeenCalledTimes(3);
+      // Results, negative ones included, are served from the 5-minute cache.
+      const second = await getAccessibleChats({} as never, api as never, 44);
+      expect(api.getChatMember).toHaveBeenCalledTimes(3);
+      expect(first.map((c) => c.id)).toEqual([-610n, -630n]);
+      expect(second.map((c) => c.id)).toEqual([-610n, -630n]);
     });
   });
 });

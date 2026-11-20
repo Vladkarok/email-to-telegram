@@ -74,18 +74,29 @@ export async function openAttachmentStream(attachment: {
 
   const tempDir = await mkdtemp(join(tmpdir(), "email-to-telegram-attachment-"));
   const tempPath = join(tempDir, "download.bin");
-  const decryptedStream = await decryptStreamFromStorage(
-    createReadStream(attachment.storagePath),
-    {
-      encryptionMode: attachment.encryptionMode === "local-v1" ? "local-v1" : "none",
-      wrappedDek: attachment.wrappedDek,
-      kekKeyId: attachment.kekKeyId,
-    },
-    `attachment:${attachment.id}`,
-  );
-  await pipeline(decryptedStream, createWriteStream(tempPath, { mode: 0o600 }));
-  const size = attachment.sizeBytes ?? (await stat(tempPath)).size;
-  const stream = createReadStream(tempPath);
+  const source = createReadStream(attachment.storagePath);
+  let size: number;
+  let stream: ReturnType<typeof createReadStream>;
+  try {
+    const decryptedStream = await decryptStreamFromStorage(
+      source,
+      {
+        encryptionMode: attachment.encryptionMode === "local-v1" ? "local-v1" : "none",
+        wrappedDek: attachment.wrappedDek,
+        kekKeyId: attachment.kekKeyId,
+      },
+      `attachment:${attachment.id}`,
+    );
+    await pipeline(decryptedStream, createWriteStream(tempPath, { mode: 0o600 }));
+    size = attachment.sizeBytes ?? (await stat(tempPath)).size;
+    stream = createReadStream(tempPath);
+  } catch (err: unknown) {
+    // No caller gets a dispose() for a failed open, so the temp dir (and any
+    // partial plaintext in it) has to go here. The original error is rethrown.
+    source.destroy();
+    await deleteDir(tempDir).catch(() => {});
+    throw err;
+  }
   let cleaned = false;
   const cleanupTemp = async () => {
     if (cleaned) return;

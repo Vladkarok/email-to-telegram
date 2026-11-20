@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { parseEmail } from "../../../src/email/parser.js";
+import {
+  parseEmail,
+  sanitizeAttachmentContentType,
+  sanitizeAttachmentFilename,
+} from "../../../src/email/parser.js";
 
 function fixture(name: string) {
   return readFileSync(join(import.meta.dirname, "../../fixtures", name));
@@ -47,6 +51,36 @@ describe("parseEmail", () => {
     expect(result.subject).toContain("Сервер");
   });
 
+  it.each(["Content-Type:", "Content-Type: ;", "Content-Type: ; name=x"])(
+    "parses an attachment whose header is %j",
+    async (header) => {
+      const raw = Buffer.from(
+        [
+          "From: sender@example.com",
+          "Subject: odd attachment",
+          'Content-Type: multipart/mixed; boundary="b"',
+          "",
+          "--b",
+          "Content-Type: text/plain",
+          "",
+          "body",
+          "--b",
+          header,
+          'Content-Disposition: attachment; filename="z.pdf"',
+          "",
+          "data",
+          "--b--",
+          "",
+        ].join("\r\n"),
+      );
+      const result = await parseEmail(raw, raw.length);
+      expect(result.textBody).toContain("body");
+      expect(result.attachments).toHaveLength(1);
+      expect(result.attachments[0]?.filename).toBe("z.pdf");
+      expect(result.attachments[0]?.contentType).toBe("application/octet-stream");
+    },
+  );
+
   it("extracts envelope from from the From header", async () => {
     const result = await parseEmail(fixture("simple.eml"), 100);
     expect(result.envelopeFrom).toBe("sender@example.com");
@@ -61,5 +95,91 @@ describe("parseEmail", () => {
     expect(result.headerFromDisplay).toBe("GitHub <noreply@github.com>");
     expect(result.headerFromEmail).toBe("noreply@github.com");
     expect(result.headerFromDomain).toBe("github.com");
+  });
+});
+
+// attachments.original_filename is varchar(255), content_type varchar(127);
+// Postgres counts code points and rejects NUL bytes in text.
+describe("attachment metadata limits", () => {
+  const codePoints = (value: string) => Array.from(value).length;
+  const NUL = String.fromCharCode(0);
+  const EMOJI = String.fromCodePoint(0x1f600);
+
+  it("leaves names and types within the column limits untouched", () => {
+    expect(sanitizeAttachmentFilename("report.pdf")).toBe("report.pdf");
+    expect(sanitizeAttachmentFilename("")).toBe("");
+    expect(sanitizeAttachmentFilename("a".repeat(251) + ".pdf")).toBe("a".repeat(251) + ".pdf");
+    // 255 code points, 510 UTF-16 units: still fits the column.
+    expect(sanitizeAttachmentFilename(EMOJI.repeat(255))).toBe(EMOJI.repeat(255));
+    expect(sanitizeAttachmentContentType("application/pdf")).toBe("application/pdf");
+    expect(sanitizeAttachmentContentType("a".repeat(127))).toBe("a".repeat(127));
+  });
+
+  it("strips NUL bytes", () => {
+    expect(sanitizeAttachmentFilename(`re${NUL}port.pdf${NUL}`)).toBe("report.pdf");
+    expect(sanitizeAttachmentFilename(NUL + NUL)).toBe("attachment");
+    expect(sanitizeAttachmentContentType(`application/${NUL}pdf`)).toBe("application/pdf");
+  });
+
+  it("truncates a long filename to 255 characters and keeps the extension", () => {
+    expect(sanitizeAttachmentFilename("a".repeat(300) + ".pdf")).toBe("a".repeat(251) + ".pdf");
+    expect(sanitizeAttachmentFilename("a".repeat(300))).toBe("a".repeat(255));
+  });
+
+  it("does not keep an extension that is not one", () => {
+    // Leading dot, trailing dot, or a tail too long to be an extension.
+    expect(sanitizeAttachmentFilename("." + "a".repeat(300))).toBe("." + "a".repeat(254));
+    expect(sanitizeAttachmentFilename("a".repeat(300) + ".")).toBe("a".repeat(255));
+    expect(sanitizeAttachmentFilename("a." + "b".repeat(300))).toBe("a." + "b".repeat(253));
+  });
+
+  it("never splits a surrogate pair", () => {
+    const name = sanitizeAttachmentFilename(EMOJI.repeat(300) + ".png");
+    expect(name).toBe(EMOJI.repeat(251) + ".png");
+    expect(codePoints(name)).toBe(255);
+
+    const type = sanitizeAttachmentContentType("x/" + EMOJI.repeat(200));
+    expect(type).toBe("x/" + EMOJI.repeat(125));
+    expect(codePoints(type)).toBe(127);
+  });
+
+  it("caps a long content type at 127 characters", () => {
+    expect(sanitizeAttachmentContentType("application/" + "x".repeat(200))).toBe(
+      "application/" + "x".repeat(115),
+    );
+  });
+
+  it("applies the limits to parsed attachments", async () => {
+    const longName = "n".repeat(300) + ".txt";
+    const raw = Buffer.from(
+      [
+        "From: sender@example.com",
+        "To: alerts@example.com",
+        "Subject: Long name",
+        "MIME-Version: 1.0",
+        'Content-Type: multipart/mixed; boundary="b1"',
+        "",
+        "--b1",
+        "Content-Type: text/plain",
+        "",
+        "body",
+        "--b1",
+        `Content-Type: application/${"x".repeat(200)}; name="${longName}"`,
+        `Content-Disposition: attachment; filename="${longName}"`,
+        "Content-Transfer-Encoding: base64",
+        "",
+        Buffer.from("hello").toString("base64"),
+        "--b1--",
+        "",
+      ].join("\r\n"),
+    );
+
+    const result = await parseEmail(raw, raw.length);
+
+    expect(result.attachments).toHaveLength(1);
+    const [att] = result.attachments;
+    expect(att?.filename).toBe("n".repeat(251) + ".txt");
+    expect(att?.contentType).toBe("application/" + "x".repeat(115));
+    expect(att?.content.toString()).toBe("hello");
   });
 });

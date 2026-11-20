@@ -12,7 +12,7 @@ vi.mock("../../../../src/config.js", () => ({
 const mockUpsertChat = vi.fn().mockResolvedValue(undefined);
 vi.mock("../../../../src/db/repos/chats.js", () => ({
   upsertChat: (...args: unknown[]): unknown => mockUpsertChat(...args),
-  findActiveChats: vi.fn().mockResolvedValue([]),
+  findActiveChatsForUser: vi.fn().mockResolvedValue([]),
 }));
 
 const mockUpsertUser = vi.fn();

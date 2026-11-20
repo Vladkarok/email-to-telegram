@@ -137,8 +137,12 @@ const baseAlias = {
 const authenticatedExampleRules = [{ matchType: "domain", matchValue: "example.com" }];
 
 const fakeDb = {
-  transaction: async <T>(fn: (tx: { execute: ReturnType<typeof vi.fn> }) => Promise<T>) =>
-    fn({ execute: vi.fn().mockResolvedValue(undefined) }),
+  transaction: async <T>(fn: (tx: unknown) => Promise<T>) =>
+    fn({
+      execute: vi.fn().mockResolvedValue(undefined),
+      // Nested transaction (savepoint) around each attachment insert.
+      transaction: async <U>(inner: (savepoint: unknown) => Promise<U>) => inner({}),
+    }),
 } as Parameters<typeof processInboundEmail>[0];
 const fakeApi = {} as NonNullable<Parameters<typeof processInboundEmail>[1]>;
 

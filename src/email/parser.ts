@@ -24,8 +24,13 @@ export async function parseEmail(raw: Buffer, rawSizeBytes: number): Promise<Par
       : null;
 
   const attachments: ParsedEmailAttachment[] = (parsed.attachments ?? []).map((att) => ({
-    filename: att.filename ?? "attachment",
-    contentType: att.contentType,
+    filename: sanitizeAttachmentFilename(
+      typeof att.filename === "string" ? att.filename : "attachment",
+    ),
+    // mailparser gives `false`, not a string, for an empty Content-Type header.
+    contentType: sanitizeAttachmentContentType(
+      typeof att.contentType === "string" ? att.contentType : "application/octet-stream",
+    ),
     sizeBytes: att.size ?? att.content.length,
     content: att.content,
     sha256: createHash("sha256").update(att.content).digest("hex"),
@@ -45,4 +50,45 @@ export async function parseEmail(raw: Buffer, rawSizeBytes: number): Promise<Par
     attachments,
     rawSizeBytes,
   };
+}
+
+// attachments.original_filename is varchar(255) and content_type varchar(127).
+// Postgres counts characters (code points) and rejects NUL in text, so an
+// unbounded value from the sender would fail the insert.
+const MAX_ATTACHMENT_FILENAME_CHARS = 255;
+const MAX_ATTACHMENT_CONTENT_TYPE_CHARS = 127;
+// Longest extension (dot included) worth keeping when a filename is cut.
+const MAX_KEPT_EXTENSION_CHARS = 16;
+
+function stripNul(value: string): string {
+  return value.replaceAll("\u0000", "");
+}
+
+// Array.from splits by code point, so a surrogate pair is never cut in half.
+function truncateCodePoints(value: string, max: number): string {
+  if (value.length <= max) return value;
+  const codePoints = Array.from(value);
+  return codePoints.length <= max ? value : codePoints.slice(0, max).join("");
+}
+
+export function sanitizeAttachmentFilename(filename: string): string {
+  const cleaned = stripNul(filename);
+  // Only NUL bytes: keep the fallback name rather than an empty one.
+  if (cleaned === "" && filename !== "") return "attachment";
+  const truncated = truncateCodePoints(cleaned, MAX_ATTACHMENT_FILENAME_CHARS);
+  if (truncated === cleaned) return cleaned;
+
+  const dot = cleaned.lastIndexOf(".");
+  if (dot <= 0) return truncated;
+  const extension = Array.from(cleaned.slice(dot));
+  if (extension.length < 2 || extension.length > MAX_KEPT_EXTENSION_CHARS) return truncated;
+  const stem = truncateCodePoints(
+    cleaned.slice(0, dot),
+    MAX_ATTACHMENT_FILENAME_CHARS - extension.length,
+  );
+  return stem + extension.join("");
+}
+
+export function sanitizeAttachmentContentType(contentType: string): string {
+  return truncateCodePoints(stripNul(contentType), MAX_ATTACHMENT_CONTENT_TYPE_CHARS);
 }
