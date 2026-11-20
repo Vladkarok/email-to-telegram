@@ -92,7 +92,19 @@ export async function createPgTestDatabase(): Promise<PgTestDatabase> {
       return client;
     },
     async drop() {
+      // pool.end() resolves as soon as it has told every client to close, not
+      // when the server has closed them. A backend that has not read the
+      // Terminate message by the time "drop database ... with (force)" signals
+      // it answers with a FATAL 57P01, which the pool re-emits as an 'error'
+      // nobody listens for: an uncaught exception. So wait for every
+      // connection to be gone ('remove' fires after the socket ends) first.
+      const closed = new Promise<void>((resolve) => {
+        let open = pool.totalCount;
+        if (open === 0) resolve();
+        else pool.on("remove", () => --open === 0 && resolve());
+      });
       await pool.end().catch(() => {});
+      await closed;
       const cleanup = new pg.Client({ connectionString: server.toString() });
       await cleanup.connect();
       try {
