@@ -16,7 +16,7 @@ the prod log collector).
   `${MONITORING_BIND_IP}:3001`. Provisioned datasources and dashboards.
 - **Loki** (`grafana/loki:2.9.10`) — single-binary, filesystem storage,
   7-day retention via compactor.
-- **loki-gateway** (`nginx:1.30.5-alpine`) — `${LOKI_PUSH_BIND_IP}:3101`.
+- **loki-gateway** (`nginx:1.30.7-alpine`) — `${LOKI_PUSH_BIND_IP}:3101`.
   Accepts only an authenticated `POST /loki/api/v1/push` and streams it to
   Loki; every other path and method gets 403.
 - **Promtail** (`grafana/promtail:2.9.10`) — tails the json-file logs

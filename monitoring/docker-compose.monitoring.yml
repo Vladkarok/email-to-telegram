@@ -138,7 +138,7 @@ services:
   # /loki/api/v1/push with basic auth, nothing else. Request bodies are
   # streamed to Loki, not buffered to disk.
   loki-gateway:
-    image: nginx:1.30.5-alpine
+    image: nginx:1.30.7-alpine
     restart: unless-stopped
     user: "101:101"
     entrypoint: ["nginx", "-c", "/etc/loki-gateway/nginx.conf", "-g", "daemon off;"]
