@@ -619,6 +619,11 @@ describe("processStripeWebhookEvent", () => {
     ).resolves.toBe("ignored");
 
     expect(mockUpdateUserBillingState).not.toHaveBeenCalled();
+    // Nothing is decided from the user row, so nothing is read.
+    expect(mockFindUserByStripeSubscriptionId).not.toHaveBeenCalled();
+    expect(mockFindUserByStripeCustomerId).not.toHaveBeenCalled();
+    expect(mockFindUserById).not.toHaveBeenCalled();
+    expect(mockFindUserByIdForUpdate).not.toHaveBeenCalled();
   });
 
   it("ignores stale subscription updates for a different subscription on the same customer", async () => {
