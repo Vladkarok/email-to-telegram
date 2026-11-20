@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "fs/promises";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import {
@@ -239,5 +239,90 @@ describe("pending raw email metadata", () => {
         rawEmailKekKeyId: metadata.kekKeyId,
       }),
     ).rejects.toThrow();
+  });
+});
+
+describe("openAttachmentStream temp files", () => {
+  let savedTmpdir: string | undefined;
+  let scratch: string;
+  let root: string;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "email-to-telegram-disk-"));
+    // os.tmpdir() reads TMPDIR on every call, so the decrypted copies land in
+    // a directory only this test uses.
+    scratch = join(root, "tmp");
+    await mkdir(scratch);
+    savedTmpdir = process.env["TMPDIR"];
+    process.env["TMPDIR"] = scratch;
+    configureStorageEncryption({
+      mode: "local-v1",
+      masterKey: Buffer.alloc(32, 21).toString("base64"),
+      masterKeyId: "temp-files-key",
+    });
+  });
+
+  afterEach(async () => {
+    if (savedTmpdir === undefined) delete process.env["TMPDIR"];
+    else process.env["TMPDIR"] = savedTmpdir;
+    resetStorageEncryptionForTests();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  async function writeEncrypted(name: string, plaintext: Buffer) {
+    const storagePath = join(root, name);
+    const metadata = await writeAttachment(storagePath, name, plaintext);
+    return {
+      id: name,
+      storagePath,
+      sizeBytes: plaintext.length,
+      encryptionMode: metadata.encryptionMode,
+      wrappedDek: metadata.wrappedDek,
+      kekKeyId: metadata.kekKeyId,
+    };
+  }
+
+  it("leaves no temp dir behind when the ciphertext fails authentication", async () => {
+    const attachment = await writeEncrypted("att-bad-tag", Buffer.from("corrupt me"));
+    const blob = await readFile(attachment.storagePath);
+    blob[blob.length - 1] ^= 0xff;
+    await writeFile(attachment.storagePath, blob);
+
+    await expect(openAttachmentStream(attachment)).rejects.toThrow();
+    expect(await readdir(scratch)).toEqual([]);
+  });
+
+  it("leaves no temp dir behind and keeps the original error when the wrapped DEK is missing", async () => {
+    const attachment = await writeEncrypted("att-no-dek", Buffer.from("no key"));
+
+    await expect(openAttachmentStream({ ...attachment, wrappedDek: null })).rejects.toThrow(
+      "Encrypted blob is missing wrapped DEK metadata",
+    );
+    expect(await readdir(scratch)).toEqual([]);
+  });
+
+  it("removes the temp dir on dispose without the stream being read", async () => {
+    const attachment = await writeEncrypted("att-dispose", Buffer.from("never read"));
+
+    const opened = await openAttachmentStream(attachment);
+    expect(await readdir(scratch)).toHaveLength(1);
+
+    await opened.dispose?.();
+    expect(opened.stream.destroyed).toBe(true);
+    expect(await readdir(scratch)).toEqual([]);
+    // A second call is a no-op.
+    await expect(opened.dispose?.()).resolves.toBeUndefined();
+  });
+
+  it("removes the temp dir once the stream has been read to the end", async () => {
+    const plaintext = Buffer.from("read me fully");
+    const attachment = await writeEncrypted("att-read", plaintext);
+
+    const opened = await openAttachmentStream(attachment);
+    const chunks: Buffer[] = [];
+    for await (const chunk of opened.stream) chunks.push(Buffer.from(chunk as Uint8Array));
+
+    expect(Buffer.concat(chunks)).toEqual(plaintext);
+    await vi.waitFor(async () => expect(await readdir(scratch)).toEqual([]));
   });
 });
