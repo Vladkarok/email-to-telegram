@@ -360,9 +360,9 @@ See [`.env.example`](./.env.example) for the authoritative template.
 | `WORKER_SECRET`                  | Yes      | Shared secret between Worker and VPS                                                                                |
 | `ATTACHMENT_DIR`                 | Yes      | Attachment storage path                                                                                             |
 | `RAW_EMAIL_DIR`                  | Yes      | Raw email storage path                                                                                              |
-| `ATTACHMENT_TTL_HOURS`           | No       | Attachment retention window                                                                                         |
-| `RAW_EMAIL_TTL_HOURS`            | No       | Raw email retention window                                                                                          |
-| `DELIVERY_LOG_RETENTION_DAYS`    | No       | Delivery log and retry-attempt retention window                                                                     |
+| `ATTACHMENT_TTL_HOURS`           | No       | Download link lifetime; file retention for mail without an owner (see the note below)                               |
+| `RAW_EMAIL_TTL_HOURS`            | No       | Raw email link lifetime; raw file retention for mail without an owner (see the note below)                          |
+| `DELIVERY_LOG_RETENTION_DAYS`    | No       | Delivery log retention for mail without an owner (see the note below)                                               |
 | `STORAGE_ENCRYPTION_MODE`        | No       | `none` or `local-v1` for at-rest attachment/raw encryption                                                          |
 | `MASTER_ENCRYPTION_KEY`          | No       | Required for `local-v1`; 32-byte base64 or hex key                                                                  |
 | `MASTER_ENCRYPTION_KEY_ID`       | No       | Optional key label stored with wrapped DEKs                                                                         |
@@ -384,6 +384,14 @@ See [`.env.example`](./.env.example) for the authoritative template.
 | `METRICS_TOKEN`                  | No       | Bearer token required when metrics are enabled                                                                      |
 | `LOG_LEVEL`                      | No       | Log verbosity                                                                                                       |
 | `NODE_ENV`                       | No       | Environment name                                                                                                    |
+
+**How long mail is kept.** Files and delivery logs of mail that belongs to a
+user, which is all normally delivered mail, are deleted after the
+`retentionDays` of that user's plan, in self-hosted mode too. Users are on
+the free plan by default, and its `retentionDays` is 7. To keep mail longer,
+set `PLAN_LIMITS`, for example `PLAN_LIMITS={"free":{"retentionDays":30}}`;
+raising the three settings above does not extend it. A download link older than the retention period
+points to a file that is already deleted.
 
 `STORAGE_ENCRYPTION_MODE=local-v1` encrypts new attachment and raw email files
 at rest with envelope encryption. Existing plaintext files remain readable, so
