@@ -331,7 +331,11 @@ probe_loop() {
   # The trap asks the job table for the curl or sleep in flight: a PID saved
   # after the fork would miss a SIGTERM that lands between the fork and the
   # assignment, and leave that job running after the probe is gone.
-  trap 'kill $(jobs -p) 2>/dev/null; wait; exit 0' TERM
+  # `wait` is given those PIDs as well: a SIGTERM that lands just as a `wait`
+  # below reaps its job makes bash drop the job's status and keep the job as
+  # running, and on such a job a `wait` without PIDs loops forever in bash
+  # 5.3.0 to 5.3.9, printing "not a child of this shell" each time round.
+  trap 'pids=$(jobs -p); kill $pids 2>/dev/null; wait $pids 2>/dev/null; exit 0' TERM
   trap '' HUP INT
   while kill -0 "$MAIN_PID" 2>/dev/null; do
     t=$(now_ms)
