@@ -24,8 +24,13 @@ export async function parseEmail(raw: Buffer, rawSizeBytes: number): Promise<Par
       : null;
 
   const attachments: ParsedEmailAttachment[] = (parsed.attachments ?? []).map((att) => ({
-    filename: sanitizeAttachmentFilename(att.filename ?? "attachment"),
-    contentType: sanitizeAttachmentContentType(att.contentType),
+    filename: sanitizeAttachmentFilename(
+      typeof att.filename === "string" ? att.filename : "attachment",
+    ),
+    // mailparser gives `false`, not a string, for an empty Content-Type header.
+    contentType: sanitizeAttachmentContentType(
+      typeof att.contentType === "string" ? att.contentType : "application/octet-stream",
+    ),
     sizeBytes: att.size ?? att.content.length,
     content: att.content,
     sha256: createHash("sha256").update(att.content).digest("hex"),

@@ -51,6 +51,36 @@ describe("parseEmail", () => {
     expect(result.subject).toContain("Сервер");
   });
 
+  it.each(["Content-Type:", "Content-Type: ;", "Content-Type: ; name=x"])(
+    "parses an attachment whose header is %j",
+    async (header) => {
+      const raw = Buffer.from(
+        [
+          "From: sender@example.com",
+          "Subject: odd attachment",
+          'Content-Type: multipart/mixed; boundary="b"',
+          "",
+          "--b",
+          "Content-Type: text/plain",
+          "",
+          "body",
+          "--b",
+          header,
+          'Content-Disposition: attachment; filename="z.pdf"',
+          "",
+          "data",
+          "--b--",
+          "",
+        ].join("\r\n"),
+      );
+      const result = await parseEmail(raw, raw.length);
+      expect(result.textBody).toContain("body");
+      expect(result.attachments).toHaveLength(1);
+      expect(result.attachments[0]?.filename).toBe("z.pdf");
+      expect(result.attachments[0]?.contentType).toBe("application/octet-stream");
+    },
+  );
+
   it("extracts envelope from from the From header", async () => {
     const result = await parseEmail(fixture("simple.eml"), 100);
     expect(result.envelopeFrom).toBe("sender@example.com");
