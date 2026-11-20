@@ -1,7 +1,7 @@
 import type { Api } from "grammy";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema.js";
-import { findActiveChats } from "../db/repos/chats.js";
+import { findActiveChatsForUser } from "../db/repos/chats.js";
 import { findAliasById } from "../db/repos/aliases.js";
 import type { Chat } from "../db/schema.js";
 
@@ -78,9 +78,9 @@ export function invalidateChatAuthorizationCache(chatId: bigint): void {
  * Checks are done in parallel to minimise latency.
  */
 export async function getAccessibleChats(db: Db, api: Api, userId: number): Promise<Chat[]> {
-  const allChats = await findActiveChats(db);
+  const candidates = await findActiveChatsForUser(db, BigInt(userId));
   const checked = await Promise.all(
-    allChats.map(async (chat) => ({
+    candidates.map(async (chat) => ({
       chat,
       allowed: await canManageChat(api, userId, chat.id),
     })),

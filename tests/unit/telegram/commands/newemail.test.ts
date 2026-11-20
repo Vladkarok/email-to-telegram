@@ -23,7 +23,7 @@ const mockFindChatById = vi.fn().mockResolvedValue({
 vi.mock("../../../../src/db/repos/chats.js", () => ({
   findChatById: (...args: unknown[]): unknown => mockFindChatById(...args),
   upsertChat: vi.fn().mockResolvedValue(undefined),
-  findActiveChats: vi.fn().mockResolvedValue([]),
+  findActiveChatsForUser: vi.fn().mockResolvedValue([]),
   deactivateChat: vi.fn().mockResolvedValue(undefined),
 }));
 

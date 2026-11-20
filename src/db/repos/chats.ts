@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { count, eq, sql } from "drizzle-orm";
+import { and, count, eq, ne, or, sql } from "drizzle-orm";
 import { chats, type Chat } from "../schema.js";
 import type * as schema from "../schema.js";
 
@@ -44,8 +44,16 @@ export async function deactivateChat(db: Db, id: bigint): Promise<void> {
   await db.update(chats).set({ isActive: false, updatedAt: new Date() }).where(eq(chats.id, id));
 }
 
-export async function findActiveChats(db: Db): Promise<Chat[]> {
-  return db.select().from(chats).where(eq(chats.isActive, true));
+/**
+ * Active chats the user could possibly manage: every non-private chat plus
+ * the user's own DM. Other users' DMs are left out because nobody else can
+ * manage them, so checking them only costs Telegram calls.
+ */
+export async function findActiveChatsForUser(db: Db, userId: bigint): Promise<Chat[]> {
+  return db
+    .select()
+    .from(chats)
+    .where(and(eq(chats.isActive, true), or(ne(chats.type, "private"), eq(chats.id, userId))));
 }
 
 export async function findChatById(db: Db, id: bigint): Promise<Chat | null> {
