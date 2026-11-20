@@ -12,8 +12,17 @@ vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
 const mockCheckInboundLimit = vi.fn().mockResolvedValue({ ok: true });
 const mockCheckEgressLimit = vi.fn().mockResolvedValue({ ok: true });
+// What a nested tx.transaction() hands its callback: the savepoint handle.
+const SAVEPOINT = { savepoint: true };
+const mockSavepoint = vi.fn();
 const mockWithOrganizationQuotaLock = vi.fn(
-  async (_db: unknown, _userId: bigint | null, work: (tx: unknown) => Promise<unknown>) => work({}),
+  async (_db: unknown, _userId: bigint | null, work: (tx: unknown) => Promise<unknown>) =>
+    work({
+      transaction: async (fn: (savepoint: unknown) => Promise<unknown>) => {
+        mockSavepoint();
+        return fn(SAVEPOINT);
+      },
+    }),
 );
 vi.mock("../../../src/billing/limits.js", () => ({
   checkInboundLimit: (...args: unknown[]): unknown => mockCheckInboundLimit(...args),
@@ -373,6 +382,29 @@ describe("/view/:token", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body).not.toContain("report.pdf");
+  });
+
+  it("mints each privacy download link in its own savepoint", async () => {
+    // One failed insert must not abort the transaction that also claims the
+    // view link and holds the other attachments' links.
+    const { token, expiresAt } = generateDeliveryViewToken("log-uuid-1", 24);
+    mockFindDeliveryViewLinkByTokenHash.mockResolvedValue(viewLinkRow(expiresAt));
+    mockListAttachments.mockResolvedValue([
+      { id: "att-1", originalFilename: "gone.pdf", sizeBytes: 1234 },
+      { id: "att-2", originalFilename: "kept.pdf", sizeBytes: 5678 },
+    ]);
+    mockCreateAttachmentLink.mockRejectedValueOnce(new Error("link mint failed"));
+
+    const app = await buildApp();
+    const res = await app.inject({ method: "POST", url: `/view/${token}` });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).not.toContain("gone.pdf");
+    expect(res.body).toContain("kept.pdf");
+    expect(mockSavepoint).toHaveBeenCalledTimes(2);
+    expect(mockCreateAttachmentLink).toHaveBeenCalledTimes(2);
+    for (const call of mockCreateAttachmentLink.mock.calls) expect(call[0]).toBe(SAVEPOINT);
+    expect(mockMarkDeliveryViewLinkViewed).toHaveBeenCalledTimes(1);
   });
 
   it("decrypts stored delivery metadata for privacy views", async () => {

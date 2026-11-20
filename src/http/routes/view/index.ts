@@ -191,11 +191,15 @@ export function deliveryViewRoute(
           const activeAttachments: Array<{ filename: string; sizeBytes: number; url: string }> = [];
           for (const attachment of plannedAttachments) {
             try {
-              await createAttachmentLink(
-                tx,
-                attachment.attachmentId,
-                attachment.token,
-                attachment.expiresAt,
+              // A savepoint, so a failed insert does not abort the quota
+              // transaction and take the claim and the other links with it.
+              await tx.transaction((savepoint) =>
+                createAttachmentLink(
+                  savepoint as Db,
+                  attachment.attachmentId,
+                  attachment.token,
+                  attachment.expiresAt,
+                ),
               );
               activeAttachments.push({
                 filename: attachment.filename,
