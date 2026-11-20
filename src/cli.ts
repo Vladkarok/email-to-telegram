@@ -251,7 +251,7 @@ export function parseStartupOptions(argv: readonly string[]): StartupOptions {
       options.manualSubscriptionStatus === "active";
     if (requiresPaidThrough && !options.manualPaidThroughAt) {
       throw new Error(
-        "--paid-through is required for paid plans (personal/pro/team). Use --plan business to grant without an expiration date.",
+        "--paid-through is required for paid plans (personal/pro/team). Use --plan business to grant without a paid-through date.",
       );
     }
 

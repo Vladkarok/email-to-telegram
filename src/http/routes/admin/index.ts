@@ -373,8 +373,9 @@ export async function adminRoutes(app: FastifyInstance, config: AdminConfig): Pr
           return;
         }
         // Operator picks a calendar day; intent is "paid through the end of
-        // this day". Storing UTC midnight would silently downgrade users up
-        // to ~24h before the grace boundary the operator chose.
+        // this day". Storing UTC midnight would list the user under Billing
+        // Attention up to ~24h early. The date is informational for an
+        // active manual plan: nothing downgrades it automatically.
         paidThroughAt = new Date(`${paidThroughRaw}T23:59:59.999Z`);
       }
 

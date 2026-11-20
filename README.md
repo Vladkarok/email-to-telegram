@@ -316,6 +316,9 @@ https://mail.example.com/admin
 The app redirects to `/admin/login`. There is no username in the first admin
 version: paste `ADMIN_SECRET` into the login form. After login, the admin UI can
 search users and grant/renew/downgrade manual plans from the user detail page.
+Manual plans do not expire on their own: once the paid-through date passes, the
+user is listed under Billing Attention on the dashboard and keeps the plan until
+you downgrade it by hand.
 
 Operational notes:
 
