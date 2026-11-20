@@ -75,11 +75,34 @@ export async function findAttachmentLinkByToken(
  * Returns true if this call claimed the download, false if already consumed
  * (concurrent request beat us to it).
  */
-export async function markLinkDownloaded(db: Db, linkId: string): Promise<boolean> {
+export async function markLinkDownloaded(
+  db: Db,
+  linkId: string,
+  claimedAt: Date = new Date(),
+): Promise<boolean> {
   const rows = await db
     .update(attachmentLinks)
-    .set({ downloadedAt: new Date() })
+    .set({ downloadedAt: claimedAt })
     .where(and(eq(attachmentLinks.id, linkId), isNull(attachmentLinks.downloadedAt)))
+    .returning({ id: attachmentLinks.id });
+  return rows.length > 0;
+}
+
+/**
+ * Undoes a claim made by markLinkDownloaded when the file could not be served
+ * at all, so the one-time link stays usable. Matches on the claim's own
+ * timestamp: only the request that made the claim can release it, never a
+ * claim some other request holds. Returns true if the claim was released.
+ */
+export async function releaseLinkDownload(
+  db: Db,
+  linkId: string,
+  claimedAt: Date,
+): Promise<boolean> {
+  const rows = await db
+    .update(attachmentLinks)
+    .set({ downloadedAt: null })
+    .where(and(eq(attachmentLinks.id, linkId), eq(attachmentLinks.downloadedAt, claimedAt)))
     .returning({ id: attachmentLinks.id });
   return rows.length > 0;
 }
