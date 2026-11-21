@@ -18,6 +18,11 @@ that has been running in production.
 
 ## [Unreleased]
 
+## [1.13.5] — 2026-11-21
+
+Fixes for failure paths found in a code review, a sturdier deploy script
+and dependency updates.
+
 ### Fixed
 
 - **One bad attachment no longer breaks the others.** An attachment whose
@@ -41,12 +46,22 @@ that has been running in production.
   or an empty search result instead of an error page.
 - `POST /billing/checkout` and `/billing/portal` answer 401 instead of 500 to
   a request without a body.
+- Deploy script: a Ctrl-C during the health wait is no longer lost, the
+  availability probe no longer leaves its `curl` or `sleep` behind, and it
+  cannot flood the log on bash 5.3.0 to 5.3.9.
 
 ### Changed
 
 - The README and the admin code now say that a manually granted plan does
   not expire on its own: after the paid-through date the user is listed
   under Billing Attention and keeps the plan until an operator changes it.
+- The README says that the plan's `retentionDays`, not the TTL settings,
+  decides how long a user's mail is kept, in self-hosted mode too.
+
+### Security
+
+- `joi` 18.3.2 (through `mailauth` 8.0.6): GHSA-4528-x5fx-h6hg.
+  `fast-xml-parser` 5.12.0.
 
 ## [1.13.4] — 2026-10-27
 
