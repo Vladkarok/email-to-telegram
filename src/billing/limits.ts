@@ -1,6 +1,6 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { sql } from "drizzle-orm";
-import { loadConfig } from "../config.js";
+import { isHostedMode } from "../hostedMode.js";
 import { getPlanDefinition, type PlanCode, type PlanDefinition } from "./plans.js";
 import { countActiveAliasesByUser } from "../db/repos/aliases.js";
 import { countAllowRulesByUser } from "../db/repos/allowRules.js";
@@ -27,6 +27,17 @@ export type LimitResult =
       limit?: number;
       used?: number;
     };
+
+/** The plan-limit reasons an inbound check can reject with. */
+export type InboundLimitCode =
+  | "subscription_inactive"
+  | "monthly_email_limit"
+  | "storage_limit"
+  | "message_size_limit";
+
+export type InboundLimitResult =
+  | { ok: true }
+  | { ok: false; code: InboundLimitCode; limit?: number; used?: number };
 
 const PAST_DUE_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -57,7 +68,7 @@ export function getEffectivePlan(
 }
 
 export async function checkAliasCreateLimit(db: Db, userId: bigint | null): Promise<LimitResult> {
-  if (!shouldEnforceHostedLimits()) return { ok: true };
+  if (!isHostedMode()) return { ok: true };
   if (userId == null) return { ok: false, code: "subscription_inactive" };
 
   const user = await findUserById(db, userId);
@@ -81,7 +92,7 @@ export async function checkAllowRuleCreateLimit(
   db: Db,
   userId: bigint | null,
 ): Promise<LimitResult> {
-  if (!shouldEnforceHostedLimits()) return { ok: true };
+  if (!isHostedMode()) return { ok: true };
   if (userId == null) return { ok: false, code: "subscription_inactive" };
 
   const user = await findUserById(db, userId);
@@ -115,30 +126,11 @@ export interface InboundPlan {
 }
 
 export async function resolveInboundPlan(db: Db, userId: bigint | null): Promise<InboundPlan> {
-  if (!shouldEnforceHostedLimits()) {
+  if (!isHostedMode()) {
     return { hosted: false, user: null, plan: getPlanDefinition("free") };
   }
   const user = userId == null ? null : ((await findUserById(db, userId)) ?? null);
   return { hosted: true, user, plan: user ? getEffectivePlan(user) : getPlanDefinition("free") };
-}
-
-export async function checkInboundLimit(
-  db: Db,
-  userId: bigint | null,
-  rawSizeBytes?: number,
-  storageDeltaBytes?: bigint,
-  // Callers pass the month they captured for the whole rejection decision so
-  // that check, counter increment, and notification claim cannot straddle a
-  // UTC month boundary and disagree.
-  month = usageMonthForDate(),
-): Promise<LimitResult> {
-  return checkInboundLimitForPlan(
-    db,
-    await resolveInboundPlan(db, userId),
-    rawSizeBytes,
-    storageDeltaBytes,
-    month,
-  );
 }
 
 export async function checkInboundLimitForPlan(
@@ -146,8 +138,11 @@ export async function checkInboundLimitForPlan(
   inbound: InboundPlan,
   rawSizeBytes?: number,
   storageDeltaBytes?: bigint,
+  // Callers pass the month they captured for the whole rejection decision so
+  // that check, counter increment, and notification claim cannot straddle a
+  // UTC month boundary and disagree.
   month = usageMonthForDate(),
-): Promise<LimitResult> {
+): Promise<InboundLimitResult> {
   if (!inbound.hosted) return { ok: true };
   const { user, plan } = inbound;
   if (!user) return { ok: false, code: "subscription_inactive" };
@@ -195,7 +190,7 @@ export async function checkEgressLimit(
   egressBytes: bigint,
   month = usageMonthForDate(),
 ): Promise<LimitResult> {
-  if (!shouldEnforceHostedLimits()) return { ok: true };
+  if (!isHostedMode()) return { ok: true };
   if (userId == null) return { ok: false, code: "subscription_inactive" };
   if (egressBytes <= 0n) return { ok: true };
 
@@ -219,23 +214,11 @@ export async function checkEgressLimit(
 }
 
 export async function hasActiveHostedUser(db: Db, userId: bigint | null): Promise<boolean> {
-  if (!shouldEnforceHostedLimits()) return true;
+  if (!isHostedMode()) return true;
   if (userId == null) return false;
 
   const user = await findUserById(db, userId);
   return Boolean(user);
-}
-
-export function shouldEnforceHostedLimits(): boolean {
-  const appMode = process.env["APP_MODE"];
-  if (appMode === "hosted") return true;
-  if (appMode === "self-hosted") return false;
-
-  try {
-    return loadConfig().appMode === "hosted";
-  } catch {
-    return false;
-  }
 }
 
 export async function withUserQuotaLock<T>(
@@ -243,7 +226,7 @@ export async function withUserQuotaLock<T>(
   userId: bigint | null,
   work: (tx: Db) => Promise<T>,
 ): Promise<T> {
-  if (!shouldEnforceHostedLimits() || userId == null) {
+  if (!isHostedMode() || userId == null) {
     return work(db);
   }
 

@@ -6,7 +6,8 @@ import {
   claimQuotaNotification,
   type QuotaNotificationReason,
 } from "../db/repos/quotaNotifications.js";
-import { getEffectivePlan, shouldEnforceHostedLimits } from "./limits.js";
+import { getEffectivePlan } from "./limits.js";
+import { isHostedMode } from "../hostedMode.js";
 import { DEFAULT_LOCALE, getMessages, normalizeLocale } from "../i18n/index.js";
 import { getLogger } from "../utils/logger.js";
 import { loadConfig } from "../config.js";
@@ -15,12 +16,6 @@ import type { Messages } from "../i18n/index.js";
 import { resolveSupportContact } from "./selfServe.js";
 
 type Db = NodePgDatabase<typeof schema>;
-
-const NOTIFIABLE_REASONS: ReadonlySet<string> = new Set([
-  "monthly_email_limit",
-  "storage_limit",
-  "subscription_inactive",
-] satisfies QuotaNotificationReason[]);
 
 /** Fraction of the monthly email limit at which the early warning fires. */
 export const APPROACHING_LIMIT_THRESHOLD = 0.8;
@@ -35,14 +30,6 @@ function higherLimitsLine(messages: Messages): string {
   return config.billingProvider === "donation"
     ? messages.quotaNotice.higherLimitsContact(escapeHtml(resolveSupportContact(config)))
     : messages.quotaNotice.higherLimitsUpgrade;
-}
-
-/**
- * Persistent, user-actionable rejections get a notice; per-message conditions
- * (size limit, rate limit, duplicates) do not — they would be spam.
- */
-export function isQuotaNotificationReason(reason: string): reason is QuotaNotificationReason {
-  return NOTIFIABLE_REASONS.has(reason);
 }
 
 /**
@@ -114,7 +101,7 @@ export async function notifyApproachingMonthlyLimit(
   deliveredCount: number,
 ): Promise<void> {
   try {
-    if (!api || !shouldEnforceHostedLimits()) return;
+    if (!api || !isHostedMode()) return;
 
     const user = await findUserById(db, userId);
     if (!user) return;

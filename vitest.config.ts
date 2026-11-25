@@ -5,6 +5,10 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["tests/**/*.test.ts"],
+    // The Postgres suites drop their database in afterAll, and
+    // "drop database ... with (force)" waits for a checkpoint; with ten of
+    // them running in parallel the default 10 s is sometimes not enough.
+    hookTimeout: 60_000,
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov", "html"],

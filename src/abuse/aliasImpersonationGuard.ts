@@ -1,4 +1,4 @@
-import { loadConfig } from "../config.js";
+import { isHostedMode } from "../hostedMode.js";
 
 export const ALIAS_IMPERSONATION_MESSAGE =
   "⛔ This alias name impersonates a reserved mailbox or a well-known brand. Please pick something else.";
@@ -204,7 +204,7 @@ function matchesAnyBlocklist(candidate: string, stripped: string): boolean {
 }
 
 export function assertAliasNotImpersonation(rawName: string): void {
-  if (!shouldEnforceImpersonationGuard()) return;
+  if (!isHostedMode()) return;
 
   const lower = rawName.toLowerCase();
   const candidates = new Set<string>([lower, ...leetVariants(lower)]);
@@ -214,17 +214,5 @@ export function assertAliasNotImpersonation(rawName: string): void {
     if (matchesAnyBlocklist(candidate, stripped)) {
       throw new AliasImpersonationError();
     }
-  }
-}
-
-function shouldEnforceImpersonationGuard(): boolean {
-  const appMode = process.env["APP_MODE"];
-  if (appMode === "hosted") return true;
-  if (appMode === "self-hosted") return false;
-
-  try {
-    return loadConfig().appMode === "hosted";
-  } catch {
-    return false;
   }
 }

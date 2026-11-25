@@ -1,5 +1,6 @@
 /**
- * Inbound email acceptance stage.
+ * The queue stage of inbound admission, run by the raw route and by raw
+ * recovery.
  *
  * Resolves the destination alias, enforces allow-rules, checks for
  * duplicates and rate limits, then atomically commits the delivery log
@@ -11,17 +12,18 @@ import { parseEmail } from "../parser.js";
 import { isDuplicate } from "../dedup.js";
 import { listAllowRules } from "../../db/repos/allowRules.js";
 import { findAliasForInbound } from "../inboundRouting.js";
-import { countRecentDeliveriesByAlias, createDeliveryLog } from "../../db/repos/deliveryLogs.js";
+import { createDeliveryLog } from "../../db/repos/deliveryLogs.js";
 import { prepareDeliveryLogMetadataWrite } from "../../security/deliveryLogMetadata.js";
 import { checkInboundLimitForPlan, resolveInboundPlan } from "../../billing/limits.js";
-import { isQuotaNotificationReason } from "../../billing/quotaNotifier.js";
 import { incrementUserUsageMonth, usageMonthForDate } from "../../db/repos/usage.js";
 import { incrementUserStorageUsage } from "../../db/repos/storageUsage.js";
-import type { Db, PipelineInput, QueueInboundResult } from "./types.js";
+import type { Db, PipelineInput, QueueInboundResult } from "../pipeline/types.js";
 import { recordQuotaRejection } from "../../observability/metrics.js";
 import { normalizeEnvelopeSender } from "../envelopeSender.js";
 import { evaluateAllowRules, hasAuthenticatedRuleCandidate } from "../allowRuleEvaluator.js";
 import { authenticateSender } from "../authenticateSender.js";
+import { isOverHourlyCap } from "./checks.js";
+import { isQuotaRejection } from "./policy.js";
 
 export async function queueInboundEmail(db: Db, input: PipelineInput): Promise<QueueInboundResult> {
   const { rawEmail, localPart } = input;
@@ -103,7 +105,7 @@ async function queueAllowedInboundEmail(
       // Quota-exhaustion rejections count as lost mail; per-message conditions
       // (size, rate, duplicate) do not. The route notifies after commit, so
       // the reminder it may send already sees this increment.
-      if (isQuotaNotificationReason(inboundLimit.code)) {
+      if (isQuotaRejection(inboundLimit.code)) {
         await incrementUserUsageMonth(tx as Db, {
           userId: alias.createdBy,
           month,
@@ -124,9 +126,7 @@ async function queueAllowedInboundEmail(
     }
 
     // The hour is measured after the locks, which may have waited.
-    const receivedSince = new Date(Date.now() - 60 * 60 * 1000);
-    const recentDeliveries = await countRecentDeliveriesByAlias(tx as Db, alias.id, receivedSince);
-    if (recentDeliveries >= inboundPlan.plan.limits.aliasEmailsPerHour) {
+    if (await isOverHourlyCap(tx as Db, alias.id, inboundPlan)) {
       return { kind: "rate_limited" as const };
     }
 

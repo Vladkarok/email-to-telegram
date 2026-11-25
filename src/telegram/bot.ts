@@ -101,15 +101,14 @@ import {
   editAliasDeleteConfirmMenu,
 } from "./menu/aliasMenu.js";
 import { sendAllowRulesMenu, editAllowRulesMenu } from "./menu/allowRulesMenu.js";
+import { findAliasById, updateAliasLabel, updateAliasStatus } from "../db/repos/aliases.js";
+import { setAliasTopicWithCas } from "../db/repos/aliasRouting.js";
 import {
-  findAliasById,
-  updateAliasBodyDedup,
-  updateAliasLabel,
-  updateAliasPrivacyMode,
-  updateAliasStatus,
-  updateAliasRenderMode,
-} from "../db/repos/aliases.js";
-import { softDeleteAliasWithCas, setAliasTopicWithCas } from "../db/repos/aliasRouting.js";
+  deleteAliasAtVersion,
+  setAliasRenderMode,
+  toggleAliasBodyDedup,
+  toggleAliasPrivacyMode,
+} from "../aliases/settings.js";
 import {
   editMovePickerMenu,
   editMoveConfirmMenu,
@@ -353,30 +352,27 @@ export function createBot(token: string, options: CreateBotOptions = {}): Bot {
   bot.callbackQuery(CB_ALIAS_DELETE_CONFIRM.pattern, async (ctx) => {
     if (!(await assertAliasAccess(ctx, ctx.match[1], { fresh: true }))) return;
     const messages = getMessages(await resolveLocale(ctx, getDb()));
-    const alias = await findAliasById(getDb(), ctx.match[1]);
-    if (alias) {
-      // Version-guarded against the state the CONFIRMATION SCREEN was built
-      // from (carried in the callback data), not the current row — otherwise
-      // the CAS could never fail and a stale delete would win a move race.
-      const deletion = await softDeleteAliasWithCas(getDb(), {
-        aliasId: alias.id,
-        expectedVersion: Number(ctx.match[2]),
-      });
-      // The toast reports the OUTCOME, so it waits for the CAS. Answering
-      // "Deleted." up front and then contradicting it is worse than a
-      // slightly later toast.
-      if (!deletion.ok) {
-        await ctx.answerCallbackQuery();
-        await ctx.reply(messages.aliasActions.routingChanged, { parse_mode: "HTML" });
-        return;
-      }
-      await ctx.answerCallbackQuery(messages.aliasActions.deletedToast);
-      const chat = await findChatById(getDb(), alias.chatId);
-      const title = chat?.title ?? alias.chatId.toString();
-      await editAliasListMenu(ctx, getDb(), alias.chatId, title);
-    } else {
+    const deletion = await deleteAliasAtVersion(getDb(), {
+      aliasId: ctx.match[1],
+      expectedVersion: Number(ctx.match[2]),
+    });
+    if (deletion.kind === "not_found") {
       await ctx.answerCallbackQuery(messages.common.aliasNotFoundShort);
+      return;
     }
+    // The toast reports the OUTCOME, so it waits for the CAS. Answering
+    // "Deleted." up front and then contradicting it is worse than a
+    // slightly later toast.
+    if (deletion.kind === "routing_changed") {
+      await ctx.answerCallbackQuery();
+      await ctx.reply(messages.aliasActions.routingChanged, { parse_mode: "HTML" });
+      return;
+    }
+    const alias = deletion.alias;
+    await ctx.answerCallbackQuery(messages.aliasActions.deletedToast);
+    const chat = await findChatById(getDb(), alias.chatId);
+    const title = chat?.title ?? alias.chatId.toString();
+    await editAliasListMenu(ctx, getDb(), alias.chatId, title);
   });
 
   // Move entry points accept EITHER normal admin rights or the orphan
@@ -503,12 +499,11 @@ export function createBot(token: string, options: CreateBotOptions = {}): Bot {
     const [, aliasId, mode] = ctx.match;
     if (!(await assertAliasAccess(ctx, aliasId, { fresh: true }))) return;
     const messages = getMessages(await resolveLocale(ctx, getDb()));
-    const validModes = ["plaintext", "html"];
-    if (!validModes.includes(mode)) {
+    const updated = await setAliasRenderMode(getDb(), aliasId, mode);
+    if (updated.kind === "invalid_mode") {
       await ctx.answerCallbackQuery(messages.settingsCommand.invalidModeToast);
       return;
     }
-    await updateAliasRenderMode(getDb(), aliasId, mode as "plaintext" | "html");
     await ctx.answerCallbackQuery(messages.settingsCommand.modeSetToast(mode));
     const alias = await findAliasById(getDb(), aliasId);
     if (!alias) return;
@@ -524,15 +519,12 @@ export function createBot(token: string, options: CreateBotOptions = {}): Bot {
     const aliasId = ctx.match[1];
     if (!(await assertAliasAccess(ctx, aliasId, { fresh: true }))) return;
     const messages = getMessages(await resolveLocale(ctx, getDb()));
-    const alias = await findAliasById(getDb(), aliasId);
-    if (!alias) {
+    const toggled = await toggleAliasBodyDedup(getDb(), aliasId);
+    if (toggled.kind === "not_found") {
       await ctx.answerCallbackQuery(messages.common.aliasNotFoundShort);
       return;
     }
-
-    const nextValue = !alias.bodyDedupEnabled;
-    await updateAliasBodyDedup(getDb(), aliasId, nextValue);
-    await ctx.answerCallbackQuery(messages.settingsCommand.bodyDedupToast(nextValue));
+    await ctx.answerCallbackQuery(messages.settingsCommand.bodyDedupToast(toggled.enabled));
 
     const updatedAlias = await findAliasById(getDb(), aliasId);
     if (!updatedAlias) return;
@@ -548,15 +540,12 @@ export function createBot(token: string, options: CreateBotOptions = {}): Bot {
     const aliasId = ctx.match[1];
     if (!(await assertAliasAccess(ctx, aliasId, { fresh: true }))) return;
     const messages = getMessages(await resolveLocale(ctx, getDb()));
-    const alias = await findAliasById(getDb(), aliasId);
-    if (!alias) {
+    const toggled = await toggleAliasPrivacyMode(getDb(), aliasId);
+    if (toggled.kind === "not_found") {
       await ctx.answerCallbackQuery(messages.common.aliasNotFoundShort);
       return;
     }
-
-    const nextValue = !alias.privacyModeEnabled;
-    await updateAliasPrivacyMode(getDb(), aliasId, nextValue);
-    await ctx.answerCallbackQuery(messages.settingsCommand.privacyToast(nextValue));
+    await ctx.answerCallbackQuery(messages.settingsCommand.privacyToast(toggled.enabled));
 
     const updatedAlias = await findAliasById(getDb(), aliasId);
     if (!updatedAlias) return;

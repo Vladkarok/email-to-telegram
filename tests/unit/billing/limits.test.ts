@@ -35,7 +35,6 @@ vi.mock("../../../src/db/repos/storageUsage.js", () => ({
 const {
   checkAliasCreateLimit,
   checkAllowRuleCreateLimit,
-  checkInboundLimit,
   checkEgressLimit,
   checkInboundLimitForPlan,
   getEffectivePlan,
@@ -43,6 +42,17 @@ const {
 } = await import("../../../src/billing/limits.js");
 const { applyPlanLimitOverrides, getPlanDefinition } =
   await import("../../../src/billing/plans.js");
+
+/** The inbound check as the queue runs it: resolve the owner's plan, then check it. */
+async function checkInbound(
+  db: Parameters<typeof resolveInboundPlan>[0],
+  userId: bigint | null,
+  rawSizeBytes?: number,
+  storageDeltaBytes?: bigint,
+): ReturnType<typeof checkInboundLimitForPlan> {
+  const inbound = await resolveInboundPlan(db, userId);
+  return checkInboundLimitForPlan(db, inbound, rawSizeBytes, storageDeltaBytes);
+}
 
 describe("billing limits", () => {
   beforeEach(() => {
@@ -58,7 +68,7 @@ describe("billing limits", () => {
   it("skips quota enforcement outside hosted mode", async () => {
     await expect(checkAliasCreateLimit({} as never, 1n)).resolves.toEqual({ ok: true });
     await expect(checkAllowRuleCreateLimit({} as never, 1n)).resolves.toEqual({ ok: true });
-    await expect(checkInboundLimit({} as never, 1n)).resolves.toEqual({ ok: true });
+    await expect(checkInbound({} as never, 1n)).resolves.toEqual({ ok: true });
     expect(mockFindUserById).not.toHaveBeenCalled();
   });
 
@@ -145,7 +155,7 @@ describe("billing limits", () => {
       ok: false,
       code: "subscription_inactive",
     });
-    await expect(checkInboundLimit({} as never, null)).resolves.toEqual({
+    await expect(checkInbound({} as never, null)).resolves.toEqual({
       ok: false,
       code: "subscription_inactive",
     });
@@ -169,7 +179,7 @@ describe("billing limits", () => {
       rejectedCount: 0,
     });
 
-    await expect(checkInboundLimit({} as never, 1n)).resolves.toEqual({
+    await expect(checkInbound({} as never, 1n)).resolves.toEqual({
       ok: false,
       code: "monthly_email_limit",
       limit: 200,
@@ -224,10 +234,10 @@ describe("billing limits", () => {
       currentPeriodEnd: null,
     });
     mockGetUserUsageMonth.mockResolvedValue({ deliveredCount: 49, rejectedCount: 0 });
-    await expect(checkInboundLimit({} as never, 1n)).resolves.toMatchObject({ ok: true });
+    await expect(checkInbound({} as never, 1n)).resolves.toMatchObject({ ok: true });
 
     mockGetUserUsageMonth.mockResolvedValue({ deliveredCount: 50, rejectedCount: 0 });
-    await expect(checkInboundLimit({} as never, 1n)).resolves.toEqual({
+    await expect(checkInbound({} as never, 1n)).resolves.toEqual({
       ok: false,
       code: "monthly_email_limit",
       limit: 50,
@@ -248,7 +258,7 @@ describe("billing limits", () => {
       rejectedCount: 0,
     });
 
-    await expect(checkInboundLimit({} as never, 1n, 6 * 1024 * 1024)).resolves.toEqual({
+    await expect(checkInbound({} as never, 1n, 6 * 1024 * 1024)).resolves.toEqual({
       ok: false,
       code: "message_size_limit",
       limit: 5 * 1024 * 1024,
@@ -269,7 +279,7 @@ describe("billing limits", () => {
       rejectedCount: 0,
     });
 
-    await expect(checkInboundLimit({} as never, 1n)).resolves.toEqual({ ok: true });
+    await expect(checkInbound({} as never, 1n)).resolves.toEqual({ ok: true });
   });
 
   it("rejects hosted egress when projected monthly bytes exceed the plan limit", async () => {
@@ -328,9 +338,7 @@ describe("billing limits", () => {
       attachmentBytes: 0n,
     });
 
-    await expect(
-      checkInboundLimit({} as never, 1n, undefined, 2n * 1024n * 1024n),
-    ).resolves.toEqual({
+    await expect(checkInbound({} as never, 1n, undefined, 2n * 1024n * 1024n)).resolves.toEqual({
       ok: false,
       code: "storage_limit",
       limit: 100 * 1024 * 1024,

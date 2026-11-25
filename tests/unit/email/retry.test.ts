@@ -2,11 +2,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { markBotHealthy, markBotUnhealthy } from "../../../src/telegram/health.js";
 import { metricsRegistry, resetMetricsForTests } from "../../../src/observability/metrics.js";
 
-vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
-
 const mockFindFailedLogs = vi.fn();
 const mockClaimLog = vi.fn();
-const mockUpdateLogStatus = vi.fn();
+const mockSettleLog = vi.fn();
+const mockCloseLog = vi.fn();
+const mockReopenLog = vi.fn();
+const mockResetLog = vi.fn();
 const mockFindAliasById = vi.fn();
 const mockCountAttempts = vi.fn();
 const mockCountCountedFailed = vi.fn();
@@ -31,7 +32,15 @@ vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
   claimDeliveryLogForRetry: (...args: unknown[]): unknown => mockClaimLog(...args),
   findDeliveryLogByRawEmailPath: (...args: unknown[]): unknown =>
     mockFindDeliveryLogByRawEmailPath(...args),
-  updateDeliveryLogStatus: (...args: unknown[]): unknown => mockUpdateLogStatus(...args),
+  // Always a promise: the code chains .catch() on these, and a reset mock returns undefined.
+  settleDeliveryLogAfterSend: (...args: unknown[]): Promise<unknown> =>
+    Promise.resolve(mockSettleLog(...args)),
+  closeDeliveryLogPermanentlyFailed: (...args: unknown[]): Promise<unknown> =>
+    Promise.resolve(mockCloseLog(...args)),
+  reopenDeliveryLogAfterMigration: (...args: unknown[]): Promise<unknown> =>
+    Promise.resolve(mockReopenLog(...args)),
+  resetDeliveryLogAfterError: (...args: unknown[]): Promise<unknown> =>
+    Promise.resolve(mockResetLog(...args)),
 }));
 vi.mock("../../../src/db/repos/aliases.js", () => ({
   findAliasById: (...args: unknown[]): unknown => mockFindAliasById(...args),
@@ -69,9 +78,16 @@ const mockRepairChatMigration = vi.fn();
 vi.mock("../../../src/telegram/chatMigration.js", () => ({
   repairChatMigration: (...args: unknown[]): unknown => mockRepairChatMigration(...args),
 }));
-vi.mock("../../../src/email/pipeline.js", () => ({
+vi.mock("../../../src/email/inboundAdmission/queue.js", () => ({
   queueInboundEmail: (...args: unknown[]): unknown => mockQueueInboundEmail(...args),
+}));
+vi.mock("../../../src/email/pipeline.js", () => ({
   deliverQueuedEmail: (...args: unknown[]): unknown => mockDeliverQueuedEmail(...args),
+}));
+const mockNotifyApproachingMonthlyLimit = vi.fn();
+vi.mock("../../../src/billing/quotaNotifier.js", () => ({
+  notifyApproachingMonthlyLimit: (...args: unknown[]): unknown =>
+    mockNotifyApproachingMonthlyLimit(...args),
 }));
 const mockLogger = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }));
 vi.mock("../../../src/utils/logger.js", () => ({
@@ -130,7 +146,7 @@ describe("runRetryWorker", () => {
     mockCountAttempts.mockResolvedValue(0);
     mockCountCountedFailed.mockResolvedValue(0);
     mockInsertAttempt.mockResolvedValue(undefined);
-    mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockSettleLog.mockResolvedValue(undefined);
     mockReadRawEmail.mockResolvedValue(RAW_EMAIL);
     mockSendTelegramMessage.mockResolvedValue({ ok: true, telegramMessageId: 42 });
     mockSendTelegramPhotos.mockResolvedValue({ ok: true, failedPhotos: [] });
@@ -179,97 +195,25 @@ describe("runRetryWorker", () => {
       fakeDb,
       expect.objectContaining({ status: "succeeded", attemptNo: 1 }),
     );
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "delivered");
+    expect(mockSettleLog).toHaveBeenCalledWith(fakeDb, fakeLog.id, "delivered");
     expect(mockMarkAliasFirstDelivered).toHaveBeenCalledWith(fakeDb, fakeLog.emailAddressId);
   });
 
-  it("keeps a retry delivered, with one send, when the marker write fails", async () => {
+  it("runs a claimed retry through the tracker under its log id", async () => {
     mockFindFailedLogs.mockResolvedValue([fakeLog]);
-    mockMarkAliasFirstDelivered.mockRejectedValueOnce(new Error("db down"));
+    // Not running the work shows the retry is started only through the tracker.
+    mockPipelineTrackerRunFor.mockResolvedValue(undefined);
 
     await runRetryWorker(fakeDb, fakeApi);
 
-    expect(mockSendTelegramMessage).toHaveBeenCalledOnce();
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "delivered");
-    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
-  });
-
-  it("writes no marker when the retry send fails", async () => {
-    mockFindFailedLogs.mockResolvedValue([fakeLog]);
-    mockSendTelegramMessage.mockResolvedValue({ ok: false, error: "Telegram error" });
-
-    await runRetryWorker(fakeDb, fakeApi);
-
-    expect(mockMarkAliasFirstDelivered).not.toHaveBeenCalled();
+    expect(mockPipelineTrackerRunFor).toHaveBeenCalledWith(fakeLog.id, expect.any(Function));
+    expect(mockReadRawEmail).not.toHaveBeenCalled();
+    expect(mockSendTelegramMessage).not.toHaveBeenCalled();
   });
 
   describe("delivery metrics", () => {
-    const retryLatency = async (): Promise<{ count: number; sum: number }> => {
-      const text = await metricsRegistry.getSingleMetricAsString(
-        "email_to_telegram_delivery_latency_seconds",
-      );
-      return {
-        count: Number(/_count\{[^}]*path="retry"[^}]*\} ([\d.]+)/.exec(text)?.[1]),
-        sum: Number(/_sum\{[^}]*path="retry"[^}]*\} ([\d.]+)/.exec(text)?.[1]),
-      };
-    };
-
     beforeEach(() => {
       resetMetricsForTests();
-    });
-
-    it("observes received_at → Telegram accepted when a retry delivers", async () => {
-      const receivedAt = new Date(Date.now() - 5 * 60 * 1000);
-      mockFindFailedLogs.mockResolvedValue([{ ...fakeLog, receivedAt }]);
-
-      await runRetryWorker(fakeDb, fakeApi);
-
-      expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "delivered");
-      const latency = await retryLatency();
-      expect(latency.count).toBe(1);
-      expect(latency.sum).toBeGreaterThanOrEqual(300);
-      expect(latency.sum).toBeLessThan(330);
-    });
-
-    it("observes nothing when the retry fails", async () => {
-      mockFindFailedLogs.mockResolvedValue([fakeLog]);
-      mockSendTelegramMessage.mockResolvedValue({ ok: false, error: "Telegram error" });
-
-      await runRetryWorker(fakeDb, fakeApi);
-
-      expect((await retryLatency()).count).toBe(0);
-    });
-
-    it("observes nothing when the retry is handed back for a chat migration", async () => {
-      mockFindFailedLogs.mockResolvedValue([fakeLog]);
-      mockRepairChatMigration.mockResolvedValue({ aliasCount: 1 });
-      mockListAttachments.mockResolvedValue([
-        {
-          id: "att-1",
-          storagePath: "/data/att-1.bin",
-          originalFilename: "photo.png",
-          contentType: "image/png",
-          sizeBytes: 10,
-          encryptionMode: null,
-          wrappedDek: null,
-          kekKeyId: null,
-        },
-      ]);
-      mockSendTelegramPhotos.mockResolvedValue({
-        ok: false,
-        failedPhotos: [{ id: "att-1", storagePath: "/data/att-1.bin" }],
-        failure: {
-          code: 400,
-          description: "Bad Request: group chat was upgraded to a supergroup chat",
-          transient: false,
-          migrateToChatId: -1002222333444n,
-        },
-      });
-
-      await runRetryWorker(fakeDb, fakeApi);
-
-      expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
-      expect((await retryLatency()).count).toBe(0);
     });
 
     const lostAt = async (stage: string): Promise<number> => {
@@ -279,6 +223,20 @@ describe("runRetryWorker", () => {
       return Number(new RegExp(`\\{stage="${stage}"[^}]*\\} ([\\d.]+)`).exec(text)?.[1]);
     };
 
+    const metricSum = async (
+      name: string,
+      labels: Record<string, string> = {},
+    ): Promise<number> => {
+      const metric = await metricsRegistry.getSingleMetric(name)?.get();
+      return (metric?.values ?? [])
+        .filter((v) => Object.entries(labels).every(([k, value]) => v.labels[k] === value))
+        .reduce((sum, v) => sum + v.value, 0);
+    };
+    const retryResult = (result: string): Promise<number> =>
+      metricSum("email_to_telegram_retry_attempts_total", { result });
+    const sendFailures = (): Promise<number> =>
+      metricSum("email_to_telegram_telegram_send_failures_total");
+
     it("counts a retry that runs out of budget as lost (stage retry)", async () => {
       mockFindFailedLogs.mockResolvedValue([fakeLog]);
       mockCountAttempts.mockResolvedValue(2);
@@ -287,8 +245,44 @@ describe("runRetryWorker", () => {
 
       await runRetryWorker(fakeDb, fakeApi);
 
-      expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+      expect(mockSettleLog).toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
       expect(await lostAt("retry")).toBe(1);
+      expect(await retryResult("permanently_failed")).toBe(1);
+      expect(await sendFailures()).toBe(1);
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ deliveryLogId: fakeLog.id }),
+        "retry worker: permanently failed",
+      );
+    });
+
+    // The retry worker's hooks on the shared attempt module: its counters and
+    // events per outcome.
+    it("counts and logs a delivered retry", async () => {
+      mockFindFailedLogs.mockResolvedValue([fakeLog]);
+
+      await runRetryWorker(fakeDb, fakeApi);
+
+      expect(await retryResult("succeeded")).toBe(1);
+      expect(await sendFailures()).toBe(0);
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        { deliveryLogId: fakeLog.id, attemptNo: 1 },
+        "retry worker: delivered",
+      );
+    });
+
+    it("counts and logs a retry that will run again", async () => {
+      mockFindFailedLogs.mockResolvedValue([fakeLog]);
+      mockSendTelegramMessage.mockResolvedValue({ ok: false, error: "Telegram error" });
+
+      await runRetryWorker(fakeDb, fakeApi);
+
+      expect(await retryResult("failed")).toBe(1);
+      expect(await retryResult("permanently_failed")).toBe(0);
+      expect(await sendFailures()).toBe(1);
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ deliveryLogId: fakeLog.id, attemptNo: 1 }),
+        "retry worker: will retry again",
+      );
     });
 
     it("counts a log closed before sending (raw email gone) as lost", async () => {
@@ -301,56 +295,12 @@ describe("runRetryWorker", () => {
 
     it("does not count a loss when the permanently_failed write fails", async () => {
       mockFindFailedLogs.mockResolvedValue([{ ...fakeLog, rawEmailPath: null }]);
-      mockUpdateLogStatus.mockRejectedValue(new Error("db down"));
+      mockCloseLog.mockRejectedValue(new Error("db down"));
 
       await runRetryWorker(fakeDb, fakeApi);
 
       expect(await lostAt("retry")).toBe(0);
     });
-
-    it("does not count a retryable failure as lost", async () => {
-      mockFindFailedLogs.mockResolvedValue([fakeLog]);
-      mockSendTelegramMessage.mockResolvedValue({ ok: false, error: "Telegram error" });
-
-      await runRetryWorker(fakeDb, fakeApi);
-
-      expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
-      expect(await lostAt("retry")).toBe(0);
-    });
-  });
-
-  it("repairs from a REAL GrammyError shape, not a hand-built failure", async () => {
-    // Acceptance criterion: the reactive path must work against the object
-    // grammY actually throws, so the whole sender→classifier→repair chain is
-    // exercised end to end rather than a convenient stand-in.
-    const { GrammyError } = await import("grammy");
-    const realError = new GrammyError(
-      "Call to 'sendMessage' failed! (400: Bad Request: group chat was upgraded to a supergroup chat)",
-      {
-        ok: false,
-        error_code: 400,
-        description: "Bad Request: group chat was upgraded to a supergroup chat",
-        parameters: { migrate_to_chat_id: -1002222333444 },
-      },
-      "sendMessage",
-      {},
-    );
-    const { describeSendError } = await import("../../../src/telegram/errorClassifier.js");
-    const failure = describeSendError(realError);
-
-    mockFindFailedLogs.mockResolvedValue([fakeLog]);
-    mockRepairChatMigration.mockResolvedValue({ aliasCount: 1 });
-    mockSendTelegramMessage.mockResolvedValue({
-      ok: false,
-      error: failure.description,
-      failure,
-    });
-
-    await runRetryWorker(fakeDb, fakeApi);
-
-    expect(mockRepairChatMigration).toHaveBeenCalledWith(fakeDb, fakeApi, -100n, -1002222333444n);
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
-    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
   });
 
   it("delivers the WHOLE email to the new chat when a move lands before the retry", async () => {
@@ -393,84 +343,6 @@ describe("runRetryWorker", () => {
     );
   });
 
-  it("aborts retryably when the RETRY's attachment send hits a migrate error", async () => {
-    // The other half of ratified amendment 2: the same rule must hold on the
-    // retry path, not just the initial delivery.
-    mockFindFailedLogs.mockResolvedValue([fakeLog]);
-    mockRepairChatMigration.mockResolvedValue({ aliasCount: 1 });
-    mockListAttachments.mockResolvedValue([
-      {
-        id: "att-1",
-        storagePath: "/data/att-1.bin",
-        originalFilename: "photo.png",
-        contentType: "image/png",
-        sizeBytes: 10,
-        encryptionMode: null,
-        wrappedDek: null,
-        kekKeyId: null,
-      },
-    ]);
-    mockSendTelegramPhotos.mockResolvedValue({
-      ok: false,
-      failedPhotos: [{ id: "att-1", storagePath: "/data/att-1.bin" }],
-      failure: {
-        code: 400,
-        description: "Bad Request: group chat was upgraded to a supergroup chat",
-        transient: false,
-        migrateToChatId: -1002222333444n,
-      },
-    });
-
-    await runRetryWorker(fakeDb, fakeApi);
-
-    expect(mockRepairChatMigration).toHaveBeenCalledWith(fakeDb, fakeApi, -100n, -1002222333444n);
-    // Handed back as retryable so the next cycle delivers the whole email to
-    // the new chat, rather than leaving it `delivered` minus its attachments.
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
-    // No fallback message to the dead old route.
-    expect(mockSendTelegramMessage).toHaveBeenCalledTimes(1);
-  });
-
-  it("aborts retryably when the attachment FALLBACK send hits a migrate error", async () => {
-    mockFindFailedLogs.mockResolvedValue([fakeLog]);
-    mockRepairChatMigration.mockResolvedValue({ aliasCount: 1 });
-    mockListAttachments.mockResolvedValue([
-      {
-        id: "att-1",
-        storagePath: "/data/att-1.bin",
-        originalFilename: "photo.png",
-        contentType: "image/png",
-        sizeBytes: 10,
-        encryptionMode: null,
-        wrappedDek: null,
-        kekKeyId: null,
-      },
-    ]);
-    // Photos fail for an unrelated reason, so the fallback runs — and THAT is
-    // where the upgrade lands.
-    mockSendTelegramPhotos.mockResolvedValue({
-      ok: false,
-      failedPhotos: [{ id: "att-1", storagePath: "/data/att-1.bin" }],
-    });
-    mockSendTelegramMessage
-      .mockResolvedValueOnce({ ok: true, telegramMessageId: 42 })
-      .mockResolvedValueOnce({
-        ok: false,
-        error: "Bad Request: group chat was upgraded to a supergroup chat",
-        failure: {
-          code: 400,
-          description: "Bad Request: group chat was upgraded to a supergroup chat",
-          transient: false,
-          migrateToChatId: -1002222333444n,
-        },
-      });
-
-    await runRetryWorker(fakeDb, fakeApi);
-
-    expect(mockRepairChatMigration).toHaveBeenCalledWith(fakeDb, fakeApi, -100n, -1002222333444n);
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
-  });
-
   it("retries to the route from the single fresh attempt-start read", async () => {
     mockFindFailedLogs.mockResolvedValue([fakeLog]);
     // The alias moved to chat -200n / thread 9n since the original delivery.
@@ -509,8 +381,9 @@ describe("runRetryWorker", () => {
       fakeDb,
       expect.objectContaining({ status: "failed", errorClass: "migrated" }),
     );
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
-    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+    expect(mockSettleLog).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
+    expect(mockSettleLog).not.toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+    expect(mockCloseLog).not.toHaveBeenCalled();
     // The next worker cycle re-reads the alias and lands on the new chat id.
     expect(mockRepairChatMigration).toHaveBeenCalledWith(fakeDb, fakeApi, -100n, -1002222333444n);
   });
@@ -522,7 +395,7 @@ describe("runRetryWorker", () => {
     await runRetryWorker(fakeDb, fakeApi);
 
     expect(mockSendTelegramMessage).not.toHaveBeenCalled();
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+    expect(mockCloseLog).toHaveBeenCalledWith(fakeDb, fakeLog.id);
   });
 
   it("marks permanently_failed when alias is deleted", async () => {
@@ -530,7 +403,7 @@ describe("runRetryWorker", () => {
     mockFindAliasById.mockResolvedValue({ ...fakeAlias, status: "deleted" });
     await runRetryWorker(fakeDb, fakeApi);
 
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+    expect(mockCloseLog).toHaveBeenCalledWith(fakeDb, fakeLog.id);
     expect(mockSendTelegramMessage).not.toHaveBeenCalled();
   });
 
@@ -539,14 +412,14 @@ describe("runRetryWorker", () => {
     mockReadRawEmail.mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
     await runRetryWorker(fakeDb, fakeApi);
 
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+    expect(mockCloseLog).toHaveBeenCalledWith(fakeDb, fakeLog.id);
   });
 
   it("marks permanently_failed when rawEmailPath is null", async () => {
     mockFindFailedLogs.mockResolvedValue([{ ...fakeLog, rawEmailPath: null }]);
     await runRetryWorker(fakeDb, fakeApi);
 
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+    expect(mockCloseLog).toHaveBeenCalledWith(fakeDb, fakeLog.id);
     expect(mockSendTelegramMessage).not.toHaveBeenCalled();
   });
 
@@ -560,19 +433,10 @@ describe("runRetryWorker", () => {
       fakeDb,
       expect.objectContaining({ status: "failed" }),
     );
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
-    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
-    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(fakeDb, fakeLog.id, "delivered");
-  });
-
-  it("marks permanently_failed on last failed attempt", async () => {
-    mockFindFailedLogs.mockResolvedValue([fakeLog]);
-    mockCountAttempts.mockResolvedValue(2); // attempt 3 of 3
-    mockCountCountedFailed.mockResolvedValue(2); // both prior failures counted
-    mockSendTelegramMessage.mockResolvedValue({ ok: false, error: "Telegram error" });
-    await runRetryWorker(fakeDb, fakeApi);
-
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+    expect(mockSettleLog).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
+    expect(mockSettleLog).not.toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+    expect(mockCloseLog).not.toHaveBeenCalled();
+    expect(mockSettleLog).not.toHaveBeenCalledWith(fakeDb, fakeLog.id, "delivered");
   });
 
   it("skips the whole cycle while the bot is unhealthy", async () => {
@@ -598,8 +462,9 @@ describe("runRetryWorker", () => {
       fakeDb,
       expect.objectContaining({ attemptNo: 11, status: "failed", errorClass: "network" }),
     );
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
-    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+    expect(mockSettleLog).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
+    expect(mockSettleLog).not.toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+    expect(mockCloseLog).not.toHaveBeenCalled();
   });
 
   it("fails permanently right away when the bot is blocked by the chat", async () => {
@@ -615,19 +480,7 @@ describe("runRetryWorker", () => {
       fakeDb,
       expect.objectContaining({ status: "failed", errorClass: "forbidden" }),
     );
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
-  });
-
-  it("fails permanently right away when the chat no longer exists", async () => {
-    mockFindFailedLogs.mockResolvedValue([fakeLog]);
-    mockSendTelegramMessage.mockResolvedValue({
-      ok: false,
-      error: "Call to 'sendMessage' failed! (400: Bad Request: chat not found)",
-    });
-
-    await runRetryWorker(fakeDb, fakeApi);
-
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
+    expect(mockSettleLog).toHaveBeenCalledWith(fakeDb, fakeLog.id, "permanently_failed");
   });
 
   it("skips logs that another worker already claimed", async () => {
@@ -658,34 +511,7 @@ describe("runRetryWorker", () => {
 
     await runRetryWorker(fakeDb, fakeApi);
 
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
-  });
-
-  it("rebuilds fresh attachment links during retry", async () => {
-    mockFindFailedLogs.mockResolvedValue([fakeLog]);
-    mockListAttachments.mockResolvedValue([
-      {
-        id: "att-1",
-        originalFilename: "report.pdf",
-        sizeBytes: 123,
-        storagePath: "/data/attachments/log-uuid/report.pdf",
-        contentType: "application/pdf",
-      },
-    ]);
-
-    await runRetryWorker(fakeDb, fakeApi, {
-      attachmentTtlHours: 48,
-      publicBaseUrl: "https://mail.example.com",
-    });
-
-    expect(mockCreateAttachmentLink).toHaveBeenCalledWith(
-      fakeDb,
-      "att-1",
-      expect.any(String),
-      expect.any(Date),
-    );
-    const [, opts] = mockSendTelegramMessage.mock.calls[0] as [unknown, { text: string }];
-    expect(opts.text).toContain("/dl/");
+    expect(mockResetLog).toHaveBeenCalledWith(fakeDb, fakeLog.id);
   });
 
   it("passes the rich ineligibility reason to the send, and none for a rich body", async () => {
@@ -862,35 +688,6 @@ describe("runRetryWorker", () => {
     );
   });
 
-  it("keeps retry delivery marked delivered when image fallback link creation fails", async () => {
-    mockFindFailedLogs.mockResolvedValue([fakeLog]);
-    mockListAttachments.mockResolvedValue([
-      {
-        id: "att-image",
-        originalFilename: "photo.png",
-        sizeBytes: 111,
-        storagePath: "/data/attachments/log-uuid/photo.png",
-        contentType: "image/png",
-      },
-    ]);
-    mockSendTelegramMessage.mockResolvedValueOnce({ ok: true, telegramMessageId: 42 });
-    mockSendTelegramPhotos.mockImplementationOnce((_api, opts: { photos: unknown[] }) =>
-      Promise.resolve({
-        ok: false,
-        failedPhotos: opts.photos,
-      }),
-    );
-    mockCreateAttachmentLink.mockRejectedValueOnce(new Error("db exploded"));
-
-    await runRetryWorker(fakeDb, fakeApi, {
-      attachmentTtlHours: 48,
-      publicBaseUrl: "https://mail.example.com",
-    });
-
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(fakeDb, fakeLog.id, "delivered");
-    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(fakeDb, fakeLog.id, "failed");
-  });
-
   it("recovers pending raw emails by queueing and delivering them", async () => {
     mockFindFailedLogs.mockResolvedValue([]);
     mockListPendingRawEmails.mockResolvedValue([
@@ -933,6 +730,48 @@ describe("runRetryWorker", () => {
     expect(queuedInput.rawEmailEncryption).toMatchObject({ encryptionMode: "none" });
     expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledWith(fakeLog.rawEmailPath);
     expect(mockDeliverQueuedEmail).toHaveBeenCalledOnce();
+  });
+
+  it("hands a recovered mail to the tracker under its log id and warns with the queue's usage", async () => {
+    mockFindFailedLogs.mockResolvedValue([]);
+    mockListPendingRawEmails.mockResolvedValue([
+      {
+        rawEmailPath: fakeLog.rawEmailPath,
+        localPart: "alerts",
+        recipientDomain: "mail.example.com",
+        envelopeFrom: "sender@example.com",
+        rawEmailEncryptionMode: "none",
+        rawEmailWrappedDek: null,
+        rawEmailKekKeyId: null,
+        correlationId: "req-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+    mockQueueInboundEmail.mockResolvedValue({
+      queued: true,
+      job: { deliveryLog: { id: "recovered-log", userId: 7n } },
+      usage: { month: "2026-04", deliveredCount: 42 },
+    });
+    // Not running the work shows the delivery is started only through the tracker.
+    mockPipelineTrackerRunFor.mockResolvedValue(undefined);
+
+    await runRetryWorker(fakeDb, fakeApi, {
+      attachmentDir: "/data/attachments",
+      attachmentTtlHours: 24,
+      publicBaseUrl: "https://mail.example.com",
+      rawEmailDir: "/data/rawemails",
+    });
+
+    expect(mockPipelineTrackerRunFor).toHaveBeenCalledWith("recovered-log", expect.any(Function));
+    expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
+    // The post-increment count from the queue, not a re-read.
+    expect(mockNotifyApproachingMonthlyLimit).toHaveBeenCalledWith(
+      fakeDb,
+      fakeApi,
+      7n,
+      "2026-04",
+      42,
+    );
   });
 
   it("leaves pending raw emails younger than two minutes to their live request", async () => {
@@ -1031,88 +870,38 @@ describe("runRetryWorker", () => {
     expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
   });
 
-  it("drops pending raw metadata for hosted quota rejections during recovery", async () => {
-    mockFindFailedLogs.mockResolvedValue([]);
-    mockListPendingRawEmails.mockResolvedValue([
-      {
-        rawEmailPath: fakeLog.rawEmailPath,
-        localPart: "alerts",
-        envelopeFrom: "sender@example.com",
-        rawEmailEncryptionMode: "none",
-        rawEmailWrappedDek: null,
-        rawEmailKekKeyId: null,
-        createdAt: "2026-01-01T00:00:00.000Z",
-      },
-    ]);
-    mockQueueInboundEmail.mockResolvedValue({
-      queued: false,
-      result: { ok: false, reason: "monthly_email_limit" },
-    });
+  // sender_auth_temperror is the one reason live ingress deletes but recovery keeps
+  // (owner decision b), so it pins which policy column recovery reads.
+  it.each(["rate_limited", "sender_auth_temperror"])(
+    "keeps a pending raw email refused with %s for a later recovery attempt",
+    async (reason) => {
+      mockFindFailedLogs.mockResolvedValue([]);
+      mockListPendingRawEmails.mockResolvedValue([
+        {
+          rawEmailPath: fakeLog.rawEmailPath,
+          localPart: "alerts",
+          envelopeFrom: "sender@example.com",
+          rawEmailEncryptionMode: "none",
+          rawEmailWrappedDek: null,
+          rawEmailKekKeyId: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ]);
+      mockQueueInboundEmail.mockResolvedValue({
+        queued: false,
+        result: { ok: false, reason },
+      });
 
-    await runRetryWorker(fakeDb, fakeApi, {
-      attachmentDir: "/data/attachments",
-      rawEmailDir: "/data/rawemails",
-    });
+      await runRetryWorker(fakeDb, fakeApi, {
+        attachmentDir: "/data/attachments",
+        rawEmailDir: "/data/rawemails",
+      });
 
-    expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledWith(fakeLog.rawEmailPath);
-    expect(mockDeleteFile).toHaveBeenCalledWith(fakeLog.rawEmailPath);
-    expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
-  });
-
-  it("drops pending raw metadata for storage-limit rejections during recovery", async () => {
-    mockFindFailedLogs.mockResolvedValue([]);
-    mockListPendingRawEmails.mockResolvedValue([
-      {
-        rawEmailPath: fakeLog.rawEmailPath,
-        localPart: "alerts",
-        envelopeFrom: "sender@example.com",
-        rawEmailEncryptionMode: "none",
-        rawEmailWrappedDek: null,
-        rawEmailKekKeyId: null,
-        createdAt: "2026-01-01T00:00:00.000Z",
-      },
-    ]);
-    mockQueueInboundEmail.mockResolvedValue({
-      queued: false,
-      result: { ok: false, reason: "storage_limit" },
-    });
-
-    await runRetryWorker(fakeDb, fakeApi, {
-      attachmentDir: "/data/attachments",
-      rawEmailDir: "/data/rawemails",
-    });
-
-    expect(mockDeletePendingRawEmailMeta).toHaveBeenCalledWith(fakeLog.rawEmailPath);
-    expect(mockDeleteFile).toHaveBeenCalledWith(fakeLog.rawEmailPath);
-    expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
-  });
-
-  it("keeps deferred pending raw emails for a later recovery attempt", async () => {
-    mockFindFailedLogs.mockResolvedValue([]);
-    mockListPendingRawEmails.mockResolvedValue([
-      {
-        rawEmailPath: fakeLog.rawEmailPath,
-        localPart: "alerts",
-        envelopeFrom: "sender@example.com",
-        rawEmailEncryptionMode: "none",
-        rawEmailWrappedDek: null,
-        rawEmailKekKeyId: null,
-        createdAt: "2026-01-01T00:00:00.000Z",
-      },
-    ]);
-    mockQueueInboundEmail.mockResolvedValue({
-      queued: false,
-      result: { ok: false, reason: "rate_limited" },
-    });
-
-    await runRetryWorker(fakeDb, fakeApi, {
-      attachmentDir: "/data/attachments",
-      rawEmailDir: "/data/rawemails",
-    });
-
-    expect(mockDeletePendingRawEmailMeta).not.toHaveBeenCalled();
-    expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
-  });
+      expect(mockDeletePendingRawEmailMeta).not.toHaveBeenCalled();
+      expect(mockDeleteFile).not.toHaveBeenCalled();
+      expect(mockDeliverQueuedEmail).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("retry runs at shutdown", () => {
@@ -1166,7 +955,7 @@ describe("retry runs at shutdown", () => {
     mockFindAliasById.mockResolvedValue(fakeAlias);
     mockCountAttempts.mockResolvedValue(0);
     mockCountCountedFailed.mockResolvedValue(0);
-    mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockSettleLog.mockResolvedValue(undefined);
     mockReadRawEmail.mockResolvedValue(RAW_EMAIL);
     mockListAttachments.mockResolvedValue([]);
     mockListPendingRawEmails.mockResolvedValue([]);

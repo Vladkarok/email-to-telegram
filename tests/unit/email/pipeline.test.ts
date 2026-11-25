@@ -1,16 +1,14 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   processInboundEmail,
   queueInboundEmail,
   deliverQueuedEmail,
 } from "../../../src/email/pipeline.js";
 import { insertDeliveryAttempt } from "../../../src/db/repos/deliveryAttempts.js";
-import { applyPlanLimitOverrides, getPlanDefinition } from "../../../src/billing/plans.js";
+import { getPlanDefinition } from "../../../src/billing/plans.js";
 import { metricsRegistry, resetMetricsForTests } from "../../../src/observability/metrics.js";
 import { readFileSync } from "fs";
 import { join } from "path";
-
-vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
 const mockFindAlias = vi.fn();
 const mockFindAliasById = vi.fn();
@@ -18,7 +16,9 @@ const mockListAllowRules = vi.fn();
 const mockAuthenticateSender = vi.fn();
 const mockIsDuplicate = vi.fn();
 const mockCreateLog = vi.fn();
-const mockUpdateLogStatus = vi.fn();
+const mockSettleLog = vi.fn();
+const mockReopenLog = vi.fn();
+const mockResetLog = vi.fn();
 const mockMarkProcessing = vi.fn();
 const mockCountRecentDeliveries = vi.fn();
 const mockCreateAttachment = vi.fn();
@@ -34,6 +34,7 @@ const mockIncrementOrganizationUsageMonth = vi
 const mockIncrementOrganizationStorageUsage = vi.fn().mockResolvedValue(undefined);
 const mockDecrementOrganizationStorageUsage = vi.fn().mockResolvedValue(undefined);
 const mockUsageMonthForDate = vi.fn(() => "2026-04");
+const mockDecrementUserUsageMonth = vi.fn();
 
 vi.mock("../../../src/db/repos/aliases.js", () => ({
   findAliasById: (...args: unknown[]): unknown => mockFindAliasById(...args),
@@ -51,7 +52,13 @@ vi.mock("../../../src/email/dedup.js", () => ({
 }));
 vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
   createDeliveryLog: (...args: unknown[]): unknown => mockCreateLog(...args),
-  updateDeliveryLogStatus: (...args: unknown[]): unknown => mockUpdateLogStatus(...args),
+  // Always a promise: the code chains .catch() on these, and a reset mock returns undefined.
+  settleDeliveryLogAfterSend: (...args: unknown[]): Promise<unknown> =>
+    Promise.resolve(mockSettleLog(...args)),
+  reopenDeliveryLogAfterMigration: (...args: unknown[]): Promise<unknown> =>
+    Promise.resolve(mockReopenLog(...args)),
+  resetDeliveryLogAfterError: (...args: unknown[]): Promise<unknown> =>
+    Promise.resolve(mockResetLog(...args)),
   markDeliveryLogProcessing: (...args: unknown[]): unknown => mockMarkProcessing(...args),
   countRecentDeliveriesByAlias: (...args: unknown[]): unknown => mockCountRecentDeliveries(...args),
 }));
@@ -99,8 +106,7 @@ vi.mock("../../../src/billing/limits.js", async () => {
   const { getPlanDefinition } = await import("../../../src/billing/plans.js");
   return {
     checkInboundLimitForPlan: (...args: unknown[]): unknown => mockCheckInboundLimit(...args),
-    // Tracked; falls back to the free plan, read at call time so
-    // applyPlanLimitOverrides in a test takes effect.
+    // Tracked; falls back to the free plan.
     resolveInboundPlan: (...args: unknown[]): unknown =>
       mockResolveInboundPlan(...args) ??
       Promise.resolve({ hosted: true, user: null, plan: getPlanDefinition("free") }),
@@ -110,6 +116,7 @@ vi.mock("../../../src/db/repos/usage.js", () => ({
   incrementUserUsageMonth: (...args: unknown[]): unknown =>
     mockIncrementOrganizationUsageMonth(...args),
   usageMonthForDate: (): unknown => mockUsageMonthForDate(),
+  decrementUserUsageMonth: (...args: unknown[]): unknown => mockDecrementUserUsageMonth(...args),
 }));
 vi.mock("../../../src/db/repos/storageUsage.js", () => ({
   incrementUserStorageUsage: (...args: unknown[]): unknown =>
@@ -118,8 +125,12 @@ vi.mock("../../../src/db/repos/storageUsage.js", () => ({
     mockDecrementOrganizationStorageUsage(...args),
 }));
 
+function fixture(name: string): Buffer {
+  return readFileSync(join(import.meta.dirname, "../../fixtures", name));
+}
+
 function simpleEmail() {
-  return readFileSync(join(import.meta.dirname, "../../fixtures/simple.eml"));
+  return fixture("simple.eml");
 }
 
 const PIPELINE_CONFIG = {
@@ -209,26 +220,6 @@ describe("processInboundEmail", () => {
     process.env["HMAC_SECRET"] = "hmac-secret-test-32chars-abcdef";
   });
 
-  it("returns sender_not_allowed when RFC5322 From has no allow-rule candidate", async () => {
-    mockFindAlias.mockResolvedValue(activeAlias);
-    const result = await processInboundEmail(
-      fakeDb() as Parameters<typeof processInboundEmail>[0],
-      null,
-      {
-        rawEmail: Buffer.from("From: blocked@attacker.com\r\nSubject: blocked\r\n\r\nbody"),
-        localPart: "alerts",
-        envelopeFrom: "blocked@attacker.com",
-        ...PIPELINE_CONFIG,
-      },
-    );
-    expect(result).toEqual({
-      ok: false,
-      reason: "sender_not_allowed",
-      senderRejection: { aliasId: "alias-uuid-1", headerFromDomain: "attacker.com" },
-    });
-    expect(mockAuthenticateSender).not.toHaveBeenCalled();
-  });
-
   it("returns a domainless sender rejection when the mail has several From addresses", async () => {
     mockFindAlias.mockResolvedValue(activeAlias);
     const result = await processInboundEmail(
@@ -264,102 +255,7 @@ describe("processInboundEmail", () => {
     expect(mockAuthenticateSender).toHaveBeenCalledWith(expect.any(Buffer), null);
   });
 
-  it("returns alias_not_found when alias is missing", async () => {
-    mockFindAlias.mockResolvedValue(null);
-    const result = await processInboundEmail(
-      fakeDb() as Parameters<typeof processInboundEmail>[0],
-      null,
-      {
-        rawEmail: simpleEmail(),
-        localPart: "unknown",
-        ...PIPELINE_CONFIG,
-      },
-    );
-    expect(result).toEqual({ ok: false, reason: "alias_not_found" });
-  });
-
-  it("returns alias_not_found when alias is paused", async () => {
-    mockFindAlias.mockResolvedValue({ ...activeAlias, status: "paused" });
-    const result = await processInboundEmail(
-      fakeDb() as Parameters<typeof processInboundEmail>[0],
-      null,
-      {
-        rawEmail: simpleEmail(),
-        localPart: "alerts",
-        envelopeFrom: "sender@example.com",
-        ...PIPELINE_CONFIG,
-      },
-    );
-    expect(result).toEqual({ ok: false, reason: "alias_not_found" });
-  });
-
-  it("returns duplicate when dedup check fails", async () => {
-    mockFindAlias.mockResolvedValue(activeAlias);
-    mockIsDuplicate.mockResolvedValue(true);
-    const result = await processInboundEmail(
-      fakeDb() as Parameters<typeof processInboundEmail>[0],
-      null,
-      {
-        rawEmail: simpleEmail(),
-        localPart: "alerts",
-        envelopeFrom: "sender@example.com",
-        ...PIPELINE_CONFIG,
-      },
-    );
-    expect(result).toEqual({ ok: false, reason: "duplicate" });
-  });
-
-  it("returns rate_limited when alias hourly cap is reached", async () => {
-    mockFindAlias.mockResolvedValue(activeAlias);
-    mockIsDuplicate.mockResolvedValue(false);
-    mockCountRecentDeliveries.mockResolvedValue(60);
-
-    const result = await processInboundEmail(
-      fakeDb() as Parameters<typeof processInboundEmail>[0],
-      null,
-      {
-        rawEmail: simpleEmail(),
-        localPart: "alerts",
-        envelopeFrom: "sender@example.com",
-        ...PIPELINE_CONFIG,
-      },
-    );
-
-    expect(result).toEqual({ ok: false, reason: "rate_limited" });
-    expect(mockCreateLog).not.toHaveBeenCalled();
-  });
-
-  describe("hourly cap from the owner's plan", () => {
-    afterEach(() => {
-      applyPlanLimitOverrides({});
-    });
-
-    async function queueWith(recent: number) {
-      mockFindAlias.mockResolvedValue(activeAlias);
-      mockIsDuplicate.mockResolvedValue(false);
-      mockCreateLog.mockResolvedValue({ id: "log-uuid-cap" });
-      mockCountRecentDeliveries.mockResolvedValue(recent);
-      return queueInboundEmail(fakeDb() as Parameters<typeof queueInboundEmail>[0], {
-        rawEmail: simpleEmail(),
-        localPart: "alerts",
-        envelopeFrom: "sender@example.com",
-        ...PIPELINE_CONFIG,
-      });
-    }
-
-    it("rate-limits at the plan's cap and ignores the legacy column", async () => {
-      applyPlanLimitOverrides({ free: { aliasEmailsPerHour: 5 } });
-      const result = await queueWith(5);
-      expect(result).toMatchObject({ queued: false, result: { reason: "rate_limited" } });
-      expect(mockCreateLog).not.toHaveBeenCalled();
-    });
-
-    it("queues one below the plan's cap", async () => {
-      applyPlanLimitOverrides({ free: { aliasEmailsPerHour: 5 } });
-      const result = await queueWith(4);
-      expect(result).toMatchObject({ queued: true });
-    });
-
+  describe("the owner's plan in the queue transaction", () => {
     it("uses one plan, resolved in the transaction, for quota and hourly cap", async () => {
       const pro = getPlanDefinition("pro");
       const snapshot = {
@@ -432,10 +328,11 @@ describe("processInboundEmail", () => {
     mockFindAlias.mockResolvedValue(activeAlias);
     mockIsDuplicate.mockResolvedValue(false);
     mockCreateLog.mockResolvedValue({ id: "log-uuid-audit" });
-    mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockSettleLog.mockResolvedValue(undefined);
 
     await processInboundEmail(fakeDb() as Parameters<typeof processInboundEmail>[0], null, {
       rawEmail: simpleEmail(),
+      rawEmailPath: "/data/rawemails/2026-01-01/test.eml",
       localPart: "alerts",
       envelopeFrom: "real-sender@sender.example.com",
       ...PIPELINE_CONFIG,
@@ -445,6 +342,7 @@ describe("processInboundEmail", () => {
       expect.anything(),
       expect.objectContaining({
         envelopeFrom: "real-sender@sender.example.com",
+        rawEmailPath: "/data/rawemails/2026-01-01/test.eml",
         bodyDedupApplied: false,
       }),
     );
@@ -454,7 +352,7 @@ describe("processInboundEmail", () => {
     mockFindAlias.mockResolvedValue({ ...activeAlias, bodyDedupEnabled: true });
     mockIsDuplicate.mockResolvedValue(false);
     mockCreateLog.mockResolvedValue({ id: "log-dedup-enabled" });
-    mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockSettleLog.mockResolvedValue(undefined);
 
     await processInboundEmail(fakeDb() as Parameters<typeof processInboundEmail>[0], null, {
       rawEmail: simpleEmail(),
@@ -485,13 +383,35 @@ describe("processInboundEmail", () => {
       rawEmailPath: "/tmp/raw/privacy.eml",
       receivedAt: new Date("2026-04-07T12:00:00.000Z"),
     });
-    mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockSettleLog.mockResolvedValue(undefined);
     mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 321 });
 
     await processInboundEmail(fakeDb() as Parameters<typeof processInboundEmail>[0], {} as never, {
       // Rich-capable body: without privacy mode this delivery would carry richHtml.
+      // The inline image would otherwise be sent as a photo.
       rawEmail: Buffer.from(
-        "From: sender@example.com\r\nTo: alerts@example.com\r\nSubject: Private\r\n\r\n# Heading\r\n\r\nCPU usage is high",
+        [
+          "From: sender@example.com",
+          "To: alerts@example.com",
+          "Subject: Private",
+          "MIME-Version: 1.0",
+          'Content-Type: multipart/mixed; boundary="b1"',
+          "",
+          "--b1",
+          "Content-Type: text/plain; charset=utf-8",
+          "",
+          "# Heading",
+          "",
+          "CPU usage is high",
+          "--b1",
+          'Content-Type: image/png; name="chart.png"',
+          'Content-Disposition: attachment; filename="chart.png"',
+          "Content-Transfer-Encoding: base64",
+          "",
+          Buffer.from("image-bytes").toString("base64"),
+          "--b1--",
+          "",
+        ].join("\r\n"),
       ),
       rawEmailPath: "/tmp/raw/privacy.eml",
       localPart: "alerts",
@@ -509,6 +429,7 @@ describe("processInboundEmail", () => {
     expect(opts.text).toContain("Private email alert");
     expect(opts.text).toContain("/view/");
     expect(opts.text).not.toContain("CPU usage");
+    expect(mockCreateAttachment).toHaveBeenCalledTimes(1);
     expect(mockSendTelegramPhotos).not.toHaveBeenCalled();
     expect(mockCreateAttachmentLink).not.toHaveBeenCalled();
     expect(mockCreateDeliveryViewLink).toHaveBeenCalledWith(
@@ -523,7 +444,7 @@ describe("processInboundEmail", () => {
     mockFindAlias.mockResolvedValue(activeAlias);
     mockIsDuplicate.mockResolvedValue(false);
     mockCreateLog.mockResolvedValue({ id: "log-uuid-1" });
-    mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockSettleLog.mockResolvedValue(undefined);
 
     const result = await processInboundEmail(
       fakeDb() as Parameters<typeof processInboundEmail>[0],
@@ -542,7 +463,7 @@ describe("processInboundEmail", () => {
     mockFindAlias.mockResolvedValue(activeAlias);
     mockIsDuplicate.mockResolvedValue(false);
     mockCreateLog.mockResolvedValue({ id: "log-uuid-2" });
-    mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockSettleLog.mockResolvedValue(undefined);
     mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 42 });
 
     const fakeApi = {} as Parameters<typeof processInboundEmail>[1];
@@ -557,44 +478,21 @@ describe("processInboundEmail", () => {
       },
     );
     expect(result).toEqual({ ok: true });
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(expect.anything(), "log-uuid-2", "delivered");
+    expect(vi.mocked(insertDeliveryAttempt)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        deliveryLogId: "log-uuid-2",
+        attemptNo: 1,
+        status: "succeeded",
+        telegramMessageId: 42n,
+      }),
+    );
+    expect(mockSettleLog).toHaveBeenCalledWith(expect.anything(), "log-uuid-2", "delivered");
     // The alias is now working: the first-delivered marker follows the
     // persisted success.
     expect(mockMarkAliasFirstDelivered).toHaveBeenCalledWith(expect.anything(), activeAlias.id);
     expect(mockMarkAliasFirstDelivered.mock.invocationCallOrder[0]).toBeGreaterThan(
-      mockUpdateLogStatus.mock.invocationCallOrder[0] ?? Infinity,
-    );
-  });
-
-  it("keeps a delivery successful, with one send, when the marker write fails", async () => {
-    mockFindAlias.mockResolvedValue(activeAlias);
-    mockIsDuplicate.mockResolvedValue(false);
-    mockCreateLog.mockResolvedValue({ id: "log-uuid-marker" });
-    mockUpdateLogStatus.mockResolvedValue(undefined);
-    mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 42 });
-    mockMarkAliasFirstDelivered.mockRejectedValue(new Error("db down"));
-
-    const result = await processInboundEmail(
-      fakeDb() as Parameters<typeof processInboundEmail>[0],
-      {} as Parameters<typeof processInboundEmail>[1],
-      {
-        rawEmail: simpleEmail(),
-        localPart: "alerts",
-        envelopeFrom: "sender@example.com",
-        ...PIPELINE_CONFIG,
-      },
-    );
-    expect(result).toEqual({ ok: true });
-    expect(mockSendTelegram).toHaveBeenCalledTimes(1);
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(
-      expect.anything(),
-      "log-uuid-marker",
-      "delivered",
-    );
-    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(
-      expect.anything(),
-      "log-uuid-marker",
-      "failed",
+      mockSettleLog.mock.invocationCallOrder[0] ?? Infinity,
     );
   });
 
@@ -602,7 +500,7 @@ describe("processInboundEmail", () => {
     mockFindAlias.mockResolvedValue(activeAlias);
     mockIsDuplicate.mockResolvedValue(false);
     mockCreateLog.mockResolvedValue({ id: "log-uuid-3" });
-    mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockSettleLog.mockResolvedValue(undefined);
     mockSendTelegram.mockResolvedValue({ ok: false, error: "flood wait" });
 
     const fakeApi = {} as Parameters<typeof processInboundEmail>[1];
@@ -617,7 +515,7 @@ describe("processInboundEmail", () => {
       },
     );
     expect(result).toEqual({ ok: false, reason: "send_failed" });
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(expect.anything(), "log-uuid-3", "failed");
+    expect(mockSettleLog).toHaveBeenCalledWith(expect.anything(), "log-uuid-3", "failed");
     expect(mockMarkAliasFirstDelivered).not.toHaveBeenCalled();
     expect(mockIncrementOrganizationUsageMonth).toHaveBeenCalledWith(
       expect.anything(),
@@ -626,6 +524,99 @@ describe("processInboundEmail", () => {
         deliveredCount: 1,
       }),
     );
+  });
+
+  // Real fixture mail through the real parser, cleaner and renderer: what the
+  // pipeline hands Telegram, and how it refuses at queue time. The queue's
+  // rules themselves run on Postgres in tests/db/inboundAdmission.pg.test.ts.
+  describe("fixture mail", () => {
+    async function run(name: string, envelopeFrom?: string) {
+      return processInboundEmail(
+        fakeDb() as Parameters<typeof processInboundEmail>[0],
+        {} as never,
+        {
+          rawEmail: fixture(name),
+          localPart: "alerts",
+          envelopeFrom,
+          ...PIPELINE_CONFIG,
+        },
+      );
+    }
+
+    function sentText(): { text: string; parseMode?: string } {
+      const [, opts] = mockSendTelegram.mock.calls[0] as [
+        unknown,
+        { text: string; parseMode?: string },
+      ];
+      return opts;
+    }
+
+    beforeEach(() => {
+      mockFindAlias.mockResolvedValue(activeAlias);
+      mockIsDuplicate.mockResolvedValue(false);
+      mockCreateLog.mockResolvedValue({ id: "log-fixture" });
+      mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 99 });
+    });
+
+    it("plain text: delivers the body", async () => {
+      expect(await run("simple.eml", "sender@example.com")).toEqual({ ok: true });
+      expect(mockSendTelegram).toHaveBeenCalledOnce();
+      expect(sentText().text).toContain("CPU usage");
+    });
+
+    it("HTML-rich email: rendered as plaintext by default", async () => {
+      await run("html-rich.eml", "newsletter@example.com");
+      expect(sentText().parseMode).toBeUndefined();
+      expect(sentText().text.length).toBeGreaterThan(0);
+    });
+
+    it("quoted reply: the quoted block is stripped", async () => {
+      await run("quoted-reply.eml", "colleague@example.com");
+      expect(sentText().text).toContain("Sounds good");
+      expect(sentText().text).not.toContain("Can everyone join");
+    });
+
+    it("signature: the signature is stripped", async () => {
+      await run("with-signature.eml", "support@example.com");
+      expect(sentText().text).toContain("Ticket #1234");
+      expect(sentText().text).not.toContain("John Smith");
+    });
+
+    it("unicode subject and body: forwarded without corruption", async () => {
+      await run("unicode.eml", "sender@example.com");
+      expect(sentText().text).toContain("Сервер");
+    });
+
+    it.each([
+      ["unknown", null],
+      ["paused", { ...activeAlias, status: "paused" }],
+    ])("refuses a %s alias as alias_not_found", async (_label, alias) => {
+      mockFindAlias.mockResolvedValue(alias);
+      expect(await run("simple.eml")).toEqual({ ok: false, reason: "alias_not_found" });
+      expect(mockSendTelegram).not.toHaveBeenCalled();
+    });
+
+    it("refuses a sender no rule allows, carrying the From domain for the owner's notice", async () => {
+      mockListAllowRules.mockResolvedValue([
+        { matchType: "domain", matchValue: "trusted.example" },
+      ]);
+      expect(await run("simple.eml", "spam@attacker.com")).toEqual({
+        ok: false,
+        reason: "sender_not_allowed",
+        senderRejection: { aliasId: activeAlias.id, headerFromDomain: "example.com" },
+      });
+      expect(mockSendTelegram).not.toHaveBeenCalled();
+    });
+
+    it("refuses a duplicate Message-ID without logging or sending", async () => {
+      mockIsDuplicate.mockResolvedValue(true);
+      expect(await run("simple.eml", "sender@example.com")).toEqual({
+        ok: false,
+        reason: "duplicate",
+      });
+      expect(mockCreateLog).not.toHaveBeenCalled();
+      expect(mockSendTelegram).not.toHaveBeenCalled();
+    });
   });
 });
 
@@ -647,83 +638,6 @@ describe("queueInboundEmail", () => {
     });
   });
 
-  it("queues a delivery log before async delivery begins", async () => {
-    mockFindAlias.mockResolvedValue(activeAlias);
-    mockIsDuplicate.mockResolvedValue(false);
-    mockCreateLog.mockResolvedValue({ id: "log-queued" });
-    const harness = fakeDbHarness();
-
-    const result = await queueInboundEmail(harness.db, {
-      rawEmail: simpleEmail(),
-      rawEmailPath: "/data/rawemails/test.eml",
-      localPart: "alerts",
-      envelopeFrom: "sender@example.com",
-      ...PIPELINE_CONFIG,
-    });
-
-    expect(result).toMatchObject({ queued: true });
-    expect(mockCreateLog).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        rawEmailPath: "/data/rawemails/test.eml",
-        finalStatus: "received",
-      }),
-    );
-    expect(mockIncrementOrganizationUsageMonth).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        userId: activeAlias.createdBy,
-        month: "2026-04",
-        deliveredCount: 1,
-      }),
-    );
-    expect(mockIncrementOrganizationStorageUsage).toHaveBeenCalledWith(
-      expect.anything(),
-      activeAlias.createdBy,
-      {
-        rawEmailBytes: BigInt(simpleEmail().length),
-        attachmentBytes: 0n,
-      },
-    );
-    expect(harness.execute).toHaveBeenCalledTimes(2);
-  });
-
-  it("returns the inbound limit reason before creating a delivery log", async () => {
-    mockFindAlias.mockResolvedValue(activeAlias);
-    mockCheckInboundLimit.mockResolvedValueOnce({
-      ok: false,
-      code: "monthly_email_limit",
-      limit: 100,
-      used: 100,
-    });
-    const harness = fakeDbHarness();
-
-    const result = await queueInboundEmail(harness.db, {
-      rawEmail: simpleEmail(),
-      rawEmailPath: "/data/rawemails/test.eml",
-      localPart: "alerts",
-      envelopeFrom: "sender@example.com",
-      ...PIPELINE_CONFIG,
-    });
-
-    expect(result).toEqual({
-      queued: false,
-      // userId and month are resolved inside the queue transaction so the
-      // route can notify the effective owner against the decision month, not
-      // its own possibly-stale lookup or a recomputed "now".
-      result: { ok: false, reason: "monthly_email_limit", userId: 1n, month: "2026-04" },
-    });
-    expect(mockCreateLog).not.toHaveBeenCalled();
-    // Quota-exhaustion rejections charge rejected_count (lost-mail tracking);
-    // delivered_count stays untouched.
-    expect(mockIncrementOrganizationUsageMonth).toHaveBeenCalledOnce();
-    expect(mockIncrementOrganizationUsageMonth).toHaveBeenCalledWith(expect.anything(), {
-      userId: 1n,
-      month: expect.stringMatching(/^\d{4}-\d{2}$/) as unknown as string,
-      rejectedCount: 1,
-    });
-  });
-
   it("returns duplicate when the delivery-log insert loses a DB race", async () => {
     mockFindAlias.mockResolvedValue(activeAlias);
     mockIsDuplicate.mockResolvedValue(false);
@@ -740,70 +654,15 @@ describe("queueInboundEmail", () => {
     });
 
     expect(result).toEqual({ queued: false, result: { ok: false, reason: "duplicate" } });
-  });
-
-  it("queues authenticated allow-rule deliveries when DKIM/DMARC aligned identity passes", async () => {
-    mockFindAlias.mockResolvedValue(activeAlias);
-    mockListAllowRules.mockResolvedValue([
-      {
-        matchType: "domain",
-        matchValue: "example.com",
-      },
-    ]);
-    mockAuthenticateSender.mockResolvedValue({
-      headerFromEmail: "sender@example.com",
-      headerFromDomain: "example.com",
-      authenticatedDomains: ["example.com"],
-      status: "pass",
-    });
-    mockIsDuplicate.mockResolvedValue(false);
-    mockCountRecentDeliveries.mockResolvedValue(0);
-    mockCreateLog.mockResolvedValue({ id: "log-auth" });
-
-    const result = await queueInboundEmail(fakeDbHarness().db, {
-      rawEmail: simpleEmail(),
-      rawEmailPath: "/data/rawemails/auth.eml",
-      localPart: "alerts",
-      envelopeFrom: "bounce@mailer.example",
-      ...PIPELINE_CONFIG,
-    });
-
-    expect(result).toMatchObject({ queued: true });
-    expect(mockAuthenticateSender).toHaveBeenCalledWith(simpleEmail(), "bounce@mailer.example");
-  });
-
-  it("rejects authenticated allow-rule candidates when sender auth fails", async () => {
-    mockFindAlias.mockResolvedValue(activeAlias);
-    mockListAllowRules.mockResolvedValue([
-      {
-        matchType: "domain",
-        matchValue: "example.com",
-      },
-    ]);
-    mockAuthenticateSender.mockResolvedValue({
-      headerFromEmail: "sender@example.com",
-      headerFromDomain: "example.com",
-      authenticatedDomains: [],
-      status: "fail",
-    });
-
-    const result = await queueInboundEmail(fakeDbHarness().db, {
-      rawEmail: simpleEmail(),
-      rawEmailPath: "/data/rawemails/auth-fail.eml",
-      localPart: "alerts",
-      envelopeFrom: "bounce@mailer.example",
-      ...PIPELINE_CONFIG,
-    });
-
-    expect(result).toEqual({ queued: false, result: { ok: false, reason: "sender_auth_failed" } });
-    expect(mockCreateLog).not.toHaveBeenCalled();
+    // The winner of the race was charged; the loser must not be.
+    expect(mockIncrementOrganizationUsageMonth).not.toHaveBeenCalled();
   });
 });
 
 describe("deliverQueuedEmail", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    mockUpdateLogStatus.mockResolvedValue(undefined);
+    mockSettleLog.mockResolvedValue(undefined);
     mockFindAliasById.mockResolvedValue(activeAlias);
     mockDeleteFile.mockResolvedValue(undefined);
     mockDecrementOrganizationStorageUsage.mockResolvedValue(undefined);
@@ -850,7 +709,7 @@ describe("deliverQueuedEmail", () => {
     ).rejects.toThrow("telegram exploded");
 
     expect(mockMarkProcessing).toHaveBeenCalledWith(expect.anything(), "log-failed");
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(expect.anything(), "log-failed", "failed");
+    expect(mockResetLog).toHaveBeenCalledWith(expect.anything(), "log-failed");
   });
 
   it("aborts before Telegram send when the queued alias was deleted", async () => {
@@ -883,16 +742,9 @@ describe("deliverQueuedEmail", () => {
 
     expect(result).toEqual({ ok: false, reason: "user_deleted" });
     expect(mockSendTelegram).not.toHaveBeenCalled();
-    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(
-      expect.anything(),
-      "log-deleted",
-      "processing",
-    );
-    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(
-      expect.anything(),
-      "log-deleted",
-      "delivered",
-    );
+    // The log is left as queued: neither claimed for processing nor settled.
+    expect(mockMarkProcessing).not.toHaveBeenCalled();
+    expect(mockSettleLog).not.toHaveBeenCalled();
   });
 
   it("delivers the whole attempt to the route from the fresh pre-send read (move after queue)", async () => {
@@ -1071,97 +923,6 @@ describe("deliverQueuedEmail", () => {
     expect(mockSendTelegramPhotos).toHaveBeenCalledOnce();
   });
 
-  it("repairs the migration and stays retryable when the text send hits a migrate error", async () => {
-    mockRepairChatMigration.mockResolvedValue({ aliasCount: 1 });
-    mockSendTelegram.mockResolvedValue({
-      ok: false,
-      error: MIGRATE_FAILURE.description,
-      failure: MIGRATE_FAILURE,
-    });
-
-    const result = await deliverQueuedEmail(
-      fakeDb() as Parameters<typeof processInboundEmail>[0],
-      {} as Parameters<typeof processInboundEmail>[1],
-      {
-        alias: activeAlias,
-        parsed: {
-          messageId: "<id@test>",
-          subject: "Hi",
-          envelopeFrom: "sender@example.com",
-          headerFrom: "Sender <sender@example.com>",
-          headerFromDisplay: "Sender <sender@example.com>",
-          headerFromEmail: "sender@example.com",
-          headerFromDomain: "example.com",
-          textBody: "hello",
-          htmlBody: null,
-          bodySha256: "hash",
-          attachments: [],
-          rawSizeBytes: 5,
-        },
-        deliveryLog: { id: "log-migrate" } as never,
-        envelopeFrom: "sender@example.com",
-        ...PIPELINE_CONFIG,
-      },
-    );
-
-    expect(result).toEqual({ ok: false, reason: "send_failed" });
-    expect(mockRepairChatMigration).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      100n,
-      -1002222333444n,
-    );
-    // Retryable, never permanently failed: repair failure must not burn the
-    // budget or trigger a premature refund.
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(expect.anything(), "log-migrate", "failed");
-    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(
-      expect.anything(),
-      "log-migrate",
-      "permanently_failed",
-    );
-  });
-
-  it("still returns send_failed (retryable) when the migrate repair itself fails", async () => {
-    mockRepairChatMigration.mockRejectedValue(new Error("repair exploded"));
-    mockSendTelegram.mockResolvedValue({
-      ok: false,
-      error: MIGRATE_FAILURE.description,
-      failure: MIGRATE_FAILURE,
-    });
-
-    const result = await deliverQueuedEmail(
-      fakeDb() as Parameters<typeof processInboundEmail>[0],
-      {} as Parameters<typeof processInboundEmail>[1],
-      {
-        alias: activeAlias,
-        parsed: {
-          messageId: "<id@test>",
-          subject: "Hi",
-          envelopeFrom: "sender@example.com",
-          headerFrom: "Sender <sender@example.com>",
-          headerFromDisplay: "Sender <sender@example.com>",
-          headerFromEmail: "sender@example.com",
-          headerFromDomain: "example.com",
-          textBody: "hello",
-          htmlBody: null,
-          bodySha256: "hash",
-          attachments: [],
-          rawSizeBytes: 5,
-        },
-        deliveryLog: { id: "log-migrate-repair-fail" } as never,
-        envelopeFrom: "sender@example.com",
-        ...PIPELINE_CONFIG,
-      },
-    );
-
-    expect(result).toEqual({ ok: false, reason: "send_failed" });
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(
-      expect.anything(),
-      "log-migrate-repair-fail",
-      "failed",
-    );
-  });
-
   it("aborts retryably when photo sends hit a migrate error, so the retry delivers it whole", async () => {
     mockRepairChatMigration.mockResolvedValue({ aliasCount: 1 });
     mockCreateAttachment.mockResolvedValueOnce({ id: "att-image" });
@@ -1218,11 +979,7 @@ describe("deliverQueuedEmail", () => {
       100n,
       -1002222333444n,
     );
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(
-      expect.anything(),
-      "log-photo-migrate",
-      "failed",
-    );
+    expect(mockReopenLog).toHaveBeenCalledWith(expect.anything(), "log-photo-migrate");
     // No fallback message to the dead old route, no orphan links.
     expect(mockSendTelegram).toHaveBeenCalledTimes(1);
     expect(mockCreateAttachmentLink).not.toHaveBeenCalled();
@@ -1532,63 +1289,6 @@ describe("deliverQueuedEmail", () => {
     );
   });
 
-  it("keeps the delivery successful when image fallback link creation fails", async () => {
-    mockCreateAttachment.mockResolvedValueOnce({ id: "att-image" });
-    mockSendTelegram.mockResolvedValueOnce({ ok: true, telegramMessageId: 99 });
-    mockSendTelegramPhotos.mockImplementationOnce((_api, opts: { photos: unknown[] }) =>
-      Promise.resolve({
-        ok: false,
-        failedPhotos: opts.photos,
-      }),
-    );
-    mockCreateAttachmentLink.mockRejectedValueOnce(new Error("db exploded"));
-
-    const result = await deliverQueuedEmail(
-      fakeDb() as Parameters<typeof processInboundEmail>[0],
-      {} as Parameters<typeof processInboundEmail>[1],
-      {
-        alias: activeAlias,
-        parsed: {
-          messageId: "<id@test>",
-          subject: "Hi",
-          envelopeFrom: "sender@example.com",
-          headerFrom: "Sender <sender@example.com>",
-          headerFromDisplay: "Sender <sender@example.com>",
-          headerFromEmail: "sender@example.com",
-          headerFromDomain: "example.com",
-          textBody: "hello",
-          htmlBody: null,
-          bodySha256: "hash",
-          attachments: [
-            {
-              filename: "image.png",
-              contentType: "image/png",
-              sizeBytes: 10,
-              sha256: "img-hash",
-              content: Buffer.from("image-bytes"),
-            },
-          ],
-          rawSizeBytes: 10,
-        },
-        deliveryLog: { id: "log-fallback-nonfatal" } as never,
-        envelopeFrom: "sender@example.com",
-        ...PIPELINE_CONFIG,
-      },
-    );
-
-    expect(result).toEqual({ ok: true });
-    expect(mockUpdateLogStatus).toHaveBeenCalledWith(
-      expect.anything(),
-      "log-fallback-nonfatal",
-      "delivered",
-    );
-    expect(mockUpdateLogStatus).not.toHaveBeenCalledWith(
-      expect.anything(),
-      "log-fallback-nonfatal",
-      "failed",
-    );
-  });
-
   describe("delivery metrics", () => {
     const latencyJob = (
       deliveryLog: object,
@@ -1628,60 +1328,6 @@ describe("deliverQueuedEmail", () => {
       resetMetricsForTests();
     });
 
-    it("observes received_at → Telegram accepted on a successful delivery", async () => {
-      mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 77 });
-
-      const result = await deliverQueuedEmail(
-        fakeDb() as Parameters<typeof processInboundEmail>[0],
-        {} as Parameters<typeof processInboundEmail>[1],
-        latencyJob({ id: "log-latency", receivedAt: new Date(Date.now() - 90_000) }),
-      );
-
-      expect(result).toEqual({ ok: true });
-      const latency = await initialLatency();
-      expect(latency.count).toBe(1);
-      expect(latency.sum).toBeGreaterThanOrEqual(90);
-      expect(latency.sum).toBeLessThan(120);
-    });
-
-    it("observes nothing when the send fails", async () => {
-      mockSendTelegram.mockResolvedValue({ ok: false, error: "Bad Request: oops" });
-
-      await deliverQueuedEmail(
-        fakeDb() as Parameters<typeof processInboundEmail>[0],
-        {} as Parameters<typeof processInboundEmail>[1],
-        latencyJob({ id: "log-latency-failed", receivedAt: new Date() }),
-      );
-
-      expect((await initialLatency()).count).toBe(0);
-    });
-
-    it("observes nothing when the attempt is handed back for a chat migration", async () => {
-      mockRepairChatMigration.mockResolvedValue({ aliasCount: 1 });
-      mockCreateAttachment.mockResolvedValueOnce({ id: "att-image" });
-      mockSendTelegram.mockResolvedValueOnce({ ok: true, telegramMessageId: 99 });
-      mockSendTelegramPhotos.mockImplementationOnce((_api, opts: { photos: unknown[] }) =>
-        Promise.resolve({ ok: false, failedPhotos: opts.photos, failure: MIGRATE_FAILURE }),
-      );
-
-      const result = await deliverQueuedEmail(
-        fakeDb() as Parameters<typeof processInboundEmail>[0],
-        {} as Parameters<typeof processInboundEmail>[1],
-        latencyJob({ id: "log-latency-migrated", receivedAt: new Date() }, [
-          {
-            filename: "image.png",
-            contentType: "image/png",
-            sizeBytes: 10,
-            sha256: "img-hash",
-            content: Buffer.from("image-bytes"),
-          },
-        ]),
-      );
-
-      expect(result).toEqual({ ok: false, reason: "chat_migrated" });
-      expect((await initialLatency()).count).toBe(0);
-    });
-
     it("still delivers when received_at is missing", async () => {
       mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 77 });
 
@@ -1695,14 +1341,42 @@ describe("deliverQueuedEmail", () => {
       expect((await initialLatency()).count).toBe(0);
     });
 
-    const lostAt = async (stage: string): Promise<number> => {
-      const text = await metricsRegistry.getSingleMetricAsString(
-        "email_to_telegram_deliveries_lost_total",
-      );
-      return Number(new RegExp(`\\{stage="${stage}"[^}]*\\} ([\\d.]+)`).exec(text)?.[1]);
+    /** Sum of the series of `name` whose labels include `labels`. */
+    const metricValue = async (
+      name: string,
+      labels: Record<string, string> = {},
+    ): Promise<number> => {
+      const metric = await metricsRegistry.getSingleMetric(name)?.get();
+      return (metric?.values ?? [])
+        .filter((v) => Object.entries(labels).every(([k, value]) => v.labels[k] === value))
+        .reduce((sum, v) => sum + v.value, 0);
     };
 
+    // The first-attempt wiring of the shared attempt module: its path label
+    // and its afterCommit counters.
+    it("observes received_at → Telegram accepted on the initial path", async () => {
+      mockSettleLog.mockResolvedValue(undefined);
+      mockSendTelegram.mockResolvedValue({ ok: true, telegramMessageId: 77 });
+
+      const result = await deliverQueuedEmail(
+        fakeDb() as Parameters<typeof processInboundEmail>[0],
+        {} as Parameters<typeof processInboundEmail>[1],
+        latencyJob({ id: "log-latency", receivedAt: new Date(Date.now() - 90_000) }),
+      );
+
+      expect(result).toEqual({ ok: true });
+      const latency = await initialLatency();
+      expect(latency.count).toBe(1);
+      expect(latency.sum).toBeGreaterThanOrEqual(90);
+      expect(latency.sum).toBeLessThan(120);
+      expect(
+        await metricValue("email_to_telegram_delivery_attempts_total", { result: "succeeded" }),
+      ).toBe(1);
+      expect(await metricValue("email_to_telegram_telegram_send_failures_total")).toBe(0);
+    });
+
     it("counts a first attempt to a blocked chat as lost (stage initial)", async () => {
+      mockSettleLog.mockResolvedValue(undefined);
       mockSendTelegram.mockResolvedValue({
         ok: false,
         error: "Call to 'sendMessage' failed! (403: Forbidden: bot was blocked by the user)",
@@ -1715,43 +1389,40 @@ describe("deliverQueuedEmail", () => {
       );
 
       expect(result).toEqual({ ok: false, reason: "send_failed" });
-      expect(mockUpdateLogStatus).toHaveBeenCalledWith(
+      expect(mockSettleLog).toHaveBeenCalledWith(
         expect.anything(),
         "log-lost-blocked",
         "permanently_failed",
       );
-      expect(await lostAt("initial")).toBe(1);
+      expect(
+        await metricValue("email_to_telegram_deliveries_lost_total", { stage: "initial" }),
+      ).toBe(1);
+      expect(
+        await metricValue("email_to_telegram_delivery_attempts_total", { result: "failed" }),
+      ).toBe(1);
+      expect(await metricValue("email_to_telegram_telegram_send_failures_total")).toBe(1);
     });
 
-    it("does not count a retryable first-attempt failure as lost", async () => {
-      mockSendTelegram.mockResolvedValue({ ok: false, error: "Bad Request: oops" });
+    // A counted failure only spends retry budget, which the retry worker
+    // enforces; the first attempt never closes the log on it.
+    it.each([
+      ["bad_request", "Call to 'sendMessage' failed! (400: Bad Request: message is too long)"],
+      ["other", "something odd happened"],
+    ])("leaves a first attempt's %s failure failed, not lost or refunded", async (_, error) => {
+      mockSettleLog.mockResolvedValue(undefined);
+      mockDecrementUserUsageMonth.mockResolvedValue(undefined);
+      mockSendTelegram.mockResolvedValue({ ok: false, error });
 
-      await deliverQueuedEmail(
+      const result = await deliverQueuedEmail(
         fakeDb() as Parameters<typeof processInboundEmail>[0],
         {} as Parameters<typeof processInboundEmail>[1],
-        latencyJob({ id: "log-not-lost", receivedAt: new Date() }),
+        latencyJob({ id: "log-counted", userId: 1n, receivedAt: new Date() }),
       );
 
-      expect(mockUpdateLogStatus).toHaveBeenCalledWith(expect.anything(), "log-not-lost", "failed");
-      expect(await lostAt("initial")).toBe(0);
-    });
-
-    it("does not count a loss when persisting permanently_failed fails", async () => {
-      mockSendTelegram.mockResolvedValue({
-        ok: false,
-        error: "Call to 'sendMessage' failed! (403: Forbidden: bot was blocked by the user)",
-      });
-      mockUpdateLogStatus.mockRejectedValue(new Error("db down"));
-
-      await expect(
-        deliverQueuedEmail(
-          fakeDb() as Parameters<typeof processInboundEmail>[0],
-          {} as Parameters<typeof processInboundEmail>[1],
-          latencyJob({ id: "log-lost-unpersisted", receivedAt: new Date() }),
-        ),
-      ).rejects.toThrow("db down");
-
-      expect(await lostAt("initial")).toBe(0);
+      expect(result).toEqual({ ok: false, reason: "send_failed" });
+      expect(mockSettleLog).toHaveBeenCalledWith(expect.anything(), "log-counted", "failed");
+      expect(await metricValue("email_to_telegram_deliveries_lost_total")).toBe(0);
+      expect(mockDecrementUserUsageMonth).not.toHaveBeenCalled();
     });
   });
 });

@@ -1,18 +1,12 @@
 import type { FastifyInstance } from "fastify";
 import { verifyWorkerRequest } from "../../utils/workerAuth.js";
 import { getDb } from "../../db/client.js";
-import { checkPreflightAllowRules } from "../../db/repos/allowRules.js";
-import { countRecentDeliveriesByAlias } from "../../db/repos/deliveryLogs.js";
-import { checkInboundLimitForPlan, resolveInboundPlan } from "../../billing/limits.js";
-import { isQuotaNotificationReason, notifyQuotaExhausted } from "../../billing/quotaNotifier.js";
-import { incrementUserUsageMonth, usageMonthForDate } from "../../db/repos/usage.js";
 import { getApi } from "../../telegram/api.js";
-import { findHostedInboundRejection } from "../../abuse/hostedInboundBlocklist.js";
-import { findAliasForInbound } from "../../email/inboundRouting.js";
+import { admitPreflight, settlePlanLimitRejection } from "../../email/inboundAdmission/index.js";
 import { normalizeEnvelopeSender } from "../../email/envelopeSender.js";
 import { getLogger } from "../../utils/logger.js";
 import { admitPreflightNoRules } from "../../activation/notice.js";
-import { recordInboundPreflight, recordQuotaRejection } from "../../observability/metrics.js";
+import { recordInboundPreflight } from "../../observability/metrics.js";
 
 function logWorkerForwardFailed(reason: string): void {
   getLogger().warn({ route: "/inbound/preflight", reason }, "worker.forward.failed");
@@ -59,108 +53,72 @@ export function preflightRoute(app: FastifyInstance): void {
         return;
       }
 
-      const alias = await findAliasForInbound(getDb(), { localPart, recipientDomain });
-      if (!alias || alias.status !== "active") {
-        recordInboundPreflight("rejected", "alias_not_found");
-        await reply.send({ accept: false });
-        return;
-      }
+      const verdict = await admitPreflight(getDb(), { localPart, recipientDomain, envelopeFrom });
+      switch (verdict.kind) {
+        case "alias_not_found":
+          recordInboundPreflight("rejected", "alias_not_found");
+          await reply.send({ accept: false });
+          return;
 
-      const hostedBlock = await findHostedInboundRejection(getDb(), {
-        userId: alias.createdBy,
-        localPart,
-        recipientDomain,
-        envelopeFrom,
-      });
-      if (hostedBlock) {
-        getLogger().info(
-          {
-            localPart,
-            aliasId: alias.id,
-            userId: alias.createdBy.toString(),
-            blockType: hostedBlock.blockType,
-            blockId: hostedBlock.id,
-          },
-          "inbound.preflight.rejected",
-        );
-        recordInboundPreflight("rejected", "hosted_blocklist");
-        await reply.send({ accept: false });
-        return;
-      }
+        case "hosted_blocklist":
+          getLogger().info(
+            {
+              localPart,
+              aliasId: verdict.alias.id,
+              userId: verdict.alias.createdBy.toString(),
+              blockType: verdict.block.blockType,
+              blockId: verdict.block.id,
+            },
+            "inbound.preflight.rejected",
+          );
+          recordInboundPreflight("rejected", "hosted_blocklist");
+          await reply.send({ accept: false });
+          return;
 
-      // One month for the whole rejection decision (check, counter, claim),
-      // and one plan for both the quota check and the hourly cap below.
-      const month = usageMonthForDate();
-      const inboundPlan = await resolveInboundPlan(getDb(), alias.createdBy);
-      const inboundLimit = await checkInboundLimitForPlan(
-        getDb(),
-        inboundPlan,
-        undefined,
-        undefined,
-        month,
-      );
-      if (!inboundLimit.ok) {
-        getLogger().info(
-          {
-            localPart,
-            aliasId: alias.id,
-            userId: alias.createdBy.toString(),
-            reason: inboundLimit.code,
-          },
-          "inbound.preflight.rejected",
-        );
-        recordInboundPreflight("rejected", inboundLimit.code);
-        recordQuotaRejection(inboundLimit.code);
-        // The Worker bounces on {accept:false} and never calls /inbound/raw,
-        // so this is the ONLY place monthly/subscription exhaustion can
-        // notify the owner. (storage_limit needs sizes and is raw-only.)
-        if (isQuotaNotificationReason(inboundLimit.code)) {
-          // Count the rejection (shown in /usage), then notify.
-          await incrementUserUsageMonth(getDb(), {
-            userId: alias.createdBy,
-            month,
-            rejectedCount: 1,
-          }).catch((err: unknown) => {
-            getLogger().warn(
-              { err, userId: alias.createdBy.toString() },
-              "quota.rejection.count_failed",
-            );
-          });
-          void notifyQuotaExhausted(getDb(), getApi(), alias.createdBy, inboundLimit.code, month);
-        }
-        await reply.send({ accept: false });
-        return;
-      }
+        case "plan_limit":
+          getLogger().info(
+            {
+              localPart,
+              aliasId: verdict.alias.id,
+              userId: verdict.userId.toString(),
+              reason: verdict.reason,
+            },
+            "inbound.preflight.rejected",
+          );
+          recordInboundPreflight("rejected", verdict.reason);
+          // The Worker bounces on {accept:false} and never calls /inbound/raw,
+          // so this is the ONLY place monthly/subscription exhaustion can
+          // notify the owner. (storage_limit needs sizes and is raw-only.)
+          await settlePlanLimitRejection(getDb(), getApi(), verdict);
+          await reply.send({ accept: false });
+          return;
 
-      // Preflight has no raw MIME, so it cannot verify DKIM/DMARC. It only
-      // rejects aliases with no allow rules; final sender authorization happens
-      // in the raw pipeline.
-      const allowed = await checkPreflightAllowRules(getDb(), alias.id);
-      if (!allowed) {
-        recordInboundPreflight("rejected", "sender_not_allowed");
-        await reply.send({ accept: false });
-        // After the response: tells the owner of a not-yet-working alias
-        // that it has no allow rules. Constant-time, never throws.
-        admitPreflightNoRules(alias.id);
-        return;
-      }
+        case "no_allow_rules":
+          recordInboundPreflight("rejected", "sender_not_allowed");
+          await reply.send({ accept: false });
+          // After the response: tells the owner of a not-yet-working alias
+          // that it has no allow rules. Constant-time, never throws.
+          admitPreflightNoRules(verdict.alias.id);
+          return;
 
-      const recentDeliveries = await countRecentDeliveriesByAlias(
-        getDb(),
-        alias.id,
-        new Date(Date.now() - 60 * 60 * 1000),
-      );
-      if (recentDeliveries >= inboundPlan.plan.limits.aliasEmailsPerHour) {
-        // Defer, not bounce: the Worker turns any non-2xx into a thrown error
-        // (a temporary SMTP failure), so the sender retries once the sliding
-        // hour frees a slot. {accept:false} would be a permanent 550.
-        getLogger().info(
-          { localPart, aliasId: alias.id, userId: alias.createdBy.toString() },
-          "inbound.preflight.deferred",
-        );
-        recordInboundPreflight("deferred", "rate_limited");
-        await reply.status(429).send({ error: "rate limited" });
-        return;
+        case "hourly_cap":
+          // Defer, not bounce: the Worker turns any non-2xx into a thrown error
+          // (a temporary SMTP failure), so the sender retries once the sliding
+          // hour frees a slot. {accept:false} would be a permanent 550.
+          getLogger().info(
+            {
+              localPart,
+              aliasId: verdict.alias.id,
+              userId: verdict.alias.createdBy.toString(),
+            },
+            "inbound.preflight.deferred",
+          );
+          recordInboundPreflight("deferred", "rate_limited");
+          await reply.status(429).send({ error: "rate limited" });
+          return;
+
+        case "accepted":
+          break;
       }
 
       recordInboundPreflight("accepted", "accepted");

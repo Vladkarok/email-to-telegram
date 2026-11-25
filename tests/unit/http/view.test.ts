@@ -1,3 +1,5 @@
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Fastify from "fastify";
 import { registerRoutes } from "../../../src/http/routes/index.js";
@@ -10,24 +12,34 @@ import { prepareDeliveryLogMetadataWrite } from "../../../src/security/deliveryL
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
-const mockCheckInboundLimit = vi.fn().mockResolvedValue({ ok: true });
-const mockCheckEgressLimit = vi.fn().mockResolvedValue({ ok: true });
 // What a nested tx.transaction() hands its callback: the savepoint handle.
 const SAVEPOINT = { savepoint: true };
 const mockSavepoint = vi.fn();
-const mockWithOrganizationQuotaLock = vi.fn(
-  async (_db: unknown, _userId: bigint | null, work: (tx: unknown) => Promise<unknown>) =>
-    work({
-      transaction: async (fn: (savepoint: unknown) => Promise<unknown>) => {
-        mockSavepoint();
-        return fn(SAVEPOINT);
-      },
-    }),
-);
-vi.mock("../../../src/billing/limits.js", () => ({
-  checkInboundLimit: (...args: unknown[]): unknown => mockCheckInboundLimit(...args),
-  checkEgressLimit: (...args: unknown[]): unknown => mockCheckEgressLimit(...args),
-  withUserQuotaLock: (...args: unknown[]): unknown => mockWithOrganizationQuotaLock(...args),
+// The charge itself (lock, check, claim, count, rollback of refused charges)
+// is covered on Postgres in tests/db/egressCharge.pg.test.ts; here it runs
+// the route's own prepare and claim steps on a handle that records savepoints.
+const CHARGE_MONTH = "2026-03";
+type ChargeInput = {
+  ownerUserId: bigint | null;
+  at?: Date;
+  onRefusal: "commit" | "rollback";
+  prepare: (tx: unknown) => Promise<{ egressBytes: bigint; value: unknown }>;
+  claim: (tx: unknown) => Promise<boolean>;
+};
+async function runCharge(_db: unknown, input: ChargeInput): Promise<unknown> {
+  const tx = {
+    transaction: async (fn: (savepoint: unknown) => Promise<unknown>) => {
+      mockSavepoint();
+      return fn(SAVEPOINT);
+    },
+  };
+  const { egressBytes, value } = await input.prepare(tx);
+  if (!(await input.claim(tx))) return { status: "claim_lost", month: CHARGE_MONTH };
+  return { status: "charged", month: CHARGE_MONTH, egressBytes, value };
+}
+const mockChargeEgress = vi.fn(runCharge);
+vi.mock("../../../src/billing/egressCharge.js", () => ({
+  chargeEgress: (...args: Parameters<typeof runCharge>): unknown => mockChargeEgress(...args),
 }));
 
 const mockFindDeliveryViewLinkByTokenHash = vi.fn();
@@ -49,13 +61,9 @@ vi.mock("../../../src/db/repos/attachmentLinks.js", () => ({
   createAttachmentLink: (...args: unknown[]): unknown => mockCreateAttachmentLink(...args),
 }));
 
-const mockIncrementOrganizationUsageMonth = vi.fn();
-const mockDecrementOrganizationUsageMonth = vi.fn();
+const mockDecrementUserUsageMonth = vi.fn();
 vi.mock("../../../src/db/repos/usage.js", () => ({
-  incrementUserUsageMonth: (...args: unknown[]): unknown =>
-    mockIncrementOrganizationUsageMonth(...args),
-  decrementUserUsageMonth: (...args: unknown[]): unknown =>
-    mockDecrementOrganizationUsageMonth(...args),
+  decrementUserUsageMonth: (...args: unknown[]): unknown => mockDecrementUserUsageMonth(...args),
   usageMonthForDate: vi.fn(() => "2026-04"),
 }));
 vi.mock("../../../src/storage/disk.js", async () => {
@@ -138,10 +146,8 @@ describe("/view/:token", () => {
     mockCreateAttachmentLink.mockResolvedValue(undefined);
     mockReadRawEmail.mockResolvedValue(RAW_EMAIL);
     mockListAttachments.mockResolvedValue([]);
-    mockCheckInboundLimit.mockResolvedValue({ ok: true });
-    mockCheckEgressLimit.mockResolvedValue({ ok: true });
-    mockIncrementOrganizationUsageMonth.mockResolvedValue(undefined);
-    mockDecrementOrganizationUsageMonth.mockResolvedValue(undefined);
+    mockChargeEgress.mockImplementation(runCharge);
+    mockDecrementUserUsageMonth.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -201,27 +207,82 @@ describe("/view/:token", () => {
       "view-link-1",
       expect.any(Date),
     );
-    const [, usageUpdate] = mockIncrementOrganizationUsageMonth.mock.calls[0] as [
-      unknown,
-      { userId: bigint; month: string; egressBytes: bigint },
-    ];
-    expect(usageUpdate.userId).toBe(1n);
-    expect(usageUpdate.month).toBe("2026-04");
-    expect(usageUpdate.egressBytes).toBeGreaterThan(0n);
+    expect(mockChargeEgress).toHaveBeenCalledOnce();
+    const [, input] = mockChargeEgress.mock.calls[0];
+    expect(input.ownerUserId).toBe(1n);
+    // The month is fixed by the same instant the claim is stamped with.
+    const [, , claimedAt] = mockMarkDeliveryViewLinkViewed.mock.calls[0] as [unknown, string, Date];
+    expect(input.at).toBeInstanceOf(Date);
+    expect(input.at).toBe(claimedAt);
+    // A refusal must undo the attachment links the prepare step inserted.
+    expect(input.onRefusal).toBe("rollback");
+    // The charge is the byte length of the page actually served.
+    const charge = (await mockChargeEgress.mock.results[0].value) as { egressBytes: bigint };
+    expect(charge.egressBytes).toBe(BigInt(res.rawPayload.length));
+    expect(mockDecrementUserUsageMonth).not.toHaveBeenCalled();
   });
 
-  it("returns 403 and keeps the view link unused when the org egress limit is exhausted", async () => {
+  it("refunds the unsent part of an aborted POST in the month it was charged to", async () => {
     const { token, expiresAt } = generateDeliveryViewToken("log-uuid-1", 24);
     mockFindDeliveryViewLinkByTokenHash.mockResolvedValue(viewLinkRow(expiresAt));
-    mockCheckEgressLimit.mockResolvedValue({ ok: false, code: "egress_limit" });
+    // A page far larger than the socket buffers, so an early abort leaves
+    // most of it unsent.
+    mockReadRawEmail.mockResolvedValue(
+      Buffer.concat([
+        Buffer.from("From: sender@example.com\r\nTo: alerts@example.com\r\nSubject: Big\r\n\r\n"),
+        Buffer.alloc(16 * 1024 * 1024, 0x61),
+      ]),
+    );
+    const app = await buildApp();
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const { port } = app.server.address() as AddressInfo;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const req = http.request(
+          { host: "127.0.0.1", port, path: `/view/${token}`, method: "POST" },
+          (res) => {
+            res.once("data", () => {
+              req.destroy();
+              resolve();
+            });
+            res.on("error", () => undefined);
+          },
+        );
+        req.on("error", (err) => {
+          if (!req.destroyed) reject(err);
+        });
+        req.end();
+      });
+
+      await vi.waitFor(() => expect(mockDecrementUserUsageMonth).toHaveBeenCalledOnce());
+      const charge = (await mockChargeEgress.mock.results[0].value) as { egressBytes: bigint };
+      const [, refund] = mockDecrementUserUsageMonth.mock.calls[0] as [
+        unknown,
+        { userId: bigint; month: string; egressBytes: bigint },
+      ];
+      expect(refund.userId).toBe(1n);
+      expect(refund.month).toBe(CHARGE_MONTH);
+      expect(refund.egressBytes).toBeGreaterThan(0n);
+      expect(refund.egressBytes).toBeLessThan(charge.egressBytes);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("returns 403 when the egress charge is over the limit", async () => {
+    const { token, expiresAt } = generateDeliveryViewToken("log-uuid-1", 24);
+    mockFindDeliveryViewLinkByTokenHash.mockResolvedValue(viewLinkRow(expiresAt));
+    mockChargeEgress.mockResolvedValue({
+      status: "over_limit",
+      month: CHARGE_MONTH,
+      limit: { ok: false, code: "egress_limit" },
+    });
 
     const app = await buildApp();
     const res = await app.inject({ method: "POST", url: `/view/${token}` });
 
     expect(res.statusCode).toBe(403);
     expect(res.body).toContain("monthly email view quota");
-    expect(mockMarkDeliveryViewLinkViewed).not.toHaveBeenCalled();
-    expect(mockIncrementOrganizationUsageMonth).not.toHaveBeenCalled();
   });
 
   it("returns 410 when the view link is already used", async () => {

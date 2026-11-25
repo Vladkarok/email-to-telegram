@@ -1,18 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockCtx } from "../../../helpers/mockContext.js";
+import { getMessages } from "../../../../src/i18n/index.js";
 
 vi.mock("../../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
-
-vi.mock("../../../../src/config.js", () => ({
-  loadConfig: () => ({ billingProvider: "none", donationUrl: undefined }),
-}));
 
 const mockFindAliasByLocalPartAnyDomain = vi.fn();
 const mockFindAliasByFullAddress = vi.fn();
 const mockListAliasesByChat = vi.fn();
 const mockFindAliasesByCreator = vi.fn();
-const mockAddAllowRule = vi.fn();
-const mockFindAllowRuleByMatch = vi.fn();
 const mockRemoveAllowRule = vi.fn();
 const mockListAllowRules = vi.fn();
 
@@ -25,8 +20,6 @@ vi.mock("../../../../src/db/repos/aliases.js", () => ({
 }));
 
 vi.mock("../../../../src/db/repos/allowRules.js", () => ({
-  addAllowRule: (...args: unknown[]): unknown => mockAddAllowRule(...args),
-  findAllowRuleByMatch: (...args: unknown[]): unknown => mockFindAllowRuleByMatch(...args),
   removeAllowRule: (...args: unknown[]): unknown => mockRemoveAllowRule(...args),
   listAllowRules: (...args: unknown[]): unknown => mockListAllowRules(...args),
 }));
@@ -37,19 +30,20 @@ vi.mock("../../../../src/telegram/authorization.js", () => ({
   canManageChat: vi.fn().mockResolvedValue(true),
 }));
 
-const mockCheckAllowRuleCreateLimit = vi.fn().mockResolvedValue({ ok: true });
 const mockHasActiveHostedOrganization = vi.fn().mockResolvedValue(true);
 vi.mock("../../../../src/billing/limits.js", () => ({
-  checkAllowRuleCreateLimit: (...args: unknown[]): unknown =>
-    mockCheckAllowRuleCreateLimit(...args),
   hasActiveHostedUser: (...args: unknown[]): unknown => mockHasActiveHostedOrganization(...args),
-  withUserQuotaLock: vi.fn(
-    async (_db: unknown, _organizationId: string | null, work: (tx: unknown) => Promise<unknown>) =>
-      work({}),
-  ),
+}));
+
+// The insertion rules run on Postgres in tests/db/aliasOperations.pg.test.ts;
+// here only the reply for each outcome is pinned.
+const mockAddAllowRuleForOwner = vi.fn().mockResolvedValue({ kind: "added" });
+vi.mock("../../../../src/aliases/allowRules.js", () => ({
+  addAllowRuleForOwner: (...args: unknown[]): unknown => mockAddAllowRuleForOwner(...args),
 }));
 
 const { allowHandler } = await import("../../../../src/telegram/commands/allow.js");
+const en = getMessages("en");
 
 const ALIAS = {
   id: "uuid-1",
@@ -63,10 +57,9 @@ const ALIAS = {
 describe("/allow command", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockCheckAllowRuleCreateLimit.mockResolvedValue({ ok: true });
+    mockAddAllowRuleForOwner.mockResolvedValue({ kind: "added" });
     mockHasActiveHostedOrganization.mockResolvedValue(true);
     mockCanManageAlias.mockResolvedValue(true);
-    mockFindAllowRuleByMatch.mockResolvedValue(null);
     mockFindAliasByLocalPartAnyDomain.mockResolvedValue(ALIAS);
     mockFindAliasByFullAddress.mockResolvedValue(ALIAS);
     mockListAliasesByChat.mockResolvedValue([ALIAS]);
@@ -74,21 +67,20 @@ describe("/allow command", () => {
   });
 
   describe("add subcommand", () => {
-    it("adds an exact email allow rule", async () => {
-      const ctx = createMockCtx({ commandMatch: "add alerts-ab12cd user@github.com" });
+    it("adds an exact email allow rule and confirms it", async () => {
+      const ctx = createMockCtx({ commandMatch: "add alerts-ab12cd User@GitHub.com" });
 
       await allowHandler(ctx);
 
-      expect(mockAddAllowRule).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({
-          emailAddressId: "uuid-1",
-          matchType: "exact_email",
-          matchValue: "user@github.com",
-        }),
-      );
+      expect(mockAddAllowRuleForOwner).toHaveBeenCalledWith(expect.anything(), ALIAS, {
+        matchType: "exact_email",
+        normalized: "user@github.com",
+      });
       expect(ctx.reply).toHaveBeenCalledOnce();
-      expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/added|allow/i);
+      expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([
+        en.allowCommand.added("alerts-ab12cd", "🔐", "user@github.com"),
+        { parse_mode: "HTML" },
+      ]);
     });
 
     it("resolves hosted aliases by full address", async () => {
@@ -103,28 +95,10 @@ describe("/allow command", () => {
         "alerts-ab12cd@inbox.example.com",
       );
       expect(mockFindAliasByLocalPartAnyDomain).not.toHaveBeenCalled();
-      expect(mockAddAllowRule).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({
-          emailAddressId: "uuid-1",
-          matchType: "domain",
-          matchValue: "github.com",
-        }),
-      );
-    });
-
-    it("adds a domain allow rule", async () => {
-      const ctx = createMockCtx({ commandMatch: "add alerts-ab12cd github.com" });
-
-      await allowHandler(ctx);
-
-      expect(mockAddAllowRule).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({
-          matchType: "domain",
-          matchValue: "github.com",
-        }),
-      );
+      expect(mockAddAllowRuleForOwner).toHaveBeenCalledWith(expect.anything(), ALIAS, {
+        matchType: "domain",
+        normalized: "github.com",
+      });
     });
 
     it("replies with error when alias not found", async () => {
@@ -133,7 +107,7 @@ describe("/allow command", () => {
 
       await allowHandler(ctx);
 
-      expect(mockAddAllowRule).not.toHaveBeenCalled();
+      expect(mockAddAllowRuleForOwner).not.toHaveBeenCalled();
       expect(ctx.reply).toHaveBeenCalledOnce();
       expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/not found/i);
     });
@@ -143,54 +117,72 @@ describe("/allow command", () => {
 
       await allowHandler(ctx);
 
-      expect(mockAddAllowRule).not.toHaveBeenCalled();
-      expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/invalid format/i);
+      expect(mockAddAllowRuleForOwner).not.toHaveBeenCalled();
+      expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([
+        en.allowCommand.invalidFormat,
+        { parse_mode: "HTML" },
+      ]);
     });
 
-    it("rejects new rules when the plan allow-rule limit is reached", async () => {
-      mockCheckAllowRuleCreateLimit.mockResolvedValue({
-        ok: false,
-        code: "allow_rule_limit",
-        limit: 10,
-        used: 10,
+    it("a duplicate replies that the rule already exists", async () => {
+      mockAddAllowRuleForOwner.mockResolvedValueOnce({ kind: "duplicate" });
+      const ctx = createMockCtx({ commandMatch: "add alerts-ab12cd github.com" });
+
+      await allowHandler(ctx);
+
+      expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([
+        en.allowCommand.alreadyExists("alerts-ab12cd", "🔐", "github.com"),
+        { parse_mode: "HTML" },
+      ]);
+    });
+
+    it("the allow-rule limit offers an upgrade", async () => {
+      mockAddAllowRuleForOwner.mockResolvedValueOnce({
+        kind: "limit",
+        limit: { ok: false, code: "allow_rule_limit", limit: 10, used: 10 },
       });
       const ctx = createMockCtx({ commandMatch: "add alerts-ab12cd github.com" });
 
       await allowHandler(ctx);
 
-      expect(mockAddAllowRule).not.toHaveBeenCalled();
       const [text, opts] = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0] as [
         string,
-        { reply_markup?: { inline_keyboard: Array<Array<{ callback_data?: string }>> } },
+        { parse_mode: string; reply_markup: { inline_keyboard: unknown[][] } },
       ];
-      expect(text).toMatch(/limit reached|upgrade/i);
-      // Should include an upgrade button
-      const buttons = opts?.reply_markup?.inline_keyboard?.flat() ?? [];
-      expect(buttons.some((b) => b.callback_data === "bill:upgrade")).toBe(true);
+      expect(text).toBe(en.allowCommand.limitReached("alerts-ab12cd", 10, 10));
+      expect(opts.parse_mode).toBe("HTML");
+      expect(opts.reply_markup.inline_keyboard).toEqual([
+        [{ text: en.allowCommand.upgradePlanButton, callback_data: "bill:upgrade" }],
+      ]);
     });
 
-    it("shows generic fallback for unrecognised limit codes without upgrade button", async () => {
-      mockCheckAllowRuleCreateLimit.mockResolvedValue({
-        ok: false,
-        code: "monthly_email_limit",
-        limit: 100,
-        used: 100,
+    it("a missing hosted user at insert time is the subscription reply", async () => {
+      mockAddAllowRuleForOwner.mockResolvedValueOnce({
+        kind: "limit",
+        limit: { ok: false, code: "subscription_inactive" },
       });
       const ctx = createMockCtx({ commandMatch: "add alerts-ab12cd github.com" });
 
       await allowHandler(ctx);
 
-      expect(mockAddAllowRule).not.toHaveBeenCalled();
-      const [text, opts] = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0] as [
-        string,
-        {
-          reply_markup?: { inline_keyboard: Array<Array<{ callback_data?: string }>> } | undefined;
-        },
-      ];
-      expect(text).toMatch(/not available|try again/i);
-      // No upgrade button for unrecognised codes
-      const buttons = opts?.reply_markup?.inline_keyboard?.flat() ?? [];
-      expect(buttons.some((b) => b.callback_data === "bill:upgrade")).toBe(false);
+      expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([
+        en.allowCommand.subscriptionInactive("alerts-ab12cd"),
+        { parse_mode: "HTML" },
+      ]);
+    });
+
+    it("any other limit code is the generic unavailable reply", async () => {
+      mockAddAllowRuleForOwner.mockResolvedValueOnce({
+        kind: "limit",
+        limit: { ok: false, code: "monthly_email_limit", limit: 100, used: 100 },
+      });
+      const ctx = createMockCtx({ commandMatch: "add alerts-ab12cd github.com" });
+
+      await allowHandler(ctx);
+
+      expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([
+        en.allowCommand.createUnavailable,
+      ]);
     });
 
     it("shows a hosted account error when the alias has no active organization", async () => {
@@ -199,27 +191,11 @@ describe("/allow command", () => {
 
       await allowHandler(ctx);
 
-      expect(mockAddAllowRule).not.toHaveBeenCalled();
+      expect(mockAddAllowRuleForOwner).not.toHaveBeenCalled();
       expect(mockCanManageAlias).toHaveBeenCalledOnce();
       expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(
         /account|active hosted account|not attached/i,
       );
-    });
-
-    it("treats duplicate allow-rule adds as idempotent", async () => {
-      mockFindAllowRuleByMatch.mockResolvedValueOnce({
-        id: "rule-1",
-        emailAddressId: "uuid-1",
-        matchType: "domain",
-        matchValue: "github.com",
-      });
-      const ctx = createMockCtx({ commandMatch: "add alerts-ab12cd github.com" });
-
-      await allowHandler(ctx);
-
-      expect(mockAddAllowRule).not.toHaveBeenCalled();
-      expect(mockCheckAllowRuleCreateLimit).not.toHaveBeenCalled();
-      expect((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/already exists/i);
     });
   });
 

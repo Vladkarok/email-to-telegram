@@ -26,7 +26,7 @@ import { emailAddresses, type EmailAddress } from "../db/schema.js";
 import { getDb } from "../db/client.js";
 import { findAliasById } from "../db/repos/aliases.js";
 import { consumeActivationToken } from "../db/repos/aliasActivation.js";
-import { insertAllowRule } from "../telegram/commands/allow.js";
+import { insertAllowRule } from "../aliases/allowRules.js";
 import { assertAliasAccess } from "../telegram/middleware/authorization.js";
 import { sendAllowRulesMenu } from "../telegram/menu/allowRulesMenu.js";
 import { parseAllowValue } from "../telegram/allowValue.js";

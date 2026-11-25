@@ -1,33 +1,30 @@
 import type { Api } from "grammy";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../db/schema.js";
-import { queueInboundEmail, deliverQueuedEmail } from "./pipeline.js";
+import { deliverQueuedEmail } from "./pipeline.js";
+import { queueInboundEmail, rejectionPolicy } from "./inboundAdmission/index.js";
 import { refundAcceptedEmail } from "../billing/usageRefund.js";
-import { markAliasFirstDelivered } from "../db/repos/aliasActivation.js";
 import { notifyApproachingMonthlyLimit } from "../billing/quotaNotifier.js";
 import { parseEmail } from "./parser.js";
 import { cleanEmailBody } from "./cleaner.js";
-import {
-  renderEmailForDelivery,
-  renderAttachmentFallback,
-  renderPrivacyAlert,
-  normalizeRenderMode,
-} from "./renderer.js";
 import { isImageContentType, isInlinePhoto } from "./imageTypes.js";
-import { sendTelegramMessage, sendTelegramPhotos } from "../telegram/sender.js";
 import {
   findLogsNeedingRetry,
   claimDeliveryLogForRetry,
   findDeliveryLogByRawEmailPath,
-  updateDeliveryLogStatus,
+  closeDeliveryLogPermanentlyFailed,
+  resetDeliveryLogAfterError,
 } from "../db/repos/deliveryLogs.js";
 import {
-  insertDeliveryAttempt,
   countAttemptsByLog,
   countCountedFailedAttemptsByLog,
 } from "../db/repos/deliveryAttempts.js";
 import { readAttemptRoute } from "./deliveryRoute.js";
-import { repairChatMigration } from "../telegram/chatMigration.js";
+import {
+  renderAttemptMessage,
+  runDeliveryAttempt,
+  sendFailureLogFields,
+} from "./deliveryAttempt.js";
 import { listAttachmentsByDeliveryLogId } from "../db/repos/attachments.js";
 import { createAttachmentLink } from "../db/repos/attachmentLinks.js";
 import {
@@ -38,21 +35,14 @@ import {
 } from "../storage/disk.js";
 import { generateDownloadToken } from "../utils/tokens.js";
 import { getLogger } from "../utils/logger.js";
-import { retryAsync } from "../utils/retryAsync.js";
 import { pipelineTracker } from "../utils/inFlight.js";
-import { createPrivacyViewUrl } from "./privacy.js";
 import {
-  recordDeliveryLatency,
   recordDeliveryLost,
   recordRetryAttempt,
   recordTelegramSendFailure,
 } from "../observability/metrics.js";
 import { isBotHealthy } from "../telegram/health.js";
-import {
-  classifyTelegramError,
-  retryDispositionForError,
-  UNCOUNTED_RETRY_ERROR_CLASSES,
-} from "../telegram/errorClassifier.js";
+import { UNCOUNTED_RETRY_ERROR_CLASSES } from "../telegram/errorClassifier.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -70,23 +60,6 @@ const PROCESSING_STALE_MS = 10 * 60 * 1000;
 // committing its delivery log; recovering it then races the live request, and
 // the loser's duplicate branch deletes the raw file the winner points to.
 const PENDING_RAW_MIN_AGE_MS = 2 * 60 * 1000;
-
-// The Telegram send is irreversible; retry the persistence of its outcome a few
-// times so a transient DB blip cannot strand the record and cause a resend.
-const POST_SEND_PERSIST_RETRY = { attempts: 3, delaysMs: [200, 1000] } as const;
-
-function shouldDeletePendingRawEmail(reason: string | undefined): boolean {
-  return (
-    reason === "duplicate" ||
-    reason === "alias_not_found" ||
-    reason === "sender_not_allowed" ||
-    reason === "sender_auth_failed" ||
-    reason === "subscription_inactive" ||
-    reason === "monthly_email_limit" ||
-    reason === "message_size_limit" ||
-    reason === "storage_limit"
-  );
-}
 
 export async function runRetryWorker(
   db: Db,
@@ -167,7 +140,7 @@ export async function runRetryWorker(
       );
     } catch (err: unknown) {
       log.error({ err, deliveryLogId: deliveryLog.id }, "retry worker: unexpected error");
-      await updateDeliveryLogStatus(db, deliveryLog.id, "failed").catch((statusErr: unknown) => {
+      await resetDeliveryLogAfterError(db, deliveryLog.id).catch((statusErr: unknown) => {
         log.error(
           { err: statusErr, deliveryLogId: deliveryLog.id },
           "retry worker: failed to reset delivery status after error",
@@ -295,7 +268,7 @@ async function recoverPendingRawEmails(
       });
 
       if (!queued.queued) {
-        if (shouldDeletePendingRawEmail(queued.result.reason)) {
+        if (rejectionPolicy(queued.result.reason).deleteInRecovery) {
           await deletePendingRawEmailMeta(pendingEmail.rawEmailPath);
           await deleteFile(pendingEmail.rawEmailPath).catch((err: unknown) => {
             log.warn(
@@ -367,7 +340,7 @@ async function retryDelivery(
   // count against their plan.
   const closePermanentlyFailed = async (): Promise<void> => {
     recordRetryAttempt("permanently_failed");
-    await updateDeliveryLogStatus(db, deliveryLog.id, "permanently_failed");
+    await closeDeliveryLogPermanentlyFailed(db, deliveryLog.id);
     recordDeliveryLost("retry");
     await refundAcceptedEmail(db, {
       deliveryLogId: deliveryLog.id,
@@ -462,233 +435,84 @@ async function retryDelivery(
       wrappedDek: attachment.wrappedDek,
       kekKeyId: attachment.kekKeyId,
     }));
+  // Failed photos are matched against every stored image row, not only the
+  // inline ones, with the same filename/size defaults as above.
+  const fallbackAttachments = storedAttachments
+    .filter((attachment) => isImageContentType(attachment.contentType ?? ""))
+    .map((attachment) => ({
+      attachmentId: attachment.id,
+      storagePath: attachment.storagePath,
+      filename: attachment.originalFilename ?? "attachment",
+      sizeBytes: attachment.sizeBytes ?? 0,
+    }));
 
-  const renderMode = normalizeRenderMode(alias.renderMode);
-  const rendered = privacyMode
-    ? {
-        text: await buildPrivacyRetryMessage(db, deliveryLog, parsed, alias.fullAddress, opts),
-        parseMode: "HTML" as const,
-        richHtml: undefined,
-      }
-    : renderEmailForDelivery(parsed, renderMode, alias.fullAddress, attachmentLinks);
-
-  const result = await sendTelegramMessage(api, {
-    chatId: route.chatId,
-    threadId: route.threadId,
-    text: rendered.text,
-    parseMode: rendered.parseMode,
-    richHtml: rendered.richHtml,
-    richIneligibleReason: rendered.richIneligibleReason,
-    richMessagesEnabled: opts.telegramRichMessagesEnabled,
+  const rendered = await renderAttemptMessage(db, {
+    privacyMode,
+    renderMode: alias.renderMode,
+    aliasFullAddress: alias.fullAddress,
+    parsed,
+    attachmentLinks,
+    deliveryLog,
+    publicBaseUrl: opts.publicBaseUrl,
+    rawEmailTtlHours: opts.rawEmailTtlHours,
   });
-  // When Telegram accepted the first message: the delivery latency end.
-  const firstMessageAcceptedAt = new Date();
 
-  const newAttemptNo = attempts + 1;
-  const sendErrorClass = result.ok ? null : classifyTelegramError(result.failure ?? result.error);
-  const disposition = result.ok ? null : retryDispositionForError(result.failure ?? result.error);
-  const countedAfterSend = disposition === "retry_counted" ? countedFailures + 1 : countedFailures;
-  const finalStatus = result.ok
-    ? "delivered"
-    : disposition === "fail_permanently" || countedAfterSend >= MAX_RETRIES
-      ? "permanently_failed"
-      : "failed";
-
-  // Persist the attempt row and the final status atomically, with bounded
-  // retries: the send already happened, so a failed write here would leave the
-  // log retryable and cause a duplicate send on the next worker cycle.
-  await retryAsync(
-    () =>
-      db.transaction(async (tx) => {
-        const workDb = tx as Db;
-        await insertDeliveryAttempt(workDb, {
-          deliveryLogId: deliveryLog.id,
-          attemptNo: newAttemptNo,
-          targetChatId: route.chatId,
-          targetThreadId: route.threadId,
-          telegramMessageId: result.telegramMessageId ? BigInt(result.telegramMessageId) : null,
-          status: result.ok ? "succeeded" : "failed",
-          errorText: result.error ?? null,
-          errorClass: sendErrorClass,
-        });
-        await updateDeliveryLogStatus(workDb, deliveryLog.id, finalStatus);
-      }),
-    POST_SEND_PERSIST_RETRY,
-  );
-
-  if (finalStatus === "permanently_failed") {
-    // The status write above succeeded (it throws otherwise).
-    recordDeliveryLost("retry");
-    await refundAcceptedEmail(db, {
-      deliveryLogId: deliveryLog.id,
-      userId: deliveryLog.userId,
-      receivedAt: deliveryLog.receivedAt,
-    });
-  }
-
-  // The chat migrated: repair the routing so the NEXT worker cycle reads the
-  // new id (a `migrated` failure is uncounted, so the log stayed retryable).
-  // Repair failure must never escalate the delivery's status.
-  if (result.failure?.migrateToChatId != null) {
-    await repairChatMigration(db, api, route.chatId, result.failure.migrateToChatId).catch(
-      (repairErr: unknown) => {
-        log.error(
-          { err: repairErr, deliveryLogId: deliveryLog.id },
-          "retry worker: chat.migration_repair_failed",
-        );
-      },
-    );
-  }
-
-  if (result.ok) {
-    recordRetryAttempt("succeeded");
-    log.info({ deliveryLogId: deliveryLog.id, attemptNo: newAttemptNo }, "retry worker: delivered");
-    // Best-effort working-alias marker, as on the initial path.
-    try {
-      await markAliasFirstDelivered(db, deliveryLog.emailAddressId);
-    } catch (markErr: unknown) {
-      log.warn(
-        { err: markErr, deliveryLogId: deliveryLog.id, aliasId: deliveryLog.emailAddressId },
-        "retry worker: first_delivered_marker_failed",
+  await runDeliveryAttempt(db, api, {
+    path: "retry",
+    log,
+    deliveryLog,
+    aliasId: deliveryLog.emailAddressId,
+    route,
+    attemptNo: attempts + 1,
+    message: {
+      text: rendered.text,
+      parseMode: rendered.parseMode,
+      richHtml: rendered.richHtml,
+      richIneligibleReason: rendered.richIneligibleReason,
+      richMessagesEnabled: opts.telegramRichMessagesEnabled,
+    },
+    privacyMode,
+    photos: imageAttachments,
+    fallbackAttachments,
+    publicBaseUrl: opts.publicBaseUrl,
+    attachmentTtlHours: opts.attachmentTtlHours,
+    failedStatus: (disposition) => {
+      const countedAfterSend =
+        disposition === "retry_counted" ? countedFailures + 1 : countedFailures;
+      return disposition === "fail_permanently" || countedAfterSend >= MAX_RETRIES
+        ? "permanently_failed"
+        : "failed";
+    },
+    afterCommit: (attempt) => {
+      if (!attempt.result.ok) return;
+      recordRetryAttempt("succeeded");
+      log.info(
+        { deliveryLogId: deliveryLog.id, attemptNo: attempt.attemptNo },
+        "retry worker: delivered",
       );
-    }
-
-    /**
-     * Chat upgraded mid-attempt, after the text landed. Repair, then hand the
-     * delivery back as retryable so the next cycle re-reads the route and
-     * delivers the WHOLE email to the new chat. Costs a visible duplicate;
-     * the alternative silently drops the attachments (user decision
-     * 2026-07-20). The attempt row stays `succeeded`, so no retry budget is
-     * consumed and no refund is triggered.
-     */
-    const abortAttemptForMigration = async (newChatId: bigint): Promise<void> => {
-      await repairChatMigration(db, api, route.chatId, newChatId).catch((repairErr: unknown) => {
-        log.error(
-          { err: repairErr, deliveryLogId: deliveryLog.id },
-          "retry worker: chat.migration_repair_failed",
+    },
+    // The retry counts and logs a failed send only after its loss, refund and
+    // migration repair.
+    afterFailure: (attempt) => {
+      if (attempt.status === "permanently_failed") {
+        recordRetryAttempt("permanently_failed");
+        recordTelegramSendFailure(attempt.result.error);
+        log.warn(
+          { deliveryLogId: deliveryLog.id, ...sendFailureLogFields(attempt) },
+          "retry worker: permanently failed",
         );
-      });
-      await updateDeliveryLogStatus(db, deliveryLog.id, "failed").catch((statusErr: unknown) => {
-        log.error(
-          { err: statusErr, deliveryLogId: deliveryLog.id },
-          "retry worker: migration_retry_reset_failed",
-        );
-      });
-      log.warn(
-        { deliveryLogId: deliveryLog.id, oldChatId: route.chatId.toString() },
-        "retry worker: delivery.aborted_for_migration",
-      );
-    };
-
-    if (!privacyMode && imageAttachments.length > 0) {
-      try {
-        const photoResult = await sendTelegramPhotos(api, {
-          chatId: route.chatId,
-          threadId: route.threadId,
-          replyToMessageId: result.telegramMessageId,
-          photos: imageAttachments,
-        });
-
-        const photoMigrateTo = photoResult.failure?.migrateToChatId ?? null;
-        if (photoMigrateTo != null) {
-          await abortAttemptForMigration(photoMigrateTo);
-          return;
-        } else if (photoResult.failedPhotos.length > 0) {
-          const failedPaths = new Set(photoResult.failedPhotos.map((photo) => photo.storagePath));
-          const fallbackLinks = await Promise.all(
-            storedAttachments
-              .filter(
-                (attachment) =>
-                  isImageContentType(attachment.contentType ?? "") &&
-                  failedPaths.has(attachment.storagePath),
-              )
-              .map(async (attachment) => {
-                const { token, expiresAt } = generateDownloadToken(
-                  attachment.id,
-                  opts.attachmentTtlHours,
-                );
-                await createAttachmentLink(db, attachment.id, token, expiresAt);
-                return {
-                  filename: attachment.originalFilename ?? "attachment",
-                  sizeBytes: attachment.sizeBytes ?? 0,
-                  url: `${opts.publicBaseUrl}/dl/${token}`,
-                };
-              }),
-          );
-
-          const fallbackResult = await sendTelegramMessage(api, {
-            chatId: route.chatId,
-            threadId: route.threadId,
-            text: renderAttachmentFallback(fallbackLinks),
-          });
-
-          if (!fallbackResult.ok) {
-            recordTelegramSendFailure(fallbackResult.error);
-            log.error(
-              { deliveryLogId: deliveryLog.id, error: fallbackResult.error },
-              "retry worker: image attachment fallback delivery failed",
-            );
-            if (fallbackResult.failure?.migrateToChatId != null) {
-              await abortAttemptForMigration(fallbackResult.failure.migrateToChatId);
-              return;
-            }
-          }
-        }
-      } catch (err: unknown) {
-        log.error(
-          { err, deliveryLogId: deliveryLog.id },
-          "retry worker: image attachment secondary delivery failed",
+      } else {
+        recordRetryAttempt("failed");
+        recordTelegramSendFailure(attempt.result.error);
+        log.warn(
+          {
+            deliveryLogId: deliveryLog.id,
+            attemptNo: attempt.attemptNo,
+            ...sendFailureLogFields(attempt),
+          },
+          "retry worker: will retry again",
         );
       }
-    }
-    recordDeliveryLatency("retry", deliveryLog.receivedAt, firstMessageAcceptedAt);
-  } else if (finalStatus === "permanently_failed") {
-    recordRetryAttempt("permanently_failed");
-    recordTelegramSendFailure(result.error);
-    log.warn(
-      {
-        deliveryLogId: deliveryLog.id,
-        code: result.failure?.code ?? null,
-        errorClass: sendErrorClass,
-        transient: result.failure?.transient ?? false,
-        hasMigrationHint: result.failure?.migrateToChatId != null,
-      },
-      "retry worker: permanently failed",
-    );
-  } else {
-    recordRetryAttempt("failed");
-    recordTelegramSendFailure(result.error);
-    log.warn(
-      {
-        deliveryLogId: deliveryLog.id,
-        attemptNo: newAttemptNo,
-        code: result.failure?.code ?? null,
-        errorClass: sendErrorClass,
-        transient: result.failure?.transient ?? false,
-        hasMigrationHint: result.failure?.migrateToChatId != null,
-      },
-      "retry worker: will retry again",
-    );
-  }
-}
-
-async function buildPrivacyRetryMessage(
-  db: Db,
-  deliveryLog: { id: string; rawEmailPath: string | null; receivedAt: Date },
-  parsed: Awaited<ReturnType<typeof parseEmail>>,
-  aliasFullAddress: string,
-  opts: { publicBaseUrl: string; rawEmailTtlHours: number },
-): Promise<string> {
-  if (!deliveryLog.rawEmailPath) {
-    throw new Error("privacy mode requires a durable raw email path");
-  }
-
-  const viewUrl = await createPrivacyViewUrl(
-    db,
-    deliveryLog.id,
-    opts.publicBaseUrl,
-    new Date(deliveryLog.receivedAt.getTime() + opts.rawEmailTtlHours * 60 * 60 * 1000),
-  );
-
-  return renderPrivacyAlert(parsed, aliasFullAddress, viewUrl, parsed.attachments.length > 0);
+    },
+  });
 }

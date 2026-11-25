@@ -22,8 +22,6 @@ const state = {
   inboundLimitResults: [] as Array<{ ok: boolean; code?: string }>,
   deliveryLogs: [] as Array<Record<string, unknown>>,
   deliveryAttempts: [] as Array<Record<string, unknown>>,
-  attachments: [] as Array<Record<string, unknown>>,
-  attachmentLinks: [] as Array<Record<string, unknown>>,
   usage: { deliveredCount: 0, rejectedCount: 0 },
   storage: { rawEmailBytes: 0n, attachmentBytes: 0n },
   telegramMessages: [] as Array<Record<string, unknown>>,
@@ -35,8 +33,6 @@ function resetState(): void {
   state.inboundLimitResults = [];
   state.deliveryLogs = [];
   state.deliveryAttempts = [];
-  state.attachments = [];
-  state.attachmentLinks = [];
   state.usage = { deliveredCount: 0, rejectedCount: 0 };
   state.storage = { rawEmailBytes: 0n, attachmentBytes: 0n };
   state.telegramMessages = [];
@@ -118,6 +114,13 @@ vi.mock("../../src/email/dedup.js", () => ({
 
 vi.mock("../../src/db/repos/deliveryLogs.js", async () => {
   const actual = await vi.importActual<object>("../../src/db/repos/deliveryLogs.js");
+  const setStatus = (id: string, finalStatus: string): Promise<void> => {
+    const log = state.deliveryLogs.find((entry) => entry["id"] === id);
+    if (log) {
+      log["finalStatus"] = finalStatus;
+    }
+    return Promise.resolve();
+  };
   return {
     ...actual,
     createDeliveryLog: vi.fn((_db: unknown, data: Record<string, unknown>) => {
@@ -130,13 +133,11 @@ vi.mock("../../src/db/repos/deliveryLogs.js", async () => {
       state.deliveryLogs.push(log);
       return Promise.resolve(log);
     }),
-    updateDeliveryLogStatus: vi.fn((_db: unknown, id: string, finalStatus: string) => {
-      const log = state.deliveryLogs.find((entry) => entry["id"] === id);
-      if (log) {
-        log["finalStatus"] = finalStatus;
-      }
-      return Promise.resolve();
-    }),
+    settleDeliveryLogAfterSend: vi.fn((_db: unknown, id: string, outcome: string) =>
+      setStatus(id, outcome),
+    ),
+    reopenDeliveryLogAfterMigration: vi.fn((_db: unknown, id: string) => setStatus(id, "failed")),
+    resetDeliveryLogAfterError: vi.fn((_db: unknown, id: string) => setStatus(id, "failed")),
     markDeliveryLogProcessing: vi.fn((_db: unknown, id: string) => {
       const log = state.deliveryLogs.find((entry) => entry["id"] === id);
       if (log) {
@@ -154,26 +155,6 @@ vi.mock("../../src/db/repos/deliveryAttempts.js", () => ({
     state.deliveryAttempts.push(data);
     return Promise.resolve();
   }),
-}));
-
-vi.mock("../../src/db/repos/attachments.js", () => ({
-  createAttachment: vi.fn((_db: unknown, data: Record<string, unknown>) => {
-    state.attachments.push(data);
-    return Promise.resolve(data);
-  }),
-}));
-
-vi.mock("../../src/db/repos/attachmentLinks.js", () => ({
-  createAttachmentLink: vi.fn(
-    (_db: unknown, attachmentId: string, token: string, expiresAt: Date) => {
-      state.attachmentLinks.push({ attachmentId, token, expiresAt });
-      return Promise.resolve();
-    },
-  ),
-}));
-
-vi.mock("../../src/db/repos/deliveryViewLinks.js", () => ({
-  createDeliveryViewLink: vi.fn(() => Promise.resolve(undefined)),
 }));
 
 vi.mock("../../src/db/repos/usage.js", async () => {
@@ -240,7 +221,6 @@ vi.mock("../../src/billing/limits.js", async () => {
   });
   return {
     ...actual,
-    checkInboundLimit: nextInboundLimit,
     checkInboundLimitForPlan: nextInboundLimit,
     resolveInboundPlan: vi.fn(() =>
       Promise.resolve({ hosted: true, user: null, plan: getPlanDefinition("free") }),

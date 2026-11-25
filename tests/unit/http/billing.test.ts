@@ -39,15 +39,17 @@ vi.mock("../../../src/db/repos/organizationMembers.js", () => ({
   userHasOrganizationRole: (...args: unknown[]): unknown => mockUserHasOrganizationRole(...args),
 }));
 
-vi.mock("../../../src/email/pipeline.js", () => ({
+vi.mock("../../../src/email/inboundAdmission/queue.js", () => ({
   queueInboundEmail: vi.fn(),
+}));
+vi.mock("../../../src/email/pipeline.js", () => ({
   deliverQueuedEmail: vi.fn(),
 }));
 vi.mock("../../../src/db/repos/aliases.js", () => ({
   findAliasByLocalPart: vi.fn(() => Promise.resolve(null)),
 }));
 vi.mock("../../../src/billing/limits.js", () => ({
-  checkInboundLimit: vi.fn(() => Promise.resolve({ ok: true })),
+  checkInboundLimitForPlan: vi.fn(() => Promise.resolve({ ok: true })),
 }));
 
 const TEST_CONFIG = {

@@ -21,12 +21,25 @@ export async function createInboundDomain(
   return domain;
 }
 
+/**
+ * The hosted shared domain cannot be used: it exists with another kind or
+ * status, or no row came back. Alias creation answers this with its own reply.
+ */
+export class SharedInboundDomainUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SharedInboundDomainUnavailableError";
+  }
+}
+
 export async function ensureSharedInboundDomain(db: Db, domain: string): Promise<InboundDomain> {
   const normalizedDomain = domain.toLowerCase();
   const existing = await findInboundDomainByDomain(db, normalizedDomain);
   if (existing) {
     if (existing.kind !== "shared" || existing.status !== "active") {
-      throw new Error("ensureSharedInboundDomain: hosted shared domain is not active");
+      throw new SharedInboundDomainUnavailableError(
+        "ensureSharedInboundDomain: hosted shared domain is not active",
+      );
     }
     return existing;
   }
@@ -39,9 +52,12 @@ export async function ensureSharedInboundDomain(db: Db, domain: string): Promise
   if (created) return created;
 
   const raced = await findInboundDomainByDomain(db, normalizedDomain);
-  if (!raced) throw new Error("ensureSharedInboundDomain: no row returned");
+  if (!raced)
+    throw new SharedInboundDomainUnavailableError("ensureSharedInboundDomain: no row returned");
   if (raced.kind !== "shared" || raced.status !== "active") {
-    throw new Error("ensureSharedInboundDomain: hosted shared domain is not active");
+    throw new SharedInboundDomainUnavailableError(
+      "ensureSharedInboundDomain: hosted shared domain is not active",
+    );
   }
   return raced;
 }

@@ -1,7 +1,7 @@
 import { readdir, stat } from "fs/promises";
 import { join } from "path";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { and, eq, inArray, isNotNull, isNull, lt, notExists, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, lt, notExists, sql } from "drizzle-orm";
 import { deliveryLogs, attachments, users } from "../db/schema.js";
 import type * as schema from "../db/schema.js";
 import { deleteFile, deleteDir } from "./disk.js";
@@ -15,7 +15,10 @@ import {
   clearExpiredActivationTokens,
   reconcileFirstDeliveredMarkers,
 } from "../db/repos/aliasActivation.js";
-import { NON_FINAL_DELIVERY_STATUSES } from "../db/repos/deliveryLogs.js";
+import {
+  closeDeliveryLogOnRawExpiry,
+  type ClearedRawEmailColumns,
+} from "../db/repos/deliveryLogs.js";
 import { recordDeliveryLost } from "../observability/metrics.js";
 import { getEffectivePlan } from "../billing/limits.js";
 import { listPlanDefinitions } from "../billing/plans.js";
@@ -277,7 +280,7 @@ async function cleanRawEmails(
       } catch {
         continue;
       }
-      const clearedRaw = {
+      const clearedRaw: ClearedRawEmailColumns = {
         rawEmailPath: null,
         rawEmailEncryptionMode: "none",
         rawEmailWrappedDek: null,
@@ -286,19 +289,8 @@ async function cleanRawEmails(
       };
       const outcome = await db.transaction(async (tx) => {
         // The raw file is the only retry source; once it expires an
-        // undelivered log can never deliver, so close it out. The status
-        // guard sits in the WHERE so the row count says whether this
-        // statement closed it (a lost mail) or it was already final.
-        const closeResult = await tx
-          .update(deliveryLogs)
-          .set({ ...clearedRaw, finalStatus: "permanently_failed" })
-          .where(
-            and(
-              eq(deliveryLogs.id, row.id),
-              inArray(deliveryLogs.finalStatus, [...NON_FINAL_DELIVERY_STATUSES]),
-            ),
-          );
-        const closed = affectedRows(closeResult) > 0;
+        // undelivered log can never deliver, so close it out.
+        const closed = await closeDeliveryLogOnRawExpiry(tx as Db, row.id, clearedRaw);
         const rowCount = closed
           ? 1
           : affectedRows(

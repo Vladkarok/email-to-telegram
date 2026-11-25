@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { loadConfig } from "../config.js";
+import { isHostedMode } from "../hostedMode.js";
 import { findAliasByLocalPart, findAliasByLocalPartAndDomainId } from "../db/repos/aliases.js";
 import { findInboundDomainByDomain } from "../db/repos/inboundDomains.js";
 import type { EmailAddress } from "../db/schema.js";
@@ -16,7 +16,7 @@ export async function findAliasForInbound(
   db: Db,
   input: InboundAliasLookup,
 ): Promise<EmailAddress | null> {
-  if (!shouldUseHostedDomainRouting()) {
+  if (!isHostedMode()) {
     return findAliasByLocalPart(db, input.localPart);
   }
 
@@ -26,16 +26,4 @@ export async function findAliasForInbound(
   if (!domain || domain.status !== "active") return null;
 
   return findAliasByLocalPartAndDomainId(db, input.localPart, domain.id);
-}
-
-export function shouldUseHostedDomainRouting(): boolean {
-  const appMode = process.env["APP_MODE"];
-  if (appMode === "hosted") return true;
-  if (appMode === "self-hosted") return false;
-
-  try {
-    return loadConfig().appMode === "hosted";
-  } catch {
-    return false;
-  }
 }
