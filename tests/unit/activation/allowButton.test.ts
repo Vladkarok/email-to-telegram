@@ -53,7 +53,7 @@ vi.mock("../../../src/db/repos/aliasActivation.js", () => ({
   },
 }));
 const mockInsertAllowRule = vi.fn();
-vi.mock("../../../src/telegram/commands/allow.js", () => ({
+vi.mock("../../../src/aliases/allowRules.js", () => ({
   insertAllowRule: (...args: unknown[]): unknown => {
     calls.push("insert");
     return mockInsertAllowRule(...args);

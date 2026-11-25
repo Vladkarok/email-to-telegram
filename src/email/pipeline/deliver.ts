@@ -5,58 +5,41 @@
  *   1. Cleans the body
  *   2. Persists attachments (images → Telegram photos, others → download links)
  *   3. Renders the message text
- *   4. Sends via Telegram
- *   5. Records the delivery attempt and final status
+ *   4. Runs the delivery attempt (../deliveryAttempt.ts): sends via Telegram,
+ *      records the attempt and final status, sends the attachments
  */
 import { randomUUID } from "crypto";
 import { join } from "path";
 import type { Api } from "grammy";
 import { sql } from "drizzle-orm";
 import { cleanEmailBody } from "../cleaner.js";
-import {
-  renderEmailForDelivery,
-  renderAttachmentFallback,
-  renderPrivacyAlert,
-  type AttachmentLink,
-  normalizeRenderMode,
-} from "../renderer.js";
+import type { AttachmentLink } from "../renderer.js";
 import { isInlinePhoto } from "../imageTypes.js";
 import type { PhotoItem } from "../../telegram/sender.js";
 import { findAliasById } from "../../db/repos/aliases.js";
-import { insertDeliveryAttempt } from "../../db/repos/deliveryAttempts.js";
-import { updateDeliveryLogStatus, markDeliveryLogProcessing } from "../../db/repos/deliveryLogs.js";
+import {
+  markDeliveryLogProcessing,
+  resetDeliveryLogAfterError,
+} from "../../db/repos/deliveryLogs.js";
 import { createAttachment } from "../../db/repos/attachments.js";
 import { createAttachmentLink } from "../../db/repos/attachmentLinks.js";
 import { writeAttachment, deleteFile } from "../../storage/disk.js";
 import { generateDownloadToken } from "../../utils/tokens.js";
 import { getLogger } from "../../utils/logger.js";
-import { retryAsync } from "../../utils/retryAsync.js";
-import { createPrivacyViewUrl } from "../privacy.js";
 import { decrementUserStorageUsage } from "../../db/repos/storageUsage.js";
-import type { DeliveryLog } from "../../db/schema.js";
-import type { parseEmail } from "../parser.js";
 import type { Db, QueuedInboundEmail, PipelineResult } from "./types.js";
-import {
-  recordDeliveryAttempt,
-  recordDeliveryLatency,
-  recordDeliveryLost,
-  recordTelegramSendFailure,
-} from "../../observability/metrics.js";
-import { classifyTelegramError, retryDispositionForError } from "../../telegram/errorClassifier.js";
+import { recordDeliveryAttempt, recordTelegramSendFailure } from "../../observability/metrics.js";
 import { readAttemptRoute } from "../deliveryRoute.js";
-import { repairChatMigration } from "../../telegram/chatMigration.js";
-import { refundAcceptedEmail } from "../../billing/usageRefund.js";
-import { markAliasFirstDelivered } from "../../db/repos/aliasActivation.js";
+import {
+  renderAttemptMessage,
+  runDeliveryAttempt,
+  sendFailureLogFields,
+} from "../deliveryAttempt.js";
 
 interface StoredImageAttachment extends PhotoItem {
   attachmentId: string;
   sizeBytes: number;
 }
-
-// The Telegram send is irreversible; if persisting its outcome fails the retry
-// worker would resend (a duplicate). Retry the persistence a few times before
-// giving up so a transient DB blip cannot strand the record.
-const POST_SEND_PERSIST_RETRY = { attempts: 3, delaysMs: [200, 1000] } as const;
 
 function getPipelineLogger(correlationId?: string) {
   return correlationId ? getLogger().child({ correlationId }) : getLogger();
@@ -194,21 +177,16 @@ export async function deliverQueuedEmail(
       }
 
       // 8. Render
-      const renderMode = normalizeRenderMode(alias.renderMode);
-      const rendered = privacyMode
-        ? {
-            text: await buildPrivacyModeMessage(
-              workDb,
-              deliveryLog,
-              parsed,
-              alias.fullAddress,
-              publicBaseUrl,
-              { rawEmailTtlHours },
-            ),
-            parseMode: "HTML" as const,
-            richHtml: undefined,
-          }
-        : renderEmailForDelivery(parsed, renderMode, alias.fullAddress, attachmentLinks);
+      const rendered = await renderAttemptMessage(workDb, {
+        privacyMode,
+        renderMode: alias.renderMode,
+        aliasFullAddress: alias.fullAddress,
+        parsed,
+        attachmentLinks,
+        deliveryLog,
+        publicBaseUrl,
+        rawEmailTtlHours,
+      });
 
       return {
         ok: true as const,
@@ -226,8 +204,6 @@ export async function deliverQueuedEmail(
 
     // 9. Send — parse_mode depends on render mode; plaintext uses none (avoids HTML metachar issues)
     if (api) {
-      const { sendTelegramMessage, sendTelegramPhotos } = await import("../../telegram/sender.js");
-
       const stillActive = await db.transaction(async (tx) => {
         await tx.execute(sql`select pg_advisory_xact_lock(${alias.createdBy})`);
 
@@ -275,232 +251,64 @@ export async function deliverQueuedEmail(
       }
       const { route } = attemptRoute;
 
-      const result = await sendTelegramMessage(api, {
-        chatId: route.chatId,
-        threadId: route.threadId,
-        text: prepared.text,
-        parseMode: prepared.parseMode,
-        richHtml: prepared.richHtml,
-        richIneligibleReason: prepared.richIneligibleReason,
-        richMessagesEnabled: job.telegramRichMessagesEnabled,
+      const outcome = await runDeliveryAttempt(db, api, {
+        path: "initial",
+        log,
+        deliveryLog,
+        aliasId: alias.id,
+        route,
+        attemptNo: 1,
+        message: {
+          text: prepared.text,
+          parseMode: prepared.parseMode,
+          richHtml: prepared.richHtml,
+          richIneligibleReason: prepared.richIneligibleReason,
+          richMessagesEnabled: job.telegramRichMessagesEnabled,
+        },
+        privacyMode,
+        photos: prepared.imageAttachments.map(
+          ({ id, storagePath, filename, encryptionMode, wrappedDek, kekKeyId }) => ({
+            id,
+            storagePath,
+            filename,
+            encryptionMode,
+            wrappedDek,
+            kekKeyId,
+          }),
+        ),
+        fallbackAttachments: prepared.imageAttachments.map(
+          ({ attachmentId, storagePath, filename, sizeBytes }) => ({
+            attachmentId,
+            storagePath,
+            filename,
+            sizeBytes,
+          }),
+        ),
+        publicBaseUrl,
+        attachmentTtlHours,
+        // A chat-level permanent error (bot blocked, chat deleted) can never
+        // succeed on retry; close the log immediately instead of burning retry
+        // cycles against an unreachable chat.
+        failedStatus: (disposition) =>
+          disposition === "fail_permanently" ? "permanently_failed" : "failed",
+        afterCommit: (attempt) => {
+          recordDeliveryAttempt(attempt.result.ok ? "succeeded" : "failed");
+          if (attempt.result.ok) return;
+          recordTelegramSendFailure(attempt.result.error);
+          log.error(
+            { deliveryLogId: deliveryLog.id, ...sendFailureLogFields(attempt) },
+            attempt.status === "permanently_failed"
+              ? "delivery.telegram.permanently_failed"
+              : "delivery.telegram.failed",
+          );
+        },
       });
-      // When Telegram accepted the first message: the delivery latency end.
-      const firstMessageAcceptedAt = new Date();
-
-      // A chat-level permanent error (bot blocked, chat deleted) can never
-      // succeed on retry; close the log immediately instead of burning retry
-      // cycles against an unreachable chat.
-      const sendErrorClass = result.ok
-        ? null
-        : classifyTelegramError(result.failure ?? result.error);
-      const failedStatus =
-        !result.ok &&
-        retryDispositionForError(result.failure ?? result.error) === "fail_permanently"
-          ? "permanently_failed"
-          : "failed";
-
-      try {
-        await retryAsync(
-          () =>
-            db.transaction(async (tx) => {
-              const workDb = tx as Db;
-              await insertDeliveryAttempt(workDb, {
-                deliveryLogId: deliveryLog.id,
-                attemptNo: 1,
-                targetChatId: route.chatId,
-                targetThreadId: route.threadId,
-                telegramMessageId: result.telegramMessageId
-                  ? BigInt(result.telegramMessageId)
-                  : null,
-                status: result.ok ? "succeeded" : "failed",
-                errorText: result.error ?? null,
-                errorClass: sendErrorClass,
-              });
-
-              const finalStatus = result.ok ? "delivered" : failedStatus;
-              await updateDeliveryLogStatus(workDb, deliveryLog.id, finalStatus);
-            }),
-          POST_SEND_PERSIST_RETRY,
-        );
-      } catch (logErr: unknown) {
-        // The Telegram send already happened. If we can't persist the outcome,
-        // the retry worker will redeliver and the user sees a duplicate. Log
-        // loudly so this is alertable.
-        log.error(
-          {
-            err: logErr,
-            deliveryLogId: deliveryLog.id,
-            telegramSent: result.ok,
-            telegramMessageId: result.telegramMessageId ?? null,
-          },
-          "delivery.attempt_log_persist_failed",
-        );
-        throw logErr;
-      }
-      recordDeliveryAttempt(result.ok ? "succeeded" : "failed");
-
-      if (!result.ok) {
-        recordTelegramSendFailure(result.error);
-        log.error(
-          {
-            deliveryLogId: deliveryLog.id,
-            code: result.failure?.code ?? null,
-            errorClass: sendErrorClass,
-            transient: result.failure?.transient ?? false,
-            hasMigrationHint: result.failure?.migrateToChatId != null,
-          },
-          failedStatus === "permanently_failed"
-            ? "delivery.telegram.permanently_failed"
-            : "delivery.telegram.failed",
-        );
-        if (failedStatus === "permanently_failed") {
-          // The status write above succeeded (it throws otherwise).
-          recordDeliveryLost("initial");
-          // The user never received this email; give the monthly-quota
-          // charge from acceptance back.
-          await refundAcceptedEmail(db, {
-            deliveryLogId: deliveryLog.id,
-            userId: deliveryLog.userId,
-            receivedAt: deliveryLog.receivedAt,
-          });
-        }
-        // The chat migrated mid-attempt: repair the alias routing so the
-        // retry (status stayed "failed", uncounted) lands on the new id.
-        // Repair failure keeps the delivery retryable — never rethrow.
-        if (result.failure?.migrateToChatId != null) {
-          await repairChatMigration(db, api, route.chatId, result.failure.migrateToChatId).catch(
-            (repairErr: unknown) => {
-              log.error(
-                { err: repairErr, deliveryLogId: deliveryLog.id },
-                "chat.migration_repair_failed",
-              );
-            },
-          );
-        }
-        return { ok: false, reason: "send_failed" };
-      }
-
-      // The text landed and its success is persisted: the alias is working.
-      // Best-effort; a failed write is reconciled by the cleanup loop from
-      // the succeeded attempt, and never touches this delivery.
-      try {
-        await markAliasFirstDelivered(db, alias.id);
-      } catch (markErr: unknown) {
-        log.warn(
-          { err: markErr, deliveryLogId: deliveryLog.id, aliasId: alias.id },
-          "delivery.first_delivered_marker_failed",
-        );
-      }
-
-      /**
-       * The chat upgraded mid-attempt, after the text had already landed.
-       * Repair the routing and hand the delivery back to the retry worker so
-       * the NEXT attempt re-reads the route and delivers the whole email to
-       * the new chat.
-       *
-       * This deliberately costs a duplicate: the text the user already
-       * received is re-sent to the migrated chat (history survives an
-       * upgrade, so it lands in the same visible conversation). The
-       * alternative — keeping this attempt `delivered` — silently drops the
-       * attachments, and a duplicate the user can see and ignore beats an
-       * attachment they never learn existed. User decision, 2026-07-20.
-       */
-      const abortAttemptForMigration = async (newChatId: bigint): Promise<PipelineResult> => {
-        await repairChatMigration(db, api, route.chatId, newChatId).catch((repairErr: unknown) => {
-          log.error(
-            { err: repairErr, deliveryLogId: deliveryLog.id },
-            "chat.migration_repair_failed",
-          );
-        });
-        // Back to retryable. The attempt row stays `succeeded`, so this does
-        // not consume the bounded retry budget and cannot trigger a refund.
-        await updateDeliveryLogStatus(db, deliveryLog.id, "failed").catch((statusErr: unknown) => {
-          log.error(
-            { err: statusErr, deliveryLogId: deliveryLog.id },
-            "delivery.migration_retry_reset_failed",
-          );
-        });
-        log.warn(
-          { deliveryLogId: deliveryLog.id, oldChatId: route.chatId.toString() },
-          "delivery.aborted_for_migration",
-        );
-        return { ok: false, reason: "chat_migrated" };
-      };
-
-      // Send image attachments as Telegram photos (replied to the text message)
-      if (!privacyMode && prepared.imageAttachments.length > 0) {
-        try {
-          const photoResult = await sendTelegramPhotos(api, {
-            chatId: route.chatId,
-            threadId: route.threadId,
-            replyToMessageId: result.telegramMessageId,
-            photos: prepared.imageAttachments.map(
-              ({ id, storagePath, filename, encryptionMode, wrappedDek, kekKeyId }) => ({
-                id,
-                storagePath,
-                filename,
-                encryptionMode,
-                wrappedDek,
-                kekKeyId,
-              }),
-            ),
-          });
-
-          const photoMigrateTo = photoResult.failure?.migrateToChatId ?? null;
-          if (photoMigrateTo != null) {
-            return await abortAttemptForMigration(photoMigrateTo);
-          } else if (photoResult.failedPhotos.length > 0) {
-            const failedPaths = new Set(photoResult.failedPhotos.map((photo) => photo.storagePath));
-            const fallbackLinks = await Promise.all(
-              prepared.imageAttachments
-                .filter((attachment) => failedPaths.has(attachment.storagePath))
-                .map(async (attachment) => {
-                  const { token, expiresAt } = generateDownloadToken(
-                    attachment.attachmentId,
-                    attachmentTtlHours,
-                  );
-                  await createAttachmentLink(db, attachment.attachmentId, token, expiresAt);
-                  return {
-                    filename: attachment.filename,
-                    sizeBytes: attachment.sizeBytes,
-                    url: `${publicBaseUrl}/dl/${token}`,
-                  };
-                }),
-            );
-
-            const fallbackResult = await sendTelegramMessage(api, {
-              chatId: route.chatId,
-              threadId: route.threadId,
-              text: renderAttachmentFallback(fallbackLinks),
-            });
-
-            if (!fallbackResult.ok) {
-              recordTelegramSendFailure(fallbackResult.error);
-              log.error(
-                { deliveryLogId: deliveryLog.id, error: fallbackResult.error },
-                "image attachment fallback delivery failed",
-              );
-              // The upgrade can just as easily land on this last send.
-              if (fallbackResult.failure?.migrateToChatId != null) {
-                return await abortAttemptForMigration(fallbackResult.failure.migrateToChatId);
-              }
-            }
-          }
-        } catch (err: unknown) {
-          log.error(
-            { err, deliveryLogId: deliveryLog.id },
-            "image attachment secondary delivery failed",
-          );
-        }
-      }
-
-      recordDeliveryLatency("initial", deliveryLog.receivedAt, firstMessageAcceptedAt);
-      return { ok: true };
+      return outcome === "delivered" ? { ok: true } : { ok: false, reason: outcome };
     }
 
     return { ok: true };
   } catch (err: unknown) {
-    await updateDeliveryLogStatus(db, deliveryLog.id, "failed").catch((statusErr: unknown) => {
+    await resetDeliveryLogAfterError(db, deliveryLog.id).catch((statusErr: unknown) => {
       log.error(
         { err: statusErr, deliveryLogId: deliveryLog.id },
         "failed to mark delivery failed",
@@ -508,25 +316,4 @@ export async function deliverQueuedEmail(
     });
     throw err;
   }
-}
-
-async function buildPrivacyModeMessage(
-  db: Db,
-  deliveryLog: Pick<DeliveryLog, "id" | "rawEmailPath" | "receivedAt">,
-  parsed: Awaited<ReturnType<typeof parseEmail>>,
-  aliasFullAddress: string,
-  publicBaseUrl: string,
-  opts: { rawEmailTtlHours: number },
-): Promise<string> {
-  if (!deliveryLog.rawEmailPath) {
-    throw new Error("privacy mode requires a durable raw email path");
-  }
-
-  const viewUrl = await createPrivacyViewUrl(
-    db,
-    deliveryLog.id,
-    publicBaseUrl,
-    new Date(deliveryLog.receivedAt.getTime() + opts.rawEmailTtlHours * 60 * 60 * 1000),
-  );
-  return renderPrivacyAlert(parsed, aliasFullAddress, viewUrl, parsed.attachments.length > 0);
 }

@@ -5,16 +5,19 @@ import { verifyWorkerRequest } from "../../utils/workerAuth.js";
 import { getDb } from "../../db/client.js";
 import { claimWorkerRequestNonce } from "../../db/repos/workerRequestNonces.js";
 import { getApi } from "../../telegram/api.js";
-import { queueInboundEmail, deliverQueuedEmail } from "../../email/pipeline.js";
-import { checkInboundLimit } from "../../billing/limits.js";
+import { deliverQueuedEmail } from "../../email/pipeline.js";
 import {
-  isQuotaNotificationReason,
+  admitRawPrecheck,
+  isQuotaRejection,
+  queueInboundEmail,
+  rejectionPolicy,
+  settlePlanLimitRejection,
+} from "../../email/inboundAdmission/index.js";
+import {
   notifyApproachingMonthlyLimit,
   notifyQuotaExhausted,
 } from "../../billing/quotaNotifier.js";
-import { incrementUserUsageMonth, usageMonthForDate } from "../../db/repos/usage.js";
-import { findHostedInboundRejection } from "../../abuse/hostedInboundBlocklist.js";
-import { findAliasForInbound } from "../../email/inboundRouting.js";
+import { usageMonthForDate } from "../../db/repos/usage.js";
 import { normalizeEnvelopeSender } from "../../email/envelopeSender.js";
 import { admitRawSenderRejection } from "../../activation/notice.js";
 import {
@@ -26,48 +29,11 @@ import {
 import { getLogger } from "../../utils/logger.js";
 import { pipelineTracker } from "../../utils/inFlight.js";
 import type { AppConfig } from "../../config.js";
-import {
-  recordDeliveryDeferred,
-  recordQuotaRejection,
-  recordRawInbound,
-} from "../../observability/metrics.js";
+import { recordDeliveryDeferred, recordRawInbound } from "../../observability/metrics.js";
 
 function rawEmailPath(rawEmailDir: string): string {
   const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
   return join(rawEmailDir, date, `${randomUUID()}.eml`);
-}
-
-function shouldDeletePendingMeta(reason: string | undefined): boolean {
-  return (
-    reason === "duplicate" ||
-    reason === "alias_not_found" ||
-    reason === "sender_not_allowed" ||
-    reason === "sender_auth_failed" ||
-    reason === "sender_auth_temperror" ||
-    reason === "subscription_inactive" ||
-    reason === "monthly_email_limit" ||
-    reason === "message_size_limit" ||
-    reason === "storage_limit"
-  );
-}
-
-function statusForQueueRejection(reason: string | undefined): number | null {
-  switch (reason) {
-    case "message_size_limit":
-      return 413;
-    case "sender_auth_temperror":
-      return 503;
-    // Both sender rejections answer alike: a 202 here silently dropped the
-    // mail, and a 202/403 split told a prober which From domains are allowed.
-    case "sender_not_allowed":
-    case "sender_auth_failed":
-    case "subscription_inactive":
-    case "monthly_email_limit":
-    case "storage_limit":
-      return 403;
-    default:
-      return null;
-  }
 }
 
 function logWorkerForwardFailed(reason: string): void {
@@ -155,72 +121,43 @@ export function rawRoute(
         return;
       }
 
-      const alias = await findAliasForInbound(getDb(), { localPart, recipientDomain });
-      if (!alias || alias.status !== "active") {
-        recordRawInbound("rejected", "alias_not_found");
-        await reply.status(403).send({ error: "rejected" });
-        return;
-      }
-      const hostedBlock = await findHostedInboundRejection(getDb(), {
-        userId: alias.createdBy,
+      const precheck = await admitRawPrecheck(getDb(), {
         localPart,
         recipientDomain,
         envelopeFrom,
+        rawSizeBytes: body.length,
       });
-      if (hostedBlock) {
-        getLogger().info(
-          {
-            localPart,
-            aliasId: alias.id,
-            userId: alias.createdBy.toString(),
-            blockType: hostedBlock.blockType,
-            blockId: hostedBlock.id,
-          },
-          "inbound.raw.rejected",
-        );
-        recordRawInbound("rejected", "hosted_blocklist");
-        await reply.status(403).send({ error: "rejected" });
-        return;
-      }
-
-      // One month for the whole rejection decision (check, counter, claim).
-      const preCheckMonth = usageMonthForDate();
-      const inboundLimit = await checkInboundLimit(
-        getDb(),
-        alias.createdBy,
-        body.length,
-        BigInt(body.length),
-        preCheckMonth,
-      );
-      if (!inboundLimit.ok) {
-        const rejectionStatus = statusForQueueRejection(inboundLimit.code);
-        if (rejectionStatus) {
-          recordRawInbound("rejected", inboundLimit.code);
-          recordQuotaRejection(inboundLimit.code);
-          if (isQuotaNotificationReason(inboundLimit.code)) {
-            // Count the rejection (shown in /usage), then notify.
-            await incrementUserUsageMonth(getDb(), {
-              userId: alias.createdBy,
-              month: preCheckMonth,
-              rejectedCount: 1,
-            }).catch((err: unknown) => {
-              getLogger().warn(
-                { err, userId: alias.createdBy.toString() },
-                "quota.rejection.count_failed",
-              );
-            });
-            void notifyQuotaExhausted(
-              getDb(),
-              getApi(),
-              alias.createdBy,
-              inboundLimit.code,
-              preCheckMonth,
-            );
-          }
-          await reply.status(rejectionStatus).send({ error: "rejected" });
+      switch (precheck.kind) {
+        case "alias_not_found":
+          recordRawInbound("rejected", "alias_not_found");
+          await reply.status(403).send({ error: "rejected" });
           return;
-        }
+
+        case "hosted_blocklist":
+          getLogger().info(
+            {
+              localPart,
+              aliasId: precheck.alias.id,
+              userId: precheck.alias.createdBy.toString(),
+              blockType: precheck.block.blockType,
+              blockId: precheck.block.id,
+            },
+            "inbound.raw.rejected",
+          );
+          recordRawInbound("rejected", "hosted_blocklist");
+          await reply.status(403).send({ error: "rejected" });
+          return;
+
+        case "plan_limit":
+          recordRawInbound("rejected", precheck.reason);
+          await settlePlanLimitRejection(getDb(), getApi(), precheck);
+          await reply.status(precheck.status).send({ error: "rejected" });
+          return;
+
+        case "accepted":
+          break;
       }
+      const { alias } = precheck;
 
       const storedPath = rawEmailPath(config.rawEmailDir);
 
@@ -257,7 +194,8 @@ export function rawRoute(
         telegramRichMessagesEnabled: config.telegramRichMessagesEnabled,
       });
 
-      const isTerminalRejection = !queued.queued && shouldDeletePendingMeta(queued.result.reason);
+      const rejection = queued.queued ? null : rejectionPolicy(queued.result.reason);
+      const isTerminalRejection = rejection?.deleteLive ?? false;
 
       // For terminal rejections the email never reaches delivery_logs, so the
       // raw .eml on disk has no lifecycle owner — delete it now. Delete the
@@ -277,12 +215,13 @@ export function rawRoute(
         });
       }
 
-      if (!queued.queued) {
-        const reason = queued.result.reason ?? "unknown";
+      if (!queued.queued && rejection) {
+        // The policy for a missing reason is the unknown row: 202, kept.
+        const reason: string = queued.result.reason ?? "unknown";
         recordRawInbound("rejected", reason);
-        const rejectionStatus = statusForQueueRejection(reason);
-        if (rejectionStatus) {
-          if (isQuotaNotificationReason(reason)) {
+        // A 202 rejection falls through to the accepted answer below.
+        if (rejection.rawStatus !== 202) {
+          if (isQuotaRejection(reason)) {
             // Prefer the owner and month resolved inside the queue
             // transaction — the route's own alias lookup may be stale, and a
             // recomputed month could straddle the UTC boundary and burn the
@@ -295,7 +234,7 @@ export function rawRoute(
               queued.result.month ?? usageMonthForDate(),
             );
           }
-          await reply.status(rejectionStatus).send({ error: "rejected" });
+          await reply.status(rejection.rawStatus).send({ error: "rejected" });
           // After the response: tells the owner of a not-yet-working alias
           // why the mail bounced. Constant-time, never throws.
           if (reason === "sender_not_allowed") {

@@ -1,24 +1,12 @@
 import { InlineKeyboard } from "grammy";
 import type { CommandContext, Context } from "grammy";
-import { eq } from "drizzle-orm";
-import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import type * as schema from "../../db/schema.js";
 import { CB_BILLING_UPGRADE } from "../callbacks.js";
 import { getDb } from "../../db/client.js";
-import { emailAddresses, type EmailAddress } from "../../db/schema.js";
-import {
-  addAllowRule,
-  findAllowRuleByMatch,
-  removeAllowRule,
-  listAllowRules,
-} from "../../db/repos/allowRules.js";
-import {
-  checkAllowRuleCreateLimit,
-  hasActiveHostedUser,
-  withUserQuotaLock,
-  type LimitResult,
-} from "../../billing/limits.js";
-import { parseAllowValue, type ParsedAllowValue } from "../allowValue.js";
+import type { EmailAddress } from "../../db/schema.js";
+import { removeAllowRule, listAllowRules } from "../../db/repos/allowRules.js";
+import { hasActiveHostedUser, type LimitResult } from "../../billing/limits.js";
+import { addAllowRuleForOwner } from "../../aliases/allowRules.js";
+import { parseAllowValue } from "../allowValue.js";
 import { escapeHtml } from "../../utils/html.js";
 import { getMessages, resolveLocale } from "../../i18n/index.js";
 import { aliasResolutionError, resolveManageableAlias } from "../aliasResolver.js";
@@ -120,9 +108,7 @@ export async function addAllowRuleForAlias(
     await ctx.reply(messages.allowCommand.invalidFormat, { parse_mode: "HTML" });
     return false;
   }
-  const outcome = await withUserQuotaLock(db, alias.createdBy, (tx) =>
-    insertAllowRule(tx, { aliasId: alias.id, ownerId: alias.createdBy, rule: parsedValue }),
-  );
+  const outcome = await addAllowRuleForOwner(db, alias, parsedValue);
   if (outcome.kind === "limit") {
     await replyForAllowRuleLimitFailure(ctx, alias.localPart, outcome.limit);
     return false;
@@ -145,74 +131,10 @@ export async function addAllowRuleForAlias(
   return true;
 }
 
-/** The alias state a caller authorized against; see `insertAllowRule`. */
-export interface ExpectedAliasSnapshot {
-  chatId: bigint;
-  routingVersion: number;
-}
-
-export type AllowRuleInsertResult =
-  | { kind: "added" }
-  | { kind: "duplicate" }
-  | { kind: "limit"; limit: Exclude<LimitResult, { ok: true }> }
-  | { kind: "stale" };
-
-/**
- * Adds one allow rule: duplicate check, plan limit, insert. Runs on the
- * caller's handle, so the caller decides the transaction and the locks (the
- * owner's quota lock in hosted mode). With `expected`, the alias row is
- * locked first (`FOR UPDATE`) and nothing is written unless the alias is
- * still active, owned by `ownerId`, and on that chat and routing version.
- */
-export async function insertAllowRule(
-  tx: NodePgDatabase<typeof schema>,
-  input: {
-    aliasId: string;
-    ownerId: bigint;
-    rule: ParsedAllowValue;
-    expected?: ExpectedAliasSnapshot;
-  },
-): Promise<AllowRuleInsertResult> {
-  if (input.expected) {
-    const [current] = await tx
-      .select({
-        status: emailAddresses.status,
-        createdBy: emailAddresses.createdBy,
-        chatId: emailAddresses.chatId,
-        routingVersion: emailAddresses.routingVersion,
-      })
-      .from(emailAddresses)
-      .where(eq(emailAddresses.id, input.aliasId))
-      .for("update");
-    if (
-      !current ||
-      current.status !== "active" ||
-      current.createdBy !== input.ownerId ||
-      current.chatId !== input.expected.chatId ||
-      current.routingVersion !== input.expected.routingVersion
-    ) {
-      return { kind: "stale" };
-    }
-  }
-
-  const match = {
-    emailAddressId: input.aliasId,
-    matchType: input.rule.matchType,
-    matchValue: input.rule.normalized,
-  };
-  if (await findAllowRuleByMatch(tx, match)) return { kind: "duplicate" };
-
-  const limit = await checkAllowRuleCreateLimit(tx, input.ownerId);
-  if (!limit.ok) return { kind: "limit", limit };
-
-  await addAllowRule(tx, match);
-  return { kind: "added" };
-}
-
 async function replyForAllowRuleLimitFailure(
   ctx: Context,
   localPart: string,
-  limit: Awaited<ReturnType<typeof checkAllowRuleCreateLimit>>,
+  limit: LimitResult,
 ): Promise<void> {
   if (limit.ok) return;
 

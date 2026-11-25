@@ -273,23 +273,4 @@ describe("assertAliasNotImpersonation (self-hosted mode)", () => {
     expect(() => assertAliasNotImpersonation("pay.pal")).not.toThrow();
     expect(() => assertAliasNotImpersonation("g00gle")).not.toThrow();
   });
-
-  it("honors APP_MODE=self-hosted env override (env wins over loadConfig=hosted)", () => {
-    process.env["APP_MODE"] = "self-hosted";
-    mockLoadConfig.mockReturnValue({ appMode: "hosted" });
-    expect(() => assertAliasNotImpersonation("admin")).not.toThrow();
-  });
-
-  it("honors APP_MODE=hosted env override (env wins over loadConfig=self-hosted)", () => {
-    process.env["APP_MODE"] = "hosted";
-    mockLoadConfig.mockReturnValue({ appMode: "self-hosted" });
-    expect(() => assertAliasNotImpersonation("admin")).toThrow(AliasImpersonationError);
-  });
-
-  it("falls back to no-op when loadConfig throws", () => {
-    mockLoadConfig.mockImplementation(() => {
-      throw new Error("config not loaded");
-    });
-    expect(() => assertAliasNotImpersonation("admin")).not.toThrow();
-  });
 });

@@ -115,3 +115,20 @@ export async function createPgTestDatabase(): Promise<PgTestDatabase> {
     },
   };
 }
+
+/**
+ * Polls from `holder` until `count` advisory lock requests in its database
+ * are waiting, so a test can release a lock only once its contenders queue.
+ */
+export async function waitForAdvisoryLockWaiters(holder: pg.Client, count: number): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    const { rows } = await holder.query<{ waiting: string }>(
+      `select count(*) as waiting from pg_locks
+       where locktype = 'advisory' and not granted
+         and database = (select oid from pg_database where datname = current_database())`,
+    );
+    if (Number(rows[0].waiting) >= count) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`expected ${count} advisory lock waiters`);
+}

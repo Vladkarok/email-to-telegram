@@ -6,6 +6,18 @@ import type * as schema from "../schema.js";
 type Db = NodePgDatabase<typeof schema>;
 
 /**
+ * Every `final_status` a delivery log can hold. The column is a varchar; this
+ * module is the only writer, through the named transitions below.
+ */
+export type DeliveryLogStatus =
+  | "received"
+  | "processing"
+  | "retrying"
+  | "failed"
+  | "delivered"
+  | "permanently_failed";
+
+/**
  * `final_status` values a delivery log can still leave: queued (`received`),
  * mid-delivery (`processing`), claimed by the retry worker (`retrying`), or
  * waiting for it (`failed`). `delivered` and `permanently_failed` are final.
@@ -15,8 +27,15 @@ export const NON_FINAL_DELIVERY_STATUSES = [
   "processing",
   "retrying",
   "failed",
-] as const;
+] as const satisfies readonly DeliveryLogStatus[];
 export type NonFinalDeliveryStatus = (typeof NON_FINAL_DELIVERY_STATUSES)[number];
+export type FinalDeliveryStatus = Exclude<DeliveryLogStatus, NonFinalDeliveryStatus>;
+
+/** What a send attempt leaves the log as, on the first attempt and on retry. */
+export type DeliverySendOutcome = Extract<
+  DeliveryLogStatus,
+  "delivered" | "failed" | "permanently_failed"
+>;
 
 export interface DeliveryBacklogSummary {
   counts: Partial<Record<NonFinalDeliveryStatus, number>>;
@@ -54,7 +73,9 @@ export function nextMonthStart(month: string): Date {
  */
 export async function createDeliveryLog(
   db: Db,
-  data: Omit<NewDeliveryLog, "createdAt" | "receivedAt">,
+  data: Omit<NewDeliveryLog, "createdAt" | "receivedAt" | "finalStatus"> & {
+    finalStatus: Extract<DeliveryLogStatus, "received">;
+  },
 ): Promise<DeliveryLog | null> {
   try {
     const [log] = await db.insert(deliveryLogs).values(data).returning();
@@ -118,12 +139,45 @@ export async function findDeliveryLogByRawEmailPath(
   return log ?? null;
 }
 
-export async function updateDeliveryLogStatus(
+/** Unconditional by id, like every transition here except the claim and the raw-expiry close. */
+async function setDeliveryLogStatus(
   db: Db,
   id: string,
-  finalStatus: string,
+  finalStatus: DeliveryLogStatus,
 ): Promise<void> {
   await db.update(deliveryLogs).set({ finalStatus }).where(eq(deliveryLogs.id, id));
+}
+
+/**
+ * Records the outcome of a send, inside the transaction that inserts its
+ * attempt row: `delivered`, `failed` (left for the retry worker) or
+ * `permanently_failed`.
+ */
+export async function settleDeliveryLogAfterSend(
+  db: Db,
+  id: string,
+  outcome: DeliverySendOutcome,
+): Promise<void> {
+  await setDeliveryLogStatus(db, id, outcome);
+}
+
+/** Closes a log the retry worker gave up on before sending (no route, budget spent, raw unreadable). */
+export async function closeDeliveryLogPermanentlyFailed(db: Db, id: string): Promise<void> {
+  await setDeliveryLogStatus(db, id, "permanently_failed");
+}
+
+/**
+ * Puts a log back to `failed` after a chat migration aborted the attachment
+ * phase. The text may already have gone out and the log may read `delivered`;
+ * the retry resends to the new chat.
+ */
+export async function reopenDeliveryLogAfterMigration(db: Db, id: string): Promise<void> {
+  await setDeliveryLogStatus(db, id, "failed");
+}
+
+/** Leaves a log retryable after an unexpected error in a delivery attempt. */
+export async function resetDeliveryLogAfterError(db: Db, id: string): Promise<void> {
+  await setDeliveryLogStatus(db, id, "failed");
 }
 
 /**
@@ -156,9 +210,13 @@ export async function findLogsNeedingRetry(
         isNotNull(deliveryLogs.rawEmailPath),
         lt(deliveryLogs.receivedAt, receivedBefore),
         or(
-          inArray(deliveryLogs.finalStatus, ["failed", "received", "retrying"]),
+          inArray(deliveryLogs.finalStatus, [
+            "failed",
+            "received",
+            "retrying",
+          ] satisfies NonFinalDeliveryStatus[]),
           and(
-            eq(deliveryLogs.finalStatus, "processing"),
+            eq(deliveryLogs.finalStatus, "processing" satisfies NonFinalDeliveryStatus),
             or(
               isNull(deliveryLogs.processingStartedAt),
               lt(deliveryLogs.processingStartedAt, processingStaleBefore),
@@ -169,17 +227,66 @@ export async function findLogsNeedingRetry(
     );
 }
 
-export async function claimDeliveryLogForRetry(
-  db: Db,
-  id: string,
-  expectedStatuses: readonly string[] = ["failed", "received", "processing", "retrying"],
-): Promise<boolean> {
+/** Statuses the retry worker may claim: every non-final one, `retrying` included. */
+const RETRY_CLAIMABLE_STATUSES: readonly NonFinalDeliveryStatus[] = [
+  "failed",
+  "received",
+  "processing",
+  "retrying",
+];
+
+/**
+ * Moves a non-final log to `retrying`; false when another writer closed it
+ * first. The selection's age predicates are not rechecked here.
+ */
+export async function claimDeliveryLogForRetry(db: Db, id: string): Promise<boolean> {
   const rows = await db
     .update(deliveryLogs)
     .set({ finalStatus: "retrying" })
-    .where(and(eq(deliveryLogs.id, id), inArray(deliveryLogs.finalStatus, [...expectedStatuses])))
+    .where(
+      and(
+        eq(deliveryLogs.id, id),
+        inArray(deliveryLogs.finalStatus, [...RETRY_CLAIMABLE_STATUSES]),
+      ),
+    )
     .returning({ id: deliveryLogs.id });
   return rows.length > 0;
+}
+
+/** The raw-email columns cleanup nulls once the raw file is deleted. */
+export type ClearedRawEmailColumns = Pick<
+  NewDeliveryLog,
+  | "rawEmailPath"
+  | "rawEmailEncryptionMode"
+  | "rawEmailWrappedDek"
+  | "rawEmailKekKeyId"
+  | "rawEmailEncryptedAt"
+>;
+
+/**
+ * Cleanup's close once the raw file expired: the raw file is the only retry
+ * source, so a non-final log can never deliver. Takes the caller's transaction
+ * so the close commits with the storage decrement. True when this statement
+ * closed the log (a lost mail); false when it was already final or gone, and
+ * then nothing was written.
+ */
+export async function closeDeliveryLogOnRawExpiry(
+  tx: Db,
+  id: string,
+  clearedRaw: ClearedRawEmailColumns,
+): Promise<boolean> {
+  // The status guard sits in the WHERE so the row count says whether this
+  // statement closed the log.
+  const result = await tx
+    .update(deliveryLogs)
+    .set({ ...clearedRaw, finalStatus: "permanently_failed" })
+    .where(
+      and(
+        eq(deliveryLogs.id, id),
+        inArray(deliveryLogs.finalStatus, [...NON_FINAL_DELIVERY_STATUSES]),
+      ),
+    );
+  return (result.rowCount ?? 0) > 0;
 }
 
 /**
@@ -234,7 +341,7 @@ export async function countDeliveryLogsByUserInMonth(
   db: Db,
   userId: bigint,
   month: string,
-  statuses: readonly string[],
+  statuses: readonly DeliveryLogStatus[],
 ): Promise<number> {
   if (statuses.length === 0) return 0;
   const start = monthStart(month);

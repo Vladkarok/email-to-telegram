@@ -1,7 +1,7 @@
 /**
  * Shared types for the inbound email pipeline.
  *
- * Imported by queue.ts, deliver.ts, and index.ts.
+ * Imported by the queue stage (../inboundAdmission/queue.ts), deliver.ts and index.ts.
  * Do not add business logic here — types only.
  */
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
@@ -9,6 +9,7 @@ import type * as schema from "../../db/schema.js";
 import type { EmailAddress, DeliveryLog } from "../../db/schema.js";
 import type { parseEmail } from "../parser.js";
 import type { StorageEncryptionMetadata } from "../../security/encryption.js";
+import type { QueueRejectionReason } from "../inboundAdmission/policy.js";
 
 export type Db = NodePgDatabase<typeof schema>;
 
@@ -64,6 +65,12 @@ export interface PipelineResult {
   senderRejection?: { aliasId: string; headerFromDomain: string | null };
 }
 
+/** A queue-stage refusal; its outcome is the policy row for `reason`. */
+export interface QueueRejection extends PipelineResult {
+  ok: false;
+  reason: QueueRejectionReason;
+}
+
 export interface QueuedInboundEmail {
   alias: EmailAddress;
   parsed: Awaited<ReturnType<typeof parseEmail>>;
@@ -89,4 +96,4 @@ export type QueueInboundResult =
        */
       usage?: { month: string; deliveredCount: number };
     }
-  | { queued: false; result: PipelineResult };
+  | { queued: false; result: QueueRejection };

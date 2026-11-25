@@ -1,24 +1,16 @@
 import { Transform } from "node:stream";
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { checkEgressLimit, withUserQuotaLock } from "../../billing/limits.js";
+import { chargeEgress } from "../../billing/egressCharge.js";
 import { getDb } from "../../db/client.js";
 import {
   findAttachmentLinkByToken,
   markLinkDownloaded,
   releaseLinkDownload,
 } from "../../db/repos/attachmentLinks.js";
-import {
-  decrementUserUsageMonth,
-  incrementUserUsageMonth,
-  usageMonthForDate,
-} from "../../db/repos/usage.js";
+import { decrementUserUsageMonth } from "../../db/repos/usage.js";
 import { openAttachmentStream } from "../../storage/disk.js";
 import { getLogger } from "../../utils/logger.js";
 import { verifyDownloadToken } from "../../utils/tokens.js";
-import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import type * as schema from "../../db/schema.js";
-
-type Db = NodePgDatabase<typeof schema>;
 
 export function downloadRoute(app: FastifyInstance): void {
   app.get(
@@ -44,40 +36,33 @@ export function downloadRoute(app: FastifyInstance): void {
         return;
       }
 
-      const quotaMonth = usageMonthForDate();
+      // Fixes the usage month. Taken before the claim stamp, as the route has
+      // always done, so a request at a month boundary keeps that month.
+      const quotaAt = new Date();
       const ownerUserId = link.attachment.userId;
       const reservedSize = BigInt(link.attachment.sizeBytes ?? 0);
       const claimedAt = new Date();
 
-      const claimResult = await withUserQuotaLock(getDb(), ownerUserId, async (tx: Db) => {
-        const egressLimit = await checkEgressLimit(tx, ownerUserId, reservedSize, quotaMonth);
-        if (!egressLimit.ok) {
-          return { status: "quota_exceeded" as const };
-        }
-
-        const claimed = await markLinkDownloaded(tx, link.id, claimedAt);
-        if (!claimed) {
-          return { status: "already_claimed" as const };
-        }
-
-        if (ownerUserId != null && reservedSize > 0n) {
-          await incrementUserUsageMonth(tx, {
-            userId: ownerUserId,
-            month: quotaMonth,
-            egressBytes: reservedSize,
-          });
-        }
-
-        return { status: "ok" as const };
+      // The stored size is charged before anything is read; whatever the
+      // response does not serve is given back below.
+      const charge = await chargeEgress(getDb(), {
+        ownerUserId,
+        at: quotaAt,
+        // Nothing is prepared here, so a refusal has nothing to undo and
+        // commits as it did before the charge was shared with the view.
+        onRefusal: "commit",
+        prepare: () => Promise.resolve({ egressBytes: reservedSize, value: undefined }),
+        claim: (tx) => markLinkDownloaded(tx, link.id, claimedAt),
       });
-      if (claimResult.status === "quota_exceeded") {
+      if (charge.status === "over_limit") {
         await reply.status(403).send({ error: "download quota exceeded" });
         return;
       }
-      if (claimResult.status === "already_claimed") {
+      if (charge.status === "claim_lost") {
         await reply.status(410).send({ error: "link expired or already used" });
         return;
       }
+      const quotaMonth = charge.month;
 
       // For failures before the usage tracker below is attached to the response.
       const releaseReservedEgress = async (): Promise<void> => {

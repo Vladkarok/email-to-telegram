@@ -6,7 +6,7 @@
  * the internal file layout.
  */
 import type { Api } from "grammy";
-import { queueInboundEmail } from "./queue.js";
+import { queueInboundEmail } from "../inboundAdmission/queue.js";
 import { deliverQueuedEmail } from "./deliver.js";
 import type { Db, PipelineInput, PipelineResult } from "./types.js";
 
@@ -14,10 +14,11 @@ export type {
   Db,
   PipelineInput,
   PipelineResult,
+  QueueRejection,
   QueuedInboundEmail,
   QueueInboundResult,
 } from "./types.js";
-export { queueInboundEmail } from "./queue.js";
+export { queueInboundEmail } from "../inboundAdmission/queue.js";
 export { deliverQueuedEmail } from "./deliver.js";
 
 /**

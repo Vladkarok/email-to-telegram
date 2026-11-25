@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Context, InlineKeyboard } from "grammy";
 import { createMockCtx } from "../../helpers/mockContext.js";
+import { getMessages } from "../../../src/i18n/index.js";
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 
@@ -30,17 +31,27 @@ const mockUpdateAliasStatus = vi.fn();
 const mockUpdateAliasLabel = vi.fn();
 vi.mock("../../../src/db/repos/aliases.js", () => ({
   findAliasById: (...args: unknown[]): unknown => mockFindAliasById(...args),
-  updateAliasBodyDedup: vi.fn(),
-  updateAliasPrivacyMode: vi.fn(),
   updateAliasStatus: (...args: unknown[]): unknown => mockUpdateAliasStatus(...args),
   updateAliasLabel: (...args: unknown[]): unknown => mockUpdateAliasLabel(...args),
-  updateAliasRenderMode: vi.fn(),
 }));
 
 const mockAddAllowRuleForAlias = vi.fn();
 vi.mock("../../../src/telegram/commands/allow.js", () => ({
   allowHandler: vi.fn(),
   addAllowRuleForAlias: (...args: unknown[]): unknown => mockAddAllowRuleForAlias(...args),
+}));
+
+// The mutation rules run on Postgres in tests/db/aliasOperations.pg.test.ts;
+// the callbacks below pin only the toast and menu for each outcome.
+const mockDeleteAliasAtVersion = vi.fn();
+const mockSetAliasRenderMode = vi.fn();
+const mockToggleAliasBodyDedup = vi.fn();
+const mockToggleAliasPrivacyMode = vi.fn();
+vi.mock("../../../src/aliases/settings.js", () => ({
+  deleteAliasAtVersion: (...args: unknown[]): unknown => mockDeleteAliasAtVersion(...args),
+  setAliasRenderMode: (...args: unknown[]): unknown => mockSetAliasRenderMode(...args),
+  toggleAliasBodyDedup: (...args: unknown[]): unknown => mockToggleAliasBodyDedup(...args),
+  toggleAliasPrivacyMode: (...args: unknown[]): unknown => mockToggleAliasPrivacyMode(...args),
 }));
 
 const mockSendAllowRulesMenu = vi.fn();
@@ -50,7 +61,6 @@ vi.mock("../../../src/telegram/menu/allowRulesMenu.js", () => ({
   editAllowRulesMenu: (...args: unknown[]): unknown => mockEditAllowRulesMenu(...args),
 }));
 
-vi.mock("../../../src/telegram/commands/start.js", () => ({ startHandler: vi.fn() }));
 const mockCreateEmailAlias = vi.fn();
 const mockPromptForEmailAliasName = vi.fn();
 vi.mock("../../../src/telegram/commands/newemail.js", () => ({
@@ -60,24 +70,15 @@ vi.mock("../../../src/telegram/commands/newemail.js", () => ({
   buildQuickAllowKeyboard: (aliasId: string): InlineKeyboard =>
     new InlineKeyboard().text("✅ github.com", `qr:${aliasId}:github.com`),
 }));
-vi.mock("../../../src/telegram/commands/listemail.js", () => ({ listemailHandler: vi.fn() }));
-vi.mock("../../../src/telegram/commands/deleteemail.js", () => ({ deleteemailHandler: vi.fn() }));
-vi.mock("../../../src/telegram/commands/pauseemail.js", () => ({ pauseemailHandler: vi.fn() }));
-vi.mock("../../../src/telegram/commands/resumeemail.js", () => ({ resumeemailHandler: vi.fn() }));
 vi.mock("../../../src/telegram/commands/settings.js", () => ({
   settingsHandler: vi.fn(),
   buildAliasSettingsKeyboard: vi.fn(),
   buildAliasSettingsText: vi.fn(),
 }));
-vi.mock("../../../src/telegram/commands/help.js", () => ({ helpHandler: vi.fn() }));
-vi.mock("../../../src/telegram/handlers/chatMember.js", () => ({ chatMemberHandler: vi.fn() }));
-vi.mock("../../../src/telegram/menu/chatMenu.js", () => ({
-  editChatSelectionMenu: vi.fn(),
-  editChatManagementMenu: vi.fn(),
-}));
 const mockSendAliasDetailMenu = vi.fn();
+const mockEditAliasListMenu = vi.fn();
 vi.mock("../../../src/telegram/menu/aliasMenu.js", () => ({
-  editAliasListMenu: vi.fn(),
+  editAliasListMenu: (...args: unknown[]): unknown => mockEditAliasListMenu(...args),
   editAliasDetailMenu: vi.fn(),
   sendAliasDetailMenu: (...args: unknown[]): unknown => mockSendAliasDetailMenu(...args),
   editAliasDeleteConfirmMenu: vi.fn(),
@@ -108,6 +109,7 @@ const mockAnswerCallbackQuery = vi
 const mockEditMessageText = vi
   .spyOn(Context.prototype, "editMessageText")
   .mockResolvedValue({} as never);
+const mockReply = vi.spyOn(Context.prototype, "reply").mockResolvedValue({} as never);
 
 function buildCallbackUpdate(data: string) {
   return {
@@ -177,6 +179,7 @@ describe("pending text flow", () => {
   afterAll(() => {
     mockAnswerCallbackQuery.mockRestore();
     mockEditMessageText.mockRestore();
+    mockReply.mockRestore();
   });
 
   it("creates a pending alias when the hosted account is active", async () => {
@@ -464,6 +467,147 @@ describe("pending text flow", () => {
       expect(mockAnswerCallbackQuery).toHaveBeenCalledWith("Rule not found.");
       expect(mockCanManageAlias).not.toHaveBeenCalled();
       expect(mockRemoveAllowRule).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("alias menu mutation callbacks", () => {
+    const aliasId = "550e8400-e29b-41d4-a716-446655440000";
+    const alias = { id: aliasId, chatId: -1001234567890n, bodyDedupEnabled: true };
+
+    describe.each([
+      ["adc", `adc:${aliasId}:3`, mockDeleteAliasAtVersion, { kind: "not_found" }],
+      ["set_mode", `set_mode:${aliasId}:html`, mockSetAliasRenderMode, { kind: "invalid_mode" }],
+      [
+        "toggle_body_dedup",
+        `toggle_body_dedup:${aliasId}`,
+        mockToggleAliasBodyDedup,
+        { kind: "not_found" },
+      ],
+      [
+        "toggle_privacy_mode",
+        `toggle_privacy_mode:${aliasId}`,
+        mockToggleAliasPrivacyMode,
+        { kind: "not_found" },
+      ],
+    ] as const)("%s: the fresh access check", (_, data, mutation, outcome) => {
+      it("refuses a caller who lost access without touching the alias", async () => {
+        mockCanManageAlias.mockResolvedValue(false);
+        const bot = createInitializedBot();
+
+        await bot.handleUpdate(buildCallbackUpdate(data) as never);
+
+        expect(mockAnswerCallbackQuery).toHaveBeenCalledWith(
+          expect.stringMatching(/access denied/i),
+        );
+        expect(mutation).not.toHaveBeenCalled();
+      });
+
+      it("asks for fresh rights before the change", async () => {
+        mutation.mockResolvedValue(outcome);
+        const bot = createInitializedBot();
+
+        await bot.handleUpdate(buildCallbackUpdate(data) as never);
+
+        expect(mockCanManageAlias).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          123,
+          aliasId,
+          { fresh: true },
+        );
+        expect(mockCanManageAlias.mock.invocationCallOrder[0]).toBeLessThan(
+          mutation.mock.invocationCallOrder[0],
+        );
+      });
+    });
+
+    it("adc: a confirmed delete toasts Deleted and reopens the chat's alias list", async () => {
+      mockDeleteAliasAtVersion.mockResolvedValue({ kind: "deleted", alias });
+      const bot = createInitializedBot();
+
+      await bot.handleUpdate(buildCallbackUpdate(`adc:${aliasId}:3`) as never);
+
+      expect(mockDeleteAliasAtVersion).toHaveBeenCalledWith(expect.anything(), {
+        aliasId,
+        expectedVersion: 3,
+      });
+      expect(mockAnswerCallbackQuery).toHaveBeenCalledWith("Deleted.");
+      expect(mockEditAliasListMenu).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        alias.chatId,
+        "Alerts",
+      );
+    });
+
+    it("adc: a stale confirmation answers without a toast and explains the change", async () => {
+      mockDeleteAliasAtVersion.mockResolvedValue({ kind: "routing_changed" });
+      const bot = createInitializedBot();
+
+      await bot.handleUpdate(buildCallbackUpdate(`adc:${aliasId}:3`) as never);
+
+      expect(mockAnswerCallbackQuery).toHaveBeenCalledWith();
+      expect(mockReply).toHaveBeenCalledWith(getMessages("en").aliasActions.routingChanged, {
+        parse_mode: "HTML",
+      });
+      expect(mockEditAliasListMenu).not.toHaveBeenCalled();
+    });
+
+    it("adc: a missing alias toasts Alias not found", async () => {
+      mockDeleteAliasAtVersion.mockResolvedValue({ kind: "not_found" });
+      const bot = createInitializedBot();
+
+      await bot.handleUpdate(buildCallbackUpdate(`adc:${aliasId}:3`) as never);
+
+      expect(mockAnswerCallbackQuery).toHaveBeenCalledWith("Alias not found.");
+      expect(mockReply).not.toHaveBeenCalled();
+    });
+
+    it("set_mode: an unsupported mode toasts Invalid mode and re-renders nothing", async () => {
+      mockSetAliasRenderMode.mockResolvedValue({ kind: "invalid_mode" });
+      const bot = createInitializedBot();
+
+      await bot.handleUpdate(buildCallbackUpdate(`set_mode:${aliasId}:markdown`) as never);
+
+      expect(mockAnswerCallbackQuery).toHaveBeenCalledWith("Invalid mode");
+      expect(mockFindAliasById).not.toHaveBeenCalled();
+    });
+
+    it("set_mode: a supported mode toasts it and re-renders the settings", async () => {
+      mockSetAliasRenderMode.mockResolvedValue({ kind: "updated", mode: "html" });
+      const bot = createInitializedBot();
+
+      await bot.handleUpdate(buildCallbackUpdate(`set_mode:${aliasId}:html`) as never);
+
+      expect(mockAnswerCallbackQuery).toHaveBeenCalledWith("✅ Mode set to html");
+      expect(mockEditMessageText).toHaveBeenCalledOnce();
+    });
+
+    it.each([
+      ["toggle_body_dedup", mockToggleAliasBodyDedup, "Body dedup enabled"],
+      ["toggle_privacy_mode", mockToggleAliasPrivacyMode, "Privacy mode enabled"],
+    ] as const)("%s: toasts the value written, then re-renders", async (cb, toggle, toast) => {
+      toggle.mockResolvedValue({ kind: "toggled", enabled: true });
+      const bot = createInitializedBot();
+
+      await bot.handleUpdate(buildCallbackUpdate(`${cb}:${aliasId}`) as never);
+
+      expect(mockAnswerCallbackQuery).toHaveBeenCalledWith(toast);
+      expect(mockFindAliasById).toHaveBeenCalledOnce();
+      expect(mockEditMessageText).toHaveBeenCalledOnce();
+    });
+
+    it.each([
+      ["toggle_body_dedup", mockToggleAliasBodyDedup],
+      ["toggle_privacy_mode", mockToggleAliasPrivacyMode],
+    ] as const)("%s: a missing alias toasts Alias not found", async (cb, toggle) => {
+      toggle.mockResolvedValue({ kind: "not_found" });
+      const bot = createInitializedBot();
+
+      await bot.handleUpdate(buildCallbackUpdate(`${cb}:${aliasId}`) as never);
+
+      expect(mockAnswerCallbackQuery).toHaveBeenCalledWith("Alias not found.");
+      expect(mockEditMessageText).not.toHaveBeenCalled();
     });
   });
 });

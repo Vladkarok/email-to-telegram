@@ -41,8 +41,10 @@ vi.mock("../../../src/billing/manual.js", () => ({
 vi.mock("../../../src/telegram/health.js", () => ({
   isBotHealthy: () => true,
 }));
-vi.mock("../../../src/email/pipeline.js", () => ({
+vi.mock("../../../src/email/inboundAdmission/queue.js", () => ({
   queueInboundEmail: vi.fn(),
+}));
+vi.mock("../../../src/email/pipeline.js", () => ({
   deliverQueuedEmail: vi.fn(),
 }));
 vi.mock("../../../src/storage/disk.js", () => ({
@@ -58,7 +60,7 @@ vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
   countRecentDeliveriesByAlias: vi.fn(),
 }));
 vi.mock("../../../src/billing/limits.js", () => ({
-  checkInboundLimit: vi.fn().mockResolvedValue({ ok: true }),
+  checkInboundLimitForPlan: vi.fn().mockResolvedValue({ ok: true }),
 }));
 vi.mock("../../../src/db/repos/hostedInboundBlocks.js", () => ({
   findHostedInboundBlock: vi.fn().mockResolvedValue(null),

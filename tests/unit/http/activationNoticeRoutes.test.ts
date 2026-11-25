@@ -27,8 +27,10 @@ vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
 vi.mock("../../../src/telegram/api.js", () => ({ getApi: vi.fn(() => null) }));
 
 const mockQueueInboundEmail = vi.fn();
-vi.mock("../../../src/email/pipeline.js", () => ({
+vi.mock("../../../src/email/inboundAdmission/queue.js", () => ({
   queueInboundEmail: (...args: unknown[]): unknown => mockQueueInboundEmail(...args),
+}));
+vi.mock("../../../src/email/pipeline.js", () => ({
   deliverQueuedEmail: vi.fn(),
 }));
 vi.mock("../../../src/storage/disk.js", () => ({
@@ -67,7 +69,6 @@ vi.mock("../../../src/db/repos/deliveryLogs.js", () => ({
 vi.mock("../../../src/billing/limits.js", async () => {
   const { getPlanDefinition } = await import("../../../src/billing/plans.js");
   return {
-    checkInboundLimit: vi.fn().mockResolvedValue({ ok: true }),
     checkInboundLimitForPlan: vi.fn().mockResolvedValue({ ok: true }),
     resolveInboundPlan: vi.fn(() =>
       Promise.resolve({ hosted: false, user: null, plan: getPlanDefinition("free") }),

@@ -1,6 +1,6 @@
 import { Readable, Transform } from "node:stream";
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { checkEgressLimit, withUserQuotaLock } from "../../../billing/limits.js";
+import { chargeEgress } from "../../../billing/egressCharge.js";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../../../db/schema.js";
 
@@ -13,11 +13,7 @@ import {
 } from "../../../db/repos/deliveryViewLinks.js";
 import { listAttachmentsByDeliveryLogId } from "../../../db/repos/attachments.js";
 import { createAttachmentLink } from "../../../db/repos/attachmentLinks.js";
-import {
-  decrementUserUsageMonth,
-  incrementUserUsageMonth,
-  usageMonthForDate,
-} from "../../../db/repos/usage.js";
+import { decrementUserUsageMonth } from "../../../db/repos/usage.js";
 import { parseEmail } from "../../../email/parser.js";
 import { readRawEmail } from "../../../storage/disk.js";
 import {
@@ -136,7 +132,6 @@ export function deliveryViewRoute(
       }
 
       const now = new Date();
-      const quotaMonth = usageMonthForDate(now);
       const attachmentExpiresAt = buildPrivacyAttachmentExpiry(
         link.deliveryLog.receivedAt,
         config.attachmentTtlHours,
@@ -175,19 +170,15 @@ export function deliveryViewRoute(
           : (storedFrom ?? deliveryMetadata.envelopeFrom ?? "unknown"));
       const subject = deliveryMetadata.subject ?? parsed.subject ?? "(no subject)";
       const bodyHtml = renderEmailBodyHtml(parsed);
-      const quotaExceededError = new Error("privacy_view_egress_limit_exceeded");
-      const alreadyClaimedError = new Error("privacy_view_already_claimed");
       const ownerUserId = link.deliveryLog.userId;
-      const viewResult = await withUserQuotaLock(
-        getDb(),
+      const charge = await chargeEgress(getDb(), {
         ownerUserId,
-        async (
-          tx: Db,
-        ): Promise<
-          | { status: "already_claimed" }
-          | { status: "quota_exceeded" }
-          | { status: "ok"; html: string; htmlBytes: number }
-        > => {
+        at: now,
+        // The links and the page are made first because the charge is the
+        // rendered page's byte length. A refused charge rolls the links back
+        // with it when the owner is known in hosted mode.
+        onRefusal: "rollback",
+        prepare: async (tx) => {
           const activeAttachments: Array<{ filename: string; sizeBytes: number; url: string }> = [];
           for (const attachment of plannedAttachments) {
             try {
@@ -221,43 +212,12 @@ export function deliveryViewRoute(
             bodyHtml,
             attachments: activeAttachments,
           });
-          const htmlBytes = Buffer.byteLength(html);
-          const egressLimit = await checkEgressLimit(
-            tx,
-            ownerUserId,
-            BigInt(htmlBytes),
-            quotaMonth,
-          );
-          if (!egressLimit.ok) {
-            throw quotaExceededError;
-          }
-
-          const claimed = await markDeliveryViewLinkViewed(tx, link.id, now);
-          if (!claimed) {
-            throw alreadyClaimedError;
-          }
-
-          if (ownerUserId != null && htmlBytes > 0) {
-            await incrementUserUsageMonth(tx, {
-              userId: ownerUserId,
-              month: quotaMonth,
-              egressBytes: BigInt(htmlBytes),
-            });
-          }
-
-          return { status: "ok" as const, html, htmlBytes };
+          return { egressBytes: BigInt(Buffer.byteLength(html)), value: html };
         },
-      ).catch((err: unknown) => {
-        if (err === quotaExceededError) {
-          return { status: "quota_exceeded" as const };
-        }
-        if (err === alreadyClaimedError) {
-          return { status: "already_claimed" as const };
-        }
-        throw err;
+        claim: (tx) => markDeliveryViewLinkViewed(tx, link.id, now),
       });
 
-      if (viewResult.status === "quota_exceeded") {
+      if (charge.status === "over_limit") {
         await sendHtml(
           reply,
           403,
@@ -268,7 +228,7 @@ export function deliveryViewRoute(
         );
         return;
       }
-      if (viewResult.status === "already_claimed") {
+      if (charge.status === "claim_lost") {
         await sendHtml(
           reply,
           410,
@@ -277,8 +237,8 @@ export function deliveryViewRoute(
         return;
       }
 
-      const htmlBuffer = Buffer.from(viewResult.html, "utf8");
-      const trackedStream = trackReservedEgressUsage(htmlBuffer, reply, ownerUserId, quotaMonth);
+      const htmlBuffer = Buffer.from(charge.value, "utf8");
+      const trackedStream = trackReservedEgressUsage(htmlBuffer, reply, ownerUserId, charge.month);
       await reply
         .status(200)
         .type("text/html; charset=utf-8")

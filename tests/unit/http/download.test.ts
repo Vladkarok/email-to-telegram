@@ -8,23 +8,27 @@ import { generateDownloadToken } from "../../../src/utils/tokens.js";
 import { getLogger } from "../../../src/utils/logger.js";
 
 vi.mock("../../../src/db/client.js", () => ({ getDb: vi.fn(() => ({})) }));
-vi.mock("../../../src/email/pipeline.js", () => ({
-  processInboundEmail: vi.fn(() => Promise.resolve({ ok: true })),
-}));
-vi.mock("../../../src/db/repos/aliases.js", () => ({
-  findAliasByLocalPart: vi.fn(() => Promise.resolve(null)),
-}));
 
-const mockCheckInboundLimit = vi.fn().mockResolvedValue({ ok: true });
-const mockCheckEgressLimit = vi.fn().mockResolvedValue({ ok: true });
-const mockWithOrganizationQuotaLock = vi.fn(
-  async (_db: unknown, _organizationId: string | null, work: (tx: unknown) => Promise<unknown>) =>
-    work({}),
-);
-vi.mock("../../../src/billing/limits.js", () => ({
-  checkInboundLimit: (...args: unknown[]): unknown => mockCheckInboundLimit(...args),
-  checkEgressLimit: (...args: unknown[]): unknown => mockCheckEgressLimit(...args),
-  withUserQuotaLock: (...args: unknown[]): unknown => mockWithOrganizationQuotaLock(...args),
+// The charge itself (lock, check, claim, count) is covered on Postgres in
+// tests/db/egressCharge.pg.test.ts; here it runs the route's own prepare and
+// claim steps and answers with a month distinct from the current one, so the
+// compensation paths can be seen to use the charged month.
+const CHARGE_MONTH = "2026-03";
+type ChargeInput = {
+  ownerUserId: bigint | null;
+  at?: Date;
+  onRefusal: "commit" | "rollback";
+  prepare: (tx: unknown) => Promise<{ egressBytes: bigint; value: unknown }>;
+  claim: (tx: unknown) => Promise<boolean>;
+};
+async function runCharge(_db: unknown, input: ChargeInput): Promise<unknown> {
+  const { egressBytes, value } = await input.prepare({});
+  if (!(await input.claim({}))) return { status: "claim_lost", month: CHARGE_MONTH };
+  return { status: "charged", month: CHARGE_MONTH, egressBytes, value };
+}
+const mockChargeEgress = vi.fn(runCharge);
+vi.mock("../../../src/billing/egressCharge.js", () => ({
+  chargeEgress: (...args: Parameters<typeof runCharge>): unknown => mockChargeEgress(...args),
 }));
 
 const mockFindLink = vi.fn();
@@ -42,15 +46,9 @@ vi.mock("../../../src/storage/disk.js", () => ({
   openAttachmentStream: (...args: unknown[]): unknown => mockOpenAttachment(...args),
 }));
 
-const mockIncrementUserUsageMonth = vi.fn();
-const mockDecrementOrganizationUsageMonth = vi.fn();
 const mockDecrementUserUsageMonth = vi.fn();
 vi.mock("../../../src/db/repos/usage.js", () => ({
-  incrementUserUsageMonth: (...args: unknown[]): unknown => mockIncrementUserUsageMonth(...args),
-  decrementOrganizationUsageMonth: (...args: unknown[]): unknown =>
-    mockDecrementOrganizationUsageMonth(...args),
   decrementUserUsageMonth: (...args: unknown[]): unknown => mockDecrementUserUsageMonth(...args),
-  usageMonthForDate: vi.fn(() => "2026-04"),
 }));
 
 const HMAC_SECRET = "test-secret-that-is-long-enough-abc";
@@ -111,15 +109,8 @@ describe("GET /dl/:token", () => {
     mockReleaseLinkDownload.mockResolvedValue(true);
     mockDecrementUserUsageMonth.mockReset();
     mockDecrementUserUsageMonth.mockResolvedValue(undefined);
-    mockCheckInboundLimit.mockReset();
-    mockCheckInboundLimit.mockResolvedValue({ ok: true });
-    mockCheckEgressLimit.mockReset();
-    mockCheckEgressLimit.mockResolvedValue({ ok: true });
-    mockWithOrganizationQuotaLock.mockClear();
-    mockIncrementUserUsageMonth.mockReset();
-    mockIncrementUserUsageMonth.mockResolvedValue(undefined);
-    mockDecrementOrganizationUsageMonth.mockReset();
-    mockDecrementOrganizationUsageMonth.mockResolvedValue(undefined);
+    mockChargeEgress.mockReset();
+    mockChargeEgress.mockImplementation(runCharge);
   });
 
   afterEach(() => {
@@ -197,15 +188,53 @@ describe("GET /dl/:token", () => {
     const res = await app.inject({ method: "GET", url: `/dl/${token}` });
     expect(res.statusCode).toBe(200);
     expect(res.headers["content-type"]).toContain("application/octet-stream");
-    expect(mockMarkDownloaded).toHaveBeenCalledOnce();
-    expect(mockIncrementUserUsageMonth).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        userId: 1n,
-        month: "2026-04",
-        egressBytes: BigInt(fileContent.length),
-      }),
-    );
+    expect(res.rawPayload).toEqual(fileContent);
+    expect(mockChargeEgress).toHaveBeenCalledOnce();
+    const [, input] = mockChargeEgress.mock.calls[0];
+    expect(input.ownerUserId).toBe(1n);
+    // Nothing is prepared, so a refusal has nothing to roll back and commits.
+    expect(input.onRefusal).toBe("commit");
+    // The stored size is what gets charged, before the file is opened.
+    await expect(input.prepare({})).resolves.toMatchObject({
+      egressBytes: BigInt(fileContent.length),
+    });
+    expect(mockMarkDownloaded).toHaveBeenCalledWith(expect.anything(), "link-1", expect.any(Date));
+  });
+
+  it("charges the month of an instant taken before the claim instant", async () => {
+    // The clock crosses into February while the route reads the attachment,
+    // between the instant that fixes the usage month and the claim stamp.
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-01-31T23:59:59.999Z") });
+    try {
+      const attachmentId = "attach-uuid-month";
+      const { token, expiresAt } = generateDownloadToken(attachmentId);
+      const link = ownedLink("link-month", attachmentId, expiresAt, 4);
+      const { attachment } = link;
+      let crossed = false;
+      Object.defineProperty(link, "attachment", {
+        get() {
+          if (!crossed) {
+            crossed = true;
+            vi.setSystemTime(new Date("2026-02-01T00:00:00.000Z"));
+          }
+          return attachment;
+        },
+      });
+      mockFindLink.mockResolvedValue(link);
+      mockMarkDownloaded.mockResolvedValue(true);
+      mockOpenAttachment.mockResolvedValue({ stream: Readable.from(Buffer.from("data")), size: 4 });
+
+      const app = await buildApp();
+      const res = await app.inject({ method: "GET", url: `/dl/${token}` });
+
+      expect(res.statusCode).toBe(200);
+      const [, input] = mockChargeEgress.mock.calls[0];
+      const [, , claimedAt] = mockMarkDownloaded.mock.calls[0] as [unknown, string, Date];
+      expect(claimedAt.toISOString()).toBe("2026-02-01T00:00:00.000Z");
+      expect(input.at?.toISOString()).toBe("2026-01-31T23:59:59.999Z");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("returns 410 when a concurrent request already claimed the token", async () => {
@@ -261,16 +290,19 @@ describe("GET /dl/:token", () => {
       size: 4,
       dispose: mockDisposeOpened,
     });
-    mockCheckEgressLimit.mockResolvedValue({ ok: false, code: "egress_limit" });
+    mockChargeEgress.mockResolvedValue({
+      status: "over_limit",
+      month: CHARGE_MONTH,
+      limit: { ok: false, code: "egress_limit" },
+    });
 
     const app = await buildApp();
     const res = await app.inject({ method: "GET", url: `/dl/${token}` });
 
     expect(res.statusCode).toBe(403);
     expect(res.json()).toEqual({ error: "download quota exceeded" });
-    expect(mockMarkDownloaded).not.toHaveBeenCalled();
-    expect(mockIncrementUserUsageMonth).not.toHaveBeenCalled();
     expect(mockOpenAttachment).not.toHaveBeenCalled();
+    expect(mockDecrementUserUsageMonth).not.toHaveBeenCalled();
   });
 
   it("returns 500 when attachment storage cannot be opened or decrypted", async () => {
@@ -312,7 +344,7 @@ describe("GET /dl/:token", () => {
     expect(mockDecrementUserUsageMonth).toHaveBeenCalledOnce();
     expect(mockDecrementUserUsageMonth).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ userId: 7n, month: "2026-04", egressBytes: 42n }),
+      expect.objectContaining({ userId: 7n, month: CHARGE_MONTH, egressBytes: 42n }),
     );
   });
 
@@ -383,7 +415,7 @@ describe("GET /dl/:token", () => {
     expect(mockDecrementUserUsageMonth).toHaveBeenCalledOnce();
     expect(mockDecrementUserUsageMonth).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ userId: 1n, egressBytes: 9n }),
+      expect.objectContaining({ userId: 1n, month: CHARGE_MONTH, egressBytes: 9n }),
     );
     // The file opened fine; a broken name is not a reason to reopen the link.
     expect(mockReleaseLinkDownload).not.toHaveBeenCalled();
@@ -534,8 +566,10 @@ describe("GET /dl/:token", () => {
         await vi.waitFor(() => expect(mockDecrementUserUsageMonth).toHaveBeenCalledOnce());
         const [, refund] = mockDecrementUserUsageMonth.mock.calls[0] as [
           unknown,
-          { egressBytes: bigint },
+          { month: string; egressBytes: bigint },
         ];
+        // In the month the bytes were charged to, not the current one.
+        expect(refund.month).toBe(CHARGE_MONTH);
         expect(refund.egressBytes).toBeGreaterThan(0n);
         expect(refund.egressBytes).toBeLessThan(BigInt(size));
         expect(mockReleaseLinkDownload).not.toHaveBeenCalled();

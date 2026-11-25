@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { loadConfig } from "../config.js";
+import { isHostedMode } from "../hostedMode.js";
 import {
   findHostedInboundBlock,
   type HostedInboundBlockInput,
@@ -12,19 +12,7 @@ export async function findHostedInboundRejection(
   db: Db,
   input: HostedInboundBlockInput & { userId?: bigint | null },
 ) {
-  if (!shouldCheckHostedInboundBlocklist()) return null;
+  if (!isHostedMode()) return null;
   if (input.userId == null) return null;
   return findHostedInboundBlock(db, input);
-}
-
-function shouldCheckHostedInboundBlocklist(): boolean {
-  const appMode = process.env["APP_MODE"];
-  if (appMode === "hosted") return true;
-  if (appMode === "self-hosted") return false;
-
-  try {
-    return loadConfig().appMode === "hosted";
-  } catch {
-    return false;
-  }
 }

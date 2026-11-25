@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Api } from "grammy";
 import {
-  isQuotaNotificationReason,
   notifyApproachingMonthlyLimit,
   notifyQuotaExhausted,
 } from "../../../src/billing/quotaNotifier.js";
@@ -55,17 +54,6 @@ function makeApi(): { api: Api; sendMessage: ReturnType<typeof vi.fn> } {
 }
 
 const DB = {} as never;
-
-describe("isQuotaNotificationReason", () => {
-  it("accepts exactly the persistent user-actionable rejection codes", () => {
-    expect(isQuotaNotificationReason("monthly_email_limit")).toBe(true);
-    expect(isQuotaNotificationReason("storage_limit")).toBe(true);
-    expect(isQuotaNotificationReason("subscription_inactive")).toBe(true);
-    expect(isQuotaNotificationReason("message_size_limit")).toBe(false);
-    expect(isQuotaNotificationReason("rate_limited")).toBe(false);
-    expect(isQuotaNotificationReason("duplicate")).toBe(false);
-  });
-});
 
 describe("notifyQuotaExhausted", () => {
   beforeEach(() => {

@@ -9,52 +9,17 @@ import {
   CB_QUICK_ALLOW_RULES,
 } from "../callbacks.js";
 import type { CommandContext, Context } from "grammy";
-import { customAlphabet } from "nanoid";
 import { getDb } from "../../db/client.js";
-import {
-  createAlias,
-  findRecentAliasTombstone,
-  listAliasesByChat,
-} from "../../db/repos/aliases.js";
-import type { EmailAddress } from "../../db/schema.js";
 import { findChatById } from "../../db/repos/chats.js";
-import { ensureSharedInboundDomain } from "../../db/repos/inboundDomains.js";
 import { loadConfig } from "../../config.js";
-import {
-  checkAliasCreateLimit,
-  hasActiveHostedUser,
-  withUserQuotaLock,
-} from "../../billing/limits.js";
+import { hasActiveHostedUser, type LimitResult } from "../../billing/limits.js";
 import { getPending, clearPending, setPending } from "../session.js";
 import { canManageChat } from "../authorization.js";
-import { withChatMigrationLock } from "../chatMigration.js";
 import { escapeHtml } from "../../utils/html.js";
-import {
-  HOSTED_ALIAS_CREATE_RATE_LIMIT_MESSAGE,
-  HostedAliasCreateRateLimitError,
-  reserveHostedAliasCreateAttempt,
-} from "../../abuse/hostedAliasCreation.js";
-import {
-  ALIAS_IMPERSONATION_MESSAGE,
-  AliasImpersonationError,
-  assertAliasNotImpersonation,
-} from "../../abuse/aliasImpersonationGuard.js";
+import { HOSTED_ALIAS_CREATE_RATE_LIMIT_MESSAGE } from "../../abuse/hostedAliasCreation.js";
+import { ALIAS_IMPERSONATION_MESSAGE } from "../../abuse/aliasImpersonationGuard.js";
+import { createAliasForChat, type AliasCreationResult } from "../../aliases/creation.js";
 import { DEFAULT_LOCALE, getMessages, resolveLocale, type Locale } from "../../i18n/index.js";
-
-const ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
-const generateSuffix = customAlphabet(ALPHABET, 6);
-
-/** Validates user-supplied name before lowercasing */
-const NAME_RE = /^[a-z0-9._-]{1,32}$/;
-
-/** Maximum candidate-name attempts before giving up. */
-const MAX_NAME_ATTEMPTS = 5;
-
-/**
- * How long a freshly deleted name is reserved against claims by a different
- * user (anti name-squatting). The deleting user may reuse it immediately.
- */
-const NAME_REUSE_COOLDOWN_HOURS = 24;
 
 /**
  * Quick-pick allow-rule domains shown right after alias creation. google.com
@@ -181,55 +146,6 @@ export async function newemailHandler(ctx: CommandContext<Context>): Promise<voi
   await createEmailAlias(ctx, rawName, targetChatId, targetThreadId, targetChatTitle);
 }
 
-async function nextInboxName(db: ReturnType<typeof getDb>, chatId: bigint): Promise<string> {
-  const aliases = await listAliasesByChat(db, chatId);
-  let maxN = 0;
-  let plainInboxTaken = false;
-  const re = /^inbox-(\d+)$/;
-  for (const a of aliases) {
-    if (a.localPart === "inbox") {
-      plainInboxTaken = true;
-      continue;
-    }
-    const m = a.localPart.match(re);
-    if (m && m[1]) {
-      const n = parseInt(m[1], 10);
-      if (Number.isFinite(n) && n > maxN) maxN = n;
-    }
-  }
-  if (!plainInboxTaken && maxN === 0) return "inbox";
-  return `inbox-${Math.max(maxN, 1) + 1}`;
-}
-
-/** Postgres error code for unique-constraint violations. */
-const PG_UNIQUE_VIOLATION = "23505";
-
-/** Cap cause-chain traversal in case of cyclic `cause` references. */
-const MAX_CAUSE_DEPTH = 5;
-
-/**
- * Walks the error `cause` chain: drizzle-orm >= 0.44 wraps driver errors in
- * DrizzleQueryError, whose own message no longer carries the pg constraint
- * text — the original pg error (code 23505) lives on `cause`.
- */
-function isLocalPartConflict(err: unknown): boolean {
-  let current: unknown = err;
-  for (let depth = 0; current instanceof Error && depth < MAX_CAUSE_DEPTH; depth++) {
-    if ((current as Error & { code?: unknown }).code === PG_UNIQUE_VIOLATION) return true;
-    const msg = current.message;
-    if (
-      msg.includes("idx_alias_local_part") ||
-      msg.includes("idx_alias_domain_local_part") ||
-      msg.includes("duplicate key value") ||
-      msg.includes("unique constraint")
-    ) {
-      return true;
-    }
-    current = current.cause;
-  }
-  return false;
-}
-
 export async function createEmailAlias(
   ctx: Context,
   rawName: string,
@@ -240,126 +156,64 @@ export async function createEmailAlias(
   if (!ctx.from) return;
   const config = loadConfig();
   const locale = await resolveLocale(ctx, getDb());
-  const messages = getMessages(locale);
 
-  if (rawName.length > 0) {
-    if (rawName.length > 32) {
+  const result = await createAliasForChat(
+    getDb(),
+    {
+      createdBy: BigInt(ctx.from.id),
+      chatId,
+      threadId,
+      requestedName: rawName.length > 0 ? rawName : null,
+    },
+    config,
+  );
+  await replyForAliasCreation(ctx, result, chatTitle, locale);
+}
+
+/** The reply for each creation outcome. Exported for the reply-mapping tests. */
+export async function replyForAliasCreation(
+  ctx: Context,
+  result: AliasCreationResult,
+  chatTitle: string | undefined,
+  locale: Locale,
+): Promise<void> {
+  const messages = getMessages(locale);
+  switch (result.kind) {
+    case "name_too_long":
       await ctx.reply(messages.newemail.nameTooLong);
       return;
-    }
-    if (!NAME_RE.test(rawName)) {
+    case "invalid_name":
       await ctx.reply(messages.newemail.invalidName);
       return;
-    }
-    try {
-      assertAliasNotImpersonation(rawName);
-    } catch (err) {
-      if (err instanceof AliasImpersonationError) {
-        await ctx.reply(ALIAS_IMPERSONATION_MESSAGE);
-        return;
-      }
-      throw err;
-    }
-  }
-
-  const db = getDb();
-  const createdBy = BigInt(ctx.from.id);
-
-  const baseName = rawName.length > 0 ? rawName : await nextInboxName(db, chatId);
-
-  let blockedLimit: Awaited<ReturnType<typeof checkAliasCreateLimit>> | null = null;
-  let alias: EmailAddress | null = null;
-
-  const cooldownSince = new Date(Date.now() - NAME_REUSE_COOLDOWN_HOURS * 60 * 60 * 1000);
-
-  for (let attempt = 0; attempt < MAX_NAME_ATTEMPTS; attempt++) {
-    const candidate = attempt === 0 ? baseName : `${baseName}-${generateSuffix()}`;
-
-    const tombstone = await findRecentAliasTombstone(db, candidate, cooldownSince);
-    if (tombstone && tombstone.createdBy !== createdBy) {
-      if (rawName.length > 0) {
-        await ctx.reply(messages.newemail.nameCooldown);
-        return;
-      }
-      continue;
-    }
-
-    try {
-      // Lock order (alias-chat-mobility contract): the per-chat migration
-      // lock is taken BEFORE the per-user quota lock, so creation can never
-      // interleave with a migration repair of this chat. The quota lock
-      // nests as a savepoint on the same transaction.
-      alias = await withChatMigrationLock(db, chatId, async (lockTx) => {
-        // Repair may have won the race and deactivated this chat id while we
-        // waited for the lock; a new alias must never point at a dead chat.
-        const chatRow = await findChatById(lockTx, chatId);
-        if (chatRow?.isActive === false) throw new Error("chat-migrated");
-
-        return withUserQuotaLock(lockTx, createdBy, async (tx) => {
-          const inboundDomain =
-            config.appMode === "hosted"
-              ? await ensureSharedInboundDomain(tx, config.hostedMailDomain!)
-              : null;
-          const fullAddress = `${candidate}@${inboundDomain?.domain ?? config.mailDomain}`;
-          const limit = await checkAliasCreateLimit(tx, createdBy);
-          if (!limit.ok) {
-            blockedLimit = limit;
-            throw new Error("quota-blocked");
-          }
-
-          await reserveHostedAliasCreateAttempt(tx, createdBy);
-
-          return createAlias(tx, {
-            localPart: candidate,
-            fullAddress,
-            domainId: inboundDomain?.id ?? null,
-            chatId,
-            messageThreadId: threadId,
-            createdBy,
-            renderMode: "html",
-            privacyModeEnabled: false,
-            bodyDedupEnabled: false,
-            status: "active",
-          });
-        });
-      });
+    case "impersonation":
+      await ctx.reply(ALIAS_IMPERSONATION_MESSAGE);
+      return;
+    case "name_cooldown":
+      await ctx.reply(messages.newemail.nameCooldown);
+      return;
+    case "limit":
+      await replyForAliasLimitFailure(ctx, result.limit);
+      return;
+    case "chat_migrated":
+      await ctx.reply(messages.newemail.chatUnavailable);
+      return;
+    case "rate_limited":
+      await ctx.reply(HOSTED_ALIAS_CREATE_RATE_LIMIT_MESSAGE);
+      return;
+    case "domain_unavailable":
+      await ctx.reply(messages.newemail.sharedDomainUnavailable);
+      return;
+    case "name_taken":
+      await ctx.reply(messages.newemail.nameTaken);
+      return;
+    case "no_unique_name":
+      await ctx.reply(messages.newemail.uniqueNameFailed);
+      return;
+    case "created":
       break;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg === "quota-blocked") {
-        if (blockedLimit) await replyForAliasLimitFailure(ctx, blockedLimit);
-        return;
-      }
-      if (msg === "chat-migrated") {
-        await ctx.reply(messages.newemail.chatUnavailable);
-        return;
-      }
-      if (err instanceof HostedAliasCreateRateLimitError) {
-        await ctx.reply(HOSTED_ALIAS_CREATE_RATE_LIMIT_MESSAGE);
-        return;
-      }
-      if (msg.includes("ensureSharedInboundDomain")) {
-        await ctx.reply(messages.newemail.sharedDomainUnavailable);
-        return;
-      }
-      if (isLocalPartConflict(err)) {
-        // A user-chosen name is sacred: don't silently hand back a suffixed
-        // variant — tell them it's taken. Auto-names retry with a suffix.
-        if (rawName.length > 0) {
-          await ctx.reply(messages.newemail.nameTaken);
-          return;
-        }
-        continue;
-      }
-      throw err;
-    }
   }
 
-  if (!alias) {
-    await ctx.reply(messages.newemail.uniqueNameFailed);
-    return;
-  }
-
+  const alias = result.alias;
   const chatNote = chatTitle ? messages.newemail.deliveringTo(escapeHtml(chatTitle)) : "";
   const fullAddress = alias.fullAddress;
 
@@ -375,10 +229,7 @@ export async function createEmailAlias(
   });
 }
 
-async function replyForAliasLimitFailure(
-  ctx: Context,
-  limit: Awaited<ReturnType<typeof checkAliasCreateLimit>>,
-): Promise<void> {
+async function replyForAliasLimitFailure(ctx: Context, limit: LimitResult): Promise<void> {
   if (limit.ok) return;
 
   if (limit.code === "subscription_inactive") {

@@ -18,7 +18,6 @@ import { createLogger, setLogger } from "../../src/utils/logger.js";
 import { ActivationNoticeQueue } from "../../src/activation/noticeQueue.js";
 import { createNoticeRunner } from "../../src/activation/notice.js";
 import { applyActivationAllow } from "../../src/activation/allowButton.js";
-import { insertAllowRule } from "../../src/telegram/commands/allow.js";
 import { NOTICE_BOUNDS, type NoticeBounds } from "../../src/activation/bounds.js";
 import { sql } from "drizzle-orm";
 import { runCleanup } from "../../src/storage/cleanup.js";
@@ -678,31 +677,6 @@ describe.skipIf(!hasTestDatabase)("first-bounce notice on real Postgres", () => 
       });
       expect(await applyActivationAllow(t.db, { aliasId, token })).toEqual({ kind: "expired" });
       expect(await rules(aliasId)).toEqual(["example.org"]);
-    });
-
-    it("the allow-rule helper writes nothing when the alias no longer matches the snapshot", async () => {
-      const aliasId = await seedAlias();
-      const rule = { matchType: "domain" as const, normalized: "github.com" };
-      const stale = await t.db.transaction((tx) =>
-        insertAllowRule(tx, {
-          aliasId,
-          ownerId: OWNER,
-          rule,
-          expected: { chatId: DM_CHAT, routingVersion: 1 },
-        }),
-      );
-      expect(stale).toEqual({ kind: "stale" });
-      expect(await rules(aliasId)).toEqual([]);
-      const added = await t.db.transaction((tx) =>
-        insertAllowRule(tx, {
-          aliasId,
-          ownerId: OWNER,
-          rule,
-          expected: { chatId: DM_CHAT, routingVersion: 0 },
-        }),
-      );
-      expect(added).toEqual({ kind: "added" });
-      expect(await rules(aliasId)).toEqual(["github.com"]);
     });
 
     it("a failed commit leaves the button usable", async () => {
