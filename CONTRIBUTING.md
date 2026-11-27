@@ -50,9 +50,16 @@ npm run test:coverage     # report coverage
 Tests must pass on `main`. New features and bug fixes should include
 tests that fail before your change and pass after it.
 
-The suites under `tests/db/` run against a real Postgres and are skipped
-unless `TEST_DATABASE_URL` points at a server where they may create and drop
-throwaway databases (CI sets it). Locally:
+The suites under `tests/db/` and `tests/scenarios/` run against a real
+Postgres and are skipped unless `TEST_DATABASE_URL` points at a server where
+they may create and drop throwaway databases (CI sets it).
+
+`tests/scenarios/` drives the real HTTP server end to end: signed Worker
+requests to `/inbound/preflight` and `/inbound/raw`, delivery, retries and
+downloads, with only Telegram (a recording grammy `Api`) and DNS faked. A new
+inbound or delivery behaviour belongs there when it can be stated as what the
+server answers, what lands in Postgres and on disk, and what Telegram
+receives. Locally:
 
 ```sh
 docker run -d --rm --name etg-test-pg -e POSTGRES_USER=app \
