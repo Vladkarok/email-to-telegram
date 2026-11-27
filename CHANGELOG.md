@@ -18,6 +18,15 @@ that has been running in production.
 
 ## [Unreleased]
 
+### Fixed
+
+- A mail that could not be delivered before its stored copy expired (for
+  example, Telegram failing for longer than the retention period) is no
+  longer counted against the owner's monthly limit, as when the retry gives
+  up on it earlier. Cleanup now leaves a mail a retry is sending at that
+  moment to the retry, so the mail is refunded only when it is lost, and
+  once.
+
 ## [1.13.6] — 2026-11-27
 
 An internal restructuring of mail delivery and admission, with no change

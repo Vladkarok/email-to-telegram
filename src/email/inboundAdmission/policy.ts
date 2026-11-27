@@ -58,8 +58,9 @@ export const REJECTION_POLICY: RejectionPolicyTable = {
   sender_not_allowed: { rawStatus: 403, deleteLive: true, deleteInRecovery: true, quota: false },
   sender_auth_failed: { rawStatus: 403, deleteLive: true, deleteInRecovery: true, quota: false },
   // Live: 503 hands the retry to the sending server, so the local copy goes.
-  // Recovery keeps its copy for a later cycle. The two disagree on purpose
-  // until the owner decides (contract decision b).
+  // Recovery keeps its copy for a later cycle: the sender was already
+  // answered 202 (or the request died), so no one else may retry it; a copy
+  // that does arrive again is dropped by its Message-ID.
   sender_auth_temperror: {
     rawStatus: 503,
     deleteLive: true,

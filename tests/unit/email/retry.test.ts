@@ -84,6 +84,10 @@ vi.mock("../../../src/email/inboundAdmission/queue.js", () => ({
 vi.mock("../../../src/email/pipeline.js", () => ({
   deliverQueuedEmail: (...args: unknown[]): unknown => mockDeliverQueuedEmail(...args),
 }));
+const mockRefundAcceptedEmail = vi.fn();
+vi.mock("../../../src/billing/usageRefund.js", () => ({
+  refundAcceptedEmail: (...args: unknown[]): unknown => mockRefundAcceptedEmail(...args),
+}));
 const mockNotifyApproachingMonthlyLimit = vi.fn();
 vi.mock("../../../src/billing/quotaNotifier.js", () => ({
   notifyApproachingMonthlyLimit: (...args: unknown[]): unknown =>
@@ -147,6 +151,8 @@ describe("runRetryWorker", () => {
     mockCountCountedFailed.mockResolvedValue(0);
     mockInsertAttempt.mockResolvedValue(undefined);
     mockSettleLog.mockResolvedValue(undefined);
+    mockCloseLog.mockResolvedValue(true);
+    mockRefundAcceptedEmail.mockResolvedValue(undefined);
     mockReadRawEmail.mockResolvedValue(RAW_EMAIL);
     mockSendTelegramMessage.mockResolvedValue({ ok: true, telegramMessageId: 42 });
     mockSendTelegramPhotos.mockResolvedValue({ ok: true, failedPhotos: [] });
@@ -285,12 +291,34 @@ describe("runRetryWorker", () => {
       );
     });
 
-    it("counts a log closed before sending (raw email gone) as lost", async () => {
-      mockFindFailedLogs.mockResolvedValue([{ ...fakeLog, rawEmailPath: null }]);
+    it("counts a log closed before sending (raw email gone) as lost and refunds it", async () => {
+      const log = { ...fakeLog, rawEmailPath: null, userId: 7n };
+      mockFindFailedLogs.mockResolvedValue([log]);
 
       await runRetryWorker(fakeDb, fakeApi);
 
       expect(await lostAt("retry")).toBe(1);
+      expect(mockRefundAcceptedEmail).toHaveBeenCalledTimes(1);
+      expect(mockRefundAcceptedEmail).toHaveBeenCalledWith(fakeDb, {
+        deliveryLogId: log.id,
+        userId: 7n,
+        receivedAt: log.receivedAt,
+      });
+    });
+
+    it("leaves the loss and the refund to cleanup when cleanup closed the log first", async () => {
+      // Cleanup deleted the expired raw file and closed the log while this
+      // retry held its claim; the retry then cannot read the file.
+      mockFindFailedLogs.mockResolvedValue([{ ...fakeLog, userId: 7n }]);
+      mockReadRawEmail.mockRejectedValue(new Error("ENOENT"));
+      mockCloseLog.mockResolvedValue(false);
+
+      await runRetryWorker(fakeDb, fakeApi);
+
+      expect(mockCloseLog).toHaveBeenCalledWith(fakeDb, fakeLog.id);
+      expect(await lostAt("retry")).toBe(0);
+      expect(await retryResult("permanently_failed")).toBe(0);
+      expect(mockRefundAcceptedEmail).not.toHaveBeenCalled();
     });
 
     it("does not count a loss when the permanently_failed write fails", async () => {
@@ -956,6 +984,8 @@ describe("retry runs at shutdown", () => {
     mockCountAttempts.mockResolvedValue(0);
     mockCountCountedFailed.mockResolvedValue(0);
     mockSettleLog.mockResolvedValue(undefined);
+    mockCloseLog.mockResolvedValue(true);
+    mockRefundAcceptedEmail.mockResolvedValue(undefined);
     mockReadRawEmail.mockResolvedValue(RAW_EMAIL);
     mockListAttachments.mockResolvedValue([]);
     mockListPendingRawEmails.mockResolvedValue([]);

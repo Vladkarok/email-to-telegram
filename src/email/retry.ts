@@ -337,10 +337,12 @@ async function retryDelivery(
 
   // Marks the log permanently failed and refunds the monthly-quota charge the
   // acceptance path took: the user never received this email, so it must not
-  // count against their plan.
+  // count against their plan. Counted only when this close ended the log:
+  // a log another writer already closed was counted there.
   const closePermanentlyFailed = async (): Promise<void> => {
+    const closed = await closeDeliveryLogPermanentlyFailed(db, deliveryLog.id);
+    if (!closed) return;
     recordRetryAttempt("permanently_failed");
-    await closeDeliveryLogPermanentlyFailed(db, deliveryLog.id);
     recordDeliveryLost("retry");
     await refundAcceptedEmail(db, {
       deliveryLogId: deliveryLog.id,
