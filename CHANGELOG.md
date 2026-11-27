@@ -18,6 +18,25 @@ that has been running in production.
 
 ## [Unreleased]
 
+## [1.13.6] — 2026-11-27
+
+An internal restructuring of mail delivery and admission, with no change
+in behaviour, and end-to-end tests that check it.
+
+### Changed
+
+- The delivery, inbound admission, quota and alias code was reorganised so
+  that the first delivery and retries share one delivery attempt, and every
+  inbound rejection reason is decided by one table. Mail handling, replies
+  and limits behave as before.
+
+### Added
+
+- End-to-end scenario tests (`tests/scenarios/`) run the real server
+  against a real database with a fake Telegram: attachments and download
+  links, the hourly cap, sender rejection, and Telegram failures with
+  retries. They pass on this release and on v1.13.5.
+
 ## [1.13.5] — 2026-11-21
 
 Fixes for failure paths found in a code review, a sturdier deploy script
