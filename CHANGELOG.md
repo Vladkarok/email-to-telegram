@@ -18,6 +18,10 @@ that has been running in production.
 
 ## [Unreleased]
 
+## [1.13.7] — 2026-11-27
+
+A fix to monthly-limit accounting for mail that could not be delivered.
+
 ### Fixed
 
 - A mail that could not be delivered before its stored copy expired (for
