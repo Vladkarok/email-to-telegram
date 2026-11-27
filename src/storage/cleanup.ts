@@ -1,7 +1,7 @@
 import { readdir, stat } from "fs/promises";
 import { join } from "path";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { and, eq, isNotNull, isNull, lt, notExists, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, lt, ne, notExists, sql } from "drizzle-orm";
 import { deliveryLogs, attachments, users } from "../db/schema.js";
 import type * as schema from "../db/schema.js";
 import { deleteFile, deleteDir } from "./disk.js";
@@ -20,6 +20,7 @@ import {
   type ClearedRawEmailColumns,
 } from "../db/repos/deliveryLogs.js";
 import { recordDeliveryLost } from "../observability/metrics.js";
+import { refundAcceptedEmail } from "../billing/usageRefund.js";
 import { getEffectivePlan } from "../billing/limits.js";
 import { listPlanDefinitions } from "../billing/plans.js";
 
@@ -266,7 +267,15 @@ async function cleanRawEmails(
       })
       .from(deliveryLogs)
       .leftJoin(users, eq(users.id, deliveryLogs.userId))
-      .where(and(isNotNull(deliveryLogs.rawEmailPath), lt(deliveryLogs.receivedAt, cutoff)));
+      .where(
+        and(
+          isNotNull(deliveryLogs.rawEmailPath),
+          lt(deliveryLogs.receivedAt, cutoff),
+          // A retry holding its claim may be sending from this raw email;
+          // its log is left for a later run (see RAW_EXPIRY_CLOSABLE_STATUSES).
+          ne(deliveryLogs.finalStatus, "retrying"),
+        ),
+      );
     let cleared = 0;
     for (const row of rawLogCandidates) {
       if (!row.rawEmailPath) {
@@ -291,10 +300,16 @@ async function cleanRawEmails(
         // The raw file is the only retry source; once it expires an
         // undelivered log can never deliver, so close it out.
         const closed = await closeDeliveryLogOnRawExpiry(tx as Db, row.id, clearedRaw);
+        // A retry that claimed the log after the selection above keeps its
+        // raw columns: it closes the log itself when the file is gone, and a
+        // later run clears them and gives the storage back.
         const rowCount = closed
           ? 1
           : affectedRows(
-              await tx.update(deliveryLogs).set(clearedRaw).where(eq(deliveryLogs.id, row.id)),
+              await tx
+                .update(deliveryLogs)
+                .set(clearedRaw)
+                .where(and(eq(deliveryLogs.id, row.id), ne(deliveryLogs.finalStatus, "retrying"))),
             );
         if (rowCount > 0 && row.userId && row.rawSizeBytes != null && row.rawSizeBytes > 0) {
           await decrementUserStorageUsage(tx as Db, row.userId, {
@@ -303,8 +318,17 @@ async function cleanRawEmails(
         }
         return { rowCount, closed };
       });
-      // Counted after commit: a rolled-back close lost nothing.
-      if (outcome.closed) recordDeliveryLost("cleanup");
+      // Counted and refunded after commit: a rolled-back close lost nothing.
+      // The user never received this mail, so its monthly charge goes back,
+      // as when the retry worker gives up.
+      if (outcome.closed) {
+        recordDeliveryLost("cleanup");
+        await refundAcceptedEmail(db, {
+          deliveryLogId: row.id,
+          userId: row.userId,
+          receivedAt: row.receivedAt,
+        });
+      }
       cleared += outcome.rowCount;
     }
     if (cleared > 0) {

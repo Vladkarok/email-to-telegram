@@ -13,6 +13,11 @@ const mockStat = vi.fn();
 const mockDeleteFile = vi.fn();
 const mockDeleteDir = vi.fn();
 const mockDecrementOrganizationStorageUsage = vi.fn();
+const mockRefundAcceptedEmail = vi.fn();
+
+vi.mock("../../../src/billing/usageRefund.js", () => ({
+  refundAcceptedEmail: (...args: unknown[]): unknown => mockRefundAcceptedEmail(...args),
+}));
 
 vi.mock("fs/promises", () => ({
   readdir: (...args: unknown[]): unknown => mockReaddir(...args),
@@ -232,6 +237,7 @@ describe("runCleanup", () => {
     mockDeleteFile.mockResolvedValue(undefined);
     mockDeleteDir.mockResolvedValue(undefined);
     mockDecrementOrganizationStorageUsage.mockResolvedValue(undefined);
+    mockRefundAcceptedEmail.mockResolvedValue(undefined);
     mockReaddir.mockResolvedValue([]);
     mockStat.mockResolvedValue({ mtime: new Date(0) }); // very old
     mockDeleteExpiredDeliveryViewLinks.mockResolvedValue(0);
@@ -317,6 +323,7 @@ describe("runCleanup", () => {
       rawEmailPath: "/data/rawemails/2025-01-01/log-1.eml",
       rawSizeBytes: 42,
       userId: 1n,
+      receivedAt: new Date("2025-01-01T08:00:00.000Z"),
     };
     const lostAtCleanup = async (): Promise<number> => {
       const text = await metricsRegistry.getSingleMetricAsString(
@@ -329,7 +336,7 @@ describe("runCleanup", () => {
       resetMetricsForTests();
     });
 
-    it("counts a log it closes as lost (stage cleanup)", async () => {
+    it("counts a log it closes as lost (stage cleanup) and refunds its monthly charge", async () => {
       const db = makeDb([], [expiredLog]);
 
       await runCleanup(db, config);
@@ -340,6 +347,13 @@ describe("runCleanup", () => {
         expect.objectContaining({ rawEmailPath: null, finalStatus: "permanently_failed" }),
       );
       expect(await lostAtCleanup()).toBe(1);
+      // The month the mail was received in, as when the retry gives up.
+      expect(mockRefundAcceptedEmail).toHaveBeenCalledTimes(1);
+      expect(mockRefundAcceptedEmail).toHaveBeenCalledWith(db, {
+        deliveryLogId: "log-1",
+        userId: 1n,
+        receivedAt: expiredLog.receivedAt,
+      });
     });
 
     it("only clears the raw path of an already-final log, without counting a loss", async () => {
@@ -361,6 +375,21 @@ describe("runCleanup", () => {
         rawEmailBytes: 42n,
       });
       expect(await lostAtCleanup()).toBe(0);
+      expect(mockRefundAcceptedEmail).not.toHaveBeenCalled();
+    });
+
+    it("leaves a log a retry claimed after the selection to that retry", async () => {
+      const db = makeDb([], [expiredLog]);
+      // Neither the close nor the plain clear matches: the log is `retrying`.
+      db._mocks.updateWhere.mockResolvedValueOnce({ rowCount: 0 });
+      db._mocks.updateWhere.mockResolvedValueOnce({ rowCount: 0 });
+
+      await runCleanup(db, config);
+
+      expect(db._mocks.updateWhere).toHaveBeenCalledTimes(2);
+      expect(mockDecrementOrganizationStorageUsage).not.toHaveBeenCalled();
+      expect(mockRefundAcceptedEmail).not.toHaveBeenCalled();
+      expect(await lostAtCleanup()).toBe(0);
     });
 
     it("does not count a loss when the close is rolled back", async () => {
@@ -370,6 +399,7 @@ describe("runCleanup", () => {
       await runCleanup(db, config);
 
       expect(await lostAtCleanup()).toBe(0);
+      expect(mockRefundAcceptedEmail).not.toHaveBeenCalled();
     });
   });
 

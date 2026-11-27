@@ -139,7 +139,7 @@ export async function findDeliveryLogByRawEmailPath(
   return log ?? null;
 }
 
-/** Unconditional by id, like every transition here except the claim and the raw-expiry close. */
+/** Unconditional by id, like every transition here except the claim and the two closes. */
 async function setDeliveryLogStatus(
   db: Db,
   id: string,
@@ -161,9 +161,24 @@ export async function settleDeliveryLogAfterSend(
   await setDeliveryLogStatus(db, id, outcome);
 }
 
-/** Closes a log the retry worker gave up on before sending (no route, budget spent, raw unreadable). */
-export async function closeDeliveryLogPermanentlyFailed(db: Db, id: string): Promise<void> {
-  await setDeliveryLogStatus(db, id, "permanently_failed");
+/**
+ * Closes a log the retry worker gave up on before sending (no route, budget
+ * spent, raw unreadable). True when this statement closed the log; false when
+ * another writer closed it first (cleanup's raw-expiry close deletes the raw
+ * file the retry then fails to read), and then nothing was written, so the
+ * loss and its refund are counted once.
+ */
+export async function closeDeliveryLogPermanentlyFailed(db: Db, id: string): Promise<boolean> {
+  const result = await db
+    .update(deliveryLogs)
+    .set({ finalStatus: "permanently_failed" })
+    .where(
+      and(
+        eq(deliveryLogs.id, id),
+        inArray(deliveryLogs.finalStatus, [...NON_FINAL_DELIVERY_STATUSES]),
+      ),
+    );
+  return (result.rowCount ?? 0) > 0;
 }
 
 /**
@@ -264,11 +279,23 @@ export type ClearedRawEmailColumns = Pick<
 >;
 
 /**
+ * The statuses cleanup's raw-expiry close may end: every non-final one except
+ * `retrying`. A retry holding its claim may be mid-send with the raw email
+ * already read; it settles the log itself (and refunds a loss once), so
+ * cleanup leaves it and its raw columns for a later run.
+ */
+export const RAW_EXPIRY_CLOSABLE_STATUSES = [
+  "received",
+  "processing",
+  "failed",
+] as const satisfies readonly NonFinalDeliveryStatus[];
+
+/**
  * Cleanup's close once the raw file expired: the raw file is the only retry
  * source, so a non-final log can never deliver. Takes the caller's transaction
  * so the close commits with the storage decrement. True when this statement
- * closed the log (a lost mail); false when it was already final or gone, and
- * then nothing was written.
+ * closed the log (a lost mail); false when it was already final, claimed by a
+ * retry or gone, and then nothing was written.
  */
 export async function closeDeliveryLogOnRawExpiry(
   tx: Db,
@@ -283,7 +310,7 @@ export async function closeDeliveryLogOnRawExpiry(
     .where(
       and(
         eq(deliveryLogs.id, id),
-        inArray(deliveryLogs.finalStatus, [...NON_FINAL_DELIVERY_STATUSES]),
+        inArray(deliveryLogs.finalStatus, [...RAW_EXPIRY_CLOSABLE_STATUSES]),
       ),
     );
   return (result.rowCount ?? 0) > 0;

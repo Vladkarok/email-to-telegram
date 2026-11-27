@@ -16,6 +16,7 @@ import {
 } from "../helpers/deliveryFixtures.js";
 import {
   NON_FINAL_DELIVERY_STATUSES,
+  RAW_EXPIRY_CLOSABLE_STATUSES,
   claimDeliveryLogForRetry,
   closeDeliveryLogOnRawExpiry,
   closeDeliveryLogPermanentlyFailed,
@@ -168,9 +169,18 @@ describe.skipIf(!hasTestDatabase)("delivery-log lifecycle on real Postgres", () 
 
   it("closes a log permanently failed before a send", async () => {
     const id = await seedLog("retrying");
-    await closeDeliveryLogPermanentlyFailed(t.db, id);
+    expect(await closeDeliveryLogPermanentlyFailed(t.db, id)).toBe(true);
     expect((await readLog(id)).finalStatus).toBe("permanently_failed");
   });
+
+  it.each(["permanently_failed", "delivered"] as const)(
+    "does not close a log another writer already made %s",
+    async (status) => {
+      const id = await seedLog(status);
+      expect(await closeDeliveryLogPermanentlyFailed(t.db, id)).toBe(false);
+      expect((await readLog(id)).finalStatus).toBe(status);
+    },
+  );
 
   it("reopens a delivered log after a migration, and the retry worker can claim it", async () => {
     const id = await seedLog("delivered");
@@ -189,7 +199,7 @@ describe.skipIf(!hasTestDatabase)("delivery-log lifecycle on real Postgres", () 
   );
 
   describe("closeDeliveryLogOnRawExpiry", () => {
-    it.each(NON_FINAL_DELIVERY_STATUSES)(
+    it.each(RAW_EXPIRY_CLOSABLE_STATUSES)(
       "closes a %s log and clears its raw columns",
       async (status) => {
         const id = await seedLog(status);
@@ -207,7 +217,7 @@ describe.skipIf(!hasTestDatabase)("delivery-log lifecycle on real Postgres", () 
       },
     );
 
-    it.each(FINAL_STATUSES)("does not touch a %s log", async (status) => {
+    it.each([...FINAL_STATUSES, "retrying"] as const)("does not touch a %s log", async (status) => {
       const id = await seedLog(status);
       const closed = await t.db.transaction((tx) =>
         closeDeliveryLogOnRawExpiry(tx, id, CLEARED_RAW),
